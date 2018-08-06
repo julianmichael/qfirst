@@ -29,7 +29,14 @@ sudo apt-get install python3.6-dev # needed for pip install spacy==2.0, at least
 git clone https://github.com/julianmichael/qfirst.git
 pushd ~/qfirst
 ./setup.sh
+
 source env/bin/activate
 pip uninstall torch
 pip install http://download.pytorch.org/whl/cu90/torch-0.4.0-cp36-cp36m-linux_x86_64.whl
 pip install torchvision
+
+pushd env/lib/python3.6/site-packages/allennlp/custom_extensions
+./make.sh
+popd
+
+popd

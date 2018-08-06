@@ -30,8 +30,8 @@ class QasrlReader(DatasetReader):
                  instance_type: str,
                  token_indexers: Dict[str, TokenIndexer] = None,
                  # has_provenance = False,
-                 # min_answers = 3,
-                 # min_valid_answers = 3,
+                 min_answers = 3,
+                 min_valid_answers = 3,
                  # question_sources = None,
                  ):
         super().__init__(False)
@@ -39,8 +39,8 @@ class QasrlReader(DatasetReader):
         # self._has_provenance = has_provenance
         # self._invalid_thresh = 0
         # self._max_spans = None
-        # self._min_answers = min_answers
-        # self._min_valid_answers = min_valid_answers
+        self._min_answers = min_answers
+        self._min_valid_answers = min_valid_answers
         self._slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
 
         self._instance_type = instance_type
@@ -80,7 +80,11 @@ class QasrlReader(DatasetReader):
                 for _, verb_entry in item["verbEntries"].items():
                     verb_index = verb_entry["verbIndex"]
 
-                    question_labels = [l for q, l in verb_entry["questionLabels"].items()]
+                    def is_valid(question_label):
+                        answers = question_label["answerJudgments"]
+                        valid_answers = [a for a in answers if a["isValid"]]
+                        return len(answers) >= self._min_answers and len(valid_answers) >= self._min_valid_answers
+                    question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
                     # TODO: remove these from the dataset, probably...?
 
                     self._num_verbs += 1
@@ -268,8 +272,8 @@ class QasrlReader(DatasetReader):
 
         # has_provenance = params.pop("has_provenance", False)
 
-        # min_answers = params.pop("min_answers", 3)
-        # min_valid_answers = params.pop("min_valid_answers", 3)
+        min_answers = params.pop("min_answers", 3)
+        min_valid_answers = params.pop("min_valid_answers", 3)
 
         # question_sources = params.pop("question_sources", None)
 
