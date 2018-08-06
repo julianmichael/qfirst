@@ -103,9 +103,9 @@ class QuestionConditionalLM(Model):
 
         # get predicate
         # Shape: batch_size, encoder_output_dim
-        pred_rep = encoded_text.long() \
+        pred_rep = encoded_text.float() \
                                .transpose(1, 2) \
-                               .matmul(predicate_indicator.view(batch_size, num_tokens, 1)) \
+                               .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
                                .view(batch_size, encoder_output_dim) \
                                .float()
 

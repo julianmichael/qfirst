@@ -24,3 +24,5 @@ popd
 pushd lib/nrl-qasrl
 sed -i -e 's/data\/glove/https:\/\/s3-us-west-2.amazonaws.com\/allennlp\/datasets\/glove/g' nrl/service/predictors/qasrl_parser.py
 popd
+
+deactivate
