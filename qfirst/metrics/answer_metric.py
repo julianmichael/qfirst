@@ -14,8 +14,8 @@ from nrl.common.span import Span
 
 class AnswerMetric(Metric):
     def __init__(self,
-                 span_thresholds = [.33, .5],
-                 invalid_thresholds = [.33, .5],
+                 span_thresholds = [.33],
+                 invalid_thresholds = [.33],
                  proportion_invalid_answers = 0.01,
                  match_heuristic = None):
         self._span_thresholds = span_thresholds

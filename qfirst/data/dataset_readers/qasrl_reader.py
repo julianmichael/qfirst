@@ -245,7 +245,11 @@ class QasrlReader(DatasetReader):
         def get_answers_field_for_question(label):
             def get_spans(spansJson):
                 return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
-            return ListField([s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ])
+            span_list = [s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ]
+            if len(span_list) == 0:
+                return ListField([SpanField(-1, -1, text_field)])
+            else:
+                return ListField(span_list)
         answers_field = get_answers_field_for_question(question_label)
         num_answers = len(question_label["answerJudgments"])
         num_invalids = num_answers - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
