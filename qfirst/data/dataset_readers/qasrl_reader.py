@@ -247,8 +247,10 @@ class QasrlReader(DatasetReader):
                 return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
             return ListField([s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ])
         answers_field = get_answers_field_for_question(question_label)
-        num_invalids = len(question_label["answerJudgments"]) - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
-        num_invalids_field  = LabelField(label = num_invalids, skip_indexing = True)
+        num_answers = len(question_label["answerJudgments"])
+        num_invalids = num_answers - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
+        num_answers_field = LabelField(label = num_answers, skip_indexing = True)
+        num_invalids_field = LabelField(label = num_invalids, skip_indexing = True)
 
         metadata = {'pred_index' : pred_index, 'sent_text': " ".join(sent_tokens)}
         metadata['sentence_id'] = sentence_id
@@ -258,7 +260,8 @@ class QasrlReader(DatasetReader):
         instance_dict = {
             'text': text_field,
             'predicate_indicator': predicate_indicator_field,
-            'answers': answers_field,
+            'answer_spans': answers_field,
+            'num_answers': num_answers_field,
             'num_invalids': num_invalids_field,
             'metadata': MetadataField(metadata),
         }
