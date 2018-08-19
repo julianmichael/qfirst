@@ -24,13 +24,14 @@ from qfirst.metrics.question_metric import QuestionMetric
 @Model.register("question_conditional_lm")
 class QuestionConditionalLM(Model):
     def __init__(self, vocab: Vocabulary,
-                text_field_embedder: TextFieldEmbedder,
-                question_generator: QuestionModel,
-                stacked_encoder: Seq2SeqEncoder = None,
-                predicate_feature_dim: int = 100,
-                embedding_dropout: float = 0.0,
-                initializer: InitializerApplicator = InitializerApplicator(),
-                regularizer: Optional[RegularizerApplicator] = None):
+                 text_field_embedder: TextFieldEmbedder,
+                 question_generator: QuestionModel,
+                 stacked_encoder: Seq2SeqEncoder,
+                 encoder_output_projected_dim: int = 100,
+                 predicate_feature_dim: int = 100,
+                 embedding_dropout: float = 0.0,
+                 initializer: InitializerApplicator = InitializerApplicator(),
+                 regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionConditionalLM, self).__init__(vocab, regularizer)
 
         self.text_field_embedder = text_field_embedder
@@ -39,6 +40,8 @@ class QuestionConditionalLM(Model):
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
         self.stacked_encoder = stacked_encoder
+        self.encoder_output_projected_dim = encoder_output_projected_dim
+        self.encoder_output_projection = TimeDistributed(Linear(stacked_encoder.get_output_dim(), encoder_output_projected_dim))
 
         self.question_generator = question_generator
         self.slot_names = question_generator.get_slot_names()
@@ -94,20 +97,20 @@ class QuestionConditionalLM(Model):
 
         # Shape: batch_size, num_tokens, encoder_output_dim
         encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, text_mask)
-        # print("encoded text: " + str(encoded_text.size()))
+        projected_encoded_text = self.encoder_output_projection(encoded_text)
 
-        encoder_output_dim = self.stacked_encoder.get_output_dim()
+        # encoder_output_dim = self.stacked_encoder.get_output_dim()
         # TODO check encoder output dim matches generator input dim. is this right?
         # if encoder_output_dim() != self.question_generator.input_dim
         #    raise ConfigurationError("todo")
 
         # get predicate
-        # Shape: batch_size, encoder_output_dim
-        pred_rep = encoded_text.float() \
-                               .transpose(1, 2) \
-                               .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
-                               .view(batch_size, encoder_output_dim) \
-                               .float()
+        # Shape: batch_size, encoder_output_projected_dim
+        pred_rep = projected_encoded_text.float() \
+                                         .transpose(1, 2) \
+                                         .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
+                                         .view(batch_size, self.encoder_output_projected_dim) \
+                                         .float()
 
         if gold_slot_labels is not None:
 
@@ -136,6 +139,7 @@ class QuestionConditionalLM(Model):
         embedder_params = params.pop("text_field_embedder")
         text_field_embedder = TextFieldEmbedder.from_params(vocab, embedder_params)
         stacked_encoder = Seq2SeqEncoder.from_params(params.pop("stacked_encoder"))
+        encoder_output_projected_dim = params.pop("encoder_output_projected_dim", 100)
         predicate_feature_dim = params.pop("predicate_feature_dim", 100)
 
         question_generator = QuestionModel.from_params(vocab, params.pop("question_generator"))
@@ -147,8 +151,9 @@ class QuestionConditionalLM(Model):
 
         return cls(vocab=vocab,
                    text_field_embedder=text_field_embedder,
-                   stacked_encoder=stacked_encoder,
                    question_generator=question_generator,
+                   stacked_encoder=stacked_encoder,
+                   encoder_output_projected_dim=encoder_output_projected_dim,
                    predicate_feature_dim=predicate_feature_dim,
                    initializer=initializer,
                    regularizer=regularizer)

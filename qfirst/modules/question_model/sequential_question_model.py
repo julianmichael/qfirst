@@ -125,20 +125,51 @@ class SequentialQuestionModel(QuestionModel):
 
         self._start_symbol = Parameter(torch.Tensor(self._dim_embedding).normal_(0, 1))
 
+    def slot_quasi_recurrence(self,
+                              slot_index,
+                              slot_name,
+                              pred_reps,
+                              curr_embedding,
+                              curr_mem):
+
+        next_mem  = []
+        curr_input = torch.cat([pred_reps, curr_embedding], -1)
+        for l in range(self._rnn_layers):
+            new_h, new_c = self._rnn_cells[l][slot_index](curr_input, curr_mem[l])
+            if self._recurrent_dropout > 0:
+                new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
+            next_mem.append((new_h, new_c))
+            if self._highway:
+                nonlin = self._highway_nonlin[l][slot_index](torch.cat([curr_input, new_h], -1))
+                gate = F.sigmoid(nonlin)
+                curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][slot_index](curr_input)
+            else:
+                curr_input = new_h
+        # curr_mem = next_mem
+        hidden = F.relu(self._slot_hiddens[slot_index](new_h))
+        logits = self._slot_preds[slot_index](hidden)
+
+        # TODO how do we choose our set of outputs and the next input?
+        # different in training (with teacher forcing) and in prediction (with beam search).
+        # take various assigned variables and put them in a dict to return.
+
+        return {
+            "next_mem": next_mem,
+            "logits": logits
+        }
+
     def forward(self,
                 pred_reps,
                 slot_labels: Dict[str, torch.LongTensor],
                 **kwargs):
-        # Shape: batch_size, numpred_rep_dim
         batch_size, pred_rep_dim = pred_reps.size()
 
         # TODO check input_dim == pred_rep_dim
 
-        # hidden state: start with batch size start symbols
+        # hidden state: start with batch_size start symbols
         curr_embedding = self._start_symbol.view(1, -1).expand(batch_size, -1)
         # print("curr_embedding: " + str(curr_embedding.size()))
 
-        # ? initialize the memory cells ?
         curr_mem = []
         for l in range(self._rnn_layers):
             curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
@@ -146,23 +177,27 @@ class SequentialQuestionModel(QuestionModel):
 
         slot_logits = {}
         for i, n in enumerate(self._slot_names):
-            next_mem  = []
-            curr_input = torch.cat([pred_reps, curr_embedding], -1)
-            for l in range(self._rnn_layers):
-                new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
-                if self._recurrent_dropout > 0:
-                    new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
-                next_mem.append((new_h, new_c))
-                if self._highway:
-                    nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
-                    gate = F.sigmoid(nonlin)
-                    curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
-                else:
-                    curr_input = new_h
-            curr_mem = next_mem
-            hidden = F.relu(self._slot_hiddens[i](new_h))
-            logits = self._slot_preds[i](hidden)
-            slot_logits[n] = logits.view(batch_size, -1)
+            recurrence_dict = self.slot_quasi_recurrence(i, n, pred_reps, curr_embedding, curr_mem)
+            slot_logits[n] = recurrence_dict["logits"]
+            curr_mem = recurrence_dict["next_mem"]
+
+            # next_mem  = []
+            # curr_input = torch.cat([pred_reps, curr_embedding], -1)
+            # for l in range(self._rnn_layers):
+            #     new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
+            #     if self._recurrent_dropout > 0:
+            #         new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
+            #     next_mem.append((new_h, new_c))
+            #     if self._highway:
+            #         nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
+            #         gate = F.sigmoid(nonlin)
+            #         curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
+            #     else:
+            #         curr_input = new_h
+            # curr_mem = next_mem
+            # hidden = F.relu(self._slot_hiddens[i](new_h))
+            # logits = self._slot_preds[i](hidden)
+            # slot_logits[n] = logits
 
             if i < len(self._slot_names) - 1:
                 curr_embedding = self._slot_embedders[i](slot_labels[n])
@@ -174,6 +209,68 @@ class SequentialQuestionModel(QuestionModel):
                 #     curr_embedding = self._slot_embedders[i](max_inds)
 
         return slot_logits
+
+    def beam_decode(self,
+                    pred_reps,
+                    max_beam_size = 1):
+        ## metadata to recover sequences
+        # slot_name -> List (batch_size) of lists (beam_size) of slot names
+        slot_beam_labels = {}
+        # slot_name -> Tensor of shape (batch_size, beam_size) where value is index into slot's beam in same batch
+        backpointers = {}
+
+        batch_size, pred_rep_dim = pred_reps.size()
+
+        ## current state of the beam search
+        # start symbol appears in every batch
+        current_beam_states = self._start_symbol.view(1, 1, -1).expand(batch_size, -1, -1)
+        # List (batch_size) of lists (current_beam_size) of current log probabilities
+        current_log_probs = [[0.] * batch_size]
+        # TODO do we need? size of beam (for when it is less than max_beam_size)
+        # current_beam_size = 1
+
+
+        # TODO all below
+
+        # curr_mem = []
+        # for l in range(self._rnn_layers):
+        #     curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
+        #                      Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+
+        # slot_logits = {}
+        # for i, n in enumerate(self._slot_names):
+        #     next_mem  = []
+        #     curr_input = torch.cat([pred_reps, curr_embedding], -1)
+        #     for l in range(self._rnn_layers):
+        #         new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
+        #         if self._recurrent_dropout > 0:
+        #             new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
+        #         next_mem.append((new_h, new_c))
+        #         if self._highway:
+        #             nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
+        #             gate = F.sigmoid(nonlin)
+        #             curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
+        #         else:
+        #             curr_input = new_h
+        #     curr_mem = next_mem
+        #     hidden = F.relu(self._slot_hiddens[i](new_h))
+        #     logits = self._slot_preds[i](hidden)
+        #     slot_logits[n] = logits.view(batch_size, -1)
+
+        #     if i < len(self._slot_names) - 1:
+        #         curr_embedding = self._slot_embedders[i](slot_labels[n])
+        #         # TODO I guess maybe beam search has to happen here...
+        #         # if self.training:
+        #         #     curr_embedding = self._slot_embedders[i](slot_labels[i]).view(batch_size, -1)
+        #         # else:
+        #         #     _, max_inds = logits.max(-1)
+        #         #     curr_embedding = self._slot_embedders[i](max_inds)
+
+        # return slot_logits
+
+
+
+        raise NotImplementedError
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'SequentialQuestionModel':

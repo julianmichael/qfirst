@@ -165,6 +165,13 @@ class QuestionAnswerer(Model):
             "loss": loss
         }
 
+    @overrides
+    def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        probs = output_dict['span_probs']
+        mask = output_dict['span_mask']
+        spans = self.to_scored_spans(probs, mask)
+        output_dict['spans'] = spans
+        return output_dict
 
     def to_scored_spans(self, probs, score_mask):
         probs = probs.data.cpu()

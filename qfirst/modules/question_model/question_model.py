@@ -26,6 +26,9 @@ class QuestionModel(torch.nn.Module, Registrable):
     def get_slot_names(self):
         return self._slot_names
 
+    def beam_decode(self, beam_size = 1, **kwargs):
+        raise NotImplementedError
+
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QuestionModel':
         choice = params.pop_choice('type', cls.list_available())
