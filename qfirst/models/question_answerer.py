@@ -34,6 +34,9 @@ class QuestionAnswerer(Model):
                  question_encoder: QuestionEncoder,
                  predicate_feature_dim: int,
                  span_hidden_dim: int,
+                 union_gold_spans: bool = False,
+                 span_thresholds: List[float] = [0.33],
+                 invalid_thresholds: List[float] = [0.11],
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
@@ -46,7 +49,9 @@ class QuestionAnswerer(Model):
 
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
-        self.metric = AnswerMetric()
+        self.metric = AnswerMetric(
+            span_thresholds = span_thresholds,
+            invalid_thresholds = invalid_thresholds)
 
         self.stacked_encoder = stacked_encoder
         self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
@@ -58,6 +63,7 @@ class QuestionAnswerer(Model):
         self.span_pred = TimeDistributed(Linear(self.span_hidden_dim + self.question_encoder.get_output_dim(), 1))
         self.invalid_pred = Linear(self.span_hidden_dim + self.question_encoder.get_output_dim(), 1)
 
+        self.union_gold_spans = union_gold_spans
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
@@ -209,11 +215,17 @@ class QuestionAnswerer(Model):
         for b in range(batchsize):
             for s in range(num_spans):
                 if span_mask.data[b, s] > 0:
-                    labels[b, arg_indexes[b, s]] += 1
+                    if self.union_gold_spans:
+                        labels[b, arg_indexes[b, s]] = 1
+                    else:
+                        labels[b, arg_indexes[b, s]] += 1
 
-        num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
+        if self.union_gold_spans:
+            return torch.autograd.Variable(labels.float())
+        else:
+            num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
+            return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
 
-        return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset = reset)
@@ -226,6 +238,9 @@ class QuestionAnswerer(Model):
         question_encoder = QuestionEncoder.from_params(vocab, params.pop("question_encoder"))
         predicate_feature_dim = params.pop("predicate_feature_dim")
         span_hidden_dim = params.pop("span_hidden_dim")
+        union_gold_spans = params.pop("union_gold_spans", False)
+        span_thresholds = params.pop("span_thresholds", [0.33])
+        invalid_thresholds = params.pop("invalid_thresholds", [0.11])
 
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
         regularizer = RegularizerApplicator.from_params(params.pop('regularizer', []))
@@ -238,5 +253,6 @@ class QuestionAnswerer(Model):
                    question_encoder = question_encoder,
                    predicate_feature_dim=predicate_feature_dim,
                    span_hidden_dim = span_hidden_dim,
+                   union_gold_spans = union_gold_spans,
                    initializer=initializer,
                    regularizer=regularizer)
