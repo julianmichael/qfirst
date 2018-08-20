@@ -60,7 +60,7 @@ class QuestionAnswerer(Model):
         self.slot_names = self.question_encoder.get_slot_names()
 
         self.span_hidden = SpanRepAssembly(self.stacked_encoder.get_output_dim(), self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
-        self.span_pred = TimeDistributed(Linear(self.span_hidden_dim + self.question_encoder.get_output_dim(), 1))
+        self.span_pred = TimeDistributed(Linear(self.span_hidden_dim + self.question_encoder.get_output_dim() + self.stacked_encoder.get_output_dim(), 1))
         self.invalid_pred = Linear(self.span_hidden_dim + self.question_encoder.get_output_dim(), 1)
 
         self.union_gold_spans = union_gold_spans
@@ -118,7 +118,10 @@ class QuestionAnswerer(Model):
         question_embedding_expanded = question_embedding.view(batch_size, 1, self.question_encoder.get_output_dim()) \
                                                         .expand(-1, num_spans, -1)
 
-        span_with_question_hidden = torch.cat([span_hidden, question_embedding_expanded], -1)
+        pred_rep_expanded = pred_rep.view(batch_size, 1, -1) \
+                                    .expand(-1, num_spans, -1)
+
+        span_with_question_hidden = torch.cat([span_hidden, question_embedding_expanded, pred_rep_expanded], -1)
         # print("span_with_question_hidden: " + str(span_with_question_hidden.size()))
 
         span_logits = self.span_pred(F.relu(span_with_question_hidden)).squeeze()
