@@ -7,6 +7,9 @@ from allennlp.common import Params, Registrable
 
 from qfirst.data.util import get_slot_label_namespace
 
+# input: a vector of input_dim
+# forward: returns logits over each slot computed using teacher forcing
+# beam_decode_single: list of questions with scores (not necessarily probabilistic) computed by beam search
 class QuestionModel(torch.nn.Module, Registrable):
     def __init__(self,
             vocab: Vocabulary,
@@ -26,7 +29,10 @@ class QuestionModel(torch.nn.Module, Registrable):
     def get_slot_names(self):
         return self._slot_names
 
-    def beam_decode(self, beam_size = 1, **kwargs):
+    def get_input_dim(self):
+        return self._input_dim
+
+    def beam_decode_single(self, pred_rep, max_beam_size = 1):
         raise NotImplementedError
 
     @classmethod

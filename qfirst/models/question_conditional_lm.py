@@ -17,15 +17,16 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure
 
+from qfirst.util.question_generator import QuestionGenerator
 from qfirst.modules.question_model import QuestionModel
-# from qfirst.modules.vector_question_generator import SequentialQuestionGenerator
 from qfirst.metrics.question_metric import QuestionMetric
 
+@QuestionGenerator.register("conditional_lm")
 @Model.register("question_conditional_lm")
-class QuestionConditionalLM(Model):
+class QuestionConditionalLM(Model, QuestionGenerator):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
-                 question_generator: QuestionModel,
+                 question_model: QuestionModel,
                  stacked_encoder: Seq2SeqEncoder,
                  encoder_output_projected_dim: int = 100,
                  predicate_feature_dim: int = 100,
@@ -43,36 +44,26 @@ class QuestionConditionalLM(Model):
         self.encoder_output_projected_dim = encoder_output_projected_dim
         self.encoder_output_projection = TimeDistributed(Linear(stacked_encoder.get_output_dim(), encoder_output_projected_dim))
 
-        self.question_generator = question_generator
-        self.slot_names = question_generator.get_slot_names()
+        self.question_model = question_model
+        self.slot_names = question_model.get_slot_names()
 
-        self.metric = QuestionMetric(vocab, question_generator.get_slot_names())
+        self.metric = QuestionMetric(vocab, question_model.get_slot_names())
 
-    @overrides
-    def forward(self,
-                text: Dict[str, torch.LongTensor],
-                predicate_indicator: torch.LongTensor,
-                **kwargs):
-        # predicate_indicator: batch_size, num_tokens
-        # kwargs: Dict[str, torch.LongTensor]
-        #     str: slot_name
-        #     shape: batch_size
-
-        # print("predicate_indicator: " + str(predicate_indicator.size()))
-
+    def _get_gold_slot_labels(self, instance_slot_labels_dict):
         # each of gold_slot_labels[slot_name] is of
         # Shape: batch_size
         gold_slot_labels = {}
         for slot_name in self.slot_names:
-            if slot_name in kwargs and kwargs[slot_name] is not None:
-                gold_slot_labels[slot_name] = kwargs[slot_name]
+            if slot_name in instance_slot_labels_dict and instance_slot_labels_dict[slot_name] is not None:
+                gold_slot_labels[slot_name] = instance_slot_labels_dict[slot_name]
         for slot_name in self.slot_names:
-            if slot_name not in kwargs or kwargs[slot_name] is None:
+            if slot_name not in instance_slot_labels_dict or instance_slot_labels_dict[slot_name] is None:
                 gold_slot_labels = None
+        return gold_slot_labels
 
-        # print("slot (wh): " + str(gold_slot_labels["wh"].size()))
-        # print("slot (aux): " + str(gold_slot_labels["aux"].size()))
-
+    def _get_pred_rep(self,
+                      text: Dict[str, torch.LongTensor],
+                      predicate_indicator: torch.LongTensor):
         # Shape: batch_size, num_tokens, embedding_dim
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
         # print("embedded text: " + str(embedded_text_input.size()))
@@ -101,7 +92,7 @@ class QuestionConditionalLM(Model):
 
         # encoder_output_dim = self.stacked_encoder.get_output_dim()
         # TODO check encoder output dim matches generator input dim. is this right?
-        # if encoder_output_dim() != self.question_generator.input_dim
+        # if encoder_output_dim() != self.question_model.input_dim
         #    raise ConfigurationError("todo")
 
         # get predicate
@@ -111,11 +102,30 @@ class QuestionConditionalLM(Model):
                                          .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
                                          .view(batch_size, self.encoder_output_projected_dim) \
                                          .float()
+        return pred_rep
+
+
+    @overrides
+    def forward(self,
+                text: Dict[str, torch.LongTensor],
+                predicate_indicator: torch.LongTensor,
+                **kwargs):
+        # predicate_indicator: batch_size, num_tokens
+        # kwargs: Dict[str, torch.LongTensor]
+        #     str: slot_name
+        #     shape: batch_size
+
+        # Shape: batch_size, encoder_output_projected_dim
+        pred_rep = self._get_pred_rep(text, predicate_indicator)
+
+        # each of gold_slot_labels[slot_name] is of
+        # Shape: batch_size
+        gold_slot_labels = self._get_gold_slot_labels(kwargs)
 
         if gold_slot_labels is not None:
 
             # Shape: slot_name -> batch_size, slot_name_vocab_size
-            slot_logits = self.question_generator(pred_rep, gold_slot_labels)
+            slot_logits = self.question_model(pred_rep, gold_slot_labels)
 
             loss = 0.
             for slot_name in self.slot_names:
@@ -127,9 +137,17 @@ class QuestionConditionalLM(Model):
             loss_dict = { "loss" : loss }
 
             return {**loss_dict, **slot_logits}
+        else:
+            raise ConfigurationError("QuestionConditionalLM requires gold labels for teacher forcing when running forward. "
+                                     "You may wish to run beam_decode_single instead.")
 
-        # TODO: fwd for decoding / prediction setting: n-best list
-        return {}
+    def beam_decode_single(self,
+                           text: Dict[str, torch.LongTensor],
+                           predicate_indicator: torch.LongTensor,
+                           max_beam_size = 1):
+        # Shape: batch_size, encoder_output_projected_dim
+        pred_rep = self._get_pred_rep(text, predicate_indicator)
+        return self.question_model.beam_decode_single(pred_rep, max_beam_size)
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset=reset)
@@ -142,7 +160,7 @@ class QuestionConditionalLM(Model):
         encoder_output_projected_dim = params.pop("encoder_output_projected_dim", 100)
         predicate_feature_dim = params.pop("predicate_feature_dim", 100)
 
-        question_generator = QuestionModel.from_params(vocab, params.pop("question_generator"))
+        question_model = QuestionModel.from_params(vocab, params.pop("question_model"))
 
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
         regularizer = RegularizerApplicator.from_params(params.pop('regularizer', []))
@@ -151,7 +169,7 @@ class QuestionConditionalLM(Model):
 
         return cls(vocab=vocab,
                    text_field_embedder=text_field_embedder,
-                   question_generator=question_generator,
+                   question_model=question_model,
                    stacked_encoder=stacked_encoder,
                    encoder_output_projected_dim=encoder_output_projected_dim,
                    predicate_feature_dim=predicate_feature_dim,

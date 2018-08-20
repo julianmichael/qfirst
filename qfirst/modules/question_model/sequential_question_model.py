@@ -125,7 +125,7 @@ class SequentialQuestionModel(QuestionModel):
 
         self._start_symbol = Parameter(torch.Tensor(self._dim_embedding).normal_(0, 1))
 
-    def slot_quasi_recurrence(self,
+    def _slot_quasi_recurrence(self,
                               slot_index,
                               slot_name,
                               pred_reps,
@@ -158,6 +158,16 @@ class SequentialQuestionModel(QuestionModel):
             "logits": logits
         }
 
+    def _init_recurrence(self, pred_reps):
+        # start with batch_size start symbols and init multi-layer memory cell
+        batch_size, _ = pred_reps.size()
+        emb = self._start_symbol.view(1, -1).expand(batch_size, -1)
+        mem = []
+        for l in range(self._rnn_layers):
+            mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
+                        Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+        return emb, mem
+
     def forward(self,
                 pred_reps,
                 slot_labels: Dict[str, torch.LongTensor],
@@ -166,111 +176,71 @@ class SequentialQuestionModel(QuestionModel):
 
         # TODO check input_dim == pred_rep_dim
 
-        # hidden state: start with batch_size start symbols
-        curr_embedding = self._start_symbol.view(1, -1).expand(batch_size, -1)
-        # print("curr_embedding: " + str(curr_embedding.size()))
-
-        curr_mem = []
-        for l in range(self._rnn_layers):
-            curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
-                             Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
-
+        curr_embedding, curr_mem = self._init_recurrence(pred_reps)
         slot_logits = {}
         for i, n in enumerate(self._slot_names):
-            recurrence_dict = self.slot_quasi_recurrence(i, n, pred_reps, curr_embedding, curr_mem)
+            recurrence_dict = self._slot_quasi_recurrence(i, n, pred_reps, curr_embedding, curr_mem)
             slot_logits[n] = recurrence_dict["logits"]
             curr_mem = recurrence_dict["next_mem"]
 
-            # next_mem  = []
-            # curr_input = torch.cat([pred_reps, curr_embedding], -1)
-            # for l in range(self._rnn_layers):
-            #     new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
-            #     if self._recurrent_dropout > 0:
-            #         new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
-            #     next_mem.append((new_h, new_c))
-            #     if self._highway:
-            #         nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
-            #         gate = F.sigmoid(nonlin)
-            #         curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
-            #     else:
-            #         curr_input = new_h
-            # curr_mem = next_mem
-            # hidden = F.relu(self._slot_hiddens[i](new_h))
-            # logits = self._slot_preds[i](hidden)
-            # slot_logits[n] = logits
-
             if i < len(self._slot_names) - 1:
                 curr_embedding = self._slot_embedders[i](slot_labels[n])
-                # TODO I guess maybe beam search has to happen here...
-                # if self.training:
-                #     curr_embedding = self._slot_embedders[i](slot_labels[i]).view(batch_size, -1)
-                # else:
-                #     _, max_inds = logits.max(-1)
-                #     curr_embedding = self._slot_embedders[i](max_inds)
 
         return slot_logits
 
-    def beam_decode(self,
-                    pred_reps,
-                    max_beam_size = 1):
-        ## metadata to recover sequences
-        # slot_name -> List (batch_size) of lists (beam_size) of slot names
-        slot_beam_labels = {}
-        # slot_name -> Tensor of shape (batch_size, beam_size) where value is index into slot's beam in same batch
-        backpointers = {}
-
+    def beam_decode_single(self,
+                           pred_rep, # shape: 1, input_dim
+                           max_beam_size = 1):
         batch_size, pred_rep_dim = pred_reps.size()
+        if batch_size != 1:
+            raise ConfigurationError("beam_decode_single must be run with a batch size of 1.")
+        if pred_rep_dim != self.get_input_dim():
+            raise ConfigurationError("predicate representation must match dimensionality of question model input.")
 
-        ## current state of the beam search
-        # start symbol appears in every batch
-        current_beam_states = self._start_symbol.view(1, 1, -1).expand(batch_size, -1, -1)
-        # List (batch_size) of lists (current_beam_size) of current log probabilities
-        current_log_probs = [[0.] * batch_size]
-        # TODO do we need? size of beam (for when it is less than max_beam_size)
-        # current_beam_size = 1
+        ## metadata to recover sequences
+        # slot_name -> List/Tensor of shape (beam_size) where value is index into slot's beam
+        backpointers = {}
+        # slot_name -> list (length <= beam_size) of slot names
+        slot_beam_labels = {}
 
+        ## initialization for beam search loop
+        init_embedding, init_mem = self._init_recurrence(pred_reps)
+        # current state of the beam search: list of (input embedding, memory cells, log_prob), ordered by probability
+        current_beam_states = [init_embedding, init_mem, 0.]
 
-        # TODO all below
+        for slot_index, slot_name in enumerate(self._slot_names):
+            # list of pairs (of backpointer, slot_value, new_embedding, new_mem, log_prob) ?
+            candidate_new_beam_states = []
+            for i, (emb, mem, prev_log_prob) in enumerate(current_beam_states):
+                recurrence_dict = self._slot_quasi_recurrence(slot_index, slot_name, pred_reps, emb, mem)
+                next_mem = recurrence_dict["next_mem"]
+                logits = recurrence_dict["logits"].squeeze()
+                log_probabilities = F.log_softmax(logits)
+                num_slot_values = self._vocab.get_vocab_size(get_slot_label_namespace(slot_name))
+                slot_name_dict = self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name))
+                for pred_slot_index in range(0, math.min(max_beam_size, num_slot_values)):
+                    log_prob = log_probabilities[pred_slot_index] + prev_log_prob
+                    slot_value = slot_name_dict[pred_slot_index]
+                    new_input_embedding = self._slot_embedders[slot_index](pred_slot_index)
+                    candidate_new_beam_states.append((i, slot_value, new_input_embedding, next_mem, log_prob))
+            candidate_new_beam_states.sort(key = lambda t: t[4], reverse = True)
+            new_beam_states = candidate_new_beam_states[:max_beam_size]
+            backpointers[slot_name] = list(map(lambda t: t[0], new_beam_states))
+            slot_beam_labels[slot_name] = list(map(lambda t: t[1], new_beam_states))
+            current_beam_states = list(map(lambda t: (t[2], t[3], t[4], new_beam_states)))
 
-        # curr_mem = []
-        # for l in range(self._rnn_layers):
-        #     curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
-        #                      Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+        # list of pairs of (question, log probability)
+        final_sequences = []
+        for final_beam_index in range(len(current_beam_states)):
+            log_prob = current_beam_states[final_beam_index][2]
+            current_backpointer = final_beam_index
+            current_question = []
+            for slot_name in reversed(self._slot_names):
+                current_question.insert(0, slot_beam_labels[slot_name][current_backpointer])
+                current_backpointer = backpointers[slot_name][current_backpointer]
+            final_sequences.append((current_question, log_prob))
 
-        # slot_logits = {}
-        # for i, n in enumerate(self._slot_names):
-        #     next_mem  = []
-        #     curr_input = torch.cat([pred_reps, curr_embedding], -1)
-        #     for l in range(self._rnn_layers):
-        #         new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
-        #         if self._recurrent_dropout > 0:
-        #             new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
-        #         next_mem.append((new_h, new_c))
-        #         if self._highway:
-        #             nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
-        #             gate = F.sigmoid(nonlin)
-        #             curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
-        #         else:
-        #             curr_input = new_h
-        #     curr_mem = next_mem
-        #     hidden = F.relu(self._slot_hiddens[i](new_h))
-        #     logits = self._slot_preds[i](hidden)
-        #     slot_logits[n] = logits.view(batch_size, -1)
-
-        #     if i < len(self._slot_names) - 1:
-        #         curr_embedding = self._slot_embedders[i](slot_labels[n])
-        #         # TODO I guess maybe beam search has to happen here...
-        #         # if self.training:
-        #         #     curr_embedding = self._slot_embedders[i](slot_labels[i]).view(batch_size, -1)
-        #         # else:
-        #         #     _, max_inds = logits.max(-1)
-        #         #     curr_embedding = self._slot_embedders[i](max_inds)
-
-        # return slot_logits
-
-
-
-        raise NotImplementedError
+        return final_sequences
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'SequentialQuestionModel':
