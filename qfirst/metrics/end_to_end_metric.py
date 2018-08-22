@@ -3,7 +3,6 @@ from typing import Dict, List, Optional, Set, Tuple
 import torch
 
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask
-from allennlp.data.vocabulary import Vocabulary
 from allennlp.training.metrics.metric import Metric
 
 import math
@@ -12,10 +11,8 @@ from qfirst.data.util import get_slot_label_namespace
 
 class EndToEndMetric(Metric):
     def __init__(self,
-                 vocabulary: Vocabulary,
                  slot_names: List[str],
                  question_thresholds: List[float] = [0.005, 0.01, 0.02, 0.1]):
-        self._vocabulary = vocabulary
         self._slot_names = slot_names
         self._question_thresholds = question_thresholds
 

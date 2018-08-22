@@ -8,6 +8,7 @@ from allennlp.models.model import Model
 from allennlp.common import Params
 from allennlp.data import Vocabulary
 
+from qfirst.metrics.end_to_end_metric import EndToEndMetric
 from qfirst.util import QuestionGenerator
 from qfirst.models.question_answerer import QuestionAnswerer
 
@@ -50,7 +51,7 @@ class QfirstParser(Model):
         answer_spans = answers.squeeze(0)
         span_label_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
         num_answers_single_batch = num_answers.squeeze(0)
-        num_tokens = question_answerer.text_field_embedder(text).size(1)
+        num_tokens = self.question_answerer.text_field_embedder(text).size(1)
         answer_span_labels = self.question_answerer.get_prediction_map(answer_spans, span_label_mask,
                                                                        num_tokens, num_answers_single_batch,
                                                                        union_gold_spans = True)

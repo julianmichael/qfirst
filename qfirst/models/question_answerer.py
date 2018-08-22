@@ -250,5 +250,7 @@ class QuestionAnswerer(Model):
                    predicate_feature_dim=predicate_feature_dim,
                    span_hidden_dim = span_hidden_dim,
                    union_gold_spans = union_gold_spans,
+                   span_thresholds = span_thresholds,
+                   invalid_thresholds = invalid_thresholds,
                    initializer=initializer,
                    regularizer=regularizer)

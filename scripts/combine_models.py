@@ -9,9 +9,16 @@ def main(qg_dir, qa_dir, config_base, outfile, target_device):
 
     qg_weights = load(os.path.join(qg_dir, "best.th"))
     qg_config = json.loads(open(os.path.join(qg_dir, "config.json"), 'r').read())
+    # TODO remove when old model is retrained
+    question_model_config_if_old = qg_config["model"].pop("question_generator", None)
+    if question_model_config_if_old is not None:
+        qg_config["model"]["question_model"] = question_model_config_if_old
 
     weights = {}
     for name, w in qg_weights.items():
+        # TODO remove when old model is retrained
+        if name.startswith('question_generator'):
+            name = name.replace('question_generator', 'question_model')
         weights['question_generator.' + name] = w
 
     qa_weights = load(os.path.join(qa_dir, "best.th"))
