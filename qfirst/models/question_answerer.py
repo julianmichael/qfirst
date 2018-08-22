@@ -68,10 +68,10 @@ class QuestionAnswerer(Model):
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
                 predicate_indicator: torch.LongTensor,
-                answer_spans: torch.LongTensor,
-                num_answers: torch.LongTensor,
-                num_invalids: torch.LongTensor,
-                metadata,
+                answer_spans: torch.LongTensor = None,
+                num_answers: torch.LongTensor = None,
+                num_invalids: torch.LongTensor = None,
+                metadata = None,
                 **kwargs):
 
         # each of gold_slot_labels[slot_name] is of
@@ -83,6 +83,8 @@ class QuestionAnswerer(Model):
         for slot_name in self.slot_names:
             if slot_name not in kwargs or kwargs[slot_name] is None:
                 question_slot_labels = None
+        if question_slot_labels is None:
+            raise ConfigurationError("QuestionAnswerer must receive a question as input.")
 
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
         mask = get_text_field_mask(text)
@@ -92,14 +94,13 @@ class QuestionAnswerer(Model):
         batch_size, num_tokens, embedding_dim_with_predicate_feature = embedded_text_with_predicate_indicator.size()
 
         # TODO fix error message
-        if self.stacked_encoder.get_input_dim() != embedding_dim_with_predicate_feature:
-            raise ConfigurationError("The SRL model uses an indicator feature, which makes "
-                                     "the embedding dimension one larger than the value "
-                                     "specified. Therefore, the 'input_dim' of the stacked_encoder "
-                                     "must be equal to total_embedding_dim + 1.")
+        # if self.stacked_encoder.get_input_dim() != embedding_dim_with_predicate_feature:
+        #     raise ConfigurationError("The SRL model uses an indicator feature, which makes "
+        #                              "the embedding dimension one larger than the value "
+        #                              "specified. Therefore, the 'input_dim' of the stacked_encoder "
+        #                              "must be equal to total_embedding_dim + 1.")
 
         encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
-        # print("encoded_text: " + str(encoded_text.size()))
 
         pred_rep = encoded_text.float() \
                                .transpose(1, 2) \
@@ -108,71 +109,63 @@ class QuestionAnswerer(Model):
                                .float()
 
         question_embedding = self.question_encoder(pred_rep, question_slot_labels)
-        # print("question_embedding: " + str(question_embedding.size()))
 
         span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
-        # print("span_hidden: " + str(span_hidden.size()))
 
         num_spans = span_hidden.size(1)
 
         question_embedding_expanded = question_embedding.view(batch_size, 1, self.question_encoder.get_output_dim()) \
                                                         .expand(-1, num_spans, -1)
-
         pred_rep_expanded = pred_rep.view(batch_size, 1, -1) \
                                     .expand(-1, num_spans, -1)
-
         span_with_question_hidden = torch.cat([span_hidden, question_embedding_expanded, pred_rep_expanded], -1)
-        # print("span_with_question_hidden: " + str(span_with_question_hidden.size()))
-
         span_logits = self.span_pred(F.relu(span_with_question_hidden)).squeeze()
-        # print("span_logits: " + str(span_logits.size()))
-
-        # uses answer_spans
-        # print("answer_spans: " + str(answer_spans.size()))
-        span_label_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
-        # print("span_label_mask: " + str(span_label_mask.size()))
-        prediction_mask = self.get_prediction_map(answer_spans, span_label_mask, num_tokens, num_answers)
-        # print("prediction_mask: " + str(prediction_mask.size()))
-        span_loss = F.binary_cross_entropy_with_logits(span_logits, prediction_mask, weight=span_mask.float(), size_average=False)
-
-        # print("self.invalid_embedding: " + str(self.invalid_embedding.size()))
-        expanded_invalid_embedding = self.invalid_embedding.view(1, -1).expand(batch_size, -1)
-        # print("expanded_invalid_embedding: " + str(expanded_invalid_embedding.size()))
-        invalid_with_question_hidden = torch.cat([expanded_invalid_embedding, question_embedding], -1)
-        # print("invalid_with_question_hidden: " + str(invalid_with_question_hidden.size()))
-        invalidity_logit = self.invalid_pred(F.relu(invalid_with_question_hidden)).squeeze()
-        # print("invalidity_logit: " + str(invalidity_logit.size()))
-
-        invalidity_label = num_invalids.float() / num_answers.float()
-        invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
-
-        loss = span_loss + invalidity_loss
-
         span_probs = F.sigmoid(span_logits) * span_mask.float()
         scored_spans = self.to_scored_spans(span_probs, span_mask)
+
+        expanded_invalid_embedding = self.invalid_embedding.view(1, -1).expand(batch_size, -1)
+        invalid_with_question_hidden = torch.cat([expanded_invalid_embedding, question_embedding], -1)
+        invalidity_logit = self.invalid_pred(F.relu(invalid_with_question_hidden)).squeeze()
         invalidity_prob = F.sigmoid(invalidity_logit)
 
-        self.metric(
-            scored_spans, [m["question_label"] for m in metadata],
-            invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+        if answer_spans is None:
+            return {
+                "span_probs": span_probs,
+                "span_mask": span_mask,
+                "invalidity_prob": invalidity_prob
+            }
+        else:
+            span_label_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
+            prediction_mask = self.get_prediction_map(answer_spans, span_label_mask,
+                                                      num_tokens, num_answers,
+                                                      self.union_gold_spans)
+            span_loss = F.binary_cross_entropy_with_logits(span_logits, prediction_mask,
+                                                           weight = span_mask.float(), size_average = False)
+            invalidity_label = num_invalids.float() / num_answers.float()
+            invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
 
-        # if not self.training:
-        #     spans = self.to_scored_spans(probs, span_mask)
-        #     self.threshold_metric(spans, annotations)
+            loss = span_loss + invalidity_loss
 
-        # TODO add this back in when necessary
-        # We need to retain the mask in the output dictionary
-        # so that we can crop the sequences to remove padding
-        # when we do viterbi inference in self.decode.
-        # output_dict["mask"] = mask
+            self.metric(
+                scored_spans, [m["question_label"] for m in metadata],
+                invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
 
-        return {
-            "span_logits": span_logits,
-            "invalidity_logit": invalidity_logit,
-            "span_probs": span_probs,
-            "span_mask": span_mask,
-            "loss": loss
-        }
+            # if not self.training:
+            #     spans = self.to_scored_spans(probs, span_mask)
+            #     self.threshold_metric(spans, annotations)
+
+            # TODO add this back in when necessary
+            # We need to retain the mask in the output dictionary
+            # so that we can crop the sequences to remove padding
+            # when we do viterbi inference in self.decode.
+            # output_dict["mask"] = mask
+
+            return {
+                "span_probs": span_probs,
+                "span_mask": span_mask,
+                "invalidity_prob": invalidity_prob,
+                "loss": loss
+            }
 
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -207,7 +200,7 @@ class QuestionAnswerer(Model):
 
         return result
 
-    def get_prediction_map(self, spans, span_mask, seq_length, num_answerers):
+    def get_prediction_map(self, spans, span_mask, seq_length, num_answerers, union_gold_spans):
         batchsize, num_spans, _ = spans.size()
         num_labels = int((seq_length * (seq_length+1))/2)
         labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
@@ -218,12 +211,12 @@ class QuestionAnswerer(Model):
         for b in range(batchsize):
             for s in range(num_spans):
                 if span_mask.data[b, s] > 0:
-                    if self.union_gold_spans:
+                    if union_gold_spans:
                         labels[b, arg_indexes[b, s]] = 1
                     else:
                         labels[b, arg_indexes[b, s]] += 1
 
-        if self.union_gold_spans:
+        if union_gold_spans:
             return torch.autograd.Variable(labels.float())
         else:
             num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()

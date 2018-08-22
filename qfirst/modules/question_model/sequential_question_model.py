@@ -200,7 +200,7 @@ class SequentialQuestionModel(QuestionModel):
         ## metadata to recover sequences
         # slot_name -> List/Tensor of shape (beam_size) where value is index into slot's beam
         backpointers = {}
-        # slot_name -> list (length <= beam_size) of slot names
+        # slot_name -> list (length <= beam_size) of indices indicating slot values
         slot_beam_labels = {}
 
         ## initialization for beam search loop
@@ -209,7 +209,7 @@ class SequentialQuestionModel(QuestionModel):
         current_beam_states = [init_embedding, init_mem, 0.]
 
         for slot_index, slot_name in enumerate(self._slot_names):
-            # list of pairs (of backpointer, slot_value, new_embedding, new_mem, log_prob) ?
+            # list of pairs (of backpointer, slot_value_index, new_embedding, new_mem, log_prob) ?
             candidate_new_beam_states = []
             for i, (emb, mem, prev_log_prob) in enumerate(current_beam_states):
                 recurrence_dict = self._slot_quasi_recurrence(slot_index, slot_name, pred_reps, emb, mem)
@@ -220,27 +220,27 @@ class SequentialQuestionModel(QuestionModel):
                 slot_name_dict = self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, math.min(max_beam_size, num_slot_values)):
                     log_prob = log_probabilities[pred_slot_index] + prev_log_prob
-                    slot_value = slot_name_dict[pred_slot_index]
                     new_input_embedding = self._slot_embedders[slot_index](pred_slot_index)
-                    candidate_new_beam_states.append((i, slot_value, new_input_embedding, next_mem, log_prob))
+                    candidate_new_beam_states.append((i, pred_slot_index, new_input_embedding, next_mem, log_prob))
             candidate_new_beam_states.sort(key = lambda t: t[4], reverse = True)
             new_beam_states = candidate_new_beam_states[:max_beam_size]
-            backpointers[slot_name] = list(map(lambda t: t[0], new_beam_states))
-            slot_beam_labels[slot_name] = list(map(lambda t: t[1], new_beam_states))
-            current_beam_states = list(map(lambda t: (t[2], t[3], t[4], new_beam_states)))
+            backpointers[slot_name] = [t[0] for t in new_beam_states]
+            slot_beam_labels[slot_name] = [t[1] for t in new_beam_states]
+            current_beam_states = [(t[2], t[3], t[4]) for t in new_beam_states]
 
-        # list of pairs of (question, log probability)
-        final_sequences = []
-        for final_beam_index in range(len(current_beam_states)):
-            log_prob = current_beam_states[final_beam_index][2]
-            current_backpointer = final_beam_index
-            current_question = []
+        final_beam_size = len(current_beam_states)
+        final_slots = {}
+        for slot_name in reversed(self._slot_names):
+            final_slots[slot_name] = torch.zeros([final_beam_size], dtype = torch.int32)
+        final_probs = torch.zeros([final_beam_size], dtype = torch.float64)
+        for beam_index in range(final_beam_size):
+            final_probs[beam_index] = current_beam_states[beam_index][2]
+            current_backpointer = beam_index
             for slot_name in reversed(self._slot_names):
-                current_question.insert(0, slot_beam_labels[slot_name][current_backpointer])
+                final_slots[slot_name][beam_index] = slot_beam_labels[slot_name][current_backpointer]
                 current_backpointer = backpointers[slot_name][current_backpointer]
-            final_sequences.append((current_question, log_prob))
 
-        return final_sequences
+        return final_slots, final_probs
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'SequentialQuestionModel':

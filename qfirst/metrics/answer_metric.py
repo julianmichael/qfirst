@@ -43,7 +43,7 @@ class AnswerMetric(Metric):
             "tn": 0,
             "fp": 0,
             "fn": 0
-        } for t in self._span_thresholds]
+        } for t in self._invalid_thresholds]
 
     def __call__(self,
                  span_probs, # List[List[(Span, float)]]
