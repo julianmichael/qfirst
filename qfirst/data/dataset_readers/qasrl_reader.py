@@ -85,7 +85,6 @@ class QasrlReader(DatasetReader):
                         valid_answers = [a for a in answers if a["isValid"]]
                         return len(answers) >= self._min_answers and len(valid_answers) >= self._min_valid_answers
                     question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
-                    # TODO: remove these from the dataset, probably...?
 
                     self._num_verbs += 1
                     if self._instance_type == "verb":
@@ -188,6 +187,7 @@ class QasrlReader(DatasetReader):
 
         metadata = {'pred_index' : pred_index, 'sent_text': " ".join(sent_tokens)}
         metadata['sentence_id'] = sentence_id
+        metadata['sentence_tokens'] = sent_tokens
         metadata['question_sources'] = [l["questionSources"] for l in question_labels]
         metadata['question_labels'] = question_labels
 
