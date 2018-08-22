@@ -8,7 +8,7 @@ from allennlp.models.model import Model
 from allennlp.common import Params
 from allennlp.data import Vocabulary
 
-from qfirst.models.question_predictor import QuestionPredictor
+from qfirst.util import QuestionGenerator
 from qfirst.models.question_answerer import QuestionAnswerer
 
 # should receive verb instances from the qasrl dataset reader
@@ -83,7 +83,7 @@ class QfirstParser(Model):
             # TODO print the stuff
 
         return {
-            "full_beam": full_beam
+            "full_beam": full_beam,
             "filtered_beam": filtered_beam
         }
 
@@ -103,8 +103,8 @@ class QfirstParser(Model):
 
         for entry in beam:
             is_valid = entry["invalidity_prob"] < self.invalid_threshold
-            valid_spans = [span in span, prob in entry["spans"] if prob >= self.span_threshold]
-            novel_spans = [span in valid_spans if not has_overlap(span)]
+            valid_spans = [span for span, prob in entry["spans"] if prob >= self.span_threshold]
+            novel_spans = [span for span in valid_spans if not has_overlap(span)]
             if(is_valid and len(novel_spans) > 0):
                 filtered_entry = {
                     "question": entry["question"],
@@ -129,6 +129,6 @@ class QfirstParser(Model):
 
         return QfirstParser(vocab,
                             question_generator = question_generator, question_answerer = question_answerer,
-                            max_beam_size = max_beam_size
+                            max_beam_size = max_beam_size,
                             question_threshold = question_threshold,
                             span_threshold = span_threshold, invalid_threshold = invalid_threshold)
