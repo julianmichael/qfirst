@@ -35,6 +35,7 @@ class QfirstParser(Model):
     @overrides
     def forward(self,
                 text: Dict[str, torch.LongTensor],
+                predicate_index: torch.LongTensor,
                 predicate_indicator: torch.LongTensor,
                 answers: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
@@ -49,8 +50,9 @@ class QfirstParser(Model):
         beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size)
         beam_size = beam_log_probs.size(0)
         text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
+        predicate_index_expanded = predicate_index.expand(beam_size, -1)
         predicate_indicator_expanded = predicate_indicator.expand(beam_size, -1)
-        answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_indicator_expanded, **beam_slots)
+        answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
         answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
         full_beam = []
         for i in range(beam_size):

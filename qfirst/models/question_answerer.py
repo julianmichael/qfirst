@@ -17,6 +17,7 @@ from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
+from allennlp.nn.util import batched_index_select
 from allennlp.training.metrics import SpanBasedF1Measure
 
 from nrl.modules.span_rep_assembly import SpanRepAssembly
@@ -59,14 +60,19 @@ class QuestionAnswerer(Model):
         self.question_encoder = question_encoder
         self.slot_names = self.question_encoder.get_slot_names()
 
+        self.question_lin = Linear(self.question_encoder.get_output_dim(), self.span_hidden_dim)
+        self.pred_lin = Linear(self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
+
         self.span_hidden = SpanRepAssembly(self.stacked_encoder.get_output_dim(), self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
-        self.span_pred = TimeDistributed(Linear(self.span_hidden_dim + self.question_encoder.get_output_dim() + self.stacked_encoder.get_output_dim(), 1))
-        self.invalid_pred = Linear(self.span_hidden_dim + self.question_encoder.get_output_dim(), 1)
+        self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
+
+        self.invalid_pred = Linear(self.span_hidden_dim, 1)
 
         self.union_gold_spans = union_gold_spans
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
+                predicate_index: torch.LongTensor,
                 predicate_indicator: torch.LongTensor,
                 answer_spans: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
@@ -93,43 +99,22 @@ class QuestionAnswerer(Model):
         embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
         batch_size, num_tokens, embedding_dim_with_predicate_feature = embedded_text_with_predicate_indicator.size()
 
-        # TODO fix error message
-        # if self.stacked_encoder.get_input_dim() != embedding_dim_with_predicate_feature:
-        #     raise ConfigurationError("The SRL model uses an indicator feature, which makes "
-        #                              "the embedding dimension one larger than the value "
-        #                              "specified. Therefore, the 'input_dim' of the stacked_encoder "
-        #                              "must be equal to total_embedding_dim + 1.")
-
         encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
 
-        # TODO
-        # switch to batched_index_select after passing index of verb in with instance
-        pred_rep = encoded_text.float() \
-                               .transpose(1, 2) \
-                               .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
-                               .view(batch_size, self.stacked_encoder.get_output_dim()) \
-                               .float()
-
-        question_embedding = self.question_encoder(pred_rep, question_slot_labels)
-
+        pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
+        pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
+        question_embedding = self.question_encoder(pred_embedding, question_slot_labels)
+        question_hidden = self.question_lin(question_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
         span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
 
-        num_spans = span_hidden.size(1)
+        consolidated_hidden = (pred_hidden + question_hidden) + span_hidden
 
-        question_embedding_expanded = question_embedding.view(batch_size, 1, self.question_encoder.get_output_dim()) \
-                                                        .expand(-1, num_spans, -1)
-        pred_rep_expanded = pred_rep.view(batch_size, 1, -1) \
-                                    .expand(-1, num_spans, -1)
-        # TODO linear before cat, sum w/broadcasting, add hidden layer
-        span_with_question_hidden = torch.cat([span_hidden, question_embedding_expanded, pred_rep_expanded], -1)
-        span_logits = self.span_pred(F.relu(span_with_question_hidden)).squeeze()
+        span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze()
         span_probs = F.sigmoid(span_logits) * span_mask.float()
         scored_spans = self.to_scored_spans(span_probs, span_mask)
 
-        # TODO same as above
-        expanded_invalid_embedding = self.invalid_embedding.view(1, -1).expand(batch_size, -1)
-        invalid_with_question_hidden = torch.cat([expanded_invalid_embedding, question_embedding], -1)
-        invalidity_logit = self.invalid_pred(F.relu(invalid_with_question_hidden)).squeeze()
+        consolidated_invalid_hidden = self.invalid_embedding + question_hidden
+        invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze()
         invalidity_prob = F.sigmoid(invalidity_logit)
 
         if answer_spans is None:

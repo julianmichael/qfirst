@@ -13,7 +13,7 @@ from allennlp.common.file_utils import cached_path
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
-from allennlp.data.fields import Field, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
+from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
 from allennlp.data.tokenizers import Token
 from allennlp.data.dataset_readers.dataset_utils.span_utils import enumerate_spans
 
@@ -143,6 +143,7 @@ class QasrlReader(DatasetReader):
         An ``Instance`` containing the following fields:
             text : ``TextField`` (length n)
                 The tokens in the sentence.
+            predicate_index : ``IndexField`` over text
             predicate_indicator : ``SequenceLabelField`` over text
                 Sequence of 0 or 1 with a single 1 marking the predicate.
             slot_X : ``ListField[LabelField]``
@@ -167,6 +168,7 @@ class QasrlReader(DatasetReader):
             sent_tokens = sent_tokens.split()
         sent_tokens = cleanse_sentence_text(sent_tokens)
         text_field = TextField([Token(t) for t in sent_tokens], self._token_indexers)
+        predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
         def get_slot_values_field(slot_name):
@@ -193,6 +195,7 @@ class QasrlReader(DatasetReader):
 
         instance_dict = {
             'text': text_field,
+            'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
             'answers': ListField(answer_fields),
             'num_answers': num_answers_field,
@@ -237,6 +240,7 @@ class QasrlReader(DatasetReader):
             sent_tokens = sent_tokens.split()
         sent_tokens = cleanse_sentence_text(sent_tokens)
         text_field = TextField([Token(t) for t in sent_tokens], self._token_indexers)
+        predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
         def get_slot_value_field(slot_name):
@@ -266,6 +270,7 @@ class QasrlReader(DatasetReader):
 
         instance_dict = {
             'text': text_field,
+            'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
             'answer_spans': answers_field,
             'num_answers': num_answers_field,
