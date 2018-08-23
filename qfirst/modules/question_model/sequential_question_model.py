@@ -215,7 +215,7 @@ class SequentialQuestionModel(QuestionModel):
                 recurrence_dict = self._slot_quasi_recurrence(slot_index, slot_name, pred_reps, emb, mem)
                 next_mem = recurrence_dict["next_mem"]
                 logits = recurrence_dict["logits"].squeeze()
-                log_probabilities = F.log_softmax(logits)
+                log_probabilities = F.log_softmax(logits, -1)
                 num_slot_values = self._vocab.get_vocab_size(get_slot_label_namespace(slot_name))
                 slot_name_dict = self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, num_slot_values):

@@ -102,6 +102,8 @@ class QuestionAnswerer(Model):
 
         encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
 
+        # TODO
+        # switch to batched_index_select after passing index of verb in with instance
         pred_rep = encoded_text.float() \
                                .transpose(1, 2) \
                                .matmul(predicate_indicator.view(batch_size, num_tokens, 1).float()) \
@@ -118,11 +120,13 @@ class QuestionAnswerer(Model):
                                                         .expand(-1, num_spans, -1)
         pred_rep_expanded = pred_rep.view(batch_size, 1, -1) \
                                     .expand(-1, num_spans, -1)
+        # TODO linear before cat, sum w/broadcasting, add hidden layer
         span_with_question_hidden = torch.cat([span_hidden, question_embedding_expanded, pred_rep_expanded], -1)
         span_logits = self.span_pred(F.relu(span_with_question_hidden)).squeeze()
         span_probs = F.sigmoid(span_logits) * span_mask.float()
         scored_spans = self.to_scored_spans(span_probs, span_mask)
 
+        # TODO same as above
         expanded_invalid_embedding = self.invalid_embedding.view(1, -1).expand(batch_size, -1)
         invalid_with_question_hidden = torch.cat([expanded_invalid_embedding, question_embedding], -1)
         invalidity_logit = self.invalid_pred(F.relu(invalid_with_question_hidden)).squeeze()
@@ -149,16 +153,6 @@ class QuestionAnswerer(Model):
             self.metric(
                 scored_spans, [m["question_label"] for m in metadata],
                 invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
-
-            # if not self.training:
-            #     spans = self.to_scored_spans(probs, span_mask)
-            #     self.threshold_metric(spans, annotations)
-
-            # TODO add this back in when necessary
-            # We need to retain the mask in the output dictionary
-            # so that we can crop the sequences to remove padding
-            # when we do viterbi inference in self.decode.
-            # output_dict["mask"] = mask
 
             return {
                 "span_probs": span_probs,
