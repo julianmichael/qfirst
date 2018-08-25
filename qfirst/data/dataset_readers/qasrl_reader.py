@@ -32,8 +32,7 @@ class QasrlReader(DatasetReader):
                  # has_provenance = False,
                  min_answers = 0,
                  min_valid_answers = 0,
-                 # question_sources = None,
-                 ):
+                 question_source = None):
         super().__init__(False)
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer(lowercase_tokens=True)}
         # self._has_provenance = has_provenance
@@ -41,6 +40,7 @@ class QasrlReader(DatasetReader):
         # self._max_spans = None
         self._min_answers = min_answers
         self._min_valid_answers = min_valid_answers
+        logger.info("Reading QA-SRL questions with at least %s answers and %s valid answers." % (self._min_answers, self._min_valid_answers))
         self._slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
 
         self._instance_type = instance_type
@@ -48,7 +48,7 @@ class QasrlReader(DatasetReader):
         self._num_instances = 0
         self._num_verbs = 0
 
-        # self._question_sources = question_sources
+        self._question_source = question_source
 
         # self._qa_pairs = 0
         # self._no_ann = 0
@@ -83,7 +83,8 @@ class QasrlReader(DatasetReader):
                     def is_valid(question_label):
                         answers = question_label["answerJudgments"]
                         valid_answers = [a for a in answers if a["isValid"]]
-                        return len(answers) >= self._min_answers and len(valid_answers) >= self._min_valid_answers
+                        is_source_valid = self._question_source is None or any([l.startswith(self._question_source) for l in question_label["questionSources"]])
+                        return (len(answers) >= self._min_answers) and (len(valid_answers) >= self._min_valid_answers) and is_source_valid
                     question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
 
                     self._num_verbs += 1
@@ -100,8 +101,8 @@ class QasrlReader(DatasetReader):
                     #     answers = len(question_label["answerJudgments"])
                     #     valid_answers = len([ans for ans in question_label["answerJudgments"] if ans["isValid"]])
 
-                    #     if self._question_sources is not None:
-                    #         if not any([source.startswith(prefix) for source in question_label["questionSources"] for prefix in self._question_sources]):
+                    #     if self._question_source is not None:
+                    #         if not any([source.startswith(prefix) for source in question_label["questionSources"] for prefix in self._question_source]):
                     #             continue
 
                     #     if answers < self._min_answers:
@@ -290,7 +291,9 @@ class QasrlReader(DatasetReader):
         min_answers = params.pop("min_answers", 0)
         min_valid_answers = params.pop("min_valid_answers", 0)
 
-        # question_sources = params.pop("question_sources", None)
+        question_source = params.pop("question_source", None)
 
         params.assert_empty(cls.__name__)
-        return QasrlReader(token_indexers = token_indexers, instance_type = instance_type)
+        return QasrlReader(token_indexers = token_indexers, instance_type = instance_type,
+                           min_answers = min_answers, min_valid_answers = min_valid_answers,
+                           question_source = question_source)

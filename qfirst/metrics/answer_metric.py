@@ -65,12 +65,12 @@ class AnswerMetric(Metric):
                 print("error: should never happen")
             return
 
-        invalidity_labels = (num_invalids / num_answers) >= self._proportion_invalid_answers
+        invalidity_labels = (num_invalids.float() / num_answers.float()) >= self._proportion_invalid_answers
         for conf in self._invalid_confs:
             invalidity_preds = invalidity_probs >= conf["threshold"]
             for b in range(invalidity_probs.size(0)):
-                positive = invalidity_preds[b].item()
-                true = positive == invalidity_labels[b].item()
+                positive = bool(invalidity_preds[b].item())
+                true = positive == bool(invalidity_labels[b].item())
                 update_conf(conf, true, positive)
 
         for conf in self._span_confs:

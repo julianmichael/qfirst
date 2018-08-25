@@ -8,6 +8,7 @@ class BeamFilter():
         self.question_threshold = question_threshold
         self.span_threshold = span_threshold
         self.invalid_threshold = invalid_threshold
+        # TODO: first answer only, incorporation of question probability into invalidity judgment
 
     def __call__(self, beam):
         """

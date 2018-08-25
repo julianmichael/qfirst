@@ -109,13 +109,11 @@ class SequentialQuestionEncoder(QuestionEncoder):
         # Shape: batch_size, numpred_rep_dim
         batch_size, pred_rep_dim = pred_reps.size()
 
-        # TODO check input_dim == pred_rep_dim
-
         # hidden state: start with batch size start symbols
         curr_embedding = self._start_symbol.view(1, -1).expand(batch_size, -1)
         # print("curr_embedding: " + str(curr_embedding.size()))
 
-        # ? initialize the memory cells ?
+        # initialize the memory cells
         curr_mem = []
         for l in range(self._rnn_layers):
             curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),

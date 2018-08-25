@@ -14,6 +14,10 @@ class EndToEndMetric(Metric):
         self.reset()
 
     def reset(self):
+        self._gold_question_counts = []
+        self._pred_question_counts = []
+        self._gold_span_counts = []
+        self._pred_span_counts = []
         self._question_conf = {
             "tp": 0,
             "tn": 0,
@@ -38,7 +42,7 @@ class EndToEndMetric(Metric):
             "fp": 0,
             "fn": 0
         }
-        self._span_matching_conf = {
+        self._q_e2e_conf = {
             "tp": 0,
             "tn": 0,
             "fp": 0,
@@ -46,8 +50,13 @@ class EndToEndMetric(Metric):
         }
 
     def __call__(self,
-                 gold_qa_pairs, # TODO
+                 gold_qa_pairs,
                  pred_qa_pairs):
+
+        self._gold_question_counts.append(len(gold_qa_pairs))
+        self._pred_question_counts.append(len(pred_qa_pairs))
+        self._gold_span_counts.extend([len(qa["answer_spans"]) for qa in gold_qa_pairs])
+        self._pred_span_counts.extend([len(qa["spans"]) for qa in pred_qa_pairs])
 
         def update_conf(conf, true, positive, n = 1):
             if true and positive:
@@ -81,81 +90,31 @@ class EndToEndMetric(Metric):
         for gold_qa in gold_qa_pairs:
             if " ".join(gold_qa["question"]) in fn_qs:
                 update_conf(self._e2e_conf, true = False, positive = False, n = len(gold_qa["answer_spans"]))
+                update_conf(self._q_e2e_conf, true = False, positive = False, n = 1)
             for pred_qa in pred_qa_pairs:
                 if gold_qa["question"] == pred_qa["question"]:
-                    q_gold_spans = set([s for s in gold_qa["answer_spans"]])
-                    q_pred_spans = set([s for s in pred_qa["spans"]])
+                    q_gold_spans = set(gold_qa["answer_spans"])
+                    q_pred_spans = set(pred_qa["spans"])
+                    shared_spans = q_gold_spans & q_pred_spans
+                    missed_gold_spans = q_gold_spans - q_pred_spans
+                    erroneously_predicted_spans = q_pred_spans - q_gold_spans
                     def update(conf):
-                        update_conf(conf, true = True,  positive = True,  n = len(q_gold_spans & q_pred_spans))
-                        update_conf(conf, true = False, positive = False, n = len(q_gold_spans - q_pred_spans))
-                        update_conf(conf, true = False, positive = True,  n = len(q_pred_spans - q_gold_spans))
+                        update_conf(conf, true = True,  positive = True,  n = len(shared_spans))
+                        update_conf(conf, true = False, positive = False, n = len(missed_gold_spans))
+                        update_conf(conf, true = False, positive = True,  n = len(erroneously_predicted_spans))
                     update(self._q_span_conf)
                     update(self._e2e_conf)
+                    if len(shared_spans) > 0:
+                        update_conf(self._q_e2e_conf, true = True, positive = True, n = 1)
+                    else:
+                        update_conf(self._q_e2e_conf, true = False, positive = True, n = 1)
+                        update_conf(self._q_e2e_conf, true = False, positive = False, n = 1)
 
         for pred_qa in pred_qa_pairs:
             if " ".join(pred_qa["question"]) in fp_qs:
                 update_conf(self._e2e_conf, true = False, positive = True,  n = len(pred_qa["spans"]))
+                update_conf(self._q_e2e_conf, true = False, positive = True,  n = 1)
 
-        # TODO
-        # picked_gold, picked_pred = self.get_matches(pred_spans, gold_spans)
-
-        # for g, tup in picked_gold.items():
-        #     f1, pred, gold = tup
-        #     if self._match_heuristic(pred, gold):
-        #         self._covered[i] += 1
-
-        #         wh = g.slots[0]
-        #         self._wh_covered[i].setdefault(wh, 0)
-        #         self._wh_covered[i][wh] += 1
-        #         if wh in ['what', 'who']:
-        #             self._wh_covered[i].setdefault("core", 0)
-        #             self._wh_covered[i]["core"] += 1
-        #         else:
-        #             self._wh_covered[i].setdefault("aux", 0)
-        #             self._wh_covered[i]["aux"] += 1
-
-        # for pred, tup in picked_pred.items():
-        #     f1, g, gold = tup
-        #     if self._match_heuristic(pred, gold):
-        #         self._correct[i] += 1
-
-    # def get_matches(self, pred_spans, gold_spans):
-    #     gold_spans = [g for g in gold_spans if g.text != 'V']
-
-    #     G = nx.Graph()
-    #     for s in gold_spans + pred_spans:
-    #         G.add_node(s)
-
-    #     max_golds = {}
-    #     max_pred_scores = {}
-    #     for gold_span_tuple in gold_spans:
-    #         for span in pred_spans:
-    #             max_f1, max_gold = max([(g.overlap_f1(span), g) for g in gold_span_tuple.all_spans], key = lambda x: x[0])
-    #             max_golds[(gold_span_tuple, span)] = (max_f1, max_gold)
-    #             if self._match_heuristic(span, max_gold):
-    #                 #G.add_edge(gold_span_tuple, span, weight = max_f1)
-    #                 G.add_edge(gold_span_tuple, span, weight = 1)
-    #                 if span not in max_pred_scores or max_f1 > max_pred_scores[span][0]:
-    #                     max_pred_scores[span] = (max_f1, gold_span_tuple, max_gold)
-
-    #     matching = nx.max_weight_matching(G)
-
-    #     matching = [(g, p) for g, p in matching.items() if g in gold_spans]
-
-    #     picked_gold = {}
-    #     picked_pred = {}
-    #     for g, p in matching:
-    #         f1, max_gold = max_golds[(g, p)]
-    #         picked_gold[g] = (f1, p, max_gold)
-    #         picked_pred[p] = (f1, g, max_gold)
-
-    #     for p, match in max_pred_scores.items():
-    #         if p not in picked_pred:
-    #             picked_pred[p] = match
-
-    #     return picked_gold, picked_pred
-
-    #     return
 
     def get_metric(self, reset=False):
         def stats(conf):
@@ -178,11 +137,20 @@ class EndToEndMetric(Metric):
                 "f1": f1
             }
 
+        stats_dict = {
+            "gold_qs_per_verb": sum(self._gold_question_counts) / len(self._gold_question_counts),
+            "pred_qs_per_verb": sum(self._pred_question_counts) / len(self._pred_question_counts),
+            "gold_spans_per_q": sum(self._gold_span_counts) / len(self._gold_span_counts),
+            "pred_spans_per_q": sum(self._pred_span_counts) / len(self._pred_span_counts)
+        }
+
         question_dict = { ("q-%s" % k): v for k, v in stats(self._question_conf).items() }
         span_dict = { ("a-%s" % k): v for k, v in stats(self._span_conf).items() }
         q_span_dict = { ("qa-%s" % k): v for k, v in stats(self._q_span_conf).items() }
+        e2e_dict = { ("e2e-%s" % k): v for k, v in stats(self._e2e_conf).items() }
+        q_e2e_dict = { ("q-e2e-%s" % k): v for k, v in stats(self._q_e2e_conf).items() }
 
         if reset:
             self.reset()
 
-        return {**question_dict, **span_dict, **q_span_dict}
+        return {**stats_dict, **question_dict, **span_dict, **q_span_dict, **q_e2e_dict, **e2e_dict}
