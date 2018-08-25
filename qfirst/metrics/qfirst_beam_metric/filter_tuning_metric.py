@@ -19,7 +19,7 @@ class FilterTuningMetric(QfirstBeamMetric):
             (BeamFilter(q_thresh, s_thresh, i_thresh), EndToEndMetric())
             for q_thresh in question_thresholds
             for s_thresh in span_thresholds
-            for s_thresh in invalid_thresholds
+            for i_thresh in invalid_thresholds
         ]
         for _, m in self.filter_metrics:
             m.reset()
@@ -30,14 +30,15 @@ class FilterTuningMetric(QfirstBeamMetric):
 
     def __call__(self,
                  gold_qa_pairs,
-                 full_beam):
+                 full_beam,
+                 metadata = None):
         for beam_filter, metric in self.filter_metrics:
             filtered_beam = beam_filter(full_beam)
             metric(gold_qa_pairs, filtered_beam)
 
     def get_metric(self, reset = False):
-        all_metric_dicts = [metric.get_metric(reset) for _, metric in self.filter_metrics]
-        best_filter, best_metrics = max(all_metric_dicts, key = lambda d: d[self.target])
+        all_metric_dicts = [(filtr, metric.get_metric(reset)) for filtr, metric in self.filter_metrics]
+        best_filter, best_metrics = max(all_metric_dicts, key = lambda d: d[1][self.target])
         filter_params = {
             "question_threshold": best_filter.question_threshold,
             "span_threshold": best_filter.span_threshold,
@@ -51,6 +52,7 @@ class FilterTuningMetric(QfirstBeamMetric):
         question_thresholds = params.pop("question_thresholds", [0.01, 0.02, 0.03])
         span_thresholds = params.pop("span_thresholds", [0.30, 0.40, 0.50])
         invalid_thresholds = params.pop("invalid_thresholds", [0.10, 0.20, 0.30])
-        return FilterTuningMetric(question_thresholds,
-                                  span_thresholds,
-                                  invalid_thresholds)
+        return FilterTuningMetric(target = target,
+                                  question_thresholds = question_thresholds,
+                                  span_thresholds = span_thresholds,
+                                  invalid_thresholds = invalid_thresholds)

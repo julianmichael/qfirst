@@ -137,11 +137,12 @@ class EndToEndMetric(Metric):
                 "f1": f1
             }
 
+        from numpy import float64
         stats_dict = {
-            "gold_qs_per_verb": sum(self._gold_question_counts) / len(self._gold_question_counts),
-            "pred_qs_per_verb": sum(self._pred_question_counts) / len(self._pred_question_counts),
-            "gold_spans_per_q": sum(self._gold_span_counts) / len(self._gold_span_counts),
-            "pred_spans_per_q": sum(self._pred_span_counts) / len(self._pred_span_counts)
+            "gold_qs_per_verb": float64(sum(self._gold_question_counts)) / len(self._gold_question_counts),
+            "pred_qs_per_verb": float64(sum(self._pred_question_counts)) / len(self._pred_question_counts),
+            "gold_spans_per_q": float64(sum(self._gold_span_counts)) / len(self._gold_span_counts),
+            "pred_spans_per_q": float64(sum(self._pred_span_counts)) / len(self._pred_span_counts)
         }
 
         question_dict = { ("q-%s" % k): v for k, v in stats(self._question_conf).items() }
