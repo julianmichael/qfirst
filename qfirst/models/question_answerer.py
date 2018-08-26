@@ -114,7 +114,7 @@ class QuestionAnswerer(Model):
         scored_spans = self.to_scored_spans(span_probs, span_mask)
 
         consolidated_invalid_hidden = self.invalid_embedding + question_hidden
-        invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1)
+        invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1).squeeze(1)
         invalidity_prob = F.sigmoid(invalidity_logit)
 
         if answer_spans is None:
