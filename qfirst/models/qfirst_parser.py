@@ -23,13 +23,15 @@ class QfirstParser(Model):
     def __init__(self, vocab: Vocabulary,
                  question_generator: QuestionGenerator,
                  question_answerer: QuestionAnswerer,
-                 max_beam_size: int = 30,
+                 max_beam_size: int = 20,
+                 min_beam_probability: float = 0.01,
                  metric: QfirstBeamMetric = None):
         super(QfirstParser, self).__init__(vocab)
         self.question_generator = question_generator
         self.question_answerer = question_answerer
         self.slot_names = question_answerer.question_encoder.get_slot_names()
         self.max_beam_size = max_beam_size
+        self.min_beam_probability = min_beam_probability
         self.metric = metric
 
     @overrides
@@ -47,7 +49,7 @@ class QfirstParser(Model):
         if predicate_indicator.size(0) != 1:
             raise ConfigurationError("QfirstParser must be run with a batch size of 1.")
 
-        beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size)
+        beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size, self.min_beam_probability)
         beam_size = beam_log_probs.size(0)
         text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
         predicate_index_expanded = predicate_index.expand(beam_size, -1)
@@ -97,7 +99,8 @@ class QfirstParser(Model):
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QfirstParser':
         question_generator = Model.from_params(vocab, params.pop("question_generator"))
         question_answerer = Model.from_params(vocab, params.pop("question_answerer"))
-        max_beam_size = params.pop("max_beam_size", 30)
+        max_beam_size = params.pop("max_beam_size", 20)
+        min_beam_probability = params.pop("min_beam_probability", 0.01)
         metric_config = params.pop("metric", None)
         metric = None
         if metric_config is not None:
@@ -106,4 +109,5 @@ class QfirstParser(Model):
         return QfirstParser(vocab,
                             question_generator = question_generator, question_answerer = question_answerer,
                             metric = metric,
-                            max_beam_size = max_beam_size)
+                            max_beam_size = max_beam_size,
+                            min_beam_probability = min_beam_probability)

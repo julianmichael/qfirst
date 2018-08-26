@@ -144,10 +144,11 @@ class QuestionConditionalLM(Model, QuestionGenerator):
     def beam_decode_single(self,
                            text: Dict[str, torch.LongTensor],
                            predicate_indicator: torch.LongTensor,
-                           max_beam_size = 1):
+                           max_beam_size: int,
+                           min_beam_probability: float):
         # Shape: batch_size, encoder_output_projected_dim
         pred_rep = self._get_pred_rep(text, predicate_indicator)
-        return self.question_model.beam_decode_single(pred_rep, max_beam_size)
+        return self.question_model.beam_decode_single(pred_rep, max_beam_size, min_beam_probability)
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset=reset)

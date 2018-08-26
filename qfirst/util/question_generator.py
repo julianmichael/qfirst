@@ -14,7 +14,9 @@ class QuestionGenerator(Registrable):
 
     def beam_decode_single(self,
                            text: Dict[str, torch.LongTensor],
-                           predicate_indicator: torch.LongTensor):
+                           predicate_indicator: torch.LongTensor,
+                           max_beam_size: int,
+                           min_beam_probability: float):
         raise NotImplementedError()
 
     @classmethod

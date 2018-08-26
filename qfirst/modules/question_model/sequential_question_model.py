@@ -4,6 +4,8 @@ from typing import List, Dict
 
 import torch
 
+import math
+
 from torch.autograd import Variable
 from torch.nn import Parameter
 from torch.nn.modules import Linear, Dropout, Embedding, LSTMCell
@@ -190,7 +192,9 @@ class SequentialQuestionModel(QuestionModel):
 
     def beam_decode_single(self,
                            pred_reps, # shape: 1, input_dim
-                           max_beam_size = 1):
+                           max_beam_size,
+                           min_beam_probability):
+        min_beam_log_probability = math.log(min_beam_probability)
         batch_size, pred_rep_dim = pred_reps.size()
         if batch_size != 1:
             raise ConfigurationError("beam_decode_single must be run with a batch size of 1.")
@@ -219,12 +223,13 @@ class SequentialQuestionModel(QuestionModel):
                 num_slot_values = self._vocab.get_vocab_size(get_slot_label_namespace(slot_name))
                 slot_name_dict = self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, num_slot_values):
-                    log_prob = log_probabilities[pred_slot_index] + prev_log_prob
+                    log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
                     if slot_index < len(self._slot_names) - 1:
                         new_input_embedding = self._slot_embedders[slot_index](torch.Tensor([pred_slot_index]).long())
                     else:
                         new_input_embedding = None
-                    candidate_new_beam_states.append((i, pred_slot_index, new_input_embedding, next_mem, log_prob))
+                    if log_prob >= min_beam_log_probability:
+                        candidate_new_beam_states.append((i, pred_slot_index, new_input_embedding, next_mem, log_prob))
             candidate_new_beam_states.sort(key = lambda t: t[4], reverse = True)
             new_beam_states = candidate_new_beam_states[:max_beam_size]
             backpointers[slot_name] = [t[0] for t in new_beam_states]
