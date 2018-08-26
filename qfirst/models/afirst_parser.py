@@ -54,7 +54,7 @@ class AfirstParser(Model):
         batch_size = predicate_indicator.size(0)
         max_num_spans = max([len(instance_spans) for instance_spans in detected_spans])
 
-        pred_labeled_spans = torch.ones(batch_size, max_num_spans, 2, dtype = torch.long)
+        pred_labeled_spans = torch.ones(batch_size, max_num_spans, 2, dtype = torch.long, device = predicate_indicator.device)
         pred_labeled_spans *= -1.0
         pred_span_lists = []
         for i, batch_spans in enumerate(detected_spans):
