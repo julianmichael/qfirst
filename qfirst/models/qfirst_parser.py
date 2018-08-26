@@ -51,21 +51,21 @@ class QfirstParser(Model):
 
         beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size, self.min_beam_probability)
         beam_size = beam_log_probs.size(0)
-        text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
-        predicate_index_expanded = predicate_index.expand(beam_size, -1)
-        predicate_indicator_expanded = predicate_indicator.expand(beam_size, -1)
-        answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
-        answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
         full_beam = []
-        for i in range(beam_size):
-            # [beam_slots[n][i] for n in self.slot_names]
-            beam_entry_dict = {
-                "question": [self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()] for n in self.slot_names],
-                "question_prob": math.exp(beam_log_probs[i]),
-                "spans": answerer_outputs["spans"][i],
-                "invalidity_prob": answerer_outputs["invalidity_prob"][i].item()
-            }
-            full_beam.append(beam_entry_dict)
+        if beam_size > 0:
+            text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
+            predicate_index_expanded = predicate_index.expand(beam_size, -1)
+            predicate_indicator_expanded = predicate_indicator.expand(beam_size, -1)
+            answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
+            answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
+            for i in range(beam_size):
+                beam_entry_dict = {
+                    "question": [self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()] for n in self.slot_names],
+                    "question_prob": math.exp(beam_log_probs[i]),
+                    "spans": answerer_outputs["spans"][i],
+                    "invalidity_prob": answerer_outputs["invalidity_prob"][i].item()
+                }
+                full_beam.append(beam_entry_dict)
 
         if num_answers is not None: # we have gold datums
             metadata = metadata[0]
