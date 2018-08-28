@@ -57,9 +57,9 @@ class AnswerMetric(Metric):
                 conf["tp"] += 1
             elif true and not positive:
                 conf["tn"] += 1
-            elif not true and positive:
+            elif (not true) and positive:
                 conf["fp"] += 1
-            elif not true and not positive:
+            elif (not true) and not positive:
                 conf["fn"] += 1
             else:
                 print("error: should never happen")

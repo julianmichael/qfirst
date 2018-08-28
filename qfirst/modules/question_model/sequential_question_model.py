@@ -147,13 +147,8 @@ class SequentialQuestionModel(QuestionModel):
                 curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][slot_index](curr_input)
             else:
                 curr_input = new_h
-        # curr_mem = next_mem
         hidden = F.relu(self._slot_hiddens[slot_index](new_h))
         logits = self._slot_preds[slot_index](hidden)
-
-        # TODO how do we choose our set of outputs and the next input?
-        # different in training (with teacher forcing) and in prediction (with beam search).
-        # take various assigned variables and put them in a dict to return.
 
         return {
             "next_mem": next_mem,

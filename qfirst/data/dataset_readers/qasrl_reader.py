@@ -29,19 +29,24 @@ class QasrlReader(DatasetReader):
     def __init__(self,
                  instance_type: str,
                  token_indexers: Dict[str, TokenIndexer] = None,
-                 # has_provenance = False,
                  min_answers = 0,
                  min_valid_answers = 0,
                  question_source = None):
         super().__init__(False)
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer(lowercase_tokens=True)}
-        # self._has_provenance = has_provenance
-        # self._invalid_thresh = 0
-        # self._max_spans = None
         self._min_answers = min_answers
         self._min_valid_answers = min_valid_answers
         logger.info("Reading QA-SRL questions with at least %s answers and %s valid answers." % (self._min_answers, self._min_valid_answers))
         self._slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
+        # self._grammar_fields = ["tense", "isPerfect", "isProgressive", "isNegated", "isPassive"]
+        self._abstract_slots = [
+            ("wh", lambda x: "what" if (x == "who") else x),
+            ("subj", lambda x: "something" if (x == "someone") else x),
+            ("obj", lambda x: "something" if (x == "someone") else x),
+            ("obj2", lambda x: "something" if (x == "someone") else x),
+            ("prep", lambda x: "_" if (x == "_") else "<prep>")
+        ]
+        # also an abstract verb slot marking whether something is passive
 
         self._instance_type = instance_type
 
@@ -244,11 +249,21 @@ class QasrlReader(DatasetReader):
         predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
+        slots = question_label["questionSlots"]
         def get_slot_value_field(slot_name):
             namespace = get_slot_label_namespace(slot_name)
-            value = question_label["questionSlots"][slot_name]
-            return LabelField(label = value, label_namespace = namespace)
+            return LabelField(label = slots[slot_name], label_namespace = namespace)
         slots_dict = { slot_name : get_slot_value_field(slot_name) for slot_name in self._slot_names }
+        def get_abstract_slot_value_field(slot_name, get_abstracted_value):
+            abst_slot_name = "abst-%s" % slot_name
+            namespace = get_slot_label_namespace(abst_slot_name)
+            abst_slot_value = get_abstracted_value(slots[slot_name])
+            return LabelField(label = abst_slot_value, label_namespace = namespace)
+        direct_abstract_slots_dict = { ("abst-%s" % slot_name): get_abstract_slot_value_field(slot_name, get_abstracted_value)
+                                       for slot_name, get_abstracted_value in self._abstract_slots }
+        abst_verb_value = "verb[pss]" if question_label["isPassive"] else "verb"
+        abst_verb_field = LabelField(label = abst_verb_value, label_namespace = get_slot_label_namespace("abst-verb"))
+        abstract_slots_dict = {**direct_abstract_slots_dict, **{"abst-verb": abst_verb_field}}
 
         def get_answers_field_for_question(label):
             def get_spans(spansJson):
@@ -279,7 +294,7 @@ class QasrlReader(DatasetReader):
             'metadata': MetadataField(metadata),
         }
 
-        return Instance({**instance_dict, **slots_dict})
+        return Instance({**instance_dict, **slots_dict, **abstract_slots_dict})
 
     @classmethod
     def from_params(cls, params: Params) -> 'QasrlReader':
