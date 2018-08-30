@@ -15,9 +15,11 @@ from allennlp.modules.token_embedders import Embedding
 from allennlp.modules.span_extractors.endpoint_span_extractor import EndpointSpanExtractor
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
+from allennlp.nn import util
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.nn.util import batched_index_select
+from allennlp.nn.util import last_dim_log_softmax
 from allennlp.training.metrics import SpanBasedF1Measure
 
 from nrl.modules.span_rep_assembly import SpanRepAssembly
@@ -27,6 +29,9 @@ from qfirst.modules.question_encoder import QuestionEncoder
 from qfirst.metrics.answer_metric import AnswerMetric
 
 
+qa_objective_values = ["binary", "multinomial"]
+qa_span_selection_policy_values = ["union", "majority", "weighted"]
+# multinomial cannot be used with weighted
 @Model.register("question_answerer")
 class QuestionAnswerer(Model):
     def __init__(self, vocab: Vocabulary,
@@ -35,7 +40,8 @@ class QuestionAnswerer(Model):
                  question_encoder: QuestionEncoder,
                  predicate_feature_dim: int,
                  span_hidden_dim: int,
-                 union_gold_spans: bool = False,
+                 objective: str = "binary",
+                 span_selection_policy: str = "weighted",
                  span_thresholds: List[float] = [0.33],
                  invalid_thresholds: List[float] = [0.11],
                  embedding_dropout: float = 0.0,
@@ -55,7 +61,6 @@ class QuestionAnswerer(Model):
             invalid_thresholds = invalid_thresholds)
 
         self.stacked_encoder = stacked_encoder
-        self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
 
         self.question_encoder = question_encoder
         self.slot_names = self.question_encoder.get_slot_names()
@@ -66,9 +71,18 @@ class QuestionAnswerer(Model):
         self.span_hidden = SpanRepAssembly(self.stacked_encoder.get_output_dim(), self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
         self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
 
-        self.invalid_pred = Linear(self.span_hidden_dim, 1)
+        if objective not in qa_objective_values:
+            raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
+        self.objective = objective
+        if span_selection_policy not in qa_span_selection_policy_values:
+            raise ConfigurationError("QA span selection policy must be one of the following: " + str(qa_objective_values))
+        self.span_selection_policy = span_selection_policy
+        if objective == "multinomial" and span_selection_policy == "weighted":
+            raise ConfigurationError("Cannot use weighted span selection policy with multinomial objective.")
 
-        self.union_gold_spans = union_gold_spans
+        if self.objective == "binary":
+            self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
+            self.invalid_pred = Linear(self.span_hidden_dim, 1)
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
@@ -108,43 +122,81 @@ class QuestionAnswerer(Model):
         span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
 
         consolidated_hidden = (pred_hidden + question_hidden) + span_hidden
-
         span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze()
-        span_probs = F.sigmoid(span_logits) * span_mask.float()
-        scored_spans = self.to_scored_spans(span_probs, span_mask)
 
-        consolidated_invalid_hidden = self.invalid_embedding + question_hidden
-        invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1).squeeze(1)
-        invalidity_prob = F.sigmoid(invalidity_logit)
-
-        if answer_spans is None:
-            return {
-                "span_probs": span_probs,
-                "span_mask": span_mask,
-                "invalidity_prob": invalidity_prob
-            }
-        else:
+        if answer_spans is not None:
             span_label_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
             prediction_mask = self.get_prediction_map(answer_spans, span_label_mask,
                                                       num_tokens, num_answers,
-                                                      self.union_gold_spans)
-            span_loss = F.binary_cross_entropy_with_logits(span_logits, prediction_mask,
-                                                           weight = span_mask.float(), size_average = False)
-            invalidity_label = num_invalids.float() / num_answers.float()
-            invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
+                                                      self.span_selection_policy)
 
-            loss = span_loss + invalidity_loss
+        if self.objective == "binary":
+            span_probs = F.sigmoid(span_logits) * span_mask.float()
+            scored_spans = self.to_scored_spans(span_probs, span_mask)
 
-            self.metric(
-                scored_spans, [m["question_label"] for m in metadata],
-                invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+            consolidated_invalid_hidden = self.invalid_embedding + question_hidden
+            invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1).squeeze(1)
+            invalidity_prob = F.sigmoid(invalidity_logit)
 
-            return {
-                "span_probs": span_probs,
-                "span_mask": span_mask,
-                "invalidity_prob": invalidity_prob,
-                "loss": loss
-            }
+            if answer_spans is None:
+                return {
+                    "span_scores": span_probs,
+                    "span_mask": span_mask,
+                    "invalidity_score": invalidity_prob
+                }
+            else:
+                span_loss = F.binary_cross_entropy_with_logits(span_logits, prediction_mask,
+                                                               weight = span_mask.float(), size_average = False)
+                invalidity_label = num_invalids.float() / num_answers.float()
+                invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
+                loss = span_loss + invalidity_loss
+
+                self.metric(
+                    scored_spans, [m["question_label"] for m in metadata],
+                    invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+
+                return {
+                    "span_scores": span_probs,
+                    "span_mask": span_mask,
+                    "invalidity_score": invalidity_prob,
+                    "loss": loss
+                }
+        else:
+            assert self.objective == "multinomial"
+            batch_size = span_logits.size(0)
+            invalidity_scores = num_invalids.new_zeros([batch_size]).float()
+            if answer_spans is None:
+                return {
+                    "span_scores": span_logits,
+                    "span_mask": span_mask,
+                    "invalidity_score": invalidity_scores
+                }
+            else:
+                masked_span_logits = span_logits + span_mask.float().log() # "masks out" bad spans by setting them to -Inf
+                scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), span_logits], -1)
+                span_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
+                gold_dummy_labels = None
+                if self.span_selection_policy == "union":
+                    gold_dummy_labels = (num_invalids > 0.0)
+                else:
+                    assert self.span_selection_policy == "majority"
+                    gold_dummy_labels = (num_invalids >= (num_answers / 2.0))
+                gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
+
+                correct_span_log_probs = span_log_probs + gold_labels_with_dummy.log()
+                negative_marginal_log_likelihood = -util.logsumexp(correct_span_log_probs).sum()
+
+                scored_spans = self.to_scored_spans(span_logits, span_mask)
+                self.metric(
+                    scored_spans, [m["question_label"] for m in metadata],
+                    invalidity_scores.cpu(), num_invalids.cpu(), num_answers.cpu())
+
+                return {
+                    "span_scores": span_logits,
+                    "span_mask": span_mask,
+                    "invalidity_score": invalidity_scores,
+                    "loss": negative_marginal_log_likelihood
+                }
 
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -162,7 +214,7 @@ class QuestionAnswerer(Model):
         for b in range(batch_size):
             batch_spans = []
             for start, end, i in self.start_end_range(num_spans):
-                if score_mask[b, i] == 1 and probs[b, i] > 0:
+                if score_mask[b, i] == 1:
                     batch_spans.append((Span(start, end), probs[b, i]))
             spans.append(batch_spans)
         return spans
@@ -179,7 +231,7 @@ class QuestionAnswerer(Model):
 
         return result
 
-    def get_prediction_map(self, spans, span_mask, seq_length, num_answerers, union_gold_spans):
+    def get_prediction_map(self, spans, span_mask, seq_length, num_answerers, span_selection_policy):
         batchsize, num_spans, _ = spans.size()
         num_labels = int((seq_length * (seq_length+1))/2)
         labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
@@ -190,17 +242,27 @@ class QuestionAnswerer(Model):
         for b in range(batchsize):
             for s in range(num_spans):
                 if span_mask.data[b, s] > 0:
-                    if union_gold_spans:
+                    if span_selection_policy == "union":
                         labels[b, arg_indexes[b, s]] = 1
                     else:
+                        assert span_selection_policy == "weighted" or span_selection_policy == "majority"
                         labels[b, arg_indexes[b, s]] += 1
+
+        if span_selection_policy == "union":
+            return torch.autograd.Variable(labels.float())
+        else: # weighted or majority
+            num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
+            if span_selection_policy == "weighted":
+                return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
+            else: # majority
+                assert span_selection_policy == "majority"
+                return torch.autograd.Variable((labels.float() / num_answerers_expanded_to_spans) >= 0.5).float()
 
         if union_gold_spans:
             return torch.autograd.Variable(labels.float())
         else:
             num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
             return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
-
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset = reset)
@@ -213,7 +275,8 @@ class QuestionAnswerer(Model):
         question_encoder = QuestionEncoder.from_params(vocab, params.pop("question_encoder"))
         predicate_feature_dim = params.pop("predicate_feature_dim")
         span_hidden_dim = params.pop("span_hidden_dim")
-        union_gold_spans = params.pop("union_gold_spans", False)
+        objective = params.pop("objective", "binary")
+        span_selection_policy = params.pop("span_selection_policy", "weighted")
         span_thresholds = params.pop("span_thresholds", [0.33])
         invalid_thresholds = params.pop("invalid_thresholds", [0.11])
 
@@ -228,7 +291,8 @@ class QuestionAnswerer(Model):
                    question_encoder = question_encoder,
                    predicate_feature_dim=predicate_feature_dim,
                    span_hidden_dim = span_hidden_dim,
-                   union_gold_spans = union_gold_spans,
+                   objective = objective,
+                   span_selection_policy = span_selection_policy,
                    span_thresholds = span_thresholds,
                    invalid_thresholds = invalid_thresholds,
                    initializer=initializer,

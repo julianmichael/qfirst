@@ -31,7 +31,8 @@ class QasrlReader(DatasetReader):
                  token_indexers: Dict[str, TokenIndexer] = None,
                  min_answers = 0,
                  min_valid_answers = 0,
-                 question_source = None):
+                 question_source = None,
+                 include_abstract_slots: bool = False):
         super().__init__(False)
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer(lowercase_tokens=True)}
         self._min_answers = min_answers
@@ -55,10 +56,7 @@ class QasrlReader(DatasetReader):
 
         self._question_source = question_source
 
-        # self._qa_pairs = 0
-        # self._no_ann = 0
-        # self._not_enough_answers = 0
-        # self._not_enough_valid_answers = 0
+        self._include_abstract_slots = include_abstract_slots
 
     @overrides
     def _read(self, file_list: str):
@@ -294,7 +292,11 @@ class QasrlReader(DatasetReader):
             'metadata': MetadataField(metadata),
         }
 
-        return Instance({**instance_dict, **slots_dict, **abstract_slots_dict})
+
+        if self._include_abstract_slots:
+            return Instance({**instance_dict, **slots_dict, **abstract_slots_dict })
+        else:
+            return Instance({**instance_dict, **slots_dict })
 
     @classmethod
     def from_params(cls, params: Params) -> 'QasrlReader':
