@@ -280,6 +280,9 @@ class QuestionAnswerer(Model):
         span_thresholds = params.pop("span_thresholds", [0.33])
         invalid_thresholds = params.pop("invalid_thresholds", [0.11])
 
+        # absorb the parameter if it exists, but we don't use it anymore
+        union_gold_spans = params.pop("union_gold_spans", False)
+
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
         regularizer = RegularizerApplicator.from_params(params.pop('regularizer', []))
 
