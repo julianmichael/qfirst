@@ -10,7 +10,7 @@ import math
 from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
-from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder
+from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner
 from allennlp.modules.token_embedders import Embedding
 from allennlp.modules.span_extractors.endpoint_span_extractor import EndpointSpanExtractor
 from allennlp.models.model import Model
@@ -69,6 +69,12 @@ class QuestionAnswerer(Model):
         self.pred_lin = Linear(self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
 
         self.span_hidden = SpanRepAssembly(self.stacked_encoder.get_output_dim(), self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
+        self.span_scorer = torch.nn.Sequential(
+            TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim)),
+            TimeDistributed(torch.nn.ReLU()),
+            TimeDistributed(Linear(self.span_hidden_dim, 1)))
+        self.span_pruner = SpanPruner(self.span_scorer)
+        self.answer_lin = TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim))
         self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
 
         if objective not in qa_objective_values:
@@ -115,37 +121,43 @@ class QuestionAnswerer(Model):
 
         encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
 
+        span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
+        (top_span_hidden, top_span_mask,
+         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), num_tokens)
+
         pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
         pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
         question_embedding = self.question_encoder(pred_embedding, question_slot_labels)
         question_hidden = self.question_lin(question_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
-        span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
+        answer_hidden = self.answer_lin(top_span_hidden)
 
-        consolidated_hidden = (pred_hidden + question_hidden) + span_hidden
-        span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze()
+        consolidated_hidden = (pred_hidden + question_hidden) + answer_hidden
+        top_span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze() + top_span_scores.squeeze()
 
         if answer_spans is not None:
-            span_label_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
-            prediction_mask = self.get_prediction_map(answer_spans, span_label_mask,
-                                                      num_tokens, num_answers,
-                                                      self.span_selection_policy)
+            gold_span_labels = self.get_prediction_map(answer_spans,
+                                                       num_tokens, num_answers,
+                                                       self.span_selection_policy)
+            prediction_mask = batched_index_select(gold_span_labels.unsqueeze(-1),
+                                                   top_span_indices).squeeze(-1)
 
         if self.objective == "binary":
-            span_probs = F.sigmoid(span_logits) * span_mask.float()
-            scored_spans = self.to_scored_spans(span_probs, span_mask)
+            top_span_probs = F.sigmoid(top_span_logits) * top_span_mask.float()
+            scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
 
             consolidated_invalid_hidden = self.invalid_embedding + question_hidden
             invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1).squeeze(1)
-            invalidity_prob = F.sigmoid(invalidity_logit)
+            invalid_prob = F.sigmoid(invalidity_logit)
 
-            if answer_spans is None:
-                return {
-                    "span_scores": span_probs,
-                    "span_mask": span_mask,
-                    "invalidity_score": invalidity_prob
-                }
-            else:
-                span_loss = F.binary_cross_entropy_with_logits(span_logits, prediction_mask,
+            output_dict = {
+                "span_mask": span_mask,
+                "top_span_indices": top_span_indices,
+                "top_span_mask": top_span_mask,
+                "top_span_probs": top_span_probs,
+                "invalid_prob": invalid_prob
+            }
+            if answer_spans is not None:
+                span_loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
                                                                weight = span_mask.float(), size_average = False)
                 invalidity_label = num_invalids.float() / num_answers.float()
                 invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
@@ -155,39 +167,40 @@ class QuestionAnswerer(Model):
                     scored_spans, [m["question_label"] for m in metadata],
                     invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
 
-                return {
-                    "span_scores": span_probs,
-                    "span_mask": span_mask,
-                    "invalidity_score": invalidity_prob,
-                    "loss": loss
-                }
+                output_dict["loss"] = loss
+            return output_dict
         else:
             assert self.objective == "multinomial"
-            batch_size = span_logits.size(0)
+            batch_size = top_span_logits.size(0)
             invalidity_scores = num_invalids.new_zeros([batch_size]).float()
-            masked_span_logits = span_logits + span_mask.float().log() # "masks out" bad spans by setting them to -Inf
-            scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), span_logits], -1)
+            masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
+            scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), top_span_logits], -1)
             pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
             pred_probs = pred_log_probs.exp()
-            span_probs = pred_probs[..., 1:]
-            invalidity_probs = pred_probs[..., 0]
+            top_span_probs = pred_probs[..., 1:]
+            invalid_prob = pred_probs[..., 0]
             output_dict = {
-                "span_scores": span_probs,
                 "span_mask": span_mask,
-                "invalidity_score": invalidity_probs
+                "top_span_indices": top_span_indices,
+                "top_span_mask": top_span_mask,
+                "top_span_probs": top_span_probs,
+                "invalid_prob": invalid_prob
             }
             if answer_spans is not None:
                 gold_dummy_labels = None
+                gold_dummy_standin = prediction_mask.view(batch_size, -1).sum(1) == 0
                 if self.span_selection_policy == "union":
-                    gold_dummy_labels = (num_invalids > 0.0)
+                    gold_invalid_labels = (num_invalids > 0.0)
                 else:
                     assert self.span_selection_policy == "majority"
-                    gold_dummy_labels = (num_invalids >= (num_answers / 2.0))
+                    gold_invalid_labels = (num_invalids >= (num_answers / 2.0))
+                gold_dummy_labels = torch.max(gold_invalid_labels, gold_dummy_standin)
                 gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
                 correct_log_probs = pred_log_probs + gold_labels_with_dummy.log()
+                logsumexp_intermediate = -util.logsumexp(correct_log_probs)
                 negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
 
-                scored_spans = self.to_scored_spans(span_logits, span_mask)
+                scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
                 self.metric(
                     scored_spans, [m["question_label"] for m in metadata],
                     invalidity_scores.cpu(), num_invalids.cpu(), num_answers.cpu())
@@ -197,24 +210,29 @@ class QuestionAnswerer(Model):
 
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        probs = output_dict['span_probs']
-        mask = output_dict['span_mask']
-        spans = self.to_scored_spans(probs, mask)
+        o = output_dict
+        spans = self.to_scored_spans(o["span_mask"], o["top_span_indices"], o["top_span_mask"], o["top_span_probs"])
         output_dict['spans'] = spans
         return output_dict
 
-    def to_scored_spans(self, probs, score_mask):
-        probs = probs.data.cpu()
-        score_mask = score_mask.data.cpu()
-        batch_size, num_spans = probs.size()
-        spans = []
+    # TODO change span_mask to num_spans? eh...nah...
+    def to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
+        span_mask = span_mask.data.cpu()
+        top_span_indices = top_span_indices.data.cpu()
+        top_span_mask = top_span_mask.data.cpu()
+        top_span_probs = top_span_probs.data.cpu()
+        batch_size, num_spans = span_mask.size()
+        top_spans = []
         for b in range(batch_size):
             batch_spans = []
             for start, end, i in self.start_end_range(num_spans):
-                if score_mask[b, i] == 1:
-                    batch_spans.append((Span(start, end), probs[b, i]))
-            spans.append(batch_spans)
-        return spans
+                batch_spans.append(Span(start, end))
+            batch_top_spans = []
+            for i in range(top_span_indices.size(1)):
+                if top_span_mask[b, i].item() == 1:
+                    batch_top_spans.append((batch_spans[top_span_indices[b, i]], top_span_probs[b, i].item()))
+            top_spans.append(batch_top_spans)
+        return top_spans
 
     def start_end_range(self, num_spans):
         n = int(.5 * (math.sqrt(8 * num_spans + 1) -1))
@@ -228,7 +246,8 @@ class QuestionAnswerer(Model):
 
         return result
 
-    def get_prediction_map(self, spans, span_mask, seq_length, num_answerers, span_selection_policy):
+    def get_prediction_map(self, spans, seq_length, num_answerers, span_selection_policy):
+        span_mask = (spans[:, :, 0] >= 0).squeeze(-1).long()
         batchsize, num_spans, _ = spans.size()
         num_labels = int((seq_length * (seq_length+1))/2)
         labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()

@@ -26,10 +26,6 @@ class AnswerMetric(Metric):
         self.reset()
 
     def reset(self):
-        # self._total_span_nll = 0.
-        # self._total_num_spans = 0
-        # self._total_invalid_nll = 0.
-        # self._total_num_questions = 0
         self._span_confs = [{
             "threshold": t,
             "tp": 0,
@@ -62,9 +58,17 @@ class AnswerMetric(Metric):
             "correct": 0,
             "total": 0
         }
+        self._top_span_acc = {
+            "correct": 0,
+            "total": 0
+        }
         self._top_acc_relaxed = {
             "correct": 0,
             "total": 0
+        }
+        self._gold_spans_max_coverage = {
+            "covered": 0,
+            "true": 0
         }
 
     def __call__(self,
@@ -93,6 +97,11 @@ class AnswerMetric(Metric):
                 acc["correct"] += 1
             return
 
+        def update_coverage(cov, covered, true):
+            cov["covered"] += covered
+            cov["true"] += true
+            return
+
         invalidity_labels = (num_invalids.float() / num_answers.float()) >= self._proportion_invalid_answers
         for conf in self._invalid_confs:
             invalidity_preds = invalidity_probs >= conf["threshold"]
@@ -102,6 +111,7 @@ class AnswerMetric(Metric):
                 update_conf(conf, true, positive)
 
         for i, (spans_with_probs, question_label) in enumerate(zip(span_probs, question_labels)):
+            spans_in_beam = [span for span, prob in spans_with_probs]
             top_span, top_span_score = max(spans_with_probs, key = lambda t: t[1])
             invalid_score = invalidity_probs[i].item()
             top_invalid = invalid_score > top_span_score
@@ -110,6 +120,9 @@ class AnswerMetric(Metric):
             gold_spans = set([
                 Span(s[0], s[1] - 1) for aj in question_label["answerJudgments"] if aj["isValid"] for s in aj["spans"]
             ])
+
+            num_gold_spans_in_beam = len([s for s in spans_in_beam if s in gold_spans])
+            update_coverage(self._gold_spans_max_coverage, num_gold_spans_in_beam, len(gold_spans))
 
             update_conf(self._top_invalid_conf, gold_invalid == top_invalid, top_invalid)
 
@@ -131,10 +144,8 @@ class AnswerMetric(Metric):
                 true = ((span in gold_spans) and not gold_invalid) == positive
                 update_conf(self._valid_spans_conf, true, positive)
 
-        # self._total_span_nll += span_nll
-        # self._total_num_spans += num_spans
-        # self._total_invalid_nll += invalid_nll
-        # self._total_num_questions += num_questions
+            if len(gold_spans) > 0:
+                update_acc(self._top_span_acc, top_span in gold_spans)
 
     def get_metric(self, reset=False):
 
@@ -166,16 +177,22 @@ class AnswerMetric(Metric):
             }
         def get_acc(acc):
             return acc["correct"] / acc["total"] if acc["total"] > 0 else 0.0
+        def get_cov(cov):
+            return cov["covered"] / cov["true"] if cov["true"] > 0 else 0.0
 
 
         span_dict = { ("span-%s" % k): v for conf in self._span_confs for k, v in stats(conf).items() }
         valid_span_dict = { ("span-%s" % k): v for k, v in stats(self._valid_spans_conf).items() }
         invalid_dict = { ("invalid-%s" % k): v for conf in self._invalid_confs for k, v in stats(conf).items() }
         top_invalid_dict = { ("invalid-%s" % k): v for k, v in stats(self._top_invalid_conf).items() }
-        top_acc_dict = { "top-acc": get_acc(self._top_acc) }
-        top_acc_relaxed_dict = { "top-acc-relaxed": get_acc(self._top_acc_relaxed) }
+        other_metrics = {
+            "top-acc": get_acc(self._top_acc),
+            "top-span-acc": get_acc(self._top_span_acc),
+            "top-acc-relaxed": get_acc(self._top_acc_relaxed),
+            "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage)
+        }
 
         if reset:
             self.reset()
 
-        return {**span_dict, **valid_span_dict, **invalid_dict, **top_invalid_dict, **top_acc_dict, **top_acc_relaxed_dict }
+        return {**span_dict, **valid_span_dict, **invalid_dict, **top_invalid_dict, **other_metrics }
