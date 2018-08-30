@@ -165,16 +165,18 @@ class QuestionAnswerer(Model):
             assert self.objective == "multinomial"
             batch_size = span_logits.size(0)
             invalidity_scores = num_invalids.new_zeros([batch_size]).float()
-            if answer_spans is None:
-                return {
-                    "span_scores": span_logits,
-                    "span_mask": span_mask,
-                    "invalidity_score": invalidity_scores
-                }
-            else:
-                masked_span_logits = span_logits + span_mask.float().log() # "masks out" bad spans by setting them to -Inf
-                scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), span_logits], -1)
-                span_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
+            masked_span_logits = span_logits + span_mask.float().log() # "masks out" bad spans by setting them to -Inf
+            scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), span_logits], -1)
+            pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
+            pred_probs = pred_log_probs.exp()
+            span_probs = pred_probs[..., 1:]
+            invalidity_probs = pred_probs[..., 0]
+            output_dict = {
+                "span_scores": span_probs,
+                "span_mask": span_mask,
+                "invalidity_score": invalidity_probs
+            }
+            if answer_spans is not None:
                 gold_dummy_labels = None
                 if self.span_selection_policy == "union":
                     gold_dummy_labels = (num_invalids > 0.0)
@@ -182,21 +184,16 @@ class QuestionAnswerer(Model):
                     assert self.span_selection_policy == "majority"
                     gold_dummy_labels = (num_invalids >= (num_answers / 2.0))
                 gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
-
-                correct_span_log_probs = span_log_probs + gold_labels_with_dummy.log()
-                negative_marginal_log_likelihood = -util.logsumexp(correct_span_log_probs).sum()
+                correct_log_probs = pred_log_probs + gold_labels_with_dummy.log()
+                negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
 
                 scored_spans = self.to_scored_spans(span_logits, span_mask)
                 self.metric(
                     scored_spans, [m["question_label"] for m in metadata],
                     invalidity_scores.cpu(), num_invalids.cpu(), num_answers.cpu())
+                output_dict["loss"] = negative_marginal_log_likelihood
 
-                return {
-                    "span_scores": span_logits,
-                    "span_mask": span_mask,
-                    "invalidity_score": invalidity_scores,
-                    "loss": negative_marginal_log_likelihood
-                }
+            return output_dict
 
     @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
