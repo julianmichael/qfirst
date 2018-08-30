@@ -106,18 +106,18 @@ class AnswerMetric(Metric):
             invalid_score = invalidity_probs[i].item()
             top_invalid = invalid_score > top_span_score
 
-            gold_invalid_label = invalidity_labels[i].item()
+            gold_invalid = invalidity_labels[i].item()
             gold_spans = set([
                 Span(s[0], s[1] - 1) for aj in question_label["answerJudgments"] if aj["isValid"] for s in aj["spans"]
             ])
 
-            update_conf(self._top_invalid_conf, gold_invalid_label == top_invalid, top_invalid)
+            update_conf(self._top_invalid_conf, gold_invalid == top_invalid, top_invalid)
 
-            top_correct = (top_invalid and gold_invalid_label) or (
-                (not top_invalid) and (not gold_invalid_label) and (top_span in gold_spans))
+            top_correct = (top_invalid and gold_invalid) or (
+                (not top_invalid) and (not gold_invalid) and (top_span in gold_spans))
             update_acc(self._top_acc, top_correct)
 
-            top_correct_relaxed = (top_invalid and gold_invalid_label) or (top_span in gold_spans)
+            top_correct_relaxed = (top_invalid and gold_invalid) or (top_span in gold_spans)
             update_acc(self._top_acc_relaxed, top_correct_relaxed)
 
             for conf in self._span_confs:
@@ -128,7 +128,7 @@ class AnswerMetric(Metric):
 
             for span, prob in spans_with_probs:
                 positive = prob >= invalid_score
-                true = (span in gold_spans) == positive
+                true = ((span in gold_spans) and not gold_invalid) == positive
                 update_conf(self._valid_spans_conf, true, positive)
 
         # self._total_span_nll += span_nll
