@@ -158,14 +158,14 @@ class QuestionAnswerer(Model):
             }
             if answer_spans is not None:
                 span_loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
-                                                               weight = span_mask.float(), size_average = False)
+                                                               weight = top_span_mask.float(), size_average = False)
                 invalidity_label = num_invalids.float() / num_answers.float()
                 invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, invalidity_label, size_average = False)
                 loss = span_loss + invalidity_loss
 
                 self.metric(
                     scored_spans, [m["question_label"] for m in metadata],
-                    invalidity_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+                    invalid_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
 
                 output_dict["loss"] = loss
             return output_dict
@@ -203,7 +203,7 @@ class QuestionAnswerer(Model):
                 scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
                 self.metric(
                     scored_spans, [m["question_label"] for m in metadata],
-                    invalidity_scores.cpu(), num_invalids.cpu(), num_answers.cpu())
+                    invalid_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
                 output_dict["loss"] = negative_marginal_log_likelihood
 
             return output_dict
