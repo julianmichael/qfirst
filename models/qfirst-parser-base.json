@@ -17,7 +17,9 @@
           "target": "q-e2e-f1",
           "question_thresholds": [0.01, 0.02, 0.03, 0.04, 0.05],
           "span_thresholds": [0.15, 0.20, 0.30, 0.35, 0.40],
-          "invalid_thresholds": [0.30, 0.35, 0.40, 0.45, 0.50]
+          "invalid_thresholds": [0.30, 0.35, 0.40, 0.45, 0.50],
+          "try_single_answer_only": true,
+          "try_invalid_as_threshold": true
       }
   },
   "iterator": {
