@@ -18,7 +18,7 @@ class FilterTuningMetric(QfirstBeamMetric):
                  try_first_answer_only: bool = False,
                  try_invalid_as_threshold: bool = False,
                  use_dense_metric: bool = False,
-                 recall_constraint: float = 2.0):
+                 recall_constraint: float = 0.0):
         self.target = target
         def make_metric():
             if use_dense_metric:
@@ -80,10 +80,12 @@ class FilterTuningMetric(QfirstBeamMetric):
         try_first_answer_only = params.pop("try_first_answer_only", False)
         try_invalid_as_threshold = params.pop("try_invalid_as_threshold", False)
         use_dense_metric = params.pop("use_dense_metric", False)
+        recall_constraint = params.pop("recall_constraint", 0.0)
         return FilterTuningMetric(target = target,
                                   question_thresholds = question_thresholds,
                                   span_thresholds = span_thresholds,
                                   invalid_thresholds = invalid_thresholds,
                                   try_first_answer_only = try_first_answer_only,
                                   try_invalid_as_threshold = try_invalid_as_threshold,
-                                  use_dense_metric = use_dense_metric)
+                                  use_dense_metric = use_dense_metric,
+                                  recall_constraint = recall_constraint)
