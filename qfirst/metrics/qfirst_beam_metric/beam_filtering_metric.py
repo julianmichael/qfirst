@@ -2,15 +2,20 @@ from allennlp.common import Params
 from allennlp.training.metrics.metric import Metric
 
 from qfirst.metrics.end_to_end_metric import EndToEndMetric
+from qfirst.metrics.dense_end_to_end_metric import DenseEndToEndMetric
 from qfirst.metrics.qfirst_beam_metric.qfirst_beam_metric import QfirstBeamMetric
 from qfirst.util.beam_filter import BeamFilter
 
 @QfirstBeamMetric.register("beam_filtering")
 class BeamFilteringMetric(QfirstBeamMetric):
     def __init__(self,
-                 beam_filter):
+                 beam_filter,
+                 use_dense_metric: bool = False):
         self.beam_filter = beam_filter
-        self.downstream_metric = EndToEndMetric()
+        if use_dense_metric:
+            self.downstream_metric = DenseEndToEndMetric()
+        else:
+            self.downstream_metric = EndToEndMetric()
         self.reset()
 
     def reset(self):
@@ -44,4 +49,5 @@ class BeamFilteringMetric(QfirstBeamMetric):
     @classmethod
     def from_params(cls, params):
         beam_filter = BeamFilter.from_params(params.pop("filter"))
-        return BeamFilteringMetric(beam_filter)
+        use_dense_metric = params.pop("use_dense_metric", False)
+        return BeamFilteringMetric(beam_filter, use_dense_metric)

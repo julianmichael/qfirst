@@ -29,7 +29,7 @@ class QasrlReader(DatasetReader):
     def __init__(self,
                  instance_type: str,
                  token_indexers: Dict[str, TokenIndexer] = None,
-                 min_answers = 0,
+                 min_answers = 1,
                  min_valid_answers = 0,
                  question_source = None,
                  include_abstract_slots: bool = False):
@@ -305,7 +305,7 @@ class QasrlReader(DatasetReader):
 
         # has_provenance = params.pop("has_provenance", False)
 
-        min_answers = params.pop("min_answers", 0)
+        min_answers = params.pop("min_answers", 1)
         min_valid_answers = params.pop("min_valid_answers", 0)
 
         question_source = params.pop("question_source", None)

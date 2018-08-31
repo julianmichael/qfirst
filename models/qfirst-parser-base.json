@@ -15,9 +15,9 @@
       "metric": {
           "type": "filter_tuning",
           "target": "q-e2e-f1",
-          "question_thresholds": [0.02, 0.05, 0.1, 0.25, 0.5],
-          "span_thresholds": [0.1, 0.2, 0.35, 0.5, 0.65],
-          "invalid_thresholds": [0.1, 0.25, 0.4, 0.6, 0.8]
+          "question_thresholds": [0.01, 0.02, 0.03, 0.04, 0.05],
+          "span_thresholds": [0.15, 0.20, 0.30, 0.35, 0.40],
+          "invalid_thresholds": [0.30, 0.35, 0.40, 0.45, 0.50]
       }
   },
   "iterator": {

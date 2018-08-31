@@ -43,6 +43,7 @@ class AfirstParser(Model):
                 predicate_indicator: torch.LongTensor,
                 labeled_spans: torch.LongTensor = None,
                 metadata = None,
+                annotations = None,
                 **kwargs):
         if self.training:
             raise ConfigurationError("AfirstParser cannot be trained directly. It must be assembled from its trained components.")
@@ -78,39 +79,27 @@ class AfirstParser(Model):
                 pred_qa_pairs.append({"question": list(q), "spans": spans })
             full_predictions.append(pred_qa_pairs)
 
-        if labeled_spans is not None: # we have gold datums
-            span_mask = (labeled_spans[:, :, 0] >= 0).long()
-
-            # assemble gold qa sets
-            span_slot_labels = {}
-            for n in self.question_predictor.question_generator.get_slot_labels():
-                if 'span_slot_%s'%n in kwargs and kwargs['span_slot_%s'%n] is not None:
-                    span_slot_labels[n] = kwargs['span_slot_%s'%n] * span_mask
-            if len(span_slot_labels) == 0:
-                span_slot_labels = None
-
+        if annotations is not None: # we have gold datums
+            # annotations = annotations[0]
+            # num_answers_cpu = num_answers[0].cpu()
+            # num_invalids_cpu = num_invalids[0].cpu()
             batched_gold_qa_pairs = []
-            for batch_index in range(batch_size):
-                gold_questions = []
-                gold_spans = []
-                for span_index in range(labeled_spans.size(1)):
-                    if span_mask[batch_index, span_index] == 1:
-                        # question
-                        slots = []
-                        for slot_name in self.question_predictor.question_generator.get_slot_labels():
-                            index_to_token = self.vocab.get_index_to_token_vocabulary("slot_%s" % slot_name)
-                            slots.append(index_to_token[span_slot_labels[slot_name][batch_index, span_index].item()])
-                        gold_questions.append(slots)
-                        # answer
-                        start = labeled_spans[batch_index, span_index, 0].item()
-                        end = labeled_spans[batch_index, span_index, 1].item()
-                        gold_spans.append(Span(start, end))
-                gold_qa_groups = [(tuples[0][1], list(set([s for s, _ in tuples])))
-                                  for q, _tuples_gen in groupby(zip(gold_spans, gold_questions), lambda t: " ".join(t[1]))
-                                  for tuples in (list(_tuples_gen),)]
+            for bi, instance_annotations in enumerate(annotations):
                 gold_qa_pairs = []
-                for q, spans in gold_qa_groups:
-                    gold_qa_pairs.append({"question": q, "answer_spans": spans })
+                for qi, question_label in enumerate(instance_annotations["question_labels"]):
+                    def get_spans(spansJson):
+                        return [Span(s[0], s[1]-1) for s in spansJson]
+                    all_gold_answer_spans = [s for ans in question_label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"])]
+                    num_answers = len(question_label["answerJudgments"])
+                    num_invalids = len([ans for ans in question_label["answerJudgments"] if not ans["isValid"]])
+                    distinct_gold_answer_spans = list(set(all_gold_answer_spans))
+                    gold_question_dict = {
+                        "question": [question_label["questionSlots"][n] for n in self.question_predictor.question_generator.get_slot_labels()],
+                        "answer_spans": distinct_gold_answer_spans,
+                        "num_answers": num_answers,
+                        "num_gold_invalids": num_invalids
+                    }
+                    gold_qa_pairs.append(gold_question_dict)
                 batched_gold_qa_pairs.append(gold_qa_pairs)
 
             if self.metric is not None:

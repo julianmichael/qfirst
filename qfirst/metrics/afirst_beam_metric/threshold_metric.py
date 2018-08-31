@@ -2,15 +2,20 @@ from allennlp.common import Params
 from allennlp.training.metrics.metric import Metric
 
 from qfirst.metrics.end_to_end_metric import EndToEndMetric
+from qfirst.metrics.dense_end_to_end_metric import DenseEndToEndMetric
 from qfirst.metrics.afirst_beam_metric.afirst_beam_metric import AfirstBeamMetric
 from qfirst.util.beam_filter import BeamFilter
 
 @AfirstBeamMetric.register("threshold")
 class ThresholdMetric(AfirstBeamMetric):
     def __init__(self,
-                 span_threshold):
+                 span_threshold,
+                 use_dense_metric: bool = False):
         self.span_threshold = span_threshold
-        self.downstream_metric = EndToEndMetric()
+        if use_dense_metric:
+            self.downstream_metric = DenseEndToEndMetric()
+        else:
+            self.downstream_metric = EndToEndMetric()
         self.reset()
 
     def reset(self):
@@ -33,4 +38,5 @@ class ThresholdMetric(AfirstBeamMetric):
     @classmethod
     def from_params(cls, params):
         span_threshold = params.pop("span_threshold")
-        return AfirstBeamMetric(span_threshold = span_threshold)
+        use_dense_metric = params.pop("use_dense_metric", False)
+        return ThresholdMetric(span_threshold = span_threshold, use_dense_metric = use_dense_metric)

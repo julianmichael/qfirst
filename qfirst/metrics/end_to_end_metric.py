@@ -139,10 +139,10 @@ class EndToEndMetric(Metric):
 
         from numpy import float64
         stats_dict = {
-            "gold_qs_per_verb": float64(sum(self._gold_question_counts)) / len(self._gold_question_counts),
-            "pred_qs_per_verb": float64(sum(self._pred_question_counts)) / len(self._pred_question_counts),
-            "gold_spans_per_q": float64(sum(self._gold_span_counts)) / len(self._gold_span_counts),
-            "pred_spans_per_q": float64(sum(self._pred_span_counts)) / len(self._pred_span_counts)
+            "gold-qs-per-verb": float64(sum(self._gold_question_counts)) / len(self._gold_question_counts),
+            "pred-qs-per-verb": float64(sum(self._pred_question_counts)) / len(self._pred_question_counts),
+            "gold-spans-per-q": float64(sum(self._gold_span_counts)) / len(self._gold_span_counts),
+            "pred-spans-per-q": float64(sum(self._pred_span_counts)) / len(self._pred_span_counts)
         }
 
         question_dict = { ("q-%s" % k): v for k, v in stats(self._question_conf).items() }

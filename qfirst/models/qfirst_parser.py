@@ -63,7 +63,7 @@ class QfirstParser(Model):
                     "question": [self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()] for n in self.slot_names],
                     "question_prob": math.exp(beam_log_probs[i]),
                     "spans": answerer_outputs["spans"][i],
-                    "invalidity_prob": answerer_outputs["invalidity_prob"][i].item()
+                    "invalidity_prob": answerer_outputs["invalid_prob"][i].item()
                 }
                 full_beam.append(beam_entry_dict)
 
