@@ -123,7 +123,7 @@ class QuestionAnswerer(Model):
 
         span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
         (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), num_tokens)
+         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), 2 * num_tokens)
         # workaround for https://github.com/allenai/allennlp/issues/1696
         if (top_span_scores == float("-inf")).any():
             top_span_scores[top_span_scores == float("-inf")] = -1.
@@ -199,7 +199,7 @@ class QuestionAnswerer(Model):
             if answer_spans is not None:
                 gold_dummy_labels = None
                 gold_dummy_standin = prediction_mask.view(batch_size, -1).sum(1) == 0
-                gold_dummy_labels = torch.max(gold_invalid_labels, gold_dummy_standin)
+                gold_dummy_labels = torch.max(gold_invalid_labels, gold_dummy_standin.float())
                 gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
                 correct_log_probs = pred_log_probs + gold_labels_with_dummy.log()
                 logsumexp_intermediate = -util.logsumexp(correct_log_probs)
