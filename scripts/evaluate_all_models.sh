@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# bool: dense/not dense
+# bool: qfirst/afirst
+# path: model archive
+# int:  cuda-device
+
 # qfirst model, tuning (qa-level e2e)
 python -m allennlp.run evaluate models/qfirst-model-1.tar.gz --evaluation-data-file http://qasrl.org/data/qasrl-v2/dense/dev.jsonl.gz --cuda-device -1 --include-package qfirst --overrides '{"dataset_reader": {"question_source": "turk", "min_answers": 6, "min_valid_answers": 5}}'
 # qfirst model, tuning (dense): all three accuracies.

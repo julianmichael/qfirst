@@ -42,8 +42,8 @@ class QuestionAnswerer(Model):
                  span_hidden_dim: int,
                  objective: str = "binary",
                  span_selection_policy: str = "weighted",
-                 span_thresholds: List[float] = [.10, .15, .20, .25, .30, 0.35, 0.40, 0.45, 0.50],
-                 invalid_thresholds: List[float] = [.10, .15, .20, .25, .30, .35, .40, .45, .50],
+                 span_thresholds: List[float] = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
+                 invalid_thresholds: List[float] = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
@@ -297,8 +297,8 @@ class QuestionAnswerer(Model):
         span_hidden_dim = params.pop("span_hidden_dim")
         objective = params.pop("objective", "binary")
         span_selection_policy = params.pop("span_selection_policy", "weighted")
-        span_thresholds = params.pop("span_thresholds", [.10, .15, .20, .25, .30, 0.35, 0.40, 0.45, 0.50])
-        invalid_thresholds = params.pop("invalid_thresholds", [.10, .15, .20, .25, .30, .35, .40, .45, .50])
+        span_thresholds = params.pop("span_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
+        invalid_thresholds = params.pop("invalid_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
 
         # absorb the parameter if it exists, but we don't use it anymore
         union_gold_spans = params.pop("union_gold_spans", False)
