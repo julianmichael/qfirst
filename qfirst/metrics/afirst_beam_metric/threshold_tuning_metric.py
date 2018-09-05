@@ -58,16 +58,17 @@ class ThresholdTuningMetric(AfirstBeamMetric):
                 all_metrics_dict = {
                     ("recall-%s-%s" % (recall_floor, metric_key)): metric_value
                     for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
-                    for metric_key, metric_value in metric_dict
+                    if metric_dict is not None
+                    for metric_key, metric_value in metric_dict.items()
                 }
                 if self._save_filepath is not None:
                     with open(self._save_filepath, 'a') as out:
-                        # out.write("%.3f\t%.5f\t%.5f\t%.5f\n"%(prev_prob, r, p, f))
                         out.write("==============================\nValidation complete. Metrics for recall pegs:\n\n")
                         for recall_floor, metric_dict in recall_constrained_metric_dicts.items():
-                            out.write("---------- Recall = %s ----------\n" % recall_floor)
-                            for metric_key, metric_value in metric_dict:
-                                out.write("%s: %.4f\n" % (metric_key, metric_value))
+                            if metric_dict is not None:
+                                out.write("---------- Recall = %s ----------\n" % recall_floor)
+                                for metric_key, metric_value in metric_dict.items():
+                                    out.write("%s: %.4f\n" % (metric_key, metric_value))
                 return all_metrics_dict
             else:
                 summary_metrics_dict = {
@@ -83,4 +84,5 @@ class ThresholdTuningMetric(AfirstBeamMetric):
         span_thresholds = params.pop("span_thresholds")
         use_dense_metric = params.pop("use_dense_metric", False)
         recall_pegs = params.pop("recall_pegs", [0.0])
-        return ThresholdTuningMetric(target, span_thresholds, use_dense_metric, recall_pegs)
+        save_filepath = params.pop("save_filepath", None)
+        return ThresholdTuningMetric(target, span_thresholds, use_dense_metric, recall_pegs, save_filepath)
