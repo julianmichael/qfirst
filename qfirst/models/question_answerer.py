@@ -182,7 +182,7 @@ class QuestionAnswerer(Model):
         else:
             assert self.objective == "multinomial"
             batch_size = top_span_logits.size(0)
-            invalidity_scores = num_invalids.new_zeros([batch_size]).float()
+            invalidity_scores = predicate_indicator.new_zeros([batch_size]).float()
             masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
             scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), top_span_logits], -1)
             pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
