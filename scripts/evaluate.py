@@ -1,20 +1,16 @@
 import torch, os, json, tarfile, argparse, uuid, shutil
 
-# bool: dense/not dense
-# bool: qfirst/afirst
-# path: model archive
-# int:  cuda-device
-
 def main(model_path: str,
          dense_eval: bool,
          cuda_device: int):
+    print(dense_eval)
 
     if dense_eval:
-        eval_data_file = "http://qasrl.org/data/qasrl-v2/dense/dev.jsonl.gz",
-        overrides = '{ "dataset_reader": { "min_answers": 6 }, "model": {"metric": {"target": "span-acc-lb", "use_dense_metric": true, "recall_constraint": 2.0 } } }'
+        eval_data_file = "http://qasrl.org/data/qasrl-v2/dense/dev.jsonl.gz"
+        overrides = '{ "dataset_reader": { "min_answers": 6, "min_valid_answers": 0 }, "model": {"metric": {"target": "question-answer-acc-lb", "use_dense_metric": true, "recall_pegs": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0] } } }'
     else:
-        eval_data_file = "http://qasrl.org/data/qasrl-v2/orig/dev.jsonl.gz",
-        overrides = '{ "dataset_reader": { "min_answers": 3, "min_valid_answers": 3 }, "model": {"metric": {"target": "e2e-f1", "use_dense_metric": false, "recall_constraint": 0.0 } } }'
+        eval_data_file = "http://qasrl.org/data/qasrl-v2/orig/dev.jsonl.gz"
+        overrides = '{ "dataset_reader": { "min_answers": 3, "min_valid_answers": 3 }, "model": {"metric": {"target": "e2e-f1", "use_dense_metric": false, "recall_pegs": [0.0] } } }'
 
     from subprocess import run
     run(["python", "-m", "allennlp.run", "evaluate",

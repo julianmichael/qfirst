@@ -16,8 +16,8 @@ from nrl.common.span import Span
 # P/R/F1 of invalid judgments above thresholds
 class AnswerMetric(Metric):
     def __init__(self,
-                 span_thresholds = [.10, .15, .20, .25, .30, 0.35, 0.40, 0.45, 0.50],
-                 invalid_thresholds = [.10, .15, .20, .25, .30, .35, .40, .45, .50],
+                 span_thresholds = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
+                 invalid_thresholds = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
                  proportion_invalid_answers = 0.01):
         self._span_thresholds = span_thresholds
         self._invalid_thresholds = invalid_thresholds

@@ -18,7 +18,8 @@ class FilterTuningMetric(QfirstBeamMetric):
                  try_first_answer_only: bool = False,
                  try_invalid_as_threshold: bool = False,
                  use_dense_metric: bool = False,
-                 recall_constraint: float = 0.0):
+                 recall_pegs: float = [0.0],
+                 save_filepath: str = None):
         self.target = target
         def make_metric():
             if use_dense_metric:
@@ -39,7 +40,8 @@ class FilterTuningMetric(QfirstBeamMetric):
         for _, m in self.filter_metrics:
             m.reset()
 
-        self.recall_constraint = recall_constraint
+        self.recall_pegs = recall_pegs
+        self._save_filepath = save_filepath
 
     def reset(self):
         for _, m in self.filter_metrics:
@@ -53,7 +55,7 @@ class FilterTuningMetric(QfirstBeamMetric):
             filtered_beam = beam_filter(full_beam)
             metric(gold_qa_pairs, filtered_beam)
 
-    def get_metric(self, reset = False):
+    def get_metric(self, reset: bool = False):
         all_metric_dicts = [(filtr, metric.get_metric(reset)) for filtr, metric in self.filter_metrics]
         recall_constrained_metric_dicts = [(filtr, metric) for filtr, metric in all_metric_dicts
                                            if metric["pred-qs-per-verb"] > self.recall_constraint]
@@ -80,7 +82,7 @@ class FilterTuningMetric(QfirstBeamMetric):
         try_first_answer_only = params.pop("try_first_answer_only", False)
         try_invalid_as_threshold = params.pop("try_invalid_as_threshold", False)
         use_dense_metric = params.pop("use_dense_metric", False)
-        recall_constraint = params.pop("recall_constraint", 0.0)
+        recall_pegs = params.pop("recall_pegs", [0.0])
         return FilterTuningMetric(target = target,
                                   question_thresholds = question_thresholds,
                                   span_thresholds = span_thresholds,
@@ -88,4 +90,4 @@ class FilterTuningMetric(QfirstBeamMetric):
                                   try_first_answer_only = try_first_answer_only,
                                   try_invalid_as_threshold = try_invalid_as_threshold,
                                   use_dense_metric = use_dense_metric,
-                                  recall_constraint = recall_constraint)
+                                  recall_pegs = recall_pegs)
