@@ -220,7 +220,7 @@ class SequentialQuestionModel(QuestionModel):
                 for pred_slot_index in range(0, num_slot_values):
                     log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
                     if slot_index < len(self._slot_names) - 1:
-                        new_input_embedding = self._slot_embedders[slot_index](torch.Tensor([pred_slot_index]).long())
+                        new_input_embedding = self._slot_embedders[slot_index](pred_reps.new([pred_slot_index]).long())
                     else:
                         new_input_embedding = None
                     if log_prob >= min_beam_log_probability:
@@ -234,8 +234,8 @@ class SequentialQuestionModel(QuestionModel):
         final_beam_size = len(current_beam_states)
         final_slots = {}
         for slot_name in reversed(self._slot_names):
-            final_slots[slot_name] = torch.zeros([final_beam_size], dtype = torch.int32)
-        final_probs = torch.zeros([final_beam_size], dtype = torch.float64)
+            final_slots[slot_name] = pred_reps.new_zeros([final_beam_size], dtype = torch.int32)
+        final_probs = pred_reps.new_zeros([final_beam_size], dtype = torch.float64)
         for beam_index in range(final_beam_size):
             final_probs[beam_index] = current_beam_states[beam_index][2]
             current_backpointer = beam_index
