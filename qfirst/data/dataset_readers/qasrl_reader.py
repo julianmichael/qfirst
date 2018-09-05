@@ -184,8 +184,12 @@ class QasrlReader(DatasetReader):
         def get_answers_field_for_question(label):
             def get_spans(spansJson):
                 return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
-            return ListField([s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ])
-        answer_fields = [get_answers_field_for_question(l) for l in question_labels]
+            span_list = [s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ]
+            if len(span_list) == 0:
+                return ListField([SpanField(-1, -1, text_field)])
+            else:
+                return ListField(span_list)
+        answer_fields_field = ListField([get_answers_field_for_question(l) for l in question_labels])
         num_answers = [len(l["answerJudgments"]) for l in question_labels]
         num_answers_field = ListField([LabelField(label = n, skip_indexing = True) for n in num_answers])
         num_invalids = [len(l["answerJudgments"]) - len([aj for aj in l["answerJudgments"] if aj["isValid"]]) for l in question_labels]
@@ -201,7 +205,7 @@ class QasrlReader(DatasetReader):
             'text': text_field,
             'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
-            'answers': ListField(answer_fields),
+            'answers': answer_fields_field,
             'num_answers': num_answers_field,
             'num_invalids': num_invalids_field,
             'metadata': MetadataField(metadata),

@@ -1,4 +1,4 @@
-import torch, os, json, tarfile, argparse, uuid, shutil
+import torch, os, json, tarfile, argparse, uuid, shutil, sys
 
 def main(model_path: str,
          dense_eval: bool,

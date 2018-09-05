@@ -55,23 +55,61 @@ class FilterTuningMetric(QfirstBeamMetric):
             filtered_beam = beam_filter(full_beam)
             metric(gold_qa_pairs, filtered_beam)
 
-    def get_metric(self, reset: bool = False):
-        all_metric_dicts = [(filtr, metric.get_metric(reset)) for filtr, metric in self.filter_metrics]
-        recall_constrained_metric_dicts = [(filtr, metric) for filtr, metric in all_metric_dicts
-                                           if metric["pred-qs-per-verb"] > self.recall_constraint]
-        if len(recall_constrained_metric_dicts) > 0:
-            best_filter, best_metrics = max(recall_constrained_metric_dicts, key = lambda d: d[1][self.target])
-        else:
-            best_filter, best_metrics = max(all_metric_dicts, key = lambda d: d[1][self.target])
+    def get_metric(self, reset = False):
+        def get_full_dict(filtr, metric_dict):
+            filter_params = {
+                "question-threshold": filtr.question_threshold,
+                "span-threshold": filtr.span_threshold,
+                "invalid-threshold": filtr.invalid_threshold,
+                "first_answer_only": float(filtr.first_answer_only),
+                "invalid_as_threshold": float(filtr.invalid_as_threshold)
+            }
+            return {**filter_params, **metric_dict}
+        all_metric_dicts = [get_full_dict(filtr, metric.get_metric(reset)) for filtr, metric in self.filter_metrics]
 
-        filter_params = {
-            "question-threshold": best_filter.question_threshold,
-            "span-threshold": best_filter.span_threshold,
-            "invalid-threshold": best_filter.invalid_threshold,
-            "first_answer_only": float(best_filter.first_answer_only),
-            "invalid_as_threshold": float(best_filter.invalid_as_threshold)
-        }
-        return {**filter_params, **best_metrics}
+        if len(self.recall_pegs) == 1:
+            recall_constrained_metric_dicts = [metric for metric in all_metric_dicts
+                                               if metric["pred-qs-per-verb"] > self.recall_pegs[0]]
+            if len(recall_constrained_metric_dicts) > 0:
+                best_metrics = max(recall_constrained_metric_dicts, key = lambda d: d[self.target])
+            else:
+                best_metrics = max(all_metric_dicts, key = lambda d: d[self.target])
+            return best_metrics
+        else:
+            def get_best_metric_opt(recall_floor):
+                valid_metrics = [metric for metric in all_metric_dicts if metric["pred-qs-per-verb"] > recall_floor]
+                if len(valid_metrics) > 0:
+                    return max(valid_metrics, key = lambda d: d[self.target])
+                else:
+                    return None
+
+            recall_constrained_metric_dicts = {
+                ("%.1f" % recall_floor): get_best_metric_opt(recall_floor)
+                for recall_floor in self.recall_pegs
+            }
+            if reset:
+                all_metrics_dict = {
+                    ("recall-%s-%s" % (recall_floor, metric_key)): metric_value
+                    for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
+                    if metric_dict is not None
+                    for metric_key, metric_value in metric_dict.items()
+                }
+                if self._save_filepath is not None:
+                    with open(self._save_filepath, 'a') as out:
+                        out.write("==============================\nValidation complete. Metrics for recall pegs:\n\n")
+                        for recall_floor, metric_dict in recall_constrained_metric_dicts.items():
+                            if metric_dict is not None:
+                                out.write("---------- Recall = %s ----------\n" % recall_floor)
+                                for metric_key, metric_value in metric_dict.items():
+                                    out.write("%s: %.4f\n" % (metric_key, metric_value))
+                return all_metrics_dict
+            else:
+                summary_metrics_dict = {
+                    ("%s-%s" % (recall_floor, self.target)): metric_dict[self.target]
+                    for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
+                    if metric_dict is not None and self.target in metric_dict
+                }
+                return summary_metrics_dict
 
     @classmethod
     def from_params(cls, params):
@@ -83,6 +121,7 @@ class FilterTuningMetric(QfirstBeamMetric):
         try_invalid_as_threshold = params.pop("try_invalid_as_threshold", False)
         use_dense_metric = params.pop("use_dense_metric", False)
         recall_pegs = params.pop("recall_pegs", [0.0])
+        save_filepath = params.pop("save_filepath", None)
         return FilterTuningMetric(target = target,
                                   question_thresholds = question_thresholds,
                                   span_thresholds = span_thresholds,
@@ -90,4 +129,5 @@ class FilterTuningMetric(QfirstBeamMetric):
                                   try_first_answer_only = try_first_answer_only,
                                   try_invalid_as_threshold = try_invalid_as_threshold,
                                   use_dense_metric = use_dense_metric,
-                                  recall_pegs = recall_pegs)
+                                  recall_pegs = recall_pegs,
+                                  save_filepath = save_filepath)
