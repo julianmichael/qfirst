@@ -20,11 +20,14 @@ class BeamFilter():
         """
         filtered_beam = []
 
-        def has_overlap(candidate_span):
+        def has_overlap(candidate_span, other_spans):
             for entry in filtered_beam:
                 for span in entry["spans"]:
                     if candidate_span.overlaps(span):
                         return True
+            for span in other_spans:
+                if candidate_span.overlaps(span):
+                    return True
             return False
 
         entries_with_spans = [(entry, s) for entry in beam for s in entry["spans"]]
@@ -33,10 +36,14 @@ class BeamFilter():
             invalid_prob = entry["invalidity_prob"]
             is_likely = q_prob > self.question_threshold
             is_valid = invalid_prob < self.invalid_threshold
-            valid_spans = [span for span, prob in entry["spans"]
+            valid_spans = [(span, prob) for span, prob in entry["spans"]
                            if prob >= self.span_threshold
                            and ((not self.invalid_as_threshold) or prob >= invalid_prob)]
-            novel_spans = [span for span in valid_spans if not has_overlap(span)]
+            sorted_valid_spans = [span for span, _ in sorted(valid_spans, key = lambda t: t[1], reverse = True)]
+            novel_spans = []
+            for span in sorted_valid_spans:
+                if not has_overlap(span, novel_spans):
+                    novel_spans.append(span)
             if(is_likely and is_valid and len(novel_spans) > 0):
                 if self.first_answer_only:
                     only_span, _ = max(entry["spans"], key = lambda t: t[1])

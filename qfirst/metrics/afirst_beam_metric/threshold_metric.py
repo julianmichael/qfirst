@@ -24,12 +24,24 @@ class ThresholdMetric(AfirstBeamMetric):
     def __call__(self,
                  gold_qa_pairs,
                  full_beam):
-        filtered_beam = [
-            {"question": qa["question"], "spans": filtered_spans}
-            for qa in full_beam
-            for filtered_spans in ([s for s, p in qa["spans"] if p >= self.span_threshold],)
-            if len(filtered_spans) > 0
-        ]
+        all_spans = []
+        def has_overlap(candidate_span, other_spans):
+            for span in all_spans:
+                if candidate_span.overlaps(span):
+                    return True
+            for span in other_spans:
+                if candidate_span.overlaps(span):
+                    return True
+            return False
+
+        filtered_beam = []
+        for qa in full_beam:
+            qa_spans = []
+            for s, p in qa["spans"]:
+                if p >= self.span_threshold and not has_overlap(s, qa_spans):
+                    qa_spans.append(s)
+            if len(qa_spans) > 0:
+                filtered_beam.append({"question": qa["question"], "spans": qa_spans})
         self.downstream_metric(gold_qa_pairs, filtered_beam)
 
     def get_metric(self, reset = False):
