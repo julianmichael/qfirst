@@ -44,7 +44,7 @@ class DenseEndToEndMetric(Metric):
         self._gold_question_counts.append(len(gold_qa_pairs))
         self._pred_question_counts.append(len(pred_qa_pairs))
         self._gold_span_counts.extend([len(qa["answer_spans"]) for qa in gold_qa_pairs])
-        self._pred_span_counts.extend([len(qa["spans"]) for qa in pred_qa_pairs])
+        self._pred_span_counts.extend([len(qa["answer_spans"]) for qa in pred_qa_pairs])
 
         def update_acc(acc, correct_lb, correct_ub, total):
             acc["correct-lb"] += correct_lb
@@ -56,7 +56,7 @@ class DenseEndToEndMetric(Metric):
         pred_qs = set([" ".join(qa["question"]) for qa in pred_qa_pairs])
 
         for pred_qa in pred_qa_pairs:
-            pred_spans = set([s for s in pred_qa["spans"]])
+            pred_spans = set([s for s in pred_qa["answer_spans"]])
             gold_qa = None
             for candidate_gold_qa in gold_qa_pairs:
                 if candidate_gold_qa["question"] == pred_qa["question"]:
@@ -66,7 +66,7 @@ class DenseEndToEndMetric(Metric):
                 update_acc(self._question_with_span_acc, 0, 1, 1)
                 update_acc(self._span_acc, 0, len(pred_spans), len(pred_spans))
             else:
-                if gold_qa["num_gold_invalids"] > 1:
+                if gold_qa["num_answers"] - gold_qa["num_gold_invalids"] < 5:
                     update_acc(self._question_acc, 0, 0, 1)
                     update_acc(self._question_with_span_acc, 0, 0, 1)
                     update_acc(self._span_acc, 0, 0, len(pred_spans))

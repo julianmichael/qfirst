@@ -76,7 +76,12 @@ class AfirstParser(Model):
                                 for tuples in (list(_tuples_gen),)]
             pred_qa_pairs = []
             for q, spans in pred_qa_groups:
-                pred_qa_pairs.append({"question": list(q), "spans": spans })
+                question = list(q)
+                question_slots = {
+                    slot_name: slot_value
+                    for slot_name, slot_value in zip(self.question_predictor.question_generator.get_slot_labels(), question)
+                }
+                pred_qa_pairs.append({"question": question, "question_slots": question_slots, "answer_spans": spans })
             full_predictions.append(pred_qa_pairs)
 
         if annotations is not None: # we have gold datums
@@ -94,6 +99,7 @@ class AfirstParser(Model):
                     num_invalids = len([ans for ans in question_label["answerJudgments"] if not ans["isValid"]])
                     distinct_gold_answer_spans = list(set(all_gold_answer_spans))
                     gold_question_dict = {
+                        "question_slots": question_label["questionSlots"],
                         "question": [question_label["questionSlots"][n] for n in self.question_predictor.question_generator.get_slot_labels()],
                         "answer_spans": distinct_gold_answer_spans,
                         "num_answers": num_answers,

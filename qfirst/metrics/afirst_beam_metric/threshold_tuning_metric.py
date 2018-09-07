@@ -11,11 +11,12 @@ class ThresholdTuningMetric(AfirstBeamMetric):
     def __init__(self,
                  target: str,
                  span_thresholds: List[float],
+                 use_templating_metric: bool = True,
                  use_dense_metric: bool = False,
                  recall_pegs = [0.0],
                  save_filepath = None):
         self.target = target
-        self.metrics = [ThresholdMetric(threshold, use_dense_metric) for threshold in span_thresholds]
+        self.metrics = [ThresholdMetric(threshold, use_templating_metric, use_dense_metric) for threshold in span_thresholds]
         for m in self.metrics:
             m.reset()
         self.recall_pegs = recall_pegs
@@ -76,13 +77,25 @@ class ThresholdTuningMetric(AfirstBeamMetric):
                     for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
                     if metric_dict is not None and self.target in metric_dict
                 }
-                return summary_metrics_dict
+                abst_target = "abst-%s" % self.target
+                abst_summary_metrics_dict = {
+                    ("%s-%s" % (recall_floor, abst_target)): metric_dict[abst_target]
+                    for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
+                    if metric_dict is not None and abst_target in metric_dict
+                }
+                return {**summary_metrics_dict, **abst_summary_metrics_dict}
 
     @classmethod
     def from_params(cls, params):
         target = params.pop("target")
         span_thresholds = params.pop("span_thresholds")
+        use_templating_metric = params.pop("use_templating_metric", True)
         use_dense_metric = params.pop("use_dense_metric", False)
         recall_pegs = params.pop("recall_pegs", [0.0])
         save_filepath = params.pop("save_filepath", None)
-        return ThresholdTuningMetric(target, span_thresholds, use_dense_metric, recall_pegs, save_filepath)
+        return ThresholdTuningMetric(target = target,
+                                     span_thresholds = span_thresholds,
+                                     use_templating_metric = use_templating_metric,
+                                     use_dense_metric = use_dense_metric,
+                                     recall_pegs = recall_pegs,
+                                     save_filepath = save_filepath)

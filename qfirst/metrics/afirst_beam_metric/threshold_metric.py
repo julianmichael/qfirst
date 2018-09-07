@@ -3,6 +3,7 @@ from allennlp.training.metrics.metric import Metric
 
 from qfirst.metrics.end_to_end_metric import EndToEndMetric
 from qfirst.metrics.dense_end_to_end_metric import DenseEndToEndMetric
+from qfirst.metrics.templating_e2e_metric import TemplatingE2EMetric
 from qfirst.metrics.afirst_beam_metric.afirst_beam_metric import AfirstBeamMetric
 from qfirst.util.beam_filter import BeamFilter
 
@@ -10,13 +11,17 @@ from qfirst.util.beam_filter import BeamFilter
 class ThresholdMetric(AfirstBeamMetric):
     def __init__(self,
                  span_threshold,
+                 use_templating_metric: bool = True,
                  use_dense_metric: bool = False):
         self.span_threshold = span_threshold
-        if use_dense_metric:
-            self.downstream_metric = DenseEndToEndMetric()
-        else:
-            self.downstream_metric = EndToEndMetric()
-        self.reset()
+        def make_metric():
+            if use_templating_metric:
+                return TemplatingE2EMetric(use_dense_metric = use_dense_metric)
+            elif use_dense_metric:
+                return DenseEndToEndMetric()
+            else:
+                return EndToEndMetric()
+        self.downstream_metric = make_metric()
 
     def reset(self):
         self.downstream_metric.reset()
@@ -37,11 +42,11 @@ class ThresholdMetric(AfirstBeamMetric):
         filtered_beam = []
         for qa in full_beam:
             qa_spans = []
-            for s, p in qa["spans"]:
+            for s, p in qa["answer_spans"]:
                 if p >= self.span_threshold and not has_overlap(s, qa_spans):
                     qa_spans.append(s)
             if len(qa_spans) > 0:
-                filtered_beam.append({"question": qa["question"], "spans": qa_spans})
+                filtered_beam.append({"question": qa["question"], "question_slots": qa["question_slots"], "answer_spans": qa_spans})
         self.downstream_metric(gold_qa_pairs, filtered_beam)
 
     def get_metric(self, reset = False):
@@ -50,5 +55,8 @@ class ThresholdMetric(AfirstBeamMetric):
     @classmethod
     def from_params(cls, params):
         span_threshold = params.pop("span_threshold")
+        use_templating_metric = params.pop("use_templating_metric", True)
         use_dense_metric = params.pop("use_dense_metric", False)
-        return ThresholdMetric(span_threshold = span_threshold, use_dense_metric = use_dense_metric)
+        return ThresholdMetric(span_threshold = span_threshold,
+                               use_templating_metric = use_templating_metric,
+                               use_dense_metric = use_dense_metric)

@@ -22,7 +22,7 @@ class BeamFilter():
 
         def has_overlap(candidate_span, other_spans):
             for entry in filtered_beam:
-                for span in entry["spans"]:
+                for span in entry["answer_spans"]:
                     if candidate_span.overlaps(span):
                         return True
             for span in other_spans:
@@ -30,13 +30,13 @@ class BeamFilter():
                     return True
             return False
 
-        entries_with_spans = [(entry, s) for entry in beam for s in entry["spans"]]
+        entries_with_spans = [(entry, s) for entry in beam for s in entry["answer_spans"]]
         for entry in beam:
             q_prob = entry["question_prob"]
             invalid_prob = entry["invalidity_prob"]
             is_likely = q_prob > self.question_threshold
             is_valid = invalid_prob < self.invalid_threshold
-            valid_spans = [(span, prob) for span, prob in entry["spans"]
+            valid_spans = [(span, prob) for span, prob in entry["answer_spans"]
                            if prob >= self.span_threshold
                            and ((not self.invalid_as_threshold) or prob >= invalid_prob)]
             sorted_valid_spans = [span for span, _ in sorted(valid_spans, key = lambda t: t[1], reverse = True)]
@@ -46,12 +46,12 @@ class BeamFilter():
                     novel_spans.append(span)
             if(is_likely and is_valid and len(novel_spans) > 0):
                 if self.first_answer_only:
-                    only_span, _ = max(entry["spans"], key = lambda t: t[1])
+                    only_span, _ = max(entry["answer_spans"], key = lambda t: t[1])
                     novel_spans = [only_span]
                 filtered_entry = {
                     "question": entry["question"],
-                    "question_prob": entry["question_prob"],
-                    "spans": novel_spans
+                    "question_slots": entry["question_slots"],
+                    "answer_spans": novel_spans
                 }
                 filtered_beam.append(filtered_entry)
 

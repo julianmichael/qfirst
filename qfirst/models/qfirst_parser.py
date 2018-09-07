@@ -59,10 +59,16 @@ class QfirstParser(Model):
             answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
             answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
             for i in range(beam_size):
+                question_slots = {
+                    n: self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()]
+                    for n in self.slot_names
+                }
+                question = [question_slots[n] for n in self.slot_names]
                 beam_entry_dict = {
-                    "question": [self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()] for n in self.slot_names],
+                    "question": question,
+                    "question_slots": question_slots,
                     "question_prob": math.exp(beam_log_probs[i]),
-                    "spans": answerer_outputs["spans"][i],
+                    "answer_spans": answerer_outputs["spans"][i],
                     "invalidity_prob": answerer_outputs["invalid_prob"][i].item()
                 }
                 full_beam.append(beam_entry_dict)
@@ -78,6 +84,7 @@ class QfirstParser(Model):
                 all_gold_answer_spans = [s for ans in question_label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"])]
                 distinct_gold_answer_spans = list(set(all_gold_answer_spans))
                 gold_question_dict = {
+                    "question_slots": question_label["questionSlots"],
                     "question": [question_label["questionSlots"][n] for n in self.slot_names],
                     "answer_spans": distinct_gold_answer_spans,
                     "num_answers": num_answers_cpu[qi],

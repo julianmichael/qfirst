@@ -5,6 +5,7 @@ from allennlp.training.metrics.metric import Metric
 
 from qfirst.metrics.end_to_end_metric import EndToEndMetric
 from qfirst.metrics.dense_end_to_end_metric import DenseEndToEndMetric
+from qfirst.metrics.templating_e2e_metric import TemplatingE2EMetric
 from qfirst.metrics.qfirst_beam_metric.qfirst_beam_metric import QfirstBeamMetric
 from qfirst.util.beam_filter import BeamFilter
 
@@ -17,11 +18,14 @@ class FilterTuningMetric(QfirstBeamMetric):
                  invalid_thresholds: List[float],
                  try_first_answer_only: bool = False,
                  try_invalid_as_threshold: bool = False,
+                 use_templating_metric: bool = True,
                  use_dense_metric: bool = False,
                  recall_pegs: float = [0.0],
                  save_filepath: str = None):
         self.target = target
         def make_metric():
+            if use_templating_metric:
+                return TemplatingE2EMetric(use_dense_metric = use_dense_metric)
             if use_dense_metric:
                 return DenseEndToEndMetric()
             else:
@@ -109,6 +113,13 @@ class FilterTuningMetric(QfirstBeamMetric):
                     for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
                     if metric_dict is not None and self.target in metric_dict
                 }
+                abst_target = "abst-%s" % self.target
+                abst_summary_metrics_dict = {
+                    ("%s-%s" % (recall_floor, abst_target)): metric_dict[abst_target]
+                    for recall_floor, metric_dict in recall_constrained_metric_dicts.items()
+                    if metric_dict is not None and abst_target in metric_dict
+                }
+                return {**summary_metrics_dict, **abst_summary_metrics_dict}
                 return summary_metrics_dict
 
     @classmethod
@@ -119,6 +130,7 @@ class FilterTuningMetric(QfirstBeamMetric):
         invalid_thresholds = params.pop("invalid_thresholds", [0.02, 0.05, 0.10, 0.20, 0.30])
         try_first_answer_only = params.pop("try_first_answer_only", False)
         try_invalid_as_threshold = params.pop("try_invalid_as_threshold", False)
+        use_templating_metric = params.pop("use_templating_metric", True)
         use_dense_metric = params.pop("use_dense_metric", False)
         recall_pegs = params.pop("recall_pegs", [0.0])
         save_filepath = params.pop("save_filepath", None)
@@ -128,6 +140,7 @@ class FilterTuningMetric(QfirstBeamMetric):
                                   invalid_thresholds = invalid_thresholds,
                                   try_first_answer_only = try_first_answer_only,
                                   try_invalid_as_threshold = try_invalid_as_threshold,
+                                  use_templating_metric = use_templating_metric,
                                   use_dense_metric = use_dense_metric,
                                   recall_pegs = recall_pegs,
                                   save_filepath = save_filepath)

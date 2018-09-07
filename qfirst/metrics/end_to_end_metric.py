@@ -56,7 +56,7 @@ class EndToEndMetric(Metric):
         self._gold_question_counts.append(len(gold_qa_pairs))
         self._pred_question_counts.append(len(pred_qa_pairs))
         self._gold_span_counts.extend([len(qa["answer_spans"]) for qa in gold_qa_pairs])
-        self._pred_span_counts.extend([len(qa["spans"]) for qa in pred_qa_pairs])
+        self._pred_span_counts.extend([len(qa["answer_spans"]) for qa in pred_qa_pairs])
 
         def update_conf(conf, true, positive, n = 1):
             if true and positive:
@@ -82,7 +82,7 @@ class EndToEndMetric(Metric):
         update_conf(self._question_conf, true = False, positive = True,  n = len(fp_qs))
 
         gold_spans = set([s for qa in gold_qa_pairs for s in qa["answer_spans"]])
-        pred_spans = set([s for qa in pred_qa_pairs for s in qa["spans"]])
+        pred_spans = set([s for qa in pred_qa_pairs for s in qa["answer_spans"]])
         update_conf(self._span_conf, true = True,  positive = True,  n = len(gold_spans & pred_spans))
         update_conf(self._span_conf, true = False, positive = False, n = len(gold_spans - pred_spans))
         update_conf(self._span_conf, true = False, positive = True,  n = len(pred_spans - gold_spans))
@@ -94,7 +94,7 @@ class EndToEndMetric(Metric):
             for pred_qa in pred_qa_pairs:
                 if gold_qa["question"] == pred_qa["question"]:
                     q_gold_spans = set(gold_qa["answer_spans"])
-                    q_pred_spans = set(pred_qa["spans"])
+                    q_pred_spans = set(pred_qa["answer_spans"])
                     shared_spans = q_gold_spans & q_pred_spans
                     missed_gold_spans = q_gold_spans - q_pred_spans
                     erroneously_predicted_spans = q_pred_spans - q_gold_spans
@@ -112,7 +112,7 @@ class EndToEndMetric(Metric):
 
         for pred_qa in pred_qa_pairs:
             if " ".join(pred_qa["question"]) in fp_qs:
-                update_conf(self._e2e_conf, true = False, positive = True,  n = len(pred_qa["spans"]))
+                update_conf(self._e2e_conf, true = False, positive = True,  n = len(pred_qa["answer_spans"]))
                 update_conf(self._q_e2e_conf, true = False, positive = True,  n = 1)
 
 
