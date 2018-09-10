@@ -82,6 +82,7 @@ class QasrlReader(DatasetReader):
 
                 for _, verb_entry in item["verbEntries"].items():
                     verb_index = verb_entry["verbIndex"]
+                    verb_inflected_forms = verb_entry["verbInflectedForms"]
 
                     def is_valid(question_label):
                         answers = question_label["answerJudgments"]
@@ -93,7 +94,7 @@ class QasrlReader(DatasetReader):
                     self._num_verbs += 1
                     if self._instance_type == "verb":
                         if len(question_labels) != 0:
-                            yield self._make_gold_verb_instance(sentence_id, sentence_tokens, verb_index, question_labels)
+                            yield self._make_gold_verb_instance(sentence_id, sentence_tokens, verb_index, verb_inflected_forms, question_labels)
                     elif self._instance_type == "question":
                         for l in question_labels:
                             yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
@@ -140,6 +141,7 @@ class QasrlReader(DatasetReader):
                             sentence_id: str,
                             sent_tokens: List[str],
                             pred_index: int,
+                            verb_inflected_forms: Dict[str, str],
                             question_labels): # List[Json]
         """
         Returns
@@ -195,7 +197,11 @@ class QasrlReader(DatasetReader):
         num_invalids = [len(l["answerJudgments"]) - len([aj for aj in l["answerJudgments"] if aj["isValid"]]) for l in question_labels]
         num_invalids_field  = ListField([LabelField(label = n, skip_indexing = True) for n in num_invalids])
 
-        metadata = {'pred_index' : pred_index, 'sent_text': " ".join(sent_tokens)}
+        metadata = {
+            'pred_index' : pred_index,
+            'sent_text': " ".join(sent_tokens),
+            "verb_inflected_forms": verb_inflected_forms
+        }
         metadata['sentence_id'] = sentence_id
         metadata['sentence_tokens'] = sent_tokens
         metadata['question_sources'] = [l["questionSources"] for l in question_labels]

@@ -5,3 +5,5 @@ from qfirst.metrics.qfirst_beam_metric.filter_tuning_metric import FilterTuningM
 from qfirst.metrics.afirst_beam_metric.afirst_beam_metric import AfirstBeamMetric
 from qfirst.metrics.afirst_beam_metric.threshold_metric import ThresholdMetric
 from qfirst.metrics.afirst_beam_metric.threshold_tuning_metric import ThresholdTuningMetric
+
+from qfirst.metrics.prediction_saving_metric import PredictionSavingMetric

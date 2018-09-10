@@ -110,7 +110,7 @@ class AfirstParser(Model):
 
             if self.metric is not None:
                 for i in range(batch_size):
-                    self.metric(batched_gold_qa_pairs[i], full_predictions[i])
+                    self.metric(batched_gold_qa_pairs[i], full_predictions[i], metadata[i])
                     # sentence_tokens = metadata[i]["sent_text"].split()
                     # print(metadata[i]["sent_text"])
                     # print("\nGOLD:")
