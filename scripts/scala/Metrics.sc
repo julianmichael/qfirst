@@ -5,6 +5,8 @@ import $ivy.`org.julianmichael::qasrl-bank:0.1.0`
 import $file.Predictions, Predictions.Prediction, Predictions.QuestionPrediction
 import $file.Consolidate
 import Consolidate.Metadata
+import Consolidate.VerbPredictionMetadata
+import Consolidate.RichMap
 // import $ivy.`io.circe::circe-core:0.9.3`
 // import $ivy.`io.circe::circe-generic:0.9.3`
 
@@ -25,13 +27,13 @@ import qasrl.bank.AnswerSource
 import qasrl.bank.QuestionSource
 // import qasrl.bank.FullData
 
-// import qasrl.data.Answer
-// import qasrl.data.AnswerLabel
+import qasrl.data.Answer
+import qasrl.data.AnswerLabel
 import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 // import qasrl.data.Sentence
-// import qasrl.data.VerbEntry
-// import qasrl.data.QuestionLabel
+import qasrl.data.VerbEntry
+import qasrl.data.QuestionLabel
 
 import qasrl.labeling.SlotBasedLabel
 
@@ -115,18 +117,59 @@ object Metrics {
   }
 }
 
+def overlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
+  x.begin <= y.end && y.begin <= x.end
+}
+
+// from the (full beam, prediction metadata) produce the (parseable narrow beam, extra unparseable QA pairs).
+type BeamFilter = (VerbEntry, VerbPredictionMetadata) => (VerbEntry, List[(String, Set[AnswerSpan])])
+
 case class Thresholds(
   questionThreshold: Double,
   spanThreshold: Double,
-  invalidThreshold: Double
+  invalidThreshold: Double,
+  shouldRemoveSpansBelowInvalidProb: Boolean
 ) {
-  def filter(pred: QuestionPrediction): Option[(SlotBasedLabel[VerbForm], NonEmptyList[AnswerSpan])] = {
+  def filterQuestion(pred: QuestionPrediction): Option[(SlotBasedLabel[VerbForm], NonEmptyList[AnswerSpan])] = {
     val spans = pred.answerSpans.collect {
       case (span, prob) if prob >= spanThreshold => span
     }
     if(pred.questionProb >= questionThreshold && pred.invalidProb <= invalidThreshold) {
       NonEmptyList.fromList(spans).map(pred.questionSlots -> _)
     } else None
+  }
+  val filterBeamNonoverlapping: BeamFilter = (fullVerb: VerbEntry, metadata: VerbPredictionMetadata) => {
+    type BeamAcc = (List[QuestionLabel], List[(String, Set[AnswerSpan])])
+    def hasOverlap(acc: BeamAcc, span: AnswerSpan) = {
+      val allAccSpans = acc._1.flatMap(_.answerJudgments).flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet ++ acc._2.flatMap(_._2).toSet
+      allAccSpans.exists(overlaps(_, span))
+    }
+    val initAcc = (List.empty[QuestionLabel], List.empty[(String, Set[AnswerSpan])])
+    val (qLabels, badQAs) = metadata.qaScores.toList.sortBy(-_._2.questionProb).foldLeft(initAcc) {
+      case (acc, (qString, qPrediction)) =>
+        if(qPrediction.questionProb < questionThreshold) acc
+        else if(qPrediction.invalidProb > invalidThreshold) acc
+        else {
+          val goodSpans = qPrediction.answerSpans.collect {
+            case (span, prob) if prob >= spanThreshold &&
+                !hasOverlap(acc, span) &&
+                (!shouldRemoveSpansBelowInvalidProb || prob >= qPrediction.invalidProb) => span
+          }.toSet
+          if(goodSpans.isEmpty) acc
+          else {
+            fullVerb.questionLabels.get(qString) match {
+              case None => (acc._1, (qString, goodSpans) :: acc._2)
+              case Some(qLabel) =>
+                val newQuestionLabel = qLabel.copy(
+                  answerJudgments = Set(AnswerLabel("model-XXX", Answer(goodSpans)))
+                )
+                (newQuestionLabel :: acc._1, acc._2)
+            }
+          }
+        }
+    }
+    val newVerbEntry = fullVerb.copy(questionLabels = qLabels.map(l => l.questionString -> l).toMap.toSortedMap)
+    (newVerbEntry, badQAs)
   }
 }
 
@@ -135,16 +178,17 @@ def computeMetrics(
   goldThreshold: (Int, Int) => Boolean, // num invalids, num answers => is valid
   pred: Dataset,
   predMetadata: Metadata,
-  predThresholds: Thresholds
+  beamFilter: BeamFilter
 ): Metrics = {
   gold.sentences.toList
-    .filter(_._2.verbEntries.values.exists(_.questionLabels.nonEmpty))
+    .filter(_._2.verbEntries.values.exists(_.questionLabels.nonEmpty)) // NOTE due to some "empty sentences" -- to fix in data
     .foldMap { case (sentenceId, goldSentence) =>
       val predSentence = pred.sentences(sentenceId)
+      // NOTE filter below due to some "empty verbs" -- to fix in data
       goldSentence.verbEntries.toList.filter(_._2.questionLabels.nonEmpty).foldMap { case (verbIndex, goldVerb) =>
         val verbMeta = predMetadata(sentenceId)(verbIndex)
-        val predVerb = predSentence.verbEntries(verbIndex)
-        val badQuestionStrings = verbMeta.badQuestions.map(_.renderQuestionString(goldVerb.verbInflectedForms)).toSet
+        val (predVerb, badQAs) = beamFilter(predSentence.verbEntries(verbIndex), verbMeta)
+        val badQuestionStrings = badQAs.map(_._1).toSet
         val allQuestionStrings = (
           goldVerb.questionLabels.keySet ++
             predVerb.questionLabels.keySet ++
@@ -156,8 +200,7 @@ def computeMetrics(
             val numInvalid = judgments.filter(_.isInvalid).size
             goldThreshold(numInvalid, judgments.size)
           }
-          val canBePredicted = (predVerb.questionLabels.contains(qString) || badQuestionStrings.contains(qString))
-          val isPredicted = canBePredicted && verbMeta.qaScores.get(qString).flatMap(predThresholds.filter).nonEmpty
+          val isPredicted = (predVerb.questionLabels.contains(qString) || badQuestionStrings.contains(qString))
           val isTrue = isValid == isPredicted
           if(isTrue && isPredicted) Conf(tp = 1)
           else if(isTrue && !isPredicted) Conf(tn = 1)
@@ -182,8 +225,9 @@ def main(goldFile: String, predDir: Path) = {
   val predThresholds = Thresholds(
     questionThreshold = 0.1,
     spanThreshold = 0.65,
-    invalidThreshold = 0.9)
-  val metrics = computeMetrics(gold, goldThreshold, pred, metadata, predThresholds)
+    invalidThreshold = 0.9,
+    shouldRemoveSpansBelowInvalidProb = false)
+  val metrics = computeMetrics(gold, goldThreshold, pred, metadata, predThresholds.filterBeamNonoverlapping)
   println(metrics.all.toStringPretty(identity, x => f"$x%.3f"))
 }
 

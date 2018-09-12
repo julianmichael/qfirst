@@ -114,8 +114,6 @@ def createDatasetAndMetadata(predFile: Path): (Dataset, Metadata) = {
       ???
     case Right(preds) => preds
   }
-  // println(predictions.size)
-  // println(predictions.groupBy(_.sentenceId).size)
   val infoBySentenceId = predictions.groupBy(_.sentenceId).map {
     case (sentenceId, sentencePreds) =>
       val verbEntriesAndMetadata = sentencePreds.map { pred =>
