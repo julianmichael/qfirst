@@ -8,11 +8,11 @@ def main(model_path: str,
          out_path: str,
          cuda_device: int):
     if model_path is None or span_minimum_prob is None or out_path is None or cuda_device is None:
-        print("All arguments (model, threshold, out, device) must be present.")
+        print("Arguments (model, span_threshold, out, device) must be present.")
 
     # eval_data_file = "http://qasrl.org/data/qasrl-v2/dense/dev.jsonl.gz"
     eval_data_file = "dev-mini.jsonl"
-    dataset_reader = '{ "min_answers": 3, "min_valid_answers": 0 }'
+    dataset_reader = '{ "min_answers": 0, "min_valid_answers": 0 }'
     metric = '{"type": "prediction_saving", "span_minimum_prob": %.4f, "file_path": "%s" }' % (span_minimum_prob, out_path)
 
     if max_beam_size is not None and question_minimum_prob is not None:
@@ -23,7 +23,6 @@ def main(model_path: str,
         model = '{"min_beam_probability": %.3f, "metric": %s}' % (question_minimum_prob, metric)
     else:
         model = '{"metric": %s}' % metric
-
 
     overrides = '{ "dataset_reader": %s, "model": %s }' % (dataset_reader, model)
 
