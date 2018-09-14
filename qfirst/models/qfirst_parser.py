@@ -8,10 +8,10 @@ from allennlp.models.model import Model
 from allennlp.common import Params
 from allennlp.data import Vocabulary
 
-from qfirst.util import QuestionGenerator
+from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.models.question_answerer import QuestionAnswerer
 from qfirst.data.util import get_slot_label_namespace
-from qfirst.metrics.qfirst_beam_metric.qfirst_beam_metric import QfirstBeamMetric
+from qfirst.metrics.beam_metric import BeamMetric
 
 import math
 
@@ -26,7 +26,7 @@ class QfirstParser(Model):
                  max_beam_size: int = 20,
                  question_minimum_prob: float = 0.01,
                  span_minimum_prob: float = 0.01,
-                 metric: QfirstBeamMetric = None):
+                 metric: BeamMetric = None):
         super(QfirstParser, self).__init__(vocab)
         self.question_generator = question_generator
         self.question_answerer = question_answerer
@@ -104,7 +104,10 @@ class QfirstParser(Model):
         }
 
     def get_metrics(self, reset: bool = False):
-        return self.metric.get_metric(reset=reset)
+        if self.metric is not None:
+            return self.metric.get_metric(reset=reset)
+        else:
+            return {}
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QfirstParser':
@@ -116,7 +119,7 @@ class QfirstParser(Model):
         metric_config = params.pop("metric", None)
         metric = None
         if metric_config is not None:
-            metric = QfirstBeamMetric.from_params(metric_config)
+            metric = BeamMetric.from_params(metric_config)
 
         return QfirstParser(vocab,
                             question_generator = question_generator, question_answerer = question_answerer,

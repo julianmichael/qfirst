@@ -1,23 +1,19 @@
 from allennlp.common import Params
 from allennlp.training.metrics.metric import Metric
 
-from qfirst.metrics.end_to_end_metric import EndToEndMetric
-from qfirst.metrics.dense_end_to_end_metric import DenseEndToEndMetric
-from qfirst.metrics.templating_e2e_metric import TemplatingE2EMetric
-from qfirst.metrics.qfirst_beam_metric.qfirst_beam_metric import QfirstBeamMetric
-from qfirst.metrics.afirst_beam_metric.afirst_beam_metric import AfirstBeamMetric
-from qfirst.util.beam_filter import BeamFilter
+from qfirst.metrics.beam_metric import BeamMetric
 
 import json
 
-@AfirstBeamMetric.register("prediction_saving")
-@QfirstBeamMetric.register("prediction_saving")
-class PredictionSavingMetric(QfirstBeamMetric):
+# TODO: this is kind of a hack for until I do an actual predictor.
+@BeamMetric.register("prediction_saving")
+class PredictionSavingMetric(BeamMetric):
     def __init__(self, file_path: str):
         self._file_path = file_path
         self._sentence_jsons = {}
 
     def reset(self):
+        self._sentence_jsons = {}
         return
 
     def __call__(self,

@@ -17,7 +17,7 @@ from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_lo
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.training.metrics import SpanBasedF1Measure
 
-from qfirst.util.question_generator import QuestionGenerator
+from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.modules.question_model import QuestionModel
 from qfirst.metrics.question_metric import QuestionMetric
 

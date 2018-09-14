@@ -9,18 +9,13 @@ from allennlp.common import Params
 from allennlp.data import Vocabulary
 from allennlp.data.dataset import Batch
 
-# from qfirst.util import QuestionGenerator
-# from qfirst.models.question_answerer import QuestionAnswerer
-# from qfirst.data.util import get_slot_label_namespace
-
-from qfirst.metrics.end_to_end_metric import EndToEndMetric
-from qfirst.metrics.afirst_beam_metric.afirst_beam_metric import AfirstBeamMetric
-
 import math
 
 from nrl.common.span import Span
 from nrl.models.question_predictor import QuestionPredictor
 from nrl.models.span_detector import SpanDetector
+
+from qfirst.metrics.beam_metric import BeamMetric
 
 from itertools import groupby
 
@@ -32,7 +27,7 @@ class AfirstParser(Model):
                  span_detector: SpanDetector,
                  question_predictor: QuestionPredictor,
                  span_minimum_prob: float,
-                 metric: AfirstBeamMetric):
+                 metric: BeamMetric):
         super(AfirstParser, self).__init__(vocab)
         self.span_detector = span_detector
         self.question_predictor = question_predictor
@@ -116,14 +111,20 @@ class AfirstParser(Model):
         }
 
     def get_metrics(self, reset: bool = False):
-        return self.metric.get_metric(reset=reset)
+        if self.metric is not None:
+            return self.metric.get_metric(reset=reset)
+        else:
+            return {}
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'AfirstParser':
         span_detector = Model.from_params(vocab, params.pop("span_detector"))
         question_predictor = Model.from_params(vocab, params.pop("question_predictor"))
-        metric = AfirstBeamMetric.from_params(params.pop("metric"))
         span_minimum_prob = params.pop("span_minimum_prob", 0.01)
+        metric_config = params.pop("metric", None)
+        metric = None
+        if metric_config is not None:
+            metric = BeamMetric.from_params(metric_config)
         return AfirstParser(vocab,
                             span_detector = span_detector, question_predictor = question_predictor,
                             span_minimum_prob = span_minimum_prob,
