@@ -24,14 +24,16 @@ class QfirstParser(Model):
                  question_generator: QuestionGenerator,
                  question_answerer: QuestionAnswerer,
                  max_beam_size: int = 20,
-                 min_beam_probability: float = 0.01,
+                 question_minimum_prob: float = 0.01,
+                 span_minimum_prob: float = 0.01,
                  metric: QfirstBeamMetric = None):
         super(QfirstParser, self).__init__(vocab)
         self.question_generator = question_generator
         self.question_answerer = question_answerer
         self.slot_names = question_answerer.question_encoder.get_slot_names()
         self.max_beam_size = max_beam_size
-        self.min_beam_probability = min_beam_probability
+        self.question_minimum_prob = question_minimum_prob
+        self.span_minimum_prob = span_minimum_prob
         self.metric = metric
 
     @overrides
@@ -49,7 +51,7 @@ class QfirstParser(Model):
         if predicate_indicator.size(0) != 1:
             raise ConfigurationError("QfirstParser must be run with a batch size of 1.")
 
-        beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size, self.min_beam_probability)
+        beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size, self.question_minimum_prob)
         beam_size = beam_log_probs.size(0)
         full_beam = []
         if beam_size > 0:
@@ -64,11 +66,13 @@ class QfirstParser(Model):
                     for n in self.slot_names
                 }
                 question = [question_slots[n] for n in self.slot_names]
+                answer_spans = [(s, p) for s, p in answerer_outputs["spans"][i]
+                                if p >= self.span_minimum_prob]
                 beam_entry_dict = {
                     "question": question,
                     "question_slots": question_slots,
                     "question_prob": math.exp(beam_log_probs[i]),
-                    "answer_spans": answerer_outputs["spans"][i],
+                    "answer_spans": answer_spans,
                     "invalidity_prob": answerer_outputs["invalid_prob"][i].item()
                 }
                 full_beam.append(beam_entry_dict)
@@ -107,7 +111,8 @@ class QfirstParser(Model):
         question_generator = Model.from_params(vocab, params.pop("question_generator"))
         question_answerer = Model.from_params(vocab, params.pop("question_answerer"))
         max_beam_size = params.pop("max_beam_size", 20)
-        min_beam_probability = params.pop("min_beam_probability", 0.01)
+        question_minimum_prob = params.pop("question_minimum_prob", 0.01)
+        span_minimum_prob = params.pop("span_minimum_prob", 0.01)
         metric_config = params.pop("metric", None)
         metric = None
         if metric_config is not None:
@@ -115,6 +120,7 @@ class QfirstParser(Model):
 
         return QfirstParser(vocab,
                             question_generator = question_generator, question_answerer = question_answerer,
-                            metric = metric,
                             max_beam_size = max_beam_size,
-                            min_beam_probability = min_beam_probability)
+                            question_minimum_prob = question_minimum_prob,
+                            span_minimum_prob = span_minimum_prob,
+                            metric = metric)

@@ -31,10 +31,12 @@ class AfirstParser(Model):
     def __init__(self, vocab: Vocabulary,
                  span_detector: SpanDetector,
                  question_predictor: QuestionPredictor,
+                 span_minimum_prob: float,
                  metric: AfirstBeamMetric):
         super(AfirstParser, self).__init__(vocab)
         self.span_detector = span_detector
         self.question_predictor = question_predictor
+        self.span_minimum_prob = span_minimum_prob
         self.metric = metric
 
     @overrides
@@ -50,7 +52,7 @@ class AfirstParser(Model):
 
         detected_span_outputs = self.span_detector.forward(text, predicate_indicator)
         detected_spans = self.span_detector.decode(detected_span_outputs)["spans"]
-        detected_spans = [[(s, p.item()) for s, p in batch_spans] for batch_spans in detected_spans]
+        detected_spans = [[(s, p.item()) for s, p in batch_spans if p >= self.span_minimum_prob] for batch_spans in detected_spans]
 
         batch_size = predicate_indicator.size(0)
         max_num_spans = max([len(instance_spans) for instance_spans in detected_spans])
@@ -85,9 +87,6 @@ class AfirstParser(Model):
             full_predictions.append(pred_qa_pairs)
 
         if annotations is not None: # we have gold datums
-            # annotations = annotations[0]
-            # num_answers_cpu = num_answers[0].cpu()
-            # num_invalids_cpu = num_invalids[0].cpu()
             batched_gold_qa_pairs = []
             for bi, instance_annotations in enumerate(annotations):
                 gold_qa_pairs = []
@@ -111,18 +110,6 @@ class AfirstParser(Model):
             if self.metric is not None:
                 for i in range(batch_size):
                     self.metric(batched_gold_qa_pairs[i], full_predictions[i], metadata[i])
-                    # sentence_tokens = metadata[i]["sent_text"].split()
-                    # print(metadata[i]["sent_text"])
-                    # print("\nGOLD:")
-                    # for gold_entry in batched_gold_qa_pairs[i]:
-                    #     print("\n" + " ".join(gold_entry["question"]))
-                    #     span_strings = [" ".join(sentence_tokens[span.start() : (span.end() + 1)]) for span in gold_entry["answer_spans"]]
-                    #     print("   " + "\n   ".join(span_strings))
-                    # print("\nPREDICTED:")
-                    # for entry in full_predictions[i]:
-                    #     print("\n" + " ".join(entry["question"]))
-                    #     span_strings = [" ".join(sentence_tokens[span.start() : (span.end() + 1)]) for span in entry["spans"]]
-                    #     print("   " + ("\n   ").join(span_strings))
 
         return {
             "full_predictions": full_predictions
@@ -136,6 +123,8 @@ class AfirstParser(Model):
         span_detector = Model.from_params(vocab, params.pop("span_detector"))
         question_predictor = Model.from_params(vocab, params.pop("question_predictor"))
         metric = AfirstBeamMetric.from_params(params.pop("metric"))
+        span_minimum_prob = params.pop("span_minimum_prob", 0.01)
         return AfirstParser(vocab,
                             span_detector = span_detector, question_predictor = question_predictor,
+                            span_minimum_prob = span_minimum_prob,
                             metric = metric)
