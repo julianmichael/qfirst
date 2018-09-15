@@ -17,14 +17,14 @@ object Main {
       "pred", metavar = "path", help = "Path to the directory of predictions."
     )
 
-    (goldPath, predPath).mapN(Metrics.main)
+    (goldPath, predPath).mapN(Run.main)
   }
 
   val runConsolidate = Opts.subcommand("consolidate", help = "Consolidate prediction file into nice data.") {
     val predPath = Opts.option[Path](
       "pred", metavar = "path", help = "Path to the directory of predictions."
     )
-    predPath.map(Consolidate.main)
+    predPath.map(_ => ()) // XXX Consolidate.main
   }
 
   val runMain = Command(
@@ -33,7 +33,7 @@ object Main {
   )(runMetrics orElse runConsolidate)
 
   def main(args: Array[String]): Unit = {
-    val result = mainCommand.parse(args) match {
+    val result = runMain.parse(args) match {
       case Left(help) => IO { System.err.println(help) }
       case Right(main) => IO { main }
     }

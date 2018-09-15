@@ -20,7 +20,7 @@ class PredictionSavingMetric(BeamMetric):
                  gold_qa_pairs,
                  full_beam,
                  metadata):
-        sentence_id = metadata.get("sentence_id") or metadata.get("sent_id"),
+        sentence_id = metadata.get("sentence_id") or metadata.get("sent_id")
         if sentence_id not in self._sentence_jsons:
             self._sentence_jsons[sentence_id] = {
                 "sentenceId": sentence_id,
