@@ -9,6 +9,8 @@ val thisScalaVersion = "2.12.6"
 val macroParadiseVersion = "2.1.0"
 val kindProjectorVersion = "0.9.4"
 
+val shapelessVersion = "2.3.3"
+
 // cats libs -- maintain version agreement or whatever
 val catsVersion = "1.1.0"
 val catsEffectVersion = "0.10.1"
@@ -35,14 +37,6 @@ val ammoniteOpsVersion = "1.1.2"
 // val scalajsJqueryVersion = "0.9.3"
 // val scalajsReactVersion = "1.1.0"
 // val scalajsScalaCSSVersion = "0.5.3"
-
-
-import $ivy.`org.typelevel::cats-core:1.1.0`
-import $ivy.`org.typelevel::kittens:1.1.1`
-import $ivy.`org.julianmichael::nlpdata:0.2.0`
-import $ivy.`org.julianmichael::qasrl:0.1.0`
-import $ivy.`org.julianmichael::qasrl-bank:0.1.0`
-import $ivy.`com.github.mpilquist::simulacrum:0.13.0`
 
 trait CommonModule extends ScalaModule with ScalafmtModule {
 
@@ -105,6 +99,7 @@ object qfirst extends CommonModule with JvmPlatform {
   def ivyDeps = super.ivyDeps() ++ Agg(
     ivy"org.typelevel::cats-core::$catsVersion",
     ivy"org.typelevel::cats-effect::$catsEffectVersion",
+    ivy"com.chuusai::shapeless::$shapelessVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
     ivy"com.github.mpilquist::simulacrum:$simulacrumVersion",
     ivy"org.julianmichael::nlpdata::$nlpdataVersion",

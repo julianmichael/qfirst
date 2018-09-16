@@ -21,6 +21,7 @@ object Metrics {
     )
 
     def collapseBuckets(keys: String*)(implicit M: Monoid[MetricData]): Bucketed[MetricData] = collapseBuckets(keys.toList)
+
     def collapseBuckets(keys: List[String])(implicit M: Monoid[MetricData]): Bucketed[MetricData] = Bucketed(
       data.toList.map {
         case (buckets, m) => keys.foldLeft(buckets)(_ - _) -> m
@@ -45,7 +46,7 @@ object Metrics {
       import cats.derived.auto.monoid._
       cats.derived.semi.monoid
     }
-    // TODO draw out the proportion calculation into a separate method so user can decide when to do it
+    // TODO perhaps draw out the proportion calculation into a separate method so user can decide when to do it
     implicit def bucketedHasMetrics[A : HasMetrics : Monoid]: HasMetrics[Bucketed[A]] = new HasMetrics[Bucketed[A]] {
       def getMetrics(ba: Bucketed[A]): MapTree[String, MetricValue] = {
         val collapsedMetrics = ba.collapsed.getMetrics
@@ -102,18 +103,52 @@ object Metrics {
     Chosen(params.map(p => p -> metric(p)(instance)).toMap)
   }
 
-  def choose[Param, Instance, MetricData](
-    choices: (Param, Instance => MetricData)*
-  ): (Instance => Chosen[Param, MetricData]) = (instance: Instance) => {
-    Chosen(choices.map { case (p, metric) => p -> metric(instance) }.toMap)
-  }
-
-  // TODO typed choice
+  // def choose[Param, Instance, MetricData](
+  //   choices: (Param, Instance => MetricData)*
+  // ): (Instance => Chosen[Param, MetricData]) = (instance: Instance) => {
+  //   Chosen(choices.map { case (p, metric) => p -> metric(instance) }.toMap)
+  // }
 
   def split[BigInstance, SmallInstance, MetricData: Monoid](
     splittingFn: BigInstance => List[SmallInstance])(
     metric: SmallInstance => MetricData
-  ): (BigInstance => MetricData) = (bigInstance: BigInstance) => {
+  ) = (bigInstance: BigInstance) => {
     splittingFn(bigInstance).foldMap(metric)
+  }
+
+  import shapeless.HList
+  import shapeless.::
+  import shapeless.HNil
+  import shapeless.Witness
+  import shapeless.labelled.field
+  import shapeless.labelled.FieldType
+
+  sealed trait InstanceMapper[Instance, Fn <: HList] {
+    type Out <: HList
+    def apply(fn: Fn): Instance => Out
+  }
+  object InstanceMapper {
+    type Aux[I, Fn <: HList, Out0 <: HList] = InstanceMapper[I, Fn] { type Out = Out0 }
+
+    implicit def hnilInstanceMapper[I]: Aux[I, HNil, HNil] =
+      new InstanceMapper[I, HNil] {
+        type Out = HNil
+        def apply(fn: HNil) = (i: I) => HNil
+      }
+
+    implicit def hconsInstanceMapper[I, O, K, Tail <: HList, TailOut <: HList](
+      implicit tailMapper: Aux[I, Tail, TailOut]
+    ): Aux[I, FieldType[K, I => O] :: Tail, FieldType[K, O] :: TailOut] =
+      new InstanceMapper[I, FieldType[K, I => O] :: Tail] {
+        type Out = FieldType[K, O] :: TailOut
+        def apply(fn: FieldType[K, I => O] :: Tail) = (i: I) => field[K](fn.head(i)) :: tailMapper(fn.tail)(i)
+    }
+  }
+
+  def hchoose[Instance, Mappers <: HList, Rec <: HList](
+    choices: Mappers)(
+    implicit instanceMapper: InstanceMapper.Aux[Instance, Mappers, Rec]
+  ): (Instance => Rec) = (instance: Instance) => {
+    instanceMapper(choices)(instance)
   }
 }

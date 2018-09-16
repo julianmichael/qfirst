@@ -74,6 +74,11 @@ sealed trait MapTree[A, B] {
 object MapTree {
   case class Fork[A, B](children: Map[A, MapTree[A, B]]) extends MapTree[A, B]
   case class Leaf[A, B](value: B) extends MapTree[A, B]
+
+  case class LeafBuilder[A] {
+    def apply[B](value: B): MapTree[A, B] = Leaf[A, B](value)
+  }
+  def leaf[A] = LeafBuilder[A]()
   def leaf[A, B](value: B): MapTree[A, B] = Leaf[A, B](value)
   def fork[A, B](children: Map[A, MapTree[A, B]]): MapTree[A, B] = Fork(children)
   def fork[A, B](children: (A, MapTree[A, B])*): MapTree[A, B] = Fork(children.toMap)
@@ -90,9 +95,13 @@ object MapTree {
       }
     }
 
+  // TODO: could replace SortQuery with a plain MapTree[K, V] => Option[S] and give general combinators
   type SortSpec[K, V, S] = List[SortQuery[K, V, S]]
   sealed trait SortQuery[K, V, S] {
     def getRepValue(mapTree: MapTree[K, V]): Option[S]
+    import SortQuery._
+    def ::(key: K): SortQuery[K, V, S] = Key(key, this)
+    def ::[S1](agg: List[S] => S1): SortQuery[K, V, S1] = Agg(agg, this)
   }
   object SortQuery {
     case class Value[K, V, S](f: V => S) extends SortQuery[K, V, S] {
@@ -110,14 +119,10 @@ object MapTree {
           .map(agg)
     }
 
-    def key[K, V, S](value: K)(rest: SortQuery[K, V, S]): SortQuery[K, V, S] = Key(value, rest)
-
     case class ValueBuilder[K]() {
       def apply[V, S](f: V => S): SortQuery[K, V, S] = Value[K, V, S](f)
     }
     def value[K] = ValueBuilder[K]()
-
-    def agg[K, V, S, S2](agg: List[S2] => S)(rest: SortQuery[K, V, S2]): SortQuery[K, V, S] = Agg(agg, rest)
   }
 
 }

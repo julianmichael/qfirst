@@ -3,6 +3,7 @@ package qfirst
 import cats.Functor
 import cats.Monoid
 import cats.Show
+import cats.data.Ior
 import cats.data.NonEmptyList
 import cats.implicits._
 
@@ -35,54 +36,18 @@ import qasrl.labeling.SlotBasedLabel
 
 import HasMetrics.ops._
 
-case class Thresholds(
-  questionThreshold: Double,
-  spanThreshold: Double,
-  invalidThreshold: Double,
-  shouldRemoveSpansBelowInvalidProb: Boolean
-) {
-  // val filterBeamNonoverlapping: BeamFilter = (fullVerb: VerbEntry, metadata: VerbPredictionMetadata) => {
-  val filterBeamNonoverlapping = (prediction: VerbPrediction) => {
-    def overlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
-      x.begin <= y.end && y.begin <= x.end
-    }
-    def hasOverlap(acc: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])], span: AnswerSpan) = {
-      val allAccSpans = acc.toList.flatMap(_._2._2).toSet
-      allAccSpans.exists(overlaps(_, span))
-    }
-    val initAcc = Map.empty[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
-    val predQAs = prediction.questions.toList.sortBy(-_.questionProb).foldLeft(initAcc) {
-      case (acc, qPrediction) =>
-        if(qPrediction.questionProb < questionThreshold) acc
-        else if(qPrediction.invalidProb > invalidThreshold) acc
-        else {
-          val goodSpans = qPrediction.answerSpans.collect {
-            case (span, prob) if prob >= spanThreshold &&
-                !hasOverlap(acc, span) &&
-                (!shouldRemoveSpansBelowInvalidProb || prob >= qPrediction.invalidProb) => span
-          }.toSet
-          if(goodSpans.isEmpty) acc
-          else {
-            val qString = qPrediction.questionSlots.renderQuestionString(prediction.verbInflectedForms)
-            acc + (qString -> (qPrediction.questionSlots, goodSpans))
-          }
-        }
-    }
-    predQAs
-  }
-}
-object Thresholds {
-  implicit def thresholdsShow: Show[Thresholds] = {
-    import cats.derived.auto.show._
-    cats.derived.semi.show
-  }
-}
 
 object Instances {
 
   case class SentenceInstance(
     gold: Sentence,
     pred: SentencePrediction
+  )
+
+  case class VerbInstance(
+    sentence: SentenceInstance,
+    gold: VerbEntry,
+    pred: VerbPrediction
   )
 
   val sentenceToVerbs = (sentence: SentenceInstance) => {
@@ -95,10 +60,11 @@ object Instances {
     }
   }
 
-  case class VerbInstance(
-    sentence: SentenceInstance,
-    gold: VerbEntry,
-    pred: VerbPrediction
+  case class QASetInstance(
+    verb: VerbInstance,
+    goldValid: Map[String, QuestionLabel],
+    goldInvalid: Map[String, QuestionLabel],
+    pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
   )
 
   def verbToQASet(
@@ -110,11 +76,10 @@ object Instances {
     QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
   }
 
-  case class QASetInstance(
-    verb: VerbInstance,
-    goldValid: Map[String, QuestionLabel],
-    goldInvalid: Map[String, QuestionLabel],
-    pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
+  case class QuestionInstance(
+    qas: QASetInstance,
+    string: String,
+    slots: SlotBasedLabel[VerbForm]
   )
 
   val qaSetToQuestions = (qas: QASetInstance) => {
@@ -129,11 +94,12 @@ object Instances {
     }
   }
 
-  case class QuestionInstance(
-    qas: QASetInstance,
-    string: String,
-    slots: SlotBasedLabel[VerbForm]
-  )
+  val getQuestionBoundedAcc = (question: QuestionInstance) => {
+    if(!question.qas.pred.contains(question.string)) BoundedAcc()
+    else if(question.qas.goldValid.contains(question.string)) BoundedAcc(correct = 1)
+    else if(question.qas.goldInvalid.contains(question.string)) BoundedAcc(incorrect = 1)
+    else BoundedAcc(uncertain = 1)
+  }
 
   val getQuestionConf = (question: QuestionInstance) => {
     val isPredicted = question.qas.pred.contains(question.string)
@@ -142,6 +108,149 @@ object Instances {
     else if(!isTrue && isPredicted) Conf(fp = 1)
     else if(!isTrue && !isPredicted) Conf(fn = 1)
     else Conf(tn = 1)
+  }
+
+  case class TemplateSlots(
+    wh: LowerCaseString,
+    hasSubj: Boolean,
+    isPassive: Boolean,
+    hasObj: Boolean,
+    prep: Option[LowerCaseString],
+    obj2: Option[LowerCaseString]
+  ) {
+    def toTemplateString = List(
+      Some(wh),
+      Option("something".lowerCase).filter(_ => hasSubj),
+      Some(if(isPassive) "verb[pss]" else "verb").map(_.lowerCase),
+      Option("something".lowerCase).filter(_ => hasObj),
+      prep,
+      obj2
+    ).flatten.mkString(" ")
+  }
+  object TemplateSlots {
+    def fromQuestionSlots(slots: SlotBasedLabel[VerbForm]) = TemplateSlots(
+      wh = if(slots.wh.toString == "who") "what".lowerCase else slots.wh,
+      hasSubj = slots.subj.nonEmpty,
+      isPassive = slots.verb == PastParticiple &&
+        slots.verbPrefix.map(_.toString).toSet.intersect(Set("be", "is", "was")).nonEmpty,
+      hasObj = slots.obj.nonEmpty,
+      prep = slots.prep,
+      obj2 = slots.obj2.map(_.toString.replaceAll("someone", "something").lowerCase)
+    )
+  }
+
+  // gold invalid doesn't make sense: because invalid questions
+  // may have been invalid due to tense issues or other things abstracted out by the template
+  case class QATemplateSetInstance(
+    qaSet: QASetInstance,
+    gold: Map[String, (TemplateSlots, Set[AnswerSpan])],
+    pred: Map[String, (TemplateSlots, Set[AnswerSpan])]
+  )
+
+  val qaSetToQATemplateSet = (qas: QASetInstance) => {
+    val goldTemplates = qas.goldValid.values.toList.map { qLabel =>
+      val templateSlots = TemplateSlots.fromQuestionSlots(qLabel.questionSlots)
+      val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+      templateSlots.toTemplateString -> (templateSlots, answerSpans)
+    }.groupBy(_._1).map { case (string, templateSets) =>
+        string -> (templateSets.head._2._1, templateSets.flatMap(_._2._2).toSet)
+    }
+    val predTemplates = qas.pred.values.map { case (slots, answerSpans) =>
+      val templateSlots = TemplateSlots.fromQuestionSlots(slots)
+      templateSlots.toTemplateString -> (templateSlots, answerSpans)
+    }.groupBy(_._1).map { case (string, templateSets) =>
+        string -> (templateSets.head._2._1, templateSets.flatMap(_._2._2).toSet)
+    }
+    QATemplateSetInstance(qas, goldTemplates, predTemplates)
+  }
+
+  case class QuestionTemplateInstance(
+    qaTemplates: QATemplateSetInstance,
+    string: String,
+    slots: TemplateSlots
+  )
+
+  val qaTemplateSetToQuestionTemplates = (qaTemplates: QATemplateSetInstance) => {
+    val allTemplateStrings = qaTemplates.gold.keySet ++ qaTemplates.pred.keySet
+    allTemplateStrings.toList.map { tString =>
+      val tSlots = qaTemplates.gold.get(tString).map(_._1).orElse {
+        qaTemplates.pred.get(tString).map(_._1)
+      }.get // should always work
+      QuestionTemplateInstance(qaTemplates, tString, tSlots)
+    }
+  }
+
+  val getQuestionTemplateConf = (template: QuestionTemplateInstance) => {
+    val isPredicted = template.qaTemplates.pred.contains(template.string)
+    val isTrue = isPredicted == template.qaTemplates.gold.contains(template.string)
+    if(isTrue && isPredicted) Conf(tp = 1)
+    else if(!isTrue && isPredicted) Conf(fp = 1)
+    else if(!isTrue && !isPredicted) Conf(fn = 1)
+    else Conf(tn = 1)
+  }
+
+  case class SpanSetInstance(
+    qaSet: QASetInstance,
+    gold: List[Set[AnswerSpan]],
+    pred: List[Set[AnswerSpan]]
+  )
+
+  val qaSetToSpanSet = (qaSet: QASetInstance) => {
+    val goldSpanSets = qaSet.goldValid.values.toList.map { qLabel =>
+      qLabel.answerJudgments.toList
+        .map(_.judgment)
+        .flatMap(_.getAnswer)
+        .map(_.spans)
+        .foldLeft(Set.empty[AnswerSpan])(_ union _)
+    }
+    val predSpanSets = qaSet.pred.values.toList.map(_._2)
+    SpanSetInstance(qaSet, goldSpanSets, predSpanSets)
+  }
+
+  // NOTE: does not do bipartite matching thing
+  val getSpanSetConf = (spanSet: SpanSetInstance) => {
+    case class SpanAlignment(
+      remainingPred: Set[Set[AnswerSpan]],
+      conf: Conf)
+    val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, Conf())) {
+      case (SpanAlignment(preds, conf), goldSpanSet) =>
+        preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
+          case None => (SpanAlignment(preds, conf |+| Conf(fn = 1)))
+          case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| Conf(tp = 1)))
+        }
+    }
+    alignment.conf |+| Conf(fp = alignment.remainingPred.size)
+  }
+
+  // left = predicted, right = gold
+  case class AlignedSpanInstance(
+    spanSet: SpanSetInstance,
+    alignment: List[Ior[Set[AnswerSpan], Set[AnswerSpan]]],
+    span: Ior[Set[AnswerSpan], Set[AnswerSpan]]
+  )
+
+  // NOTE: does not do bipartite matching thing
+  val spanSetToAlignedSpans = (spanSet: SpanSetInstance) => {
+    case class SpanAlignment(
+      alignedSpans: List[Ior[Set[AnswerSpan], Set[AnswerSpan]]],
+      remainingPred: Set[Set[AnswerSpan]])
+    val SpanAlignment(partialAlignment, unmatchedPreds) = spanSet.gold.foldLeft(SpanAlignment(Nil, spanSet.pred.toSet)) {
+      case (SpanAlignment(alignment, preds), goldSpanSet) =>
+        preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
+          case None => SpanAlignment(Ior.right(goldSpanSet) :: alignment, preds)
+          case Some(predSpanSet) => SpanAlignment(Ior.both(predSpanSet, goldSpanSet) :: alignment, preds - predSpanSet)
+        }
+    }
+    val alignment = unmatchedPreds.toList.map(Ior.left) ++ partialAlignment
+    alignment.map(AlignedSpanInstance(spanSet, alignment, _))
+  }
+
+  val getAlignedSpanConf = (alignedSpan: AlignedSpanInstance) => {
+    alignedSpan.span match {
+      case Ior.Left(_) => Conf(fp = 1)
+      case Ior.Right(_) => Conf(fn = 1)
+      case Ior.Both(_, _) => Conf(tp = 1)
+    }
   }
 
   def foldMapInstances[A: Monoid](
@@ -161,364 +270,65 @@ object Instances {
         }
     }
   }
-}
 
-object Bucketers {
+  object Bucketers {
 
-  import Instances._
-
-  val wh = (question: QuestionInstance) => {
-    question.slots.wh.toString
-  }
-
-  val prep = (question: QuestionInstance) => {
-    question.slots.prep.fold("_")(_.toString)
-  }
-
-  object Mappers {
-    val prepIsPresent = (x: String) => if(x != "none") "yes" else "no"
-    val whAdv = (x: String) => if(x == "who" || x == "what") "who/what" else "adv"
-  }
-
-  // object Templated {
-  //   val wh = (instance: TemplatedQuestionInstance) => {
-  //     instance.thisQuestionSlots(0)
-  //   }
-
-  //   val prep = (instance: TemplatedQuestionInstance) => {
-  //     instance.thisQuestionSlots(4)
-  //   }
-  // }
-}
-
-object Run {
-
-  // import io.circe.Error
-  import ammonite.ops._
-
-  def readPredictions(path: java.nio.file.Path) = {
-    import io.circe.jawn
-    read.lines(Path(path, pwd)).toList
-      .traverse(jawn.decode[SentencePrediction])
-      .map(_.map(pred => pred.sentenceId -> pred).toMap)
-  }
-
-  // @main
-  def main(goldFile: java.nio.file.Path, predFile: java.nio.file.Path) = {
-    val filterGold = (verb: VerbEntry) => {
-      val (invalids, valids) = verb.questionLabels.toList.flatMap {
-        case (questionString, qLabel) =>
-          val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-          val numInvalid = judgments.filter(_.isInvalid).size
-          val numAnswers = judgments.size
-          if(numAnswers >= 3) {
-            if(numInvalid == 0) Some(Right(questionString -> qLabel))
-            else Some(Left(questionString -> qLabel))
-          } else None
-      }.separate
-      invalids.toMap -> valids.toMap
-    }
-    val questionBucketers = Map(
-      // "wh" -> Bucketers.wh,
-      "prep" -> Bucketers.prep
-    )
-    // val templateBucketers = Map(
-    //   "wh" -> Bucketers.Templated.wh,
-    //   "prep" -> Bucketers.Templated.prep,
-    //   )
-    val predThresholds = Thresholds(
-      questionThreshold = 0.1,
-      spanThreshold = 0.5,
-      invalidThreshold = 0.9,
-      shouldRemoveSpansBelowInvalidProb = true)
-    val computeMetrics = {
-      import qfirst.{Instances => I}
-      import qfirst.{Metrics => M}
-      // val M = Metrics
-      M.split(I.sentenceToVerbs) {
-        I.verbToQASet(filterGold, predThresholds.filterBeamNonoverlapping) andThen
-        M.choose {
-          "full question" -> M.split(I.qaSetToQuestions) {
-            M.bucket(questionBucketers) {
-              I.getQuestionConf
-            }
-          }
-        }
+    def evalBucketBounds(
+      unsortedBounds: NonEmptyList[Int])(
+      value: Int
+    ) = {
+      val bounds = unsortedBounds.sorted
+      if(value <= bounds.head) s"<=${bounds.head}"
+      else bounds.toList.sliding(2).find(g => value > g(0) && value <= g(1)) match {
+        case Some(g) => s"${g(0) + 1}-${g(1)}"
+        case None => s">${bounds.last}"
       }
-      // Metrics.choose(List(predThresholds)) { (thresholds: Thresholds) =>
-      //   getFilteredInstance(thresholds) andThen
-      //   Metrics.choose(
-      //     // "span" -> Metrics.bucket(Map.empty[String, Instance => String]) { // TODO heterogeneous choose
-      //     //   (getSpanSetInstance andThen getSpanConf)
-      //     // },
-      //     "full question" ->
-      //       Metrics.split(getQuestionInstances) {
-      //           getQuestionConf
-      //       },
-      //     // "question template" ->
-      //     //   Metrics.split(getTemplatedQuestionInstances) {
-      //     //     Metrics.bucket(templateBucketers) {
-      //     //       getTemplatedQuestionConf
-      //     //     }
-      //     //   }
-      //   )
-      // }
     }
-    val sortSpec = {
-      import MapTree._
-      import SortQuery._
-      import MetricValue._
-      val getMetricDouble = (mv: MetricValue) => mv match {
-        case MetricInt(x) => x.toDouble
-        case MetricDouble(x) => x
-        case MetricIntOfTotal(x, _) => x.toDouble
-      }
-      List(
-        key("num gold") {
-          value[String](getMetricDouble)
-        }
+
+    def verbFreq(
+      getFreq: LowerCaseString => Int,
+      bounds: NonEmptyList[Int]
+    ) = (verb: VerbInstance) => {
+      val freq = getFreq(verb.gold.verbInflectedForms.stem)
+      evalBucketBounds(bounds)(freq)
+    }
+
+    def goldDepLength(bounds: NonEmptyList[Int]) = (alignedSpan: AlignedSpanInstance) => {
+      alignedSpan.span.right.fold("n/a")(
+        _.flatMap(s => List(s.begin, s.end - 1))
+          .map(_ - alignedSpan.spanSet.qaSet.verb.gold.verbIndex)
+          .map(math.abs).min <| evalBucketBounds(bounds)
       )
     }
 
-    val gold = Data.readDataset(goldFile)
-    val predEither = readPredictions(predFile)
-    predEither match {
-      case Left(error) => System.err.println(error)
-      case Right(pred) =>
-        val rawResult = Instances.foldMapInstances(gold, pred)(computeMetrics)
-        val result = rawResult
-        println(result.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec))
+    def predDepLength(bounds: NonEmptyList[Int]) = (alignedSpan: AlignedSpanInstance) => {
+      alignedSpan.span.left.fold("n/a")(
+        _.flatMap(s => List(s.begin, s.end - 1))
+          .map(_ - alignedSpan.spanSet.qaSet.verb.gold.verbIndex)
+          .map(math.abs).min <| evalBucketBounds(bounds)
+      )
     }
 
-    // take initial params, maxes, etc.
-    // println(result.getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(metrics
-    //           .collapseBuckets("wh")
-    //           .all.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(metrics
-    //           .collapseBuckets("prep")
-    //           .all.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("prep")
-    //             // .filter(_.numGold >= 50)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println(result.map(b =>
-    //           b.mapBucketValues("prep", Bucketers.Mappers.prepIsPresent)
-    //             .mapBucketValues("wh", Bucketers.Mappers.whAdv)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("prep")
-    //             .mapBucketValues("wh", Bucketers.Mappers.whAdv)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("wh")
-    //             .mapBucketValues("prep", Bucketers.Mappers.prepIsPresent)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    println("================================")
+    val wh = (question: QuestionInstance) => {
+      question.slots.wh.toString
+    }
+
+    val prep = (question: QuestionInstance) => {
+      question.slots.prep.fold("_")(_.toString)
+    }
+
+    object Mappers {
+      val prepIsPresent = (x: String) => if(x != "none") "yes" else "no"
+      val whAdv = (x: String) => if(x == "who" || x == "what") "who/what" else "adv"
+    }
+
+    object Templated {
+      val wh = (template: QuestionTemplateInstance) => {
+        template.slots.wh.toString
+      }
+      val prep = (template: QuestionTemplateInstance) => {
+        template.slots.prep.fold("_")(_.toString)
+      }
+    }
   }
 }
-
-// case class TemplatedQuestionInstance(
-//   goldValidQuestions: Set[String],
-//   goldInvalidQuestions: Set[String],
-//   predQuestions: Set[String],
-//   thisQuestion: String,
-//   thisQuestionSlots: List[String]
-// )
-
-// case class SpanSetInstance(
-//   verbIndex: Int,
-//   goldSpanSets: List[Set[AnswerSpan]],
-//   predSpanSets: List[Set[AnswerSpan]]
-// )
-
-// TODO for dependency length calculation
-// case class AlignedSpanSetInstance(
-//   verbIndex: Int,
-//   alignedSpanSets: List[(Set[AnswerSpan], Set[AnswerSpan])],
-//   goldOnlySpanSets: List[Set[AnswerSpan]],
-//   predOnlySpanSets: List[Set[AnswerSpan]],
-//   thisSpanSet: Ior[Set[AnswerSpan], Set[AnswerSpan]]
-// )
-
-// val getSpanSetInstance = (instance: Instance) => {
-//   val goldSpanSets = instance.goldVerb.questionLabels.toList.flatMap {
-//     case (questionString, qLabel) =>
-//       val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-//       val numInvalid = judgments.filter(_.isInvalid).size
-//       if(instance.goldThreshold(numInvalid, judgments.size)) Some(
-//         judgments.flatMap(_.getAnswer).map(_.spans).foldLeft(Set.empty[AnswerSpan])(_ union _)
-//       )
-//       else None
-//   }
-//   val predSpanSets = instance.predVerb.verbEntry.questionLabels.values.toList
-//     .map(_.answerJudgments.flatMap(_.judgment.getAnswer).map(_.spans).foldLeft(Set.empty[AnswerSpan])(_ union _)) ++
-//     instance.predVerb.badQAs.toList.map(_._2._2)
-//   SpanSetInstance(instance.goldVerb.verbIndex, goldSpanSets, predSpanSets)
-// }
-
-// NOTE: does not do bipartite matching thing
-// val getSpanConf = (instance: SpanSetInstance) => {
-//   case class SpanAlignment(
-//     remainingPred: Set[Set[AnswerSpan]],
-//     conf: Conf)
-//   val alignment = instance.goldSpanSets.foldLeft(SpanAlignment(instance.predSpanSets.toSet, Conf())) {
-//     case (SpanAlignment(preds, conf), goldSpanSet) =>
-//       preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
-//         case None => (SpanAlignment(preds, conf |+| Conf(fn = 1)))
-//         case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| Conf(tp = 1)))
-//       }
-//   }
-//   alignment.conf |+| Conf(fp = alignment.remainingPred.size)
-// }
-
-// val getQuestionInstances = (instance: Instance) => {
-//   val (goldInvalidQuestionStringsList, goldValidQuestionStringsList) = instance.goldVerb.questionLabels.toList.map {
-//     case (questionString, qLabel) =>
-//       val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-//       val numInvalid = judgments.filter(_.isInvalid).size
-//       if(instance.goldThreshold(numInvalid, judgments.size)) Right(questionString)
-//       else Left(questionString)
-//   }.separate
-//   val goldValidQuestionStrings = goldValidQuestionStringsList.toSet
-//   val goldInvalidQuestionStrings = goldInvalidQuestionStringsList.toSet
-//   val predQuestionStrings = instance.predVerb.verbEntry.questionLabels.keySet ++ instance.predVerb.badQAs.keySet
-
-//   (goldInvalidQuestionStrings ++ goldValidQuestionStrings ++ predQuestionStrings).toList.map { thisQuestion =>
-//     val thisQuestionSlots = instance.goldVerb.questionLabels.get(thisQuestion).map(_.questionSlots).orElse {
-//       instance.predVerb.verbEntry.questionLabels.get(thisQuestion).map(_.questionSlots).orElse {
-//         instance.predVerb.badQAs.get(thisQuestion).map(_._1)
-//       }
-//     }.get
-//     QuestionInstance(
-//       goldValidQuestionStrings,
-//       goldInvalidQuestionStrings,
-//       predQuestionStrings,
-//       thisQuestion,
-//       thisQuestionSlots
-//     )
-//   }
-// }
-
-// def abstractNoun(slot: LowerCaseString): String = {
-//   if(slot.toString == "who") "what"
-//   else if(slot.toString == "someone") "something"
-//   else slot.toString
-// }
-// def getTemplateTokensFromLabel(questionLabel: QuestionLabel) = {
-//   val slots = questionLabel.questionSlots
-//   List(
-//     abstractNoun(slots.wh),
-//     slots.subj.fold("_")(abstractNoun),
-//     if(questionLabel.isPassive) "verb[pss]" else "verb",
-//     slots.obj.fold("_")(abstractNoun),
-//     slots.prep.fold("_")(_.toString),
-//     slots.obj2.fold("_")(abstractNoun)
-//   )
-// }
-// def getTemplateTokensFromSlots(slots: SlotBasedLabel[VerbForm]) = {
-//   val isPassive = slots.verb == PastParticiple &&
-//     slots.verbPrefix.map(_.toString).toSet.intersect(Set("be", "is", "was")).nonEmpty
-//   List(
-//     abstractNoun(slots.wh),
-//     slots.subj.fold("_")(abstractNoun),
-//     if(isPassive) "verb[pss]" else "verb",
-//     slots.obj.fold("_")(abstractNoun),
-//     slots.prep.fold("_")(_.toString),
-//     slots.obj2.fold("_")(abstractNoun)
-//   )
-// }
-
-// val getTemplatedQuestionInstances = (instance: Instance) => {
-//   def getTemplateString(templateTokens: List[String]) = Text.render(templateTokens.map(_.trim).filter(s => s.nonEmpty && s != "_"))
-//   val (goldInvalidTemplateTokensList, goldValidTemplateTokensList) = instance.goldVerb.questionLabels.toList.map {
-//     case (questionString, qLabel) =>
-//       val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-//       val numInvalid = judgments.filter(_.isInvalid).size
-//       if(instance.goldThreshold(numInvalid, judgments.size)) Right(getTemplateTokensFromLabel(qLabel))
-//       else Left(getTemplateTokensFromLabel(qLabel))
-//   }.separate
-//   val goldValidTemplateTokens = goldValidTemplateTokensList.toSet
-//   val goldInvalidTemplateTokens = goldInvalidTemplateTokensList.toSet
-//   val predTemplateTokens = instance.predVerb.verbEntry.questionLabels.values.map(getTemplateTokensFromLabel).toSet ++
-//     instance.predVerb.badQAs.values.toList.map(_._1).map(getTemplateTokensFromSlots).toSet
-//   val goldValidTemplateStrings = goldValidTemplateTokens.map(getTemplateString)
-//   val goldInvalidTemplateStrings = goldInvalidTemplateTokens.map(getTemplateString)
-//   val predTemplateStrings = predTemplateTokens.map(getTemplateString)
-
-//   val templateStringAndTokenPairs = (goldValidTemplateTokens ++ goldInvalidTemplateTokens ++ predTemplateTokens)
-//     .groupBy(getTemplateString)
-//     .map { case (templateString, tokenLists) => templateString -> tokenLists.head }
-
-//   templateStringAndTokenPairs.toList.map { case (templateString, templateTokens) =>
-//     TemplatedQuestionInstance(
-//       goldValidQuestions = goldValidTemplateStrings,
-//       goldInvalidQuestions = goldInvalidTemplateStrings,
-//       predQuestions = predTemplateStrings,
-//       thisQuestion = templateString,
-//       thisQuestionSlots = templateTokens
-//     )
-//   }
-// }
-
-// val getQuestionConf = (instance: QuestionInstance) => {
-//   val isPredicted = instance.predQuestions.contains(instance.thisQuestion)
-//   val isTrue = isPredicted == instance.goldValidQuestions.contains(instance.thisQuestion)
-//   if(isTrue && isPredicted) Conf(tp = 1)
-//   else if(!isTrue && isPredicted) Conf(fp = 1)
-//   else if(!isTrue && !isPredicted) Conf(fn = 1)
-//   else Conf(tn = 1)
-// }
-
-// val getTemplatedQuestionConf = (instance: TemplatedQuestionInstance) => {
-//   val isPredicted = instance.predQuestions.contains(instance.thisQuestion)
-//   val isTrue = isPredicted == instance.goldValidQuestions.contains(instance.thisQuestion)
-//   if(isTrue && isPredicted) Conf(tp = 1)
-//   else if(!isTrue && isPredicted) Conf(fp = 1)
-//   else if(!isTrue && !isPredicted) Conf(fn = 1)
-//   else Conf(tn = 1)
-// }
-
-// def computeDenseMetricsForInstance(
-//   instance: Instance
-// ): DenseMetrics = {
-//   // case class BoundedAcc(
-//   //   numValidReferences: Int,
-//   //   numInvalidReferences: Int,
-//   //   numCorrect: Int,
-//   //   numIncorrect: Int,
-//   //   numUncertain: Int
-//   // ) {
-
-//   val questionAcc = {
-//     val goldQuestionLabelOpt = instance.goldVerb.questionLabels.get(instance.questionString)
-//     val isQuestionCertain = goldQuestionLabelOpt.exists(l => l.answerJudgments.size)
-//     val isValid = instance.goldVerb.questionLabels.get(instance.questionString).exists { qLabel =>
-//       val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-//       val numInvalid = judgments.filter(_.isInvalid).size
-//       instance.goldThreshold(numInvalid, judgments.size)
-//     }
-//     val isPredicted = instance.predVerb.verbEntry.questionLabels.contains(instance.questionString) ||
-//       instance.predVerb.badQAs.contains(instance.questionString)
-//     val isTrue = isValid == isPredicted
-//   }
-//   DenseMetrics(full = BaseDenseMetrics(questionAcc))
-// }
-
-// def getFilteredInstance = (thresholds: Thresholds) => (instance: UnfilteredInstance) => {
-//   val filteredVerbPrediction = thresholds.filterBeamNonoverlapping(instance.predVerbGoodQuestions, instance.predVerbMetadata)
-//   val filteredInstance = Instance(
-//     instance.goldThreshold,
-//     instance.goldSentence,
-//     instance.goldVerb,
-//     instance.predSentence,
-//     filteredVerbPrediction
-//   )
-//   filteredInstance
-// }
-

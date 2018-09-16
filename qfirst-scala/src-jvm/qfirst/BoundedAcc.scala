@@ -1,24 +1,29 @@
 package qfirst
 
+import cats.Monoid
+import cats.implicits._
+
 case class BoundedAcc(
-  numValidReferences: Int,
-  numInvalidReferences: Int,
-  numCorrect: Int,
-  numIncorrect: Int,
-  numUncertain: Int
+  correct: Int = 0,
+  incorrect: Int = 0,
+  uncertain: Int = 0
 ) {
-  def numPredicted = numCorrect + numIncorrect + numUncertain
-  def accuracyLowerBound = numCorrect.toDouble / numPredicted
-  def accuracyUpperBound = (numCorrect + numUncertain).toDouble / numPredicted
+  def predicted = correct + incorrect + uncertain
+  def accuracyLowerBound = correct.toDouble / predicted
+  def accuracyUpperBound = (correct + uncertain).toDouble / predicted
 
   def allStats: MapTree[String, MetricValue] = MapTree.fromPairs(
-    "num valid refs" -> MetricValue(numValidReferences),
-    "num invalid refs" -> MetricValue(numInvalidReferences),
-    "num predicted" -> MetricValue(numPredicted),
+    "num predicted" -> MetricValue(predicted),
     "acc-lb" -> MetricValue(accuracyLowerBound),
     "acc-ub" -> MetricValue(accuracyUpperBound)
   )
 }
 object BoundedAcc {
-  // TODO monoid
+  implicit val boundedAccMonoid: Monoid[BoundedAcc] = {
+    import cats.derived.auto.monoid._
+    cats.derived.semi.monoid
+  }
+  implicit val boundedAccHasMetrics = new HasMetrics[BoundedAcc] {
+    def getMetrics(bacc: BoundedAcc) = bacc.allStats
+  }
 }

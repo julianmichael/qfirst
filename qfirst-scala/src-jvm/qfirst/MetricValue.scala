@@ -16,4 +16,16 @@ object MetricValue {
   def apply(value: Int): MetricValue = MetricInt(value)
   def apply(value: Double): MetricValue = MetricDouble(value)
   def apply(value: Int, total: Int): MetricValue = MetricIntOfTotal(value, total)
+
+  implicit val intHasMetricValueMapTree: HasMapTree[MetricValue, Int] =
+    new HasMapTree[MetricValue, Int] {
+      def getMapTree(i: Int): MapTree[String, MetricValue] =
+        MapTree.Leaf[String](MetricInt(i))
+    }
+
+  implicit val intHasMetricValueMapTree: HasMapTree[MetricValue, Double] =
+    new HasMapTree[MetricValue, Double] {
+      def getMapTree(i: Double): MapTree[String, MetricValue] =
+        MapTree.Leaf[String](MetricDouble(i))
+    }
 }
