@@ -42,7 +42,7 @@ def main(model_path: str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Output a model's full (unfiltered, scored) predictions to a file.")
     parser.add_argument('--model', type=str)
-    parser.add_argument('--beam', type=float)
+    parser.add_argument('--beam', type=int)
     parser.add_argument('--question_threshold', type=float)
     parser.add_argument('--span_threshold', type=float)
     parser.add_argument('--out', type=str)

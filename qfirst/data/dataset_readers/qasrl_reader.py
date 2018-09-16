@@ -94,9 +94,11 @@ class QasrlReader(DatasetReader):
                     self._num_verbs += 1
                     if self._instance_type == "verb":
                         if len(question_labels) != 0:
+                            self._num_instances += 1
                             yield self._make_gold_verb_instance(sentence_id, sentence_tokens, verb_index, verb_inflected_forms, question_labels)
                     elif self._instance_type == "question":
                         for l in question_labels:
+                            self._num_instances += 1
                             yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
 
                     # each item in question_labels includes info for one question and all of its answer judgments

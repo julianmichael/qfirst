@@ -33,7 +33,7 @@ class PredictionSavingMetric(BeamMetric):
             "questions": [{
                 "questionSlots": beam_entry["question_slots"],
                 "questionProb": beam_entry.get("question_prob") or 1.0,
-                "invalidProb": beam_entry.get("invalid_prob") or 0.0,
+                "invalidProb": beam_entry.get("invalidity_prob") or 0.0,
                 "answerSpans": [((s.start(), s.end() + 1), p)
                                 for s, p in beam_entry["answer_spans"]]
             } for beam_entry in full_beam]
