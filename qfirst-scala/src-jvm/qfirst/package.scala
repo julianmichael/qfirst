@@ -34,7 +34,7 @@ package object qfirst {
     }
 
   trait RecordHasMetrics[R <: HList] {
-    def apply(r: R): List[(String, MapTree[String, MetricValue])]
+    def apply(r: R): List[(String, MapTree[String, Metric])]
   }
   object RecordHasMetrics {
     implicit def hnilHasMetrics: RecordHasMetrics[HNil] =
@@ -51,7 +51,7 @@ package object qfirst {
       }
   }
   implicit def recordHasMetrics[R <: HList](implicit recordHasMetrics: RecordHasMetrics[R]): HasMetrics[R] = new HasMetrics[R] {
-    def getMetrics(rec: R): MapTree[String, MetricValue] = {
+    def getMetrics(rec: R): MapTree[String, Metric] = {
       MapTree.fork(recordHasMetrics(rec).toMap)
     }
   }

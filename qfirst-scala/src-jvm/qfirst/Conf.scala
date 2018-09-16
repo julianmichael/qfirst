@@ -25,12 +25,12 @@ case class Conf(
     2 * (precision * recall) / (precision + recall)
   } else 0.0
 
-  def allStats: MapTree[String, MetricValue] = MapTree.fromPairs(
-    "num gold" -> MetricValue(numGold),
-    "num predicted" -> MetricValue(numPredicted),
-    "precision" -> MetricValue(precision),
-    "recall" -> MetricValue(recall),
-    "f1" -> MetricValue(f1)
+  def allStats: MapTree[String, Metric] = MapTree.fromPairs(
+    "num gold" -> Metric.int(numGold),
+    "num predicted" -> Metric.int(numPredicted),
+    "precision" -> Metric.double(precision),
+    "recall" -> Metric.double(recall),
+    "f1" -> Metric.double(f1)
   )
 }
 object Conf {

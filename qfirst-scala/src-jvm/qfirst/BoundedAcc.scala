@@ -12,10 +12,10 @@ case class BoundedAcc(
   def accuracyLowerBound = correct.toDouble / predicted
   def accuracyUpperBound = (correct + uncertain).toDouble / predicted
 
-  def allStats: MapTree[String, MetricValue] = MapTree.fromPairs(
-    "num predicted" -> MetricValue(predicted),
-    "acc-lb" -> MetricValue(accuracyLowerBound),
-    "acc-ub" -> MetricValue(accuracyUpperBound)
+  def allStats: MapTree[String, Metric] = MapTree.fromPairs(
+    "num predicted" -> Metric.int(predicted),
+    "acc-lb" -> Metric.double(accuracyLowerBound),
+    "acc-ub" -> Metric.double(accuracyUpperBound)
   )
 }
 object BoundedAcc {

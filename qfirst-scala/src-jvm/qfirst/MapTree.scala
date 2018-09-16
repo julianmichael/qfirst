@@ -75,7 +75,7 @@ object MapTree {
   case class Fork[A, B](children: Map[A, MapTree[A, B]]) extends MapTree[A, B]
   case class Leaf[A, B](value: B) extends MapTree[A, B]
 
-  case class LeafBuilder[A] {
+  case class LeafBuilder[A]() {
     def apply[B](value: B): MapTree[A, B] = Leaf[A, B](value)
   }
   def leaf[A] = LeafBuilder[A]()

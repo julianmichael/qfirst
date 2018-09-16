@@ -21,7 +21,7 @@ val qasrlBankVersion = "0.1.0"
 val circeVersion = "0.9.3"
 val declineVersion = "0.4.2"
 val simulacrumVersion = "0.13.0"
-  // val monocleVersion = "1.5.1-cats"
+val monocleVersion = "1.5.1-cats"
 
 // val catsEffectVersion = "0.10.1"
 // val radhocVersion = "0.1.0"
@@ -102,6 +102,9 @@ object qfirst extends CommonModule with JvmPlatform {
     ivy"com.chuusai::shapeless::$shapelessVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
     ivy"com.github.mpilquist::simulacrum:$simulacrumVersion",
+    ivy"com.github.julien-truffaut::monocle-core::$monocleVersion",
+    ivy"com.github.julien-truffaut::monocle-macro::$monocleVersion",
+    ivy"com.github.julien-truffaut::monocle-generic::$monocleVersion",
     ivy"org.julianmichael::nlpdata::$nlpdataVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank::$qasrlBankVersion",
@@ -110,8 +113,6 @@ object qfirst extends CommonModule with JvmPlatform {
     ivy"io.circe::circe-generic::$circeVersion",
     ivy"com.monovore::decline::$declineVersion",
     ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion"
-    // ivy"com.github.julien-truffaut::monocle-core::$monocleVersion",
-    // ivy"com.github.julien-truffaut::monocle-macro::$monocleVersion",
   )
 
   // def generateDev(port: Int, domain: String = "localhost") = T.command {

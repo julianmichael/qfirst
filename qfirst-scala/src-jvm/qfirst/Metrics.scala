@@ -1,9 +1,14 @@
 package qfirst
 
+import cats.Applicative
 import cats.Functor
+import cats.Eval
 import cats.Monoid
 import cats.Show
+import cats.Traverse
 import cats.implicits._
+
+import monocle.function.Each
 
 import HasMetrics.ops._
 
@@ -37,10 +42,12 @@ object Metrics {
     def collapsed(implicit M : Monoid[MetricData]) = data.values.toList.combineAll
   }
   object Bucketed {
-    implicit val bucketedFunctor: Functor[Bucketed] = new Functor[Bucketed] {
-      def map[A, B](fa: Bucketed[A])(f: A => B): Bucketed[B] = Bucketed(
-        fa.data.map { case (k, v) => k -> f(v) }
-      )
+    implicit val bucketedTraverse: Traverse[Bucketed] = new Traverse[Bucketed] {
+      def traverse[G[_]: Applicative, A, B](fa: Bucketed[A])(f: A => G[B]): G[Bucketed[B]] = {
+        fa.data.toList.traverse { case (bucket, value) => f(value).map(bucket -> _) }.map(l => Bucketed(l.toMap))
+      }
+      def foldLeft[A, B](fa: Bucketed[A], b: B)(f: (B, A) => B): B = fa.data.values.foldLeft(b)(f)
+      def foldRight[A, B](fa: Bucketed[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = fa.data.values.foldRight(lb)(f)
     }
     implicit def bucketedMonoid[A : Monoid]: Monoid[Bucketed[A]] = {
       import cats.derived.auto.monoid._
@@ -48,10 +55,10 @@ object Metrics {
     }
     // TODO perhaps draw out the proportion calculation into a separate method so user can decide when to do it
     implicit def bucketedHasMetrics[A : HasMetrics : Monoid]: HasMetrics[Bucketed[A]] = new HasMetrics[Bucketed[A]] {
-      def getMetrics(ba: Bucketed[A]): MapTree[String, MetricValue] = {
+      def getMetrics(ba: Bucketed[A]): MapTree[String, Metric] = {
         val collapsedMetrics = ba.collapsed.getMetrics
-        val computeIntsOfTotal = (x: MetricValue, y: MetricValue) => (x, y) match {
-          case (MetricValue.MetricInt(xi), MetricValue.MetricInt(yi)) => MetricValue.MetricIntOfTotal(xi, yi)
+        val computeIntsOfTotal = (x: Metric, y: Metric) => (x, y) match {
+          case (Metric.MetricInt(xi), Metric.MetricInt(yi)) => Metric.intOfTotal(xi, yi)
           case (x, _) => x
         }
         MapTree.fork(
@@ -62,6 +69,7 @@ object Metrics {
         )
       }
     }
+    implicit def bucketedEach[A] = Each.fromTraverse[Bucketed, A]
   }
 
   def bucket[Instance, MetricData](
@@ -74,19 +82,28 @@ object Metrics {
 
   case class Chosen[Param, MetricData](
     data: Map[Param, MetricData]
-  )
+  ) {
+    // TODO TraverseFilter
+    def filter(p: MetricData => Boolean) = Chosen(data.collect { case (k, v) if p(v) => k -> v })
+    def maxBy[O](f: MetricData => O)(implicit o: Ordering[O]) = {
+      if(data.nonEmpty) Some(data.toList.maxBy(p => f(p._2)))
+      else None
+    }
+  }
   object Chosen {
-    implicit def chosenFunctor[Param]: Functor[Chosen[Param, ?]] = new Functor[Chosen[Param, ?]] {
-      def map[A, B](fa: Chosen[Param, A])(f: A => B): Chosen[Param, B] = Chosen(
-        fa.data.map { case (k, v) => k -> f(v) }
-      )
+    implicit def chosenTraverse[Param]: Traverse[Chosen[Param, ?]] = new Traverse[Chosen[Param, ?]] {
+      def traverse[G[_]: Applicative, A, B](fa: Chosen[Param, A])(f: A => G[B]): G[Chosen[Param, B]] = {
+        fa.data.toList.traverse { case (param, value) => f(value).map(param -> _) }.map(l => Chosen(l.toMap))
+      }
+      def foldLeft[A, B](fa: Chosen[Param, A], b: B)(f: (B, A) => B): B = fa.data.values.foldLeft(b)(f)
+      def foldRight[A, B](fa: Chosen[Param, A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = fa.data.values.foldRight(lb)(f)
     }
     implicit def chosenMonoid[Param, A: Monoid]: Monoid[Chosen[Param, A]] = {
       import cats.derived.auto.monoid._
       cats.derived.semi.monoid
     }
     implicit def chosenHasMetrics[Param: Show, A: HasMetrics]: HasMetrics[Chosen[Param, A]] = new HasMetrics[Chosen[Param, A]] {
-      def getMetrics(ba: Chosen[Param, A]): MapTree[String, MetricValue] = {
+      def getMetrics(ba: Chosen[Param, A]): MapTree[String, Metric] = {
         MapTree.fork(
           ba.data.map { case (param, bucketData) =>
             param.show -> bucketData.getMetrics
@@ -94,6 +111,7 @@ object Metrics {
         )
       }
     }
+    implicit def chosenEach[Param, A] = Each.fromTraverse[Chosen[Param, ?], A]
   }
 
   def choose[Param, Instance, MetricData](
@@ -150,5 +168,15 @@ object Metrics {
     implicit instanceMapper: InstanceMapper.Aux[Instance, Mappers, Rec]
   ): (Instance => Rec) = (instance: Instance) => {
     instanceMapper(choices)(instance)
+  }
+
+  import shapeless.Generic
+
+  def hchoose[Instance, P <: Product, Mappers <: HList, Rec <: HList](
+    choices: P)(
+    implicit gen: Generic.Aux[P, Mappers],
+    instanceMapper: InstanceMapper.Aux[Instance, Mappers, Rec]
+  ): (Instance => Rec) = (instance: Instance) => {
+    instanceMapper(gen.to(choices))(instance)
   }
 }

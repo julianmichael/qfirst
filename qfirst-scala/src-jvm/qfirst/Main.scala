@@ -52,30 +52,31 @@ object Main {
     // "pred-dep-len" -> Bucketers.predDepLength(NonEmptyList.of(1, 2, 3, 5, 8, 12, 18, 27))
   )
 
-
   val sortSpec = {
-    import MetricValue._
+    import Metric._
     import MapTree.SortQuery._
     val double = value[String](
-      (mv: MetricValue) => mv match {
+      (mv: Metric) => mv match {
         case MetricInt(x) => x.toDouble
         case MetricDouble(x) => x
         case MetricIntOfTotal(x, _) => x.toDouble
       }
     )
     List(
-      "full question" :: "f1" :: double
+      "full question" :: "f1" :: double,
+      "full question" :: "acc-lb" :: double
     )
   }
 
-  val filterPred = BeamFilter(
-    questionThreshold = 0.1,
-    spanThreshold = 0.5,
-    invalidThreshold = 0.9,
-    shouldRemoveSpansBelowInvalidProb = true)
+  val allQFirstFilters = for {
+    qThresh <- (1 to 10).map(_ / 1000.0).toList ++ (1 to 50 by 2).map(_ / 100.0).toList
+    sThresh <- (5 to 95 by 5).map(_ / 100.0)
+    iThresh <- (0 to 100 by 10).map(_ / 100.0)
+    remBelowInv <- List(false, true)
+  } yield BeamFilter(qThresh, sThresh, iThresh, remBelowInv)
 
-  val allAFirstFilters = (5 to 95 by 5)
-    .map(_.toDouble / 100)
+  val allAFirstFilters = (1 to 1000)
+    .map(_.toDouble / 1000)
     .toList.map(spanThreshold =>
     BeamFilter(
       questionThreshold = 0.1,
@@ -83,6 +84,9 @@ object Main {
       invalidThreshold = 0.9,
       shouldRemoveSpansBelowInvalidProb = false)
   )
+
+  // TODO make this choice a command-line argument?
+  val allFilters = allAFirstFilters
 
   def nullBucketer[I] = Map.empty[String, I => String]
 
@@ -102,30 +106,48 @@ object Main {
     import shapeless._
     import shapeless.syntax.singleton._
     import shapeless.record._
+    import monocle.function.{all => Optics}
 
     val computeMetrics = M.split(I.sentenceToVerbs) {
       M.hchoose(
-        "num verbs" ->> ((vi: I.VerbInstance) => 1) ::
-          "full question" ->> (
-            M.choose(allAFirstFilters) { filterPred =>
-              I.verbToQASet(filterGoldDense, filterPred) andThen
-              M.split(I.qaSetToQuestions) {
-                // M.bucket(questionBucketers) {
-                I.getQuestionBoundedAcc
-                // }
-              }
+        "num verbs" ->> ((vi: I.VerbInstance) => 1),
+        "questions" ->> (
+          M.choose(allFilters) { filterPred =>
+            I.verbToQASet(filterGoldDense, filterPred) andThen
+            M.split(I.qaSetToQuestions) {
+              I.getQuestionBoundedAcc
             }
-          ) :: HNil
+          }
+        )
       )
     }
 
     val rawResult = Instances.foldMapInstances(gold, pred)(computeMetrics)
-    // NOTE: kinda just a test; maybe we can do this less intrusively
-    val result = rawResult.updateWith("full question")(
+
+    // postprocess
+
+    // compute number of questions per verb
+    val res1 = rawResult.updateWith("questions")(
       _.map(acc => "acc" ->> acc ::
               "questions per verb" ->> (acc.predicted.toDouble / rawResult("num verbs")) :: HNil
       )
     )
+
+    val recallThresholds = List(0.1, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
+
+    // filter by recall thresholds, take max (lb) performing setting under each threshold
+    val res2 = res1.updateWith("questions")(
+      filters => M.Chosen(
+        recallThresholds.flatMap(thresh =>
+          filters.filter(_("questions per verb") >= thresh)
+            .maxBy(_("acc").accuracyLowerBound)
+            .map(choice => thresh -> M.Chosen(Map(choice)))
+        ).toMap
+      )
+    )
+
+    val result = res2
+
     println(result.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec))
   }
 
@@ -143,8 +165,9 @@ object Main {
 
     val computeMetrics = M.split(I.sentenceToVerbs) {
       // M.bucket(verbBucketers(getVerbFrequency)) {
+      M.choose(allFilters) { filterPred =>
         I.verbToQASet(filterGoldNonDense, filterPred) andThen
-        M.choose(
+        M.hchoose(
           // "span" -> (
           //   I.qaSetToSpanSet andThen
           //     I.getSpanSetConf
@@ -154,57 +177,34 @@ object Main {
           //     //   }
           //     // }
           // ),
-          "full question" -> M.split(I.qaSetToQuestions) {
+          "full question" ->> M.split(I.qaSetToQuestions) {
             // M.bucket(questionBucketers) {
-              I.getQuestionConf
+            I.getQuestionConf
             // }
-          }
-          // "question template" -> (
-          //   I.qaSetToQATemplateSet andThen
-          //     M.split(I.qaTemplateSetToQuestionTemplates) {
-          //       M.bucket(templateBucketers) {
-          //         I.getQuestionTemplateConf
-          //       }
-          //     }
-          // )
+          },
+          "question template" ->> (
+            I.qaSetToQATemplateSet andThen
+              M.split(I.qaTemplateSetToQuestionTemplates) {
+                // M.bucket(templateBucketers) {
+                I.getQuestionTemplateConf
+                // }
+              }
+          )
         )
+      }
       // }
     }
 
     val rawResult = Instances.foldMapInstances(gold, pred)(computeMetrics)
-    val result = rawResult
+
+    val res1 = M.Chosen(
+      rawResult.maxBy(_("full question").f1).toMap
+    )
+
+    val result = res1
+
     println(result.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec))
   }
-
-    // take initial params, maxes, etc.
-    // println(result.getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(metrics
-    //           .collapseBuckets("wh")
-    //           .all.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(metrics
-    //           .collapseBuckets("prep")
-    //           .all.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("prep")
-    //             // .filter(_.numGold >= 50)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println(result.map(b =>
-    //           b.mapBucketValues("prep", Bucketers.Mappers.prepIsPresent)
-    //             .mapBucketValues("wh", Bucketers.Mappers.whAdv)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("prep")
-    //             .mapBucketValues("wh", Bucketers.Mappers.whAdv)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
-    // println("================================")
-    // println(result.map(b =>
-    //           b.collapseBuckets("wh")
-    //             .mapBucketValues("prep", Bucketers.Mappers.prepIsPresent)
-    //         ).getMetrics.toStringPretty(identity, x => x.render))
 
   def readPredictions(path: NIOPath) = {
     import ammonite.ops._
