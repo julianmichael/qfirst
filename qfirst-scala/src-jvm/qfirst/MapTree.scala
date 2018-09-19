@@ -95,12 +95,13 @@ object MapTree {
       }
     }
 
+  // TODO handle sort by function on key
   // TODO: could replace SortQuery with a plain MapTree[K, V] => Option[S] and give general combinators
   type SortSpec[K, V, S] = List[SortQuery[K, V, S]]
   sealed trait SortQuery[K, V, S] {
     def getRepValue(mapTree: MapTree[K, V]): Option[S]
     import SortQuery._
-    def ::(key: K): SortQuery[K, V, S] = Key(key, this)
+    def ::(key: K): SortQuery[K, V, S] = Down(key, this)
     def ::[S1](agg: List[S] => S1): SortQuery[K, V, S1] = Agg(agg, this)
   }
   object SortQuery {
@@ -108,7 +109,7 @@ object MapTree {
       def getRepValue(mapTree: MapTree[K, V]): Option[S] =
         mapTree.getLeaf.map(_.value).map(f)
     }
-    case class Key[K, V, S](value: K, rest: SortQuery[K, V, S]) extends SortQuery[K, V, S] {
+    case class Down[K, V, S](value: K, rest: SortQuery[K, V, S]) extends SortQuery[K, V, S] {
       def getRepValue(mapTree: MapTree[K, V]): Option[S] =
         mapTree.getFork.flatMap(_.children.get(value)).flatMap(rest.getRepValue)
     }

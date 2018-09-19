@@ -1,4 +1,5 @@
-package qfirst
+package qfirst.metrics
+import qfirst._
 
 import cats.Monoid
 import cats.implicits._

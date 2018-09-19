@@ -16,6 +16,8 @@
   // "test_data_path": "http://qasrl.org/data/qasrl-v2/orig/test.jsonl.gz",
     "model": {
         "type": "question_answerer",
+        "objective": "binary",
+        "span_selection_policy": "union",
         "predicate_feature_dim": 100,
         "span_hidden_dim": 200,
         "text_field_embedder": {
@@ -47,13 +49,13 @@
   "iterator": {
     "type": "bucket",
     "sorting_keys": [["text", "num_tokens"]],
-    "batch_size" : 80
+    "batch_size" : 10
   },
   "trainer": {
     "num_epochs": 200,
     "grad_norm": 1.0,
-    "patience": 3,
-    "validation_metric": "+span-mcc-0.50",
+    "patience": 100,
+    "validation_metric": "+span-f1-valid",
     "cuda_device": -1,
     "optimizer": {
       "type": "adadelta",

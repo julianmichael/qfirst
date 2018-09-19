@@ -1,4 +1,5 @@
 package qfirst
+import qfirst.metrics._
 
 import cats.Functor
 import cats.Monoid
@@ -32,10 +33,7 @@ import qasrl.data.QuestionLabel
 
 import qasrl.labeling.SlotBasedLabel
 
-// import scala.collection.immutable.SortedMap
-
 import HasMetrics.ops._
-
 
 object Instances {
 
@@ -65,7 +63,9 @@ object Instances {
     goldValid: Map[String, QuestionLabel],
     goldInvalid: Map[String, QuestionLabel],
     pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
-  )
+  ) {
+    def allQuestionStrings = (goldValid.keySet ++ goldInvalid.keySet ++ pred.keySet)
+  }
 
   def verbToQASet(
     filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
@@ -83,8 +83,7 @@ object Instances {
   )
 
   val qaSetToQuestions = (qas: QASetInstance) => {
-    val allStrings = (qas.goldValid.keySet ++ qas.goldInvalid.keySet ++ qas.pred.keySet)
-    allStrings.toList.map { qString =>
+    qas.allQuestionStrings.toList.map { qString =>
       val qSlots = qas.goldValid.get(qString).map(_.questionSlots).orElse {
         qas.goldInvalid.get(qString).map(_.questionSlots).orElse {
           qas.pred.get(qString).map(_._1)
@@ -95,19 +94,73 @@ object Instances {
   }
 
   val getQuestionBoundedAcc = (question: QuestionInstance) => {
-    if(!question.qas.pred.contains(question.string)) BoundedAcc()
-    else if(question.qas.goldValid.contains(question.string)) BoundedAcc(correct = 1)
-    else if(question.qas.goldInvalid.contains(question.string)) BoundedAcc(incorrect = 1)
-    else BoundedAcc(uncertain = 1)
+    if(!question.qas.pred.contains(question.string)) BoundedAccA[QuestionInstance]()
+    else if(question.qas.goldValid.contains(question.string)) BoundedAccA.correct(question)
+    else if(question.qas.goldInvalid.contains(question.string)) BoundedAccA.incorrect(question)
+    else BoundedAccA.uncertain(question)
   }
 
   val getQuestionConf = (question: QuestionInstance) => {
     val isPredicted = question.qas.pred.contains(question.string)
     val isTrue = isPredicted == question.qas.goldValid.contains(question.string)
-    if(isTrue && isPredicted) Conf(tp = 1)
-    else if(!isTrue && isPredicted) Conf(fp = 1)
-    else if(!isTrue && !isPredicted) Conf(fn = 1)
-    else Conf(tn = 1)
+    if(isTrue && isPredicted) Conf.tp(question)
+    else if(!isTrue && isPredicted) Conf.fp(question)
+    else if(!isTrue && !isPredicted) Conf.fn(question)
+    else Conf.tn(question)
+  }
+
+  val getQuestionWithAnswerConf = (question: QuestionInstance) => {
+    (question.qas.pred.get(question.string), question.qas.goldValid.get(question.string)) match {
+      case (None, None) => Conf.tn(question)
+      case (Some(_), None) => Conf.fp(question)
+      case (None, Some(_)) => Conf.fn(question)
+      case (Some(predQA), Some(goldQA)) =>
+        val predAnswerSpans = predQA._2
+        val goldAnswerSpans = goldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
+          Conf.tp(question)
+        } else Conf.fp(question) |+| Conf.fn(question)
+    }
+  }
+
+  val getQuestionWithAnswerBoundedAcc = (question: QuestionInstance) => {
+    question.qas.pred.get(question.string).fold(BoundedAcc()) { predQA =>
+      question.qas.goldValid.get(question.string).map { validGoldQA =>
+        val predAnswerSpans = predQA._2
+        val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
+          BoundedAcc(correct = 1)
+        } else BoundedAcc(incorrect = 1)
+      }.orElse {
+        question.qas.goldInvalid.get(question.string).as(BoundedAcc(incorrect = 1))
+      }.getOrElse(BoundedAcc(uncertain = 1))
+    }
+  }
+
+  case class QAInstance(
+    question: QuestionInstance,
+    span: AnswerSpan
+  )
+
+  val questionToQAs = (question: QuestionInstance) => {
+    val allSpans = question.qas.goldValid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans)).toSet ++
+      question.qas.goldInvalid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans)).toSet ++
+      question.qas.pred.get(question.string).toList.flatMap(_._2).toSet
+    allSpans.toList.map(s => QAInstance(question, s))
+  }
+
+  val getQABoundedAcc = (qa: QAInstance) => {
+    qa.question.qas.pred.get(qa.question.string).fold(BoundedAcc()) { predQA =>
+      qa.question.qas.goldValid.get(qa.question.string).map { validGoldQA =>
+        val predAnswerSpans = predQA._2
+        val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
+          BoundedAcc(correct = 1)
+        } else BoundedAcc(incorrect = 1)
+      }.orElse {
+        qa.question.qas.goldInvalid.get(qa.question.string).as(BoundedAcc(incorrect = 1))
+      }.getOrElse(BoundedAcc(uncertain = 1))
+    }
   }
 
   case class TemplateSlots(
@@ -183,10 +236,65 @@ object Instances {
   val getQuestionTemplateConf = (template: QuestionTemplateInstance) => {
     val isPredicted = template.qaTemplates.pred.contains(template.string)
     val isTrue = isPredicted == template.qaTemplates.gold.contains(template.string)
-    if(isTrue && isPredicted) Conf(tp = 1)
-    else if(!isTrue && isPredicted) Conf(fp = 1)
-    else if(!isTrue && !isPredicted) Conf(fn = 1)
-    else Conf(tn = 1)
+    if(isTrue && isPredicted) Conf.tp(template)
+    else if(!isTrue && isPredicted) Conf.fp(template)
+    else if(!isTrue && !isPredicted) Conf.fn(template)
+    else Conf.tn(template)
+  }
+
+  val getQuestionTemplateWithAnswerConf = (template: QuestionTemplateInstance) => {
+    (template.qaTemplates.pred.get(template.string), template.qaTemplates.gold.get(template.string)) match {
+      case (None, None) => Conf.tn(template)
+      case (Some(_), None) => Conf.fp(template)
+      case (None, Some(_)) => Conf.fn(template)
+      case (Some(predQA), Some(goldQA)) =>
+        if(predQA._2.intersect(goldQA._2).nonEmpty) {
+          Conf.tp(template)
+        } else Conf.fp(template) |+| Conf.fn(template)
+    }
+  }
+
+  val getQuestionTemplateAcc = (template: QuestionTemplateInstance) => {
+    if(!template.qaTemplates.pred.contains(template.string)) Accuracy()
+    else if(template.qaTemplates.gold.contains(template.string)) Accuracy(correct = 1)
+    else Accuracy(incorrect = 1)
+  }
+
+  val getQuestionTemplateWithAnswerAcc = (template: QuestionTemplateInstance) => {
+    (template.qaTemplates.pred.get(template.string), template.qaTemplates.gold.get(template.string)) match {
+      case (None, None) => Accuracy()
+      case (Some(_), None) => Accuracy(incorrect = 1)
+      case (None, Some(_)) => Accuracy()
+      case (Some(predQA), Some(goldQA)) =>
+        val predAnswerSpans = predQA._2
+        val goldAnswerSpans = goldQA._2
+        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
+          Accuracy(correct = 1)
+        } else Accuracy(incorrect = 1)
+    }
+  }
+
+  case class QATemplateInstance(
+    template: QuestionTemplateInstance,
+    span: AnswerSpan
+  )
+
+  val questionTemplateToQATemplates = (template: QuestionTemplateInstance) => {
+    val allSpans = template.qaTemplates.gold.get(template.string).toList.flatMap(_._2).toSet ++
+      template.qaTemplates.pred.get(template.string).toList.flatMap(_._2).toSet
+    allSpans.toList.map(s => QATemplateInstance(template, s))
+  }
+
+  val getQATemplateAcc = (qa: QATemplateInstance) => {
+    qa.template.qaTemplates.pred.get(qa.template.string).fold(Accuracy()) { predQA =>
+      qa.template.qaTemplates.gold.get(qa.template.string).map { goldQA =>
+        val predAnswerSpans = predQA._2
+        val goldAnswerSpans = goldQA._2
+        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
+          Accuracy(correct = 1)
+        } else Accuracy(incorrect = 1)
+      }.getOrElse(Accuracy(incorrect = 1))
+    }
   }
 
   case class SpanSetInstance(
@@ -211,15 +319,15 @@ object Instances {
   val getSpanSetConf = (spanSet: SpanSetInstance) => {
     case class SpanAlignment(
       remainingPred: Set[Set[AnswerSpan]],
-      conf: Conf)
-    val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, Conf())) {
+      conf: Conf.Stats)
+    val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, Conf.Stats())) {
       case (SpanAlignment(preds, conf), goldSpanSet) =>
         preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
-          case None => (SpanAlignment(preds, conf |+| Conf(fn = 1)))
-          case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| Conf(tp = 1)))
+          case None => (SpanAlignment(preds, conf |+| Conf.Stats(fn = 1)))
+          case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| Conf.Stats(tp = 1)))
         }
     }
-    alignment.conf |+| Conf(fp = alignment.remainingPred.size)
+    alignment.conf |+| Conf.Stats(fp = alignment.remainingPred.size)
   }
 
   // left = predicted, right = gold
@@ -247,9 +355,9 @@ object Instances {
 
   val getAlignedSpanConf = (alignedSpan: AlignedSpanInstance) => {
     alignedSpan.span match {
-      case Ior.Left(_) => Conf(fp = 1)
-      case Ior.Right(_) => Conf(fn = 1)
-      case Ior.Both(_, _) => Conf(tp = 1)
+      case Ior.Left(_) => Conf.fp(alignedSpan)
+      case Ior.Right(_) => Conf.fn(alignedSpan)
+      case Ior.Both(_, _) => Conf.tp(alignedSpan)
     }
   }
 

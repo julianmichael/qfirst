@@ -43,6 +43,6 @@ object BeamFilter {
   implicit def beamFilterShow: Show[BeamFilter] = Show.show { beamFilter =>
     import beamFilter._
     val iSlash = if(shouldRemoveSpansBelowInvalidProb) "/i" else ""
-    f"q = $questionThreshold%.3f, s = $spanThreshold%.3f$iSlash%s, i = $invalidThreshold%.3f"
+    f"q = $questionThreshold%.2f, s = $spanThreshold%.2f$iSlash%s, i = $invalidThreshold%.2f"
   }
 }

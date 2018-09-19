@@ -1,4 +1,5 @@
-package qfirst
+package qfirst.metrics
+import qfirst._
 
 sealed trait Metric {
   import Metric._
