@@ -26,10 +26,10 @@ trait Implicits {
         field[K]((x.head: H) |+| (y.head: H)) :: (x.tail |+| y.tail)
     }
 
-  trait RecordHasMetrics[R <: HList] {
+  sealed trait RecordHasMetrics[R <: HList] {
     def apply(r: R): List[(String, MapTree[String, Metric])]
   }
-  object RecordHasMetrics {
+  final object RecordHasMetrics {
     implicit def hnilHasMetrics: RecordHasMetrics[HNil] =
       new RecordHasMetrics[HNil] {
         def apply(r: HNil) = Nil

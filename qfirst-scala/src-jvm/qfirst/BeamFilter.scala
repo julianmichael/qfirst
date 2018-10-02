@@ -1,48 +1,134 @@
 package qfirst
 
-import cats.Show
+import qfirst.metrics.HasMetrics
+import qfirst.metrics.Metric
 
+import cats.Order
+import cats.Show
+import cats.implicits._
+
+import nlpdata.datasets.wiktionary.InflectedForms
 import nlpdata.datasets.wiktionary.VerbForm
 
 import qasrl.data.AnswerSpan
 import qasrl.labeling.SlotBasedLabel
 
-case class BeamFilter(
-  questionThreshold: Double,
-  spanThreshold: Double,
-  invalidThreshold: Double,
-  shouldRemoveSpansBelowInvalidProb: Boolean
-) extends (VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]) {
-  def apply(prediction: VerbPrediction) = {
-    def hasOverlap(acc: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])], span: AnswerSpan) = {
-      val allAccSpans = acc.toList.flatMap(_._2._2).toSet
-      allAccSpans.exists(overlaps(_, span))
-    }
-    val initAcc = Map.empty[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
-    val predQAs = prediction.questions.toList.sortBy(-_.questionProb).foldLeft(initAcc) {
-      case (acc, qPrediction) =>
-        if(qPrediction.questionProb < questionThreshold) acc
-        else if(qPrediction.invalidProb > invalidThreshold) acc
-        else {
-          val goodSpans = qPrediction.answerSpans.collect {
-            case (span, prob) if prob >= spanThreshold &&
-                !hasOverlap(acc, span) &&
-                (!shouldRemoveSpansBelowInvalidProb || prob >= qPrediction.invalidProb) => span
-          }.toSet
-          if(goodSpans.isEmpty) acc
-          else {
-            val qString = qPrediction.questionSlots.renderQuestionString(prediction.verbInflectedForms)
-            acc + (qString -> (qPrediction.questionSlots, goodSpans))
-          }
-        }
-    }
-    predQAs
-  }
-}
+sealed trait BeamFilter extends (VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])])
 object BeamFilter {
-  implicit def beamFilterShow: Show[BeamFilter] = Show.show { beamFilter =>
-    import beamFilter._
-    val iSlash = if(shouldRemoveSpansBelowInvalidProb) "/i" else ""
-    f"q = $questionThreshold%.2f, s = $spanThreshold%.2f$iSlash%s, i = $invalidThreshold%.2f"
+  // TODO
+  implicit val beamFilterShow: Show[BeamFilter] = Show.show {
+    case OneThreshold(thresh) => f"q*s*v ≥ $thresh%.3f"
+    case TwoThreshold(qaThresh, iThresh) => f"q*s ≥ $qaThresh%.3f ∧ i ≤ $iThresh%.3f"
+    case ThreeThreshold(qThresh, sThresh, iThresh, sGtI) =>
+      f"q ≥ $qThresh%.3f ∧ s ≥ $sThresh%.3f ∧ i ≤ $iThresh%.3f" + (if(sGtI) " ∧ s ≥ i" else "")
   }
+  implicit val beamFilterHasMetrics: HasMetrics[BeamFilter] = new HasMetrics[BeamFilter] {
+    def getMetrics(filter: BeamFilter): MapTree[String, Metric] = {
+      MapTree.leaf[String](Metric.metadata(beamFilterShow.show(filter)))
+    }
+  }
+  // MapTree.fromPairs(
+  //   "q" -> Metric.double(filter.questionThreshold),
+  //   "s" -> Metric.double(filter.spanThreshold),
+  //   "i" -> Metric.double(filter.invalidThreshold),
+  //   "□(i <= s)" -> Metric.bool(filter.shouldRemoveSpansBelowInvalidProb)
+  // )
+
+  // private[this] def hasOverlap(acc: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])], span: AnswerSpan) = {
+  //   val allAccSpans = acc.toList.flatMap(_._2._2).toSet
+  //   allAccSpans.exists(overlaps(_, span))
+  // }
+
+  private[this] def hasOverlap(acc: List[QAPrediction], span: AnswerSpan) = {
+    acc.map(_.answerSpan).toSet.exists(overlaps(_, span))
+  }
+
+  private[this] case class QAPrediction(
+    questionSlots: SlotBasedLabel[VerbForm],
+    answerSpan: AnswerSpan,
+    questionProb: Double,
+    invalidProb: Double,
+    spanProb: Double
+  ) {
+    def qaProb = questionProb * spanProb
+    def validQAProb = (1.0 - invalidProb) * questionProb * qaProb
+  }
+  private[this] def splitPredictionsBySpan(pred: QuestionPrediction): List[QAPrediction] = {
+    pred.answerSpans.map { case (span, spanProb) =>
+      QAPrediction(
+        pred.questionSlots,
+        span,
+        pred.questionProb,
+        pred.invalidProb,
+        spanProb
+      )
+    }
+  }
+  private[this] def consolidateQAs(verbInflectedForms: InflectedForms)(qas: List[QAPrediction]): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+    qas.groupBy(_.questionSlots.renderQuestionString(verbInflectedForms)).map {
+      case (qString, qaPreds) => qString -> (qaPreds.head.questionSlots -> qaPreds.map(_.answerSpan).toSet)
+    }
+  }
+
+  private[this] def filterBeam(
+    verb: VerbPrediction,
+    order: Order[QAPrediction],
+    filterPred: QAPrediction => Boolean
+  ): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+    verb.questions
+      .flatMap(splitPredictionsBySpan)
+      .sorted(order.toOrdering)
+      .filter(filterPred)
+      .foldLeft(List.empty[QAPrediction]) { case (acc, qaPred) =>
+        if(!hasOverlap(acc, qaPred.answerSpan)) qaPred :: acc
+        else acc
+    } <| consolidateQAs(verb.verbInflectedForms)
+  }
+
+  private[this] val questionProbOrder = {
+    Order.whenEqual(
+      Order.by[QAPrediction, Double](-_.questionProb),
+      Order.by[QAPrediction, Double](-_.spanProb)
+    )
+  }
+
+  case class OneThreshold(
+    threshold: Double
+  ) extends BeamFilter {
+    def apply(verb: VerbPrediction): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+      filterBeam(verb, Order.by[QAPrediction, Double](_.validQAProb), (_.validQAProb >= threshold))
+    }
+  }
+
+  case class TwoThreshold(
+    qaThreshold: Double,
+    invalidThreshold: Double
+  ) extends BeamFilter {
+    def apply(verb: VerbPrediction): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+      filterBeam(verb, Order.by[QAPrediction, Double](_.qaProb),
+                 (p => p.qaProb >= qaThreshold && p.invalidProb < invalidThreshold))
+    }
+  }
+
+  case class ThreeThreshold(
+    questionThreshold: Double,
+    spanThreshold: Double,
+    invalidThreshold: Double,
+    shouldRemoveSpansBelowInvalidProb: Boolean
+  ) extends BeamFilter {
+    def apply(verb: VerbPrediction) = {
+      filterBeam(
+        verb, questionProbOrder,
+        (p => p.questionProb >= questionThreshold &&
+           p.spanProb >= spanThreshold &&
+           p.invalidProb < invalidThreshold &&
+           (!shouldRemoveSpansBelowInvalidProb || p.spanProb > p.invalidProb))
+      )
+    }
+  }
+
+  def oneThreshold(threshold: Double): BeamFilter = OneThreshold(threshold)
+  def twoThreshold(qaThreshold: Double, invalidThreshold: Double): BeamFilter = TwoThreshold(qaThreshold, invalidThreshold)
+  def threeThreshold(questionThreshold: Double, spanThreshold: Double, invalidThreshold: Double, shouldRemoveSpansBelowInvalidProb: Boolean): BeamFilter = ThreeThreshold(questionThreshold, spanThreshold, invalidThreshold, shouldRemoveSpansBelowInvalidProb)
 }
+

@@ -94,46 +94,46 @@ object Instances {
   }
 
   val getQuestionBoundedAcc = (question: QuestionInstance) => {
-    if(!question.qas.pred.contains(question.string)) BoundedAccA[QuestionInstance]()
-    else if(question.qas.goldValid.contains(question.string)) BoundedAccA.correct(question)
-    else if(question.qas.goldInvalid.contains(question.string)) BoundedAccA.incorrect(question)
-    else BoundedAccA.uncertain(question)
+    if(!question.qas.pred.contains(question.string)) BoundedAcc[QuestionInstance]()
+    else if(question.qas.goldValid.contains(question.string)) BoundedAcc.correct(question)
+    else if(question.qas.goldInvalid.contains(question.string)) BoundedAcc.incorrect(question)
+    else BoundedAcc.uncertain(question)
   }
 
   val getQuestionConf = (question: QuestionInstance) => {
     val isPredicted = question.qas.pred.contains(question.string)
     val isTrue = isPredicted == question.qas.goldValid.contains(question.string)
-    if(isTrue && isPredicted) Conf.tp(question)
-    else if(!isTrue && isPredicted) Conf.fp(question)
-    else if(!isTrue && !isPredicted) Conf.fn(question)
-    else Conf.tn(question)
+    if(isTrue && isPredicted) BinaryConf.tp(question)
+    else if(!isTrue && isPredicted) BinaryConf.fp(question)
+    else if(!isTrue && !isPredicted) BinaryConf.fn(question)
+    else BinaryConf.tn(question)
   }
 
   val getQuestionWithAnswerConf = (question: QuestionInstance) => {
     (question.qas.pred.get(question.string), question.qas.goldValid.get(question.string)) match {
-      case (None, None) => Conf.tn(question)
-      case (Some(_), None) => Conf.fp(question)
-      case (None, Some(_)) => Conf.fn(question)
+      case (None, None) => BinaryConf.tn(question)
+      case (Some(_), None) => BinaryConf.fp(question)
+      case (None, Some(_)) => BinaryConf.fn(question)
       case (Some(predQA), Some(goldQA)) =>
         val predAnswerSpans = predQA._2
         val goldAnswerSpans = goldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          Conf.tp(question)
-        } else Conf.fp(question) |+| Conf.fn(question)
+          BinaryConf.tp(question)
+        } else BinaryConf.fp(question) |+| BinaryConf.fn(question)
     }
   }
 
   val getQuestionWithAnswerBoundedAcc = (question: QuestionInstance) => {
-    question.qas.pred.get(question.string).fold(BoundedAcc()) { predQA =>
+    question.qas.pred.get(question.string).fold(BoundedAcc[QuestionInstance]()) { predQA =>
       question.qas.goldValid.get(question.string).map { validGoldQA =>
         val predAnswerSpans = predQA._2
         val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          BoundedAcc(correct = 1)
-        } else BoundedAcc(incorrect = 1)
+          BoundedAcc.correct(question)
+        } else BoundedAcc.incorrect(question)
       }.orElse {
-        question.qas.goldInvalid.get(question.string).as(BoundedAcc(incorrect = 1))
-      }.getOrElse(BoundedAcc(uncertain = 1))
+        question.qas.goldInvalid.get(question.string).as(BoundedAcc.incorrect(question))
+      }.getOrElse(BoundedAcc.uncertain(question))
     }
   }
 
@@ -150,16 +150,16 @@ object Instances {
   }
 
   val getQABoundedAcc = (qa: QAInstance) => {
-    qa.question.qas.pred.get(qa.question.string).fold(BoundedAcc()) { predQA =>
+    qa.question.qas.pred.get(qa.question.string).fold(BoundedAcc[QAInstance]()) { predQA =>
       qa.question.qas.goldValid.get(qa.question.string).map { validGoldQA =>
         val predAnswerSpans = predQA._2
         val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          BoundedAcc(correct = 1)
-        } else BoundedAcc(incorrect = 1)
+          BoundedAcc.correct(qa)
+        } else BoundedAcc.incorrect(qa)
       }.orElse {
-        qa.question.qas.goldInvalid.get(qa.question.string).as(BoundedAcc(incorrect = 1))
-      }.getOrElse(BoundedAcc(uncertain = 1))
+        qa.question.qas.goldInvalid.get(qa.question.string).as(BoundedAcc.incorrect(qa))
+      }.getOrElse(BoundedAcc.uncertain(qa))
     }
   }
 
@@ -236,21 +236,21 @@ object Instances {
   val getQuestionTemplateConf = (template: QuestionTemplateInstance) => {
     val isPredicted = template.qaTemplates.pred.contains(template.string)
     val isTrue = isPredicted == template.qaTemplates.gold.contains(template.string)
-    if(isTrue && isPredicted) Conf.tp(template)
-    else if(!isTrue && isPredicted) Conf.fp(template)
-    else if(!isTrue && !isPredicted) Conf.fn(template)
-    else Conf.tn(template)
+    if(isTrue && isPredicted) BinaryConf.tp(template)
+    else if(!isTrue && isPredicted) BinaryConf.fp(template)
+    else if(!isTrue && !isPredicted) BinaryConf.fn(template)
+    else BinaryConf.tn(template)
   }
 
   val getQuestionTemplateWithAnswerConf = (template: QuestionTemplateInstance) => {
     (template.qaTemplates.pred.get(template.string), template.qaTemplates.gold.get(template.string)) match {
-      case (None, None) => Conf.tn(template)
-      case (Some(_), None) => Conf.fp(template)
-      case (None, Some(_)) => Conf.fn(template)
+      case (None, None) => BinaryConf.tn(template)
+      case (Some(_), None) => BinaryConf.fp(template)
+      case (None, Some(_)) => BinaryConf.fn(template)
       case (Some(predQA), Some(goldQA)) =>
         if(predQA._2.intersect(goldQA._2).nonEmpty) {
-          Conf.tp(template)
-        } else Conf.fp(template) |+| Conf.fn(template)
+          BinaryConf.tp(template)
+        } else BinaryConf.fp(template) |+| BinaryConf.fn(template)
     }
   }
 
@@ -287,13 +287,12 @@ object Instances {
 
   val getQATemplateAcc = (qa: QATemplateInstance) => {
     qa.template.qaTemplates.pred.get(qa.template.string).fold(Accuracy()) { predQA =>
-      qa.template.qaTemplates.gold.get(qa.template.string).map { goldQA =>
-        val predAnswerSpans = predQA._2
-        val goldAnswerSpans = goldQA._2
-        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          Accuracy(correct = 1)
-        } else Accuracy(incorrect = 1)
-      }.getOrElse(Accuracy(incorrect = 1))
+      if(!predQA._2.contains(qa.span)) Accuracy() else {
+        qa.template.qaTemplates.gold.get(qa.template.string).fold(Accuracy(incorrect = 1)) { goldQA =>
+          if(goldQA._2.contains(qa.span)) Accuracy(correct = 1)
+          else Accuracy(incorrect = 1)
+        }
+      }
     }
   }
 
@@ -319,15 +318,15 @@ object Instances {
   val getSpanSetConf = (spanSet: SpanSetInstance) => {
     case class SpanAlignment(
       remainingPred: Set[Set[AnswerSpan]],
-      conf: Conf.Stats)
-    val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, Conf.Stats())) {
+      conf: BinaryConf.Stats)
+    val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, BinaryConf.Stats())) {
       case (SpanAlignment(preds, conf), goldSpanSet) =>
         preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
-          case None => (SpanAlignment(preds, conf |+| Conf.Stats(fn = 1)))
-          case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| Conf.Stats(tp = 1)))
+          case None => (SpanAlignment(preds, conf |+| BinaryConf.Stats(fn = 1)))
+          case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| BinaryConf.Stats(tp = 1)))
         }
     }
-    alignment.conf |+| Conf.Stats(fp = alignment.remainingPred.size)
+    alignment.conf |+| BinaryConf.Stats(fp = alignment.remainingPred.size)
   }
 
   // left = predicted, right = gold
@@ -355,9 +354,9 @@ object Instances {
 
   val getAlignedSpanConf = (alignedSpan: AlignedSpanInstance) => {
     alignedSpan.span match {
-      case Ior.Left(_) => Conf.fp(alignedSpan)
-      case Ior.Right(_) => Conf.fn(alignedSpan)
-      case Ior.Both(_, _) => Conf.tp(alignedSpan)
+      case Ior.Left(_) => BinaryConf.fp(alignedSpan)
+      case Ior.Right(_) => BinaryConf.fn(alignedSpan)
+      case Ior.Both(_, _) => BinaryConf.tp(alignedSpan)
     }
   }
 

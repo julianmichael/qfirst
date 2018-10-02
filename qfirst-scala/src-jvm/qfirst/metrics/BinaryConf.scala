@@ -5,18 +5,18 @@ import cats.Monoid
 import cats.MonoidK
 import cats.implicits._
 
-case class Conf[A](
+case class BinaryConf[A](
   tp: Vector[A] = Vector(),
   tn: Vector[A] = Vector(),
   fp: Vector[A] = Vector(),
   fn: Vector[A] = Vector()
 ) {
 
-  def stats = Conf.Stats(
+  def stats = BinaryConf.Stats(
     tp.size, tn.size, fp.size, fn.size
   )
 }
-object Conf {
+object BinaryConf {
 
   case class Stats(
     tp: Int = 0,
@@ -63,25 +63,25 @@ object Conf {
     }
   }
 
-  implicit val confAMonoidK: MonoidK[Conf] = {
+  implicit val confAMonoidK: MonoidK[BinaryConf] = {
     import cats.derived.auto.monoidK._
     cats.derived.semi.monoidK
   }
-  implicit def confAMonoid[A]: Monoid[Conf[A]] = confAMonoidK.algebra[A]
-  implicit def confAHasMetrics[A] = new HasMetrics[Conf[A]] {
-    def getMetrics(conf: Conf[A]) = conf.stats.metrics
+  implicit def confAMonoid[A]: Monoid[BinaryConf[A]] = confAMonoidK.algebra[A]
+  implicit def confAHasMetrics[A] = new HasMetrics[BinaryConf[A]] {
+    def getMetrics(conf: BinaryConf[A]) = conf.stats.metrics
   }
 
-  def tp[A](a: A) = Conf[A](tp = Vector(a))
-  def tn[A](a: A) = Conf[A](tn = Vector(a))
-  def fp[A](a: A) = Conf[A](fp = Vector(a))
-  def fn[A](a: A) = Conf[A](fn = Vector(a))
+  def tp[A](a: A) = BinaryConf[A](tp = Vector(a))
+  def tn[A](a: A) = BinaryConf[A](tn = Vector(a))
+  def fp[A](a: A) = BinaryConf[A](fp = Vector(a))
+  def fn[A](a: A) = BinaryConf[A](fn = Vector(a))
 
   def fromSets[A](
     gold: Set[A],
     pred: Set[A],
     all: Set[A]
-  ): Conf[A] = Conf[A](
+  ): BinaryConf[A] = BinaryConf[A](
     tp = gold.intersect(pred).toVector,
     tn = (all -- pred -- gold).toVector,
     fp = (pred -- gold).toVector,
@@ -91,5 +91,5 @@ object Conf {
   def fromSets[A](
     gold: Set[A],
     pred: Set[A]
-  ): Conf[A] = fromSets(gold, pred, gold ++ pred)
+  ): BinaryConf[A] = fromSets(gold, pred, gold ++ pred)
 }
