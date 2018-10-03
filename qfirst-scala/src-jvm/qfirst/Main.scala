@@ -73,24 +73,25 @@ object Main {
           val qaTemplates = Instances.qaSetToQATemplateSet(question.qas)
           val predTemplateSlots = Instances.TemplateSlots.fromQuestionSlots(predSlots)
           qaTemplates.gold.get(predTemplateSlots.toTemplateString).as(P.correctTemplate).getOrElse {
-            val whAbstractedPredTemplateSlots = predTemplateSlots.copy(wh = "_".lowerCase)
+            def abstractWh(slots: Instances.TemplateSlots) = slots.copy(wh = (if(slots.wh.toString == "what") "what" else "adv").lowerCase)
+            val whAbstractedPredTemplateSlots = abstractWh(predTemplateSlots)
             val whError = qaTemplates.gold.values.toList.map(_._1).filter { goldSlots =>
-              goldSlots.copy(wh = "_".lowerCase) == whAbstractedPredTemplateSlots
+              abstractWh(goldSlots) == whAbstractedPredTemplateSlots
             }.map(goldSlots => P.wrongWh(predTemplateSlots.wh, goldSlots.wh)).headOption
             whError.getOrElse {
               val prepError = predTemplateSlots.prep match {
                 case None => // missing prep
                   qaTemplates.gold.values.toList.map(_._1).filter { goldSlots =>
-                    goldSlots.copy(prep = None) == predTemplateSlots ||
-                      goldSlots.copy(prep = None, obj2 = None) == predTemplateSlots
+                    abstractWh(goldSlots).copy(prep = None) == whAbstractedPredTemplateSlots ||
+                      abstractWh(goldSlots).copy(prep = None, obj2 = None) == whAbstractedPredTemplateSlots
                   }.flatMap(_.prep.map(P.missingPrep(_))).headOption
                 case Some(predPrep) =>
                   qaTemplates.gold.values.toList.map(_._1).filter { goldSlots =>
-                    goldSlots.copy(prep = Some(predPrep)) == predTemplateSlots
+                    abstractWh(goldSlots).copy(prep = Some(predPrep)) == whAbstractedPredTemplateSlots
                   }.flatMap(_.prep.map(P.swappedPrep(predPrep, _))).headOption.orElse {
                     qaTemplates.gold.values.toList.map(_._1).filter { goldSlots =>
-                      predTemplateSlots.copy(prep = None) == goldSlots ||
-                        predTemplateSlots.copy(prep = None, obj2 = None) == goldSlots
+                      whAbstractedPredTemplateSlots.copy(prep = None) == abstractWh(goldSlots) ||
+                        whAbstractedPredTemplateSlots.copy(prep = None, obj2 = None) == abstractWh(goldSlots)
                     }.headOption.as(P.extraPrep(predPrep))
                   }
               }
@@ -437,6 +438,7 @@ object Main {
 
   def runDenseMetrics(
     getVerbFrequency: => (LowerCaseString => Int),
+    getVerbPrepHist: => (LowerCaseString => Map[LowerCaseString, Int])
     gold: Dataset,
     pred: Map[String, SentencePrediction],
     metadataDir: NIOPath
@@ -462,38 +464,15 @@ object Main {
           "predictions" ->> (
             M.choose(filterSpace.allFilters) { filter =>
               I.verbToQASet(filterGoldDense, filter) andThen
-              // ((qas: I.QASetInstance) => { System.out.println(renderPredStuff(qas)); qas }) andThen
-              M.hchoose(
-                "spans" ->> (
-                  I.qaSetToSpanSet andThen
-                    I.getSpanSetConf
-                ),
-                "full questions" ->> M.split(I.qaSetToQuestions) {
-                  // M.bucket(questionBucketers) {
-                  M.hchoose(
-                    "question" ->> I.getQuestionBoundedAcc,
-                    "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
-                    "answer span" ->> M.split(I.questionToQAs) {
-                      I.getQABoundedAcc
-                    }
-                  )
-                  // }
-                }
-                // "templated questions" ->> (
-                //   I.qaSetToQATemplateSet andThen
-                //     M.split(I.qaTemplateSetToQuestionTemplates) {
-                //       // M.bucket(templateBucketers) {
-                //         M.hchoose(
-                //           "question" ->> I.getQuestionTemplateAcc,
-                //           "question with answer" ->> I.getQuestionTemplateWithAnswerAcc,
-                //           "answer span" ->> M.split(I.questionTemplateToQATemplates) {
-                //             I.getQATemplateAcc
-                //           }
-                //         )
-                //       // }
-                //     }
-                // )
-              )
+              M.split(I.qaSetToQuestions) {
+                M.hchoose(
+                  "question" ->> I.getQuestionBoundedAcc,
+                  "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
+                  "answer span" ->> M.split(I.questionToQAs) {
+                    I.getQABoundedAcc
+                  }
+                )
+              }
             }
           )
         )
@@ -506,15 +485,15 @@ object Main {
       // compute number of questions and spans per verb
       val results = raw.updateWith("predictions")(
         _.map { stats => // stats for given filter
-          val questionsPerVerb = "questions per verb" ->> stats.get("full questions").get("question").stats.predicted.toDouble / raw("num verbs")
-          val spansPerVerb = "spans per verb" ->> stats.get("full questions").get("answer span").stats.predicted.toDouble / raw("num verbs")
+          val questionsPerVerb = "questions per verb" ->> stats.get("question").stats.predicted.toDouble / raw("num verbs")
+          val spansPerVerb = "spans per verb" ->> stats.get("answer span").stats.predicted.toDouble / raw("num verbs")
           stats + questionsPerVerb + spansPerVerb
         }
       )
 
       val questionTunedResults = results.updateWith("predictions")(
         _.filter(_.get("questions per verb") >= 2.0)
-          .keepMaxBy(_.get("full questions").get("question with answer").stats.accuracyLowerBound)
+          .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
       )
 
       val bestFilter = questionTunedResults.get("predictions").data.head._1
@@ -526,19 +505,10 @@ object Main {
         Files.write(filtersPath, printer.pretty(filterSpace.withBest(bestFilter).asJson).getBytes("UTF-8"))
       }
 
-      import ammonite.ops._
-      val metricsFilename = "dense-metrics.txt"
-      write.over(pwd / metricsFilename, "")
+      def getMetricsString[M: HasMetrics](m: M) =
+        m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-      def printMetrics[M: HasMetrics](label: String, metrics: M) = {
-        def pr(s: String) = {
-          println(s)
-          write.append(pwd / metricsFilename, s + "\n")
-        }
-        pr(label + ": " + metrics.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec))
-      }
-
-      printMetrics("Overall at ≥2.0", questionTunedResults)
+      println("Overall at ≥2.0: " + getMetricsString(questionTunedResults))
 
       val computePredClassesForSentences = M.split(I.sentenceToVerbs) {
         I.verbToQASet(filterGoldDense, bestFilter) andThen
@@ -569,7 +539,7 @@ object Main {
         }
       )
 
-      printMetrics("Main bucketed error classes", bucketedErrorClasses)
+      println("Main bucketed error classes: " + getMetricsString(bucketedErrorClasses))
 
       val prepConf = {
         import PredClass._
@@ -585,6 +555,16 @@ object Main {
 
       println(prepConf.stats.prettyString(10))
 
+      val whConf = {
+        import PredClass._
+        predClasses.values.collect {
+          case (Correct | WrongAnswer | CorrectTemplate, q) => Confusion.instance(q.slots.wh, q.slots.wh, q)
+          case (WrongWh(pred, gold), q) => Confusion.instance(gold, pred, q)
+        }.combineAll
+      }
+
+      println(whConf.stats.prettyString(0))
+
       val allConfusionPairs = prepConf.matrix.toList.flatMap {
         case (gold, predMap) => predMap.toList.map {
           case (pred, questions) => (gold, pred, questions)
@@ -592,8 +572,6 @@ object Main {
       }
       allConfusionPairs
         .filter(t => t._1 != t._2)
-        // .filter(t => t._1.toString != "_")
-        // .filter(t => t._2.toString != "_")
         .sortBy(-_._3.size).takeWhile(_._3.size >= 10).foreach {
         case (gold, pred, questions) =>
           val verbHist = questions.groupBy(_.qas.verb.gold.verbInflectedForms.stem).map {
@@ -601,8 +579,12 @@ object Main {
           }
           val numInstances = questions.size
           println(s"Gold: $gold; Pred: $pred; num confusions: $numInstances")
-          verbHist.toList.sortBy(-_._2).takeWhile(_._2.toDouble / numInstances >= 0.04).foreach { case (verb, num) =>
-            println(f"$verb%12s $num%3d (${num * 100.0 / numInstances}%4.1f%%)")
+          verbHist.toList
+            .sortBy(-_._2)
+            .takeWhile(_._2 > 1)
+            .takeWhile(_._2.toDouble / numInstances >= 0.04)
+            .foreach { case (verb, num) =>
+              println(f"$verb%12s $num%3d (${num * 100.0 / numInstances}%4.1f%%)")
           }
       }
 
@@ -632,8 +614,20 @@ object Main {
           case ((gold, pred), num) => println(f"Gold: $gold%10s | Pred: $pred%10s $num%d")
         }
       }
-    }
 
+      val examplesDir = metadataDir.resolve("examples")
+      if(!Files.exists(examplesDir)) {
+        Files.createDirectories(examplesDir)
+      }
+      def writeExamples(filename: String, examples: List[Instances.QuestionInstance], rand: util.Random) = {
+        val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
+        Files.write(examplesDir.resolve(filename), examplesString.getBytes("UTF-8"))
+      }
+      val r = new util.Random(235867962L)
+      writeExamples("template.txt", predClasses.values.collect { case (PredClass.CorrectTemplate, q) => q }, r)
+      writeExamples("prep-swap.txt", predClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q }, r)
+      writeExamples("other.txt", predClasses.values.collect { case (PredClass.Other, q) => q }, r)
+    }
   }
 
   def runNonDenseMetrics(
@@ -748,11 +742,20 @@ object Main {
       .map(_.map(pred => pred.sentenceId -> pred).toMap)
   }
 
-  def readVerbFrequencies(trainFile: NIOPath) = {
-    val data = Data.readDataset(trainFile)
+  def readVerbFrequencies(data: Dataset) = {
     data.sentences.iterator
       .flatMap(s => s._2.verbEntries.values.map(_.verbInflectedForms.stem).iterator)
       .foldLeft(Map.empty[LowerCaseString, Int].withDefaultValue(0)) {
+      (counts, stem) => counts + (stem -> (counts(stem) + 1))
+    }
+  }
+
+  def readVerbPrepCounts(data: Dataset) = {
+    data.sentences.iterator
+      .flatMap(s => s._2.verbEntries.values.iterator)
+      .foldMap { verb =>
+      val stem = verb.verbInflectedForms.stem
+      val preps = verb.questionLabels.flatMap(_.questionSlots.prep)
       (counts, stem) => counts + (stem -> (counts(stem) + 1))
     }
   }
@@ -764,7 +767,9 @@ object Main {
       System.exit(1)
     }
     val metadataDir = predDir.resolve(mode)
-    lazy val verbFrequencies = readVerbFrequencies(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz"))
+    lazy val trainData = Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz"))
+    lazy val verbFrequencies = readVerbFrequencies(trainData)
+    lazy val verbPrepCounts = readVerbPrepCounts(trainData)
     val gold = if(mode == "dense" || mode == "dense-curve") {
       Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz"))
     } else Data.readDataset(qasrlBankPath.resolve("orig").resolve("dev.jsonl.gz"))
@@ -777,7 +782,7 @@ object Main {
       case Right(pred) =>
         if(mode == "non-dense") runNonDenseMetrics(verbFrequencies, gold, pred)
         else if(mode == "dense-curve") runDenseCurveMetrics(verbFrequencies, gold, pred)
-        else if(mode == "dense") runDenseMetrics(verbFrequencies, gold, pred, metadataDir) match {
+        else if(mode == "dense") runDenseMetrics(verbFrequencies, verbPrepCounts, gold, pred, metadataDir) match {
           case Right(res) => res
           case Left(err) =>
             System.err.println(err)

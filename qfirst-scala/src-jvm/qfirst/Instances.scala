@@ -185,7 +185,7 @@ object Instances {
       wh = if(slots.wh.toString == "who") "what".lowerCase else slots.wh,
       hasSubj = slots.subj.nonEmpty,
       isPassive = slots.verb == PastParticiple &&
-        slots.verbPrefix.map(_.toString).toSet.intersect(Set("be", "is", "was")).nonEmpty,
+        (slots.aux.toList ++ slots.verbPrefix).map(_.toString).toSet.intersect(Set("be", "is", "was")).nonEmpty,
       hasObj = slots.obj.nonEmpty,
       prep = slots.prep,
       obj2 = slots.obj2.map(_.toString.replaceAll("someone", "something").lowerCase)
