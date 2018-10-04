@@ -1,7 +1,7 @@
 import codecs
 import os
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 from collections import Counter
 import json
 import gzip
@@ -23,6 +23,45 @@ from nrl.data.util import cleanse_sentence_text
 from qfirst.data.util import get_slot_label_namespace
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
+qasrlv2_0_prepositions = [
+    "to", "by", "with", "to do", "in", "for", "from", "as", "on",
+    "of", "into", "up", "through", "about", "out", "at", "", "down", "off",
+    "doing", "against", "over", "do", "out of", "around", "after", "between", "by doing", "to as",
+    "up of", "upon", "within", "from doing", "under", "on to", "for doing", "up to", "without", "up in",
+    "across", "down into", "during", "behind", "along", "until", "toward", "in doing", "onto", "before",
+    "on to do", "as doing", "above", "among", "up doing", "of doing", "out to", "down on", "on doing", "towards",
+    "up by", "inside", "with doing", "alongside", "after doing", "out by", "near", "ahead", "below", "up for",
+    "down by", "throughout", "up on", "off by", "beneath", "off from", "down from", "aside", "beyond", "down to",
+    "up into", "up from", "before doing", "in for", "out from", "off of", "through doing", "of as", "about doing", "at doing",
+    "out to do", "out for", "out on", "over by", "on by", "off for", "off into", "since", "in on", "ahead of",
+    "than", "on in", "inside of", "in from", "behind by", "down at", "up at", "amid", "over to", "over as",
+    "via", "along by", "up to do", "off as", "down through", "until doing", "down in", "down doing", "without doing", "amongst",
+    "up as", "aside for", "from inside", "in to", "out in", "during doing", "along in", "out doing", "out of doing", "through to",
+    "against doing", "ahead by", "in as", "despite", "underneath", "beside", "next to", "as to", "out onto", "outside",
+    "amid doing", "until after", "out over", "up in doing", "at about", "out during", "up around",
+    "given", "about below", "by without",
+    "by before", "out about", "from around", "up against", "on from", "given up", "outside of", "about into", "off in", "up after",
+    "on as", "on into", "over into", "on over", "out by doing", "around to", "out below", "next", "behind doing", "over from",
+    "around doing", "up through", "down to do", "off doing", "opposite", "round up", "towards doing", "down for", "in to do", "along doing",
+    "toward doing", "through to do", "given to", "to on", "between doing", "among doing", "about by", "to as doing", "to by", "up about",
+    "to in", "except", "upon by", "down as", "up from doing", "off to",
+]
+
+qasrlv2_0_global_prepositions = [
+    "by", "for", "with", "in", "from", "to", "as"
+]
+
+def get_qasrlv2_0_allowed_prepositions(tokens: List[str]) -> Set[str]:
+    lower_tokens = [t.lower() for t in tokens]
+    bigrams = [t[0] + " " + t[1] for t in zip(lower_tokens, lower_tokens[1:])]
+    all_candidates = lower_tokens.concat(bigrams)
+    all_contained_simple_preps = [s for s in all_candidates if s in qasrlv2_0_prepositions]
+    all_simple_preps = qasrlv2_0_global_prepositions.concat(all_contained_simple_preps)
+    all_possible_preps = [prep for p in all_simple_preps
+                          for prep in [p, p + " do", p + " doing"]
+                          if prep in qasrlv2_0_prepositions].concat(["_", "", "do", "doing"])
+    set(all_possible_preps)
 
 @DatasetReader.register("qfirst_qasrl")
 class QasrlReader(DatasetReader):
@@ -101,36 +140,6 @@ class QasrlReader(DatasetReader):
                             self._num_instances += 1
                             yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
 
-                    # each item in question_labels includes info for one question and all of its answer judgments
-                    # question_labels = []
-                    # for _, question_label in .items():
-                    #     answers = len(question_label["answerJudgments"])
-                    #     valid_answers = len([ans for ans in question_label["answerJudgments"] if ans["isValid"]])
-
-                    #     if self._question_sources is not None:
-                    #         if not any([source.startswith(prefix) for source in question_label["questionSources"] for prefix in self._question_sources]):
-                    #             continue
-
-                    #     if answers < self._min_answers:
-                    #         self._not_enough_answers += 1
-                    #         continue
-                    #     if valid_answers < self._min_valid_answers:
-                    #         self._not_enough_valid_answers += 1
-                    #         continue
-
-                    #     slots = [slots.append(question_label["questionSlots"][l]) for l in self._slot_labels]
-                    #     provenance = list(question_label["questionSources"])[0]
-                    #     spans = [Span(s[0], s[1]-1) for s in ans["spans"] if ans["isValid"] for ans in question_label["answerJudgments"]]
-                    #     num_invalid = len(questionLabel["answerJudgments"]) - len(spans)
-
-                    #     self._qa_pairs += 1
-                    #     annotations.append(AnnotatedSpan(slots = slots, all_spans = spans, provenance=provenance))
-
-                    # if annotations:
-                    #     self._instances += 1
-                    #     yield self._make_instance_from_text(sentence_tokens, verb_index, annotations = annotations, sentence_id = sentence_id)
-                    # else:
-                    #     self._no_ann += 1
 
         logger.info("Produced %d instances"%self._num_instances)
         logger.info("\t%d Verbs"%self._num_verbs)
