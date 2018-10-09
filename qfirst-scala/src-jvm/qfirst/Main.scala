@@ -524,38 +524,41 @@ object Main {
 
     filterSpaceEither.map { filterSpace =>
       val computeMetrics = M.split(I.sentenceToVerbs) {
-        M.hchoose(
-          "num verbs" ->> ((vi: I.VerbInstance) => 1),
-          "predictions" ->> (
-            M.choose(filterSpace.allFilters) { filter =>
-              I.verbToQASet(filterGoldDense, filter) andThen
-              M.split(I.qaSetToQuestions) {
-                M.hchoose(
-                  "question" ->> I.getQuestionBoundedAcc,
-                  "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
-                  "answer span" ->> M.split(I.questionToQAs) {
-                    I.getQABoundedAcc
-                  }
-                )
+        M.bucket(verbBucketers(getVerbFrequency)) {
+          M.hchoose(
+            "verbs" ->> ((vi: I.VerbInstance) => Count(vi.gold.verbInflectedForms.stem)),
+            "predictions" ->> (
+              M.choose(filterSpace.allFilters) { filter =>
+                I.verbToQASet(filterGoldDense, filter) andThen
+                M.split(I.qaSetToQuestions) {
+                  M.hchoose(
+                    "question" ->> I.getQuestionBoundedAcc,
+                    "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
+                    "answer span" ->> M.split(I.questionToQAs) {
+                      I.getQABoundedAcc
+                    }
+                  )
+                }
               }
-            }
+            )
           )
-        )
+        }
       }
 
       val raw = Instances.foldMapInstances(gold, pred)(computeMetrics)
 
-      // postprocess
+      val rawCollapsed = raw.collapsed
 
       // compute number of questions and spans per verb
-      val results = raw.updateWith("predictions")(
+      val results = rawCollapsed.updateWith("predictions")(
         _.map { stats => // stats for given filter
-          val questionsPerVerb = "questions per verb" ->> stats.get("question").stats.predicted.toDouble / raw("num verbs")
-          val spansPerVerb = "spans per verb" ->> stats.get("answer span").stats.predicted.toDouble / raw("num verbs")
+          val questionsPerVerb = "questions per verb" ->> stats.get("question").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
+          val spansPerVerb = "spans per verb" ->> stats.get("answer span").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
           stats + questionsPerVerb + spansPerVerb
         }
       )
 
+      // choose the filter with best results that has >= 2 Qs/verb recall
       val questionTunedResults = results.updateWith("predictions")(
         _.filter(_.get("questions per verb") >= 2.0)
           .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
@@ -575,38 +578,46 @@ object Main {
 
       println("Overall at ≥2.0: " + getMetricsString(questionTunedResults))
 
+      // do automated error analysis
+
       val computePredClassesForSentences = M.split(I.sentenceToVerbs) {
-        I.verbToQASet(filterGoldDense, bestFilter) andThen
-        M.split(I.qaSetToQuestions) {
-          ((q: I.QuestionInstance) => computePredClass(q) -> q) andThen Count[(PredClass, I.QuestionInstance)]
-          // (computePredClass *** identity[I.QuestionInstance]) andThen Count[(PredClass, I.QuestionInstance)]
+        M.bucket(verbBucketers(getVerbFrequency)) {
+          I.verbToQASet(filterGoldDense, bestFilter) andThen
+          M.split(I.qaSetToQuestions) {
+            ((q: I.QuestionInstance) => computePredClass(q) -> q) andThen Count[(PredClass, I.QuestionInstance)]
+            // (computePredClass *** identity[I.QuestionInstance]) andThen Count[(PredClass, I.QuestionInstance)]
+          }
         }
       }
 
       val predClasses = Instances
         .foldMapInstances(gold, pred)(computePredClassesForSentences)
-        .filter(_._1 != PredClass.NotPredicted)
+        .map(_.filter(_._1 != PredClass.NotPredicted))
 
       val mainErrorClasses = {
         import PredClass._
-        predClasses.values.map(_._1).filter(_ != PredClass.Correct).map {
-          case WrongWh(_, _) => WrongWh("_".lowerCase, "_".lowerCase)
-          case SwappedPrep(_, _) => SwappedPrep("_".lowerCase, "_".lowerCase)
-          case MissingPrep(_) => MissingPrep("_".lowerCase)
-          case ExtraPrep(_) => ExtraPrep("_".lowerCase)
-          case x => x
-        }
+        predClasses.map(
+          _.values.map(_._1).filter(_ != PredClass.Correct).map {
+            case WrongWh(_, _) => WrongWh("_".lowerCase, "_".lowerCase)
+            case SwappedPrep(_, _) => SwappedPrep("_".lowerCase, "_".lowerCase)
+            case MissingPrep(_) => MissingPrep("_".lowerCase)
+            case ExtraPrep(_) => ExtraPrep("_".lowerCase)
+            case x => x
+          }
+        )
       }
 
-      val bucketedErrorClasses = mainErrorClasses.foldMap(
-        M.bucket(Map("class" -> ((x: PredClass) => x.toString))) {
-          Count[PredClass]
-        }
+      val bucketedErrorClasses = mainErrorClasses.map(
+        _.foldMap(
+          M.bucket(Map("class" -> ((x: PredClass) => x.toString))) {
+            ((_: PredClass) => 1)
+          }
+        )
       )
 
       val whConf = {
         import PredClass._
-        predClasses.values.collect {
+        predClasses.collapsed.values.collect {
           case (Correct | WrongAnswer | CorrectTemplate, q) => Confusion.instance(q.slots.wh, q.slots.wh, q)
           case (WrongWh(pred, gold), q) => Confusion.instance(gold, pred, q)
         }.combineAll
@@ -614,20 +625,65 @@ object Main {
 
       println(whConf.stats.prettyString(0))
 
-      println("Main bucketed error classes: " + getMetricsString(bucketedErrorClasses))
+      println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
+      println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
+
+      def writeExamples(path: NIOPath, examples: List[Instances.QuestionInstance], rand: util.Random) = {
+        val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
+        Files.write(path, examplesString.getBytes("UTF-8"))
+      }
+
+      val collapsedPredClasses = predClasses.collapsed
 
       val examplesDir = metadataDir.resolve("examples")
       if(!Files.exists(examplesDir)) {
         Files.createDirectories(examplesDir)
       }
-      def writeExamples(filename: String, examples: List[Instances.QuestionInstance], rand: util.Random) = {
-        val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
-        Files.write(examplesDir.resolve(filename), examplesString.getBytes("UTF-8"))
+
+      {
+        val r = new util.Random(235867962L)
+        writeExamples(
+          examplesDir.resolve("template.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.CorrectTemplate, q) => q },
+          r
+        )
+        writeExamples(
+          examplesDir.resolve("prep-swap.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q },
+          r
+        )
+        writeExamples(
+          examplesDir.resolve("other.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.Other, q) => q },
+          r
+        )
       }
-      val r = new util.Random(235867962L)
-      writeExamples("template.txt", predClasses.values.collect { case (PredClass.CorrectTemplate, q) => q }, r)
-      writeExamples("prep-swap.txt", predClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q }, r)
-      writeExamples("other.txt", predClasses.values.collect { case (PredClass.Other, q) => q }, r)
+
+      // performance on verbs by frequency
+
+      val verbBucketedResults = raw.map(
+        _.updateWith("predictions")(
+          _.data(bestFilter).get("question with answer")
+        )
+      )
+      println("Overall by verb: " + getMetricsString(verbBucketedResults))
+
+      val verbsDir = examplesDir.resolve("verb-freq")
+      if(!Files.exists(verbsDir)) {
+        Files.createDirectories(verbsDir)
+      }
+      {
+        val r = new util.Random(22646L)
+        predClasses.data.foreach { case (buckets, results) =>
+          // val instances = results.get("predictions").incorrect ++ results.get("predictions").uncertain
+          val bucketDir = verbsDir.resolve(buckets("verb-freq"))
+          if(!Files.exists(bucketDir)) {
+            Files.createDirectories(bucketDir)
+          }
+          val instances = results.values.collect { case (PredClass.Other, q) => q }
+          writeExamples(bucketDir.resolve("other.txt"), instances, r)
+        }
+      }
     }
   }
 

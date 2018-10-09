@@ -7,16 +7,17 @@ import cats.MonoidK
 import cats.implicits._
 
 case class Count[A](values: List[A]) {
-  def stats = Count.Stats(values.size)
+  def stats = Count.Stats(values.size, values.toSet.size)
   // TODO functorfilter
   def filter(f: A => Boolean) = Count(values.filter(f))
 }
 object Count {
   def apply[A](a: A): Count[A] = Count(List(a))
 
-  case class Stats(count: Int) {
+  case class Stats(numInstances: Int, numTypes: Int) {
     def metrics: MapTree[String, Metric] = MapTree.fromPairs(
-      "count" -> Metric.int(count)
+      "num types" -> Metric.int(numTypes),
+      "num instances" -> Metric.int(numInstances),
     )
   }
 
