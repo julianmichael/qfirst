@@ -71,6 +71,7 @@ class QasrlReader(DatasetReader):
                  min_answers = 1,
                  min_valid_answers = 0,
                  question_sources = None,
+                 domains = None,
                  include_abstract_slots: bool = False):
         super().__init__(False)
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer(lowercase_tokens=True)}
@@ -94,6 +95,7 @@ class QasrlReader(DatasetReader):
         self._num_verbs = 0
 
         self._question_sources = question_sources
+        self._domains = [d.lower() for d in domains]
 
         self._include_abstract_slots = include_abstract_slots
 
@@ -118,27 +120,29 @@ class QasrlReader(DatasetReader):
             for item in data:
                 sentence_id = item["sentenceId"]
                 sentence_tokens = item["sentenceTokens"]
+                is_sentence_in_domain = self._domains is None or any([d in sentence_id.lower() for d in self._domains])
 
-                for _, verb_entry in item["verbEntries"].items():
-                    verb_index = verb_entry["verbIndex"]
-                    verb_inflected_forms = verb_entry["verbInflectedForms"]
+                if is_sentence_in_domain:
+                    for _, verb_entry in item["verbEntries"].items():
+                        verb_index = verb_entry["verbIndex"]
+                        verb_inflected_forms = verb_entry["verbInflectedForms"]
 
-                    def is_valid(question_label):
-                        answers = question_label["answerJudgments"]
-                        valid_answers = [a for a in answers if a["isValid"]]
-                        is_source_valid = self._question_sources is None or any([l.startswith(source) for source in self._question_sources for l in question_label["questionSources"]])
-                        return (len(answers) >= self._min_answers) and (len(valid_answers) >= self._min_valid_answers) and is_source_valid
-                    question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
+                        def is_valid(question_label):
+                            answers = question_label["answerJudgments"]
+                            valid_answers = [a for a in answers if a["isValid"]]
+                            is_source_valid = self._question_sources is None or any([l.startswith(source) for source in self._question_sources for l in question_label["questionSources"]])
+                            return (len(answers) >= self._min_answers) and (len(valid_answers) >= self._min_valid_answers) and is_source_valid
+                        question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
 
-                    self._num_verbs += 1
-                    if self._instance_type == "verb":
-                        if len(question_labels) != 0:
-                            self._num_instances += 1
-                            yield self._make_gold_verb_instance(sentence_id, sentence_tokens, verb_index, verb_inflected_forms, question_labels)
-                    elif self._instance_type == "question":
-                        for l in question_labels:
-                            self._num_instances += 1
-                            yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
+                        self._num_verbs += 1
+                        if self._instance_type == "verb":
+                            if len(question_labels) != 0:
+                                self._num_instances += 1
+                                yield self._make_gold_verb_instance(sentence_id, sentence_tokens, verb_index, verb_inflected_forms, question_labels)
+                        elif self._instance_type == "question":
+                            for l in question_labels:
+                                self._num_instances += 1
+                                yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
 
 
         logger.info("Produced %d instances"%self._num_instances)
@@ -330,8 +334,10 @@ class QasrlReader(DatasetReader):
         min_valid_answers = params.pop("min_valid_answers", 0)
 
         question_sources = params.pop("question_sources", None)
+        domains = params.pop("domains", None)
 
         params.assert_empty(cls.__name__)
         return QasrlReader(token_indexers = token_indexers, instance_type = instance_type,
                            min_answers = min_answers, min_valid_answers = min_valid_answers,
-                           question_sources = question_sources)
+                           question_sources = question_sources,
+                           domains = domains)
