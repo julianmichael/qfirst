@@ -115,6 +115,21 @@ object qfirst extends CommonModule with JvmPlatform {
     ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion"
   )
 
+  def runMetrics(args: String*) = T.command {
+    val runMain = runMainFn()
+    runMain("qfirst.MetricsApp", args)
+  }
+
+  def runLearn(args: String*) = T.command {
+    val runMain = runMainFn()
+    runMain("qfirst.learn.LearnApp", args)
+  }
+
+  def runReprocess(args: String*) = T.command {
+    val runMain = runMainFn()
+    runMain("qfirst.reprocess.ReprocessApp", args)
+  }
+
   // def generateDev(port: Int, domain: String = "localhost") = T.command {
   //   val browserJSPath = browser.js.fastOpt().path.toString
   //   val browserJSDepsPath = browser.js.aggregatedJSDeps().path.toString

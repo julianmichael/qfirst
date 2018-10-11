@@ -13,14 +13,16 @@ import java.nio.file.Files
 import nlpdata.util.Text
 import nlpdata.util.LowerCaseStrings._
 
+import qasrl.bank.Data
+import qasrl.bank.SentenceId
+
 import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.VerbEntry
-import qasrl.bank.Data
 
 import HasMetrics.ops._
 
-object Main {
+object MetricsApp {
 
   def filterGold(minNumAnswers: Int, maxNumInvalid: Int) = (verb: VerbEntry) => {
     val (invalids, valids) = verb.questionLabels.toList.flatMap {
@@ -168,32 +170,44 @@ object Main {
     }
   }
 
-  sealed trait FilterSpace {
-    def withBest(filter: BeamFilter): FilterSpace
-    def allFilters: List[BeamFilter]
+  case class FilterSpace(
+    oneThreshold: Option[OneThresholdFilterSpace] = None,
+    twoThreshold: Option[TwoThresholdFilterSpace] = None,
+    threeThreshold: Option[ThreeThresholdFilterSpace] = None,
+    best: Option[BeamFilter]
+  ) {
+    def withBest(filter: BeamFilter): FilterSpace = this.copy(best = Some(filter))
+    def allFilters = best.map(List(_)).getOrElse(
+      oneThreshold.foldMap(_.allFilters) ++
+        twoThreshold.foldMap(_.allFilters) ++
+        threeThreshold.foldMap(_.allFilters)
+    )
   }
-  case class OneThresholdFilterSpace(
-    thresholds: List[Double] = Nil,
-    best: Option[BeamFilter] = None
-  ) extends FilterSpace {
-    def withBest(filter: BeamFilter) = this.copy(best = Some(filter))
-    def allFilters = best.fold(thresholds.map(BeamFilter.oneThreshold))(List(_))
+
+  case class OneThresholdFilterSpace(thresholds: List[Double] = Nil) {
+    def allFilters = thresholds.map(BeamFilter.oneThreshold)
   }
+  case class TwoThresholdFilterSpace(
+    qaThresholds: List[Double] = Nil,
+    invalidThresholds: List[Double] = Nil
+  ) {
+    def allFilters = for {
+      qa <- qaThresholds
+      i <- invalidThresholds
+    } yield BeamFilter.twoThreshold(qa, i)
+  }
+
   case class ThreeThresholdFilterSpace(
     questionThresholds: List[Double] = Nil,
     spanThresholds: List[Double] = Nil,
-    invalidThresholds: List[Double] = Nil,
-    best: Option[BeamFilter] = None
-  ) extends FilterSpace {
-    def withBest(filter: BeamFilter) = this.copy(best = Some(filter))
-    def allFilters = best.fold {
-      for {
-        q <- questionThresholds
-        s <- spanThresholds
-        i <- invalidThresholds
-        b <- List(true, false)
-      } yield BeamFilter.threeThreshold(q, s, i, b)
-    }(List(_))
+    invalidThresholds: List[Double] = Nil
+  ) {
+    def allFilters = for {
+      q <- questionThresholds
+      s <- spanThresholds
+      i <- invalidThresholds
+      b <- List(true, false)
+    } yield BeamFilter.threeThreshold(q, s, i, b)
   }
 
   import Instances.Bucketers
@@ -264,6 +278,10 @@ object Main {
     "verb-freq" -> Bucketers.verbFreq(
       verbFreq,
       NonEmptyList.of(0, 10, 50, 150, 250, 500, 750, 1000))
+  )
+
+  def domainBucketers = Map(
+    "domain" -> ((verb: Instances.VerbInstance) => SentenceId.fromString(verb.sentence.gold.sentenceId).documentId.domain.toString)
   )
 
   def renderVerbPrediction(sentenceTokens: Vector[String], verb: VerbPrediction) = {
@@ -524,7 +542,7 @@ object Main {
 
     filterSpaceEither.map { filterSpace =>
       val computeMetrics = M.split(I.sentenceToVerbs) {
-        M.bucket(verbBucketers(getVerbFrequency)) {
+        M.bucket(/*verbBucketers(getVerbFrequency) ++ */ domainBucketers) {
           M.hchoose(
             "verbs" ->> ((vi: I.VerbInstance) => Count(vi.gold.verbInflectedForms.stem)),
             "predictions" ->> (
@@ -581,7 +599,7 @@ object Main {
       // do automated error analysis
 
       val computePredClassesForSentences = M.split(I.sentenceToVerbs) {
-        M.bucket(verbBucketers(getVerbFrequency)) {
+        M.bucket(/* verbBucketers(getVerbFrequency) ++ */ domainBucketers) {
           I.verbToQASet(filterGoldDense, bestFilter) andThen
           M.split(I.qaSetToQuestions) {
             ((q: I.QuestionInstance) => computePredClass(q) -> q) andThen Count[(PredClass, I.QuestionInstance)]
@@ -668,15 +686,15 @@ object Main {
       )
       println("Overall by verb: " + getMetricsString(verbBucketedResults))
 
-      val verbsDir = examplesDir.resolve("verb-freq")
-      if(!Files.exists(verbsDir)) {
-        Files.createDirectories(verbsDir)
+      val domainsDir = examplesDir.resolve("domain")
+      if(!Files.exists(domainsDir)) {
+        Files.createDirectories(domainsDir)
       }
       {
         val r = new util.Random(22646L)
         predClasses.data.foreach { case (buckets, results) =>
           // val instances = results.get("predictions").incorrect ++ results.get("predictions").uncertain
-          val bucketDir = verbsDir.resolve(buckets("verb-freq"))
+          val bucketDir = domainsDir.resolve(buckets("domain"))
           if(!Files.exists(bucketDir)) {
             Files.createDirectories(bucketDir)
           }
@@ -840,7 +858,7 @@ object Main {
   }
 
   val runMetrics = Command(
-    name = "mill qfirst.run",
+    name = "mill qfirst.runMetrics",
     header = "Calculate metrics."
   ) {
     val goldPath = Opts.option[NIOPath](

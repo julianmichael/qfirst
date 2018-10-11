@@ -1,0 +1,198 @@
+package qfirst.reprocess
+import qfirst._
+import qfirst.metrics._
+
+import cats.Id
+import cats.Monad
+import cats.implicits._
+import cats.data.NonEmptyList
+import cats.data.Writer
+import cats.effect.IO
+
+import com.monovore.decline._
+
+import java.nio.file.{Path => NIOPath}
+import java.nio.file.Files
+
+import nlpdata.datasets.wiktionary.InflectedForms
+import nlpdata.datasets.wiktionary.VerbForm
+
+import nlpdata.util.Text
+import nlpdata.util.LowerCaseStrings._
+
+import qasrl.bank.Data
+import qasrl.bank.SentenceId
+
+import qasrl.data.AnswerSpan
+import qasrl.data.Dataset
+import qasrl.data.QuestionLabel
+import qasrl.data.Sentence
+import qasrl.data.VerbEntry
+
+import qasrl.labeling.SlotBasedLabel
+
+import HasMetrics.ops._
+
+object ReprocessApp {
+
+  def getMismatchInfo(
+    sentence: Sentence,
+    verb: VerbEntry,
+    qLabel: QuestionLabel
+  ): Option[String] = {
+    val oldSlots = qLabel.questionSlots
+    val newSlotsOpt = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
+      sentence.sentenceTokens,
+      verb.verbInflectedForms,
+      List(qLabel.questionString)
+    ).head
+    newSlotsOpt match {
+      case None => Some("Cannot reconstruct slots for question: " + qLabel.questionString)
+      case Some(newSlots) => if(oldSlots != newSlots) Some {
+        val oldString = oldSlots.renderWithSeparator(verb.verbInflectedForms, " ")
+        val newString = newSlots.renderWithSeparator(verb.verbInflectedForms, " ")
+        s"Old:$oldString%-40s New: $newString%-40s"
+      } else None
+    }
+  }
+
+  def getAllMismatchInfo(dataset: Dataset): Vector[String] = {
+    dataset.sentences.values.toList.foldMap { sentence =>
+      sentence.verbEntries.values.toList.foldMap { verb =>
+        verb.questionLabels.foldMap { questionLabel =>
+          getMismatchInfo(sentence, verb, questionLabel).toVector
+        }
+      }
+    }
+  }
+
+  def getSlotVocabularies: (Dataset => Map[String, Map[LowerCaseString, Vector[QuestionLabel]]]) = {
+    Dataset.questionLabels.foldMap { qLabel =>
+      val slots = qLabel.questionSlots
+      List(
+        Some("wh" -> slots.wh),
+        slots.aux.map("aux" -> _),
+        slots.subj.map("subj" -> _),
+        Some("verb" -> (slots.verbPrefix ++ List(slots.verb.toString.lowerCase)).mkString(" ").lowerCase),
+        slots.obj.map("obj" -> _),
+        slots.prep.map("prep" -> _),
+        slots.obj2.map("obj2" -> _)
+      ).flatten.map { case (k, v) => k -> Map(v -> Vector(qLabel)) }.toMap
+    }
+  }
+
+  sealed trait Log[F[_]] extends (String => F[Unit]) {
+    def apply(s: String): F[Unit]
+    final def any(a: Any): F[Unit] = apply(a.toString)
+  }
+  object Log {
+    val writer: Log[Writer[Vector[String], ?]] = new Log[Writer[Vector[String], ?]] {
+      override def apply(s: String) = Writer.tell[Vector[String]](Vector(s))
+    }
+    val nop: Log[Id] = new Log[Id] {
+      override def apply(s: String) = ()
+    }
+    val console: Log[IO] = new Log[IO] {
+      override def apply(s: String) = IO { println(s) }
+    }
+  }
+
+  def getAudit[F[_]: Monad](dataset: Dataset, log: Log[F]): F[Boolean] = {
+    for {
+      _ <- log("==========\nRunning audit...")
+      // all questions
+      allQuestions = Dataset.questionLabels.getAll(dataset).map(_.questionSlots).toSet
+      allQuestionTemplates = Dataset.questionLabels.getAll(dataset).map{ q =>
+        val slots = q.questionSlots
+        slots.wh.toString + slots.subj.toString + q.isPassive + slots.obj.toString + slots.prep.toString + slots.obj2.toString
+      }.toSet
+      _ <- log(s"Num unique questions: ${allQuestions.size}")
+      _ <- log(s"Num unique question templates: ${allQuestionTemplates.size}")
+      // identify sentences with no/all empty verbs
+      emptySentences = dataset.sentences.values.toList.filter { sentence =>
+        sentence.verbEntries.forall(_._2.questionLabels.isEmpty)
+      }
+      _ <- log(s"-----\nEmpty sentences: ${emptySentences.size}")
+      _ <- log("Examples:")
+      _ <- emptySentences.take(5).toList.traverse(s => log(Text.render(s.sentenceTokens)))
+      // identify empty verbs
+      emptyVerbs = (
+        for {
+          s <- emptySentences
+          v <- s.verbEntries.values
+          if v.questionLabels.isEmpty
+        } yield (s, v)
+      )
+      _ <- log(s"-----\nEmpty verbs: ${emptyVerbs.size}")
+      _ <- log("Examples:")
+      _ <- emptyVerbs.take(5).traverse { case (s, v) =>
+        log(Text.render(s.sentenceTokens)) >> log(v.verbInflectedForms.stem.toString + "(" + v.verbIndex + ")")
+      }
+      // check slot vocabularies
+      slotVocabularies = getSlotVocabularies(dataset)
+      _ <- log("-----\nSlot vocabularies:")
+      _ <- slotVocabularies.toList.map { case (k, v) => s"$k (${v.size}): " + v.map(_._1).mkString(", ") }.traverse(log)
+      // examples of multi-word prepositions
+      _ <- slotVocabularies("prep").filter(_._1.toString.contains(" ")).toList.traverse { case (p, questions) =>
+        log(s"---- $p (${questions.size}) -----") >> questions.take(2).map(_.questionString).traverse(log)
+      }
+      prepsWithDo = slotVocabularies("prep").filter(p => p._1.endsWith("do".lowerCase) || p._1.endsWith("doing".lowerCase)).map(_._1)
+      _ <- log(s"Prepositions with do (${prepsWithDo.size}): " + prepsWithDo.mkString(", "))
+      emptyOrSpacePreps = slotVocabularies("prep").filter(_._1.trim.isEmpty)
+      _ <- log("Spacey preps: " + emptyOrSpacePreps.map(_._1).map(p => s"|$p|").mkString(", "))
+      _ <- emptyOrSpacePreps.toList.traverse { case (p, questions) =>
+        log(s"---- |$p| (${questions.size}) -----") >> questions.take(10).map(_.questionString).traverse(log)
+      }
+      verbsWithNot = slotVocabularies("verb").filter(_._1.startsWith("not".lowerCase)).map(_._1)
+      _ <- log(s"Verbs with not (${verbsWithNot.size}): " + verbsWithNot.mkString(", "))
+      questionsWithSplitDo = Dataset.questionLabels.getAll(dataset).filter(q =>
+        q.questionSlots.prep.exists(p => p.endsWith(" to".lowerCase) || p == "to".lowerCase) &&
+          q.questionSlots.obj2.exists(o => o.startsWith("do ".lowerCase) || o == "do".lowerCase)
+      )
+      _ <- log(s"Questions with split do (${questionsWithSplitDo.size}): TODO")
+      questionsWithDoButNoToInMisc = Dataset.questionLabels.getAll(dataset).filter(q =>
+        q.questionSlots.obj2.exists(o => o.startsWith("do ".lowerCase) || o == "do".lowerCase)
+      )
+      _ <- log(s"Questions with do but no to in misc (${questionsWithSplitDo.size}): TODO")
+    } yield {
+      List(
+        emptySentences.isEmpty,
+        emptyVerbs.isEmpty,
+        prepsWithDo.isEmpty,
+        emptyOrSpacePreps.isEmpty,
+        questionsWithSplitDo.isEmpty,
+        questionsWithDoButNoToInMisc.isEmpty
+        // verbsWithNot.isEmpty
+      ).forall(identity)
+    }
+  }
+
+  def program(qasrlBankPath: NIOPath/*, targetPath: NIOPath*/) = for {
+    fullData <- IO { Data.readFromQasrlBank(qasrlBankPath).get }
+    // audit
+    _ <- getAudit(fullData.all, Log.console)
+    // TODO: propose & correct
+    // _ <- IO { getAllMismatchInfo(data).foreach(println) }
+    // TODO: verify
+    // TODO: write
+  } yield ()
+
+  val runReprocess = Command(
+    name = "mill qfirst.runReprocess",
+    header = "Do the data reprocessing on QA-SRL."
+  ) {
+    val qasrlBankPath = Opts.option[NIOPath](
+      "qasrl-bank", metavar = "path", help = "Path to the QA-SRL Bank."
+    )
+
+    (qasrlBankPath).map(program)
+  }
+
+  def main(args: Array[String]): Unit = {
+    val result = runReprocess.parse(args) match {
+      case Left(help) => IO { System.err.println(help) }
+      case Right(main) => main
+    }
+    result.unsafeRunSync
+  }
+}
