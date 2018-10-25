@@ -21,6 +21,7 @@ import nlpdata.util.Text
 import nlpdata.util.LowerCaseStrings._
 
 import qasrl.bank.Data
+import qasrl.bank.FullData
 import qasrl.bank.SentenceId
 
 import qasrl.data.AnswerSpan
@@ -97,6 +98,130 @@ object ReprocessApp {
     }
   }
 
+  def reprocessDataset(old: Dataset): Dataset = {
+    import qasrl.TemplateStateMachine
+    import qasrl.QuestionProcessor
+    import qasrl.labeling.SlotBasedLabel
+
+    def fixQuestionLabel(verbInflectedForms: InflectedForms, questionLabel: QuestionLabel) = {
+      val newSlotsOpt = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
+        Vector(), verbInflectedForms, List(questionLabel.questionString)
+      ).head
+      newSlotsOpt.map(s => questionLabel.copy(questionSlots = s))
+    }
+
+    val fixAllQuestionStrings = Dataset.verbEntries.modify { verbEntry =>
+      verbEntry.copy(
+        questionLabels = verbEntry.questionLabels.flatMap {
+          case (qString, qLabel) =>
+            fixQuestionLabel(verbEntry.verbInflectedForms, qLabel).map(
+              qString -> _
+            )
+        }
+      )
+    }
+
+    fixAllQuestionStrings(old.cullQuestionlessVerbs.filterSentences(_.verbEntries.nonEmpty))
+  }
+
+  // mostly copied from QA-SRL Bank client library
+  def reprocessAllData(old: FullData): FullData = {
+
+    import qasrl.bank.qasrlDataSentenceOrder
+    import qasrl.bank.DatasetPartition
+    import qasrl.bank.Document
+    import qasrl.bank.DocumentId
+    import qasrl.bank.DocumentMetadata
+    import scala.collection.immutable.SortedSet
+
+    val trainExpanded = reprocessDataset(old.trainExpanded) // readDataset(qasrlBankPath.resolve("expanded").resolve("train.jsonl.gz"))
+    val devExpanded = reprocessDataset(old.devExpanded) // readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz"))
+
+    // avoid having to read more files since result is the same anyway
+    val trainOrig = Data.filterExpandedToOrig(trainExpanded)
+    val devOrig = Data.filterExpandedToOrig(devExpanded)
+    val testOrig = reprocessDataset(old.testOrig) // readDataset(qasrlBankPath.resolve("orig").resolve("test.jsonl.gz"))
+
+    val devDense = reprocessDataset(old.devDense) // readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz"))
+    val testDense = reprocessDataset(old.testDense) // readDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz"))
+
+    implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+    val all = trainExpanded |+| devExpanded |+| testOrig |+| devDense |+| testDense
+
+    val sentenceIdToPart = (
+      trainExpanded.sentences.keySet.map(s => SentenceId.fromString(s) -> DatasetPartition.Train) ++
+      devExpanded.sentences.keySet.map(s => SentenceId.fromString(s)   -> DatasetPartition.Dev) ++
+      testOrig.sentences.keySet.map(s => SentenceId.fromString(s)      -> DatasetPartition.Test)
+    ).toMap
+
+    val denseIds = (devDense.sentences.keySet ++ testDense.sentences.keySet)
+      .map(SentenceId.fromString)
+
+    val index = old.index // readIndexZipped(qasrlBankPath.resolve("index.json.gz"))
+
+    val documentsById = {
+
+      val sentencesByDocId = all.sentences.values.toSet
+        .groupBy((s: Sentence) => SentenceId.fromString(s.sentenceId).documentId)
+
+      val docIdToMeta = index.documents.values.reduce(_ union _).map(meta => meta.id -> meta).toMap
+
+      val documents = sentencesByDocId.iterator.map {
+        case (docId @ DocumentId(domain, idString), sentences) =>
+          def makeDocumentMetadata(title: String) = DocumentMetadata(
+            docId,
+            sentenceIdToPart(SentenceId.fromString(sentences.head.sentenceId)),
+            title
+          )
+          val metadata = docIdToMeta(docId)
+          Document(metadata, SortedSet(sentences.toSeq: _*))
+      }.toSeq
+
+      val documentsById = documents.map(doc => doc.metadata.id -> doc).toMap
+
+      documentsById
+    }
+
+    FullData(
+      index,
+      all,
+      documentsById,
+      trainOrig,
+      devOrig,
+      testOrig,
+      trainExpanded,
+      devExpanded,
+      devDense,
+      testDense
+    )
+  }
+
+  def writeDatasetLines(path: NIOPath, dataset: Dataset) = {
+    import io.circe.syntax._
+    import qasrl.data.JsonCodecs._
+    val printer = io.circe.Printer.noSpaces
+    val linesStr = dataset.sentences.iterator.map(_._2).map(_.asJson).map(printer.pretty).mkString("\n")
+    Files.write(path, linesStr.getBytes("UTF-8"))
+  }
+
+  def writeDataToDirectory(data: FullData, path: NIOPath) = {
+    for(dirname <- List("", "orig", "expanded", "dense")) {
+      val dirPath = path.resolve(dirname)
+      if(!Files.exists(dirPath)) {
+        Files.createDirectories(dirPath)
+      }
+    }
+    Data.writeIndex(path.resolve("index.json"), data.index)
+    def write(suff: String, d: Dataset) = writeDatasetLines(path.resolve(suff), d)
+    write("orig/train.jsonl", data.trainOrig)
+    write("orig/dev.jsonl", data.devOrig)
+    write("orig/test.jsonl", data.testOrig)
+    write("expanded/train.jsonl", data.trainExpanded)
+    write("expanded/dev.jsonl", data.devExpanded)
+    write("dense/dev.jsonl", data.devDense)
+    write("dense/test.jsonl", data.testDense)
+  }
+
   def getAudit[F[_]: Monad](dataset: Dataset, log: Log[F]): F[Boolean] = {
     for {
       _ <- log("==========\nRunning audit...")
@@ -133,8 +258,8 @@ object ReprocessApp {
       _ <- log("-----\nSlot vocabularies:")
       _ <- slotVocabularies.toList.map { case (k, v) => s"$k (${v.size}): " + v.map(_._1).mkString(", ") }.traverse(log)
       // examples of multi-word prepositions
-      _ <- slotVocabularies("prep").filter(_._1.toString.contains(" ")).toList.traverse { case (p, questions) =>
-        log(s"---- $p (${questions.size}) -----") >> questions.take(2).map(_.questionString).traverse(log)
+      _ <- slotVocabularies("prep").filter(_._1.toString.contains(" ")).toList.sortBy(_._2.size).traverse { case (p, questions) =>
+        log(s"---- $p (${questions.size}) -----") >> questions.distinct.take(10).map(_.questionString).traverse(log)
       }
       prepsWithDo = slotVocabularies("prep").filter(p => p._1.endsWith("do".lowerCase) || p._1.endsWith("doing".lowerCase)).map(_._1)
       _ <- log(s"Prepositions with do (${prepsWithDo.size}): " + prepsWithDo.mkString(", "))
@@ -153,7 +278,12 @@ object ReprocessApp {
       questionsWithDoButNoToInMisc = Dataset.questionLabels.getAll(dataset).filter(q =>
         q.questionSlots.obj2.exists(o => o.startsWith("do ".lowerCase) || o == "do".lowerCase)
       )
-      _ <- log(s"Questions with do but no to in misc (${questionsWithSplitDo.size}): TODO")
+      _ <- log(s"Questions with do but no to in misc (${questionsWithDoButNoToInMisc.size}): TODO")
+      questionsWithDoingSomeone = Dataset.questionLabels.getAll(dataset).filter(q =>
+        q.questionSlots.obj2.exists(o => o == "doing someone".lowerCase)
+      )
+      _ <- log(s"Questions with doing someone (${questionsWithDoingSomeone.size}):")
+      _ <- questionsWithDoingSomeone.take(10).map(_.questionString).traverse(log)
     } yield {
       List(
         emptySentences.isEmpty,
@@ -161,20 +291,26 @@ object ReprocessApp {
         prepsWithDo.isEmpty,
         emptyOrSpacePreps.isEmpty,
         questionsWithSplitDo.isEmpty,
-        questionsWithDoButNoToInMisc.isEmpty
+        questionsWithDoingSomeone.isEmpty,
         // verbsWithNot.isEmpty
       ).forall(identity)
     }
   }
 
-  def program(qasrlBankPath: NIOPath/*, targetPath: NIOPath*/) = for {
+  def program(qasrlBankPath: NIOPath, targetPathOpt: Option[NIOPath]) = for {
     fullData <- IO { Data.readFromQasrlBank(qasrlBankPath).get }
     // audit
     _ <- getAudit(fullData.all, Log.console)
-    // TODO: propose & correct
-    // _ <- IO { getAllMismatchInfo(data).foreach(println) }
-    // TODO: verify
-    // TODO: write
+    fixedData = reprocessAllData(fullData)
+    isResultValid <- getAudit(fixedData.all, Log.console)
+    _ <- IO {
+      targetPathOpt.foreach { targetPath =>
+        if(isResultValid) {
+          System.out.println(s"Saving reprocessed data to $targetPath...")
+          writeDataToDirectory(fixedData, targetPath)
+        }
+      }
+    }
   } yield ()
 
   val runReprocess = Command(
@@ -182,10 +318,13 @@ object ReprocessApp {
     header = "Do the data reprocessing on QA-SRL."
   ) {
     val qasrlBankPath = Opts.option[NIOPath](
-      "qasrl-bank", metavar = "path", help = "Path to the QA-SRL Bank."
+      "qasrl-bank", metavar = "path", help = "Path to the original QA-SRL Bank."
     )
+    val outPath = Opts.option[NIOPath](
+      "out", metavar = "path", help = "Path to the newly reprocessed QA-SRL Bank."
+    ).orNone
 
-    (qasrlBankPath).map(program)
+    (qasrlBankPath, outPath).mapN(program)
   }
 
   def main(args: Array[String]): Unit = {

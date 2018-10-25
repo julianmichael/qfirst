@@ -42,9 +42,8 @@ class QuestionAnswerer(Model):
                  span_hidden_dim: int,
                  objective: str = "binary",
                  span_selection_policy: str = "weighted",
-                 span_thresholds: List[float] = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
-                 invalid_thresholds: List[float] = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
                  embedding_dropout: float = 0.0,
+                 metric: AnswerMetric = AnswerMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionAnswerer, self).__init__(vocab, regularizer)
@@ -56,9 +55,7 @@ class QuestionAnswerer(Model):
 
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
-        self.metric = AnswerMetric(
-            span_thresholds = span_thresholds,
-            invalid_thresholds = invalid_thresholds)
+        self.metric = metric
 
         self.stacked_encoder = stacked_encoder
 
@@ -297,11 +294,12 @@ class QuestionAnswerer(Model):
         span_hidden_dim = params.pop("span_hidden_dim")
         objective = params.pop("objective", "binary")
         span_selection_policy = params.pop("span_selection_policy", "weighted")
-        span_thresholds = params.pop("span_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
-        invalid_thresholds = params.pop("invalid_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
 
         # absorb the parameter if it exists, but we don't use it anymore
         union_gold_spans = params.pop("union_gold_spans", False)
+
+        metric_params = params.pop("metric", None)
+        metric = AnswerMetric.from_params(metric_params) if metric_params is not None else AnswerMetric()
 
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
         regularizer = RegularizerApplicator.from_params(params.pop('regularizer', []))
@@ -316,7 +314,6 @@ class QuestionAnswerer(Model):
                    span_hidden_dim = span_hidden_dim,
                    objective = objective,
                    span_selection_policy = span_selection_policy,
-                   span_thresholds = span_thresholds,
-                   invalid_thresholds = invalid_thresholds,
-                   initializer=initializer,
-                   regularizer=regularizer)
+                   metric = metric,
+                   initializer = initializer,
+                   regularizer = regularizer)

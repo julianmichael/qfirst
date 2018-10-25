@@ -18,10 +18,12 @@ class AnswerMetric(Metric):
     def __init__(self,
                  span_thresholds = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
                  invalid_thresholds = [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50],
-                 proportion_invalid_answers = 0.01):
+                 proportion_invalid_answers = 0.01,
+                 verbose = False):
         self._span_thresholds = span_thresholds
         self._invalid_thresholds = invalid_thresholds
         self._proportion_invalid_answers = proportion_invalid_answers
+        self._verbose = verbose
 
         self.reset()
 
@@ -181,24 +183,43 @@ class AnswerMetric(Metric):
         def get_cov(cov):
             return cov["covered"] / cov["true"] if cov["true"] > 0 else 0.0
 
-
-
         best_span_dict = max([stats(conf) for conf in self._span_confs], key = lambda d: d["f1"])
         span_dict = { ("span-%s" % k): v for k, v in best_span_dict.items() if isinstance(v, float) }
-        valid_span_dict = { ("span-%s-valid" % k): v for k, v in stats(self._valid_spans_conf).items() if isinstance(v, float) }
         best_invalid_dict = max([stats(conf) for conf in self._invalid_confs], key = lambda d: d["f1"])
         invalid_dict = { ("invalid-%s" % k): v for k, v in best_invalid_dict.items() if isinstance(v, float) }
-        top_invalid_dict = { ("top-invalid-%s" % k): v for k, v in stats(self._top_invalid_conf).items() if isinstance(v, float) }
-        other_metrics = {
-            "top-acc": get_acc(self._top_acc),
-            "top-span-acc": get_acc(self._top_span_acc),
-            "top-acc-relaxed": get_acc(self._top_acc_relaxed),
-            "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage),
-            "span_threshold": float(best_span_dict["threshold"]),
-            "invalid_threshold": float(best_invalid_dict["threshold"])
-        }
+
+        res = None
+        if self._verbose:
+            valid_span_dict = { ("span-%s-valid" % k): v for k, v in stats(self._valid_spans_conf).items() if isinstance(v, float) }
+            top_invalid_dict = { ("top-invalid-%s" % k): v for k, v in stats(self._top_invalid_conf).items() if isinstance(v, float) }
+            other_metrics = {
+                "top-acc": get_acc(self._top_acc),
+                "top-span-acc": get_acc(self._top_span_acc),
+                "top-acc-relaxed": get_acc(self._top_acc_relaxed),
+                "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage),
+                "span_threshold": float(best_span_dict["threshold"]),
+                "invalid_threshold": float(best_invalid_dict["threshold"])
+            }
+            res = {**span_dict, **valid_span_dict, **invalid_dict, **top_invalid_dict, **other_metrics}
+        else:
+            other_metrics = {
+                "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage)
+            }
+            res = {**span_dict, **invalid_dict, **other_metrics}
 
         if reset:
             self.reset()
 
-        return {**span_dict, **valid_span_dict, **invalid_dict, **top_invalid_dict, **other_metrics}
+        return res
+
+    @classmethod
+    def from_params(cls, params) -> 'AnswerMetric':
+        span_thresholds = params.pop("span_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
+        invalid_thresholds = params.pop("invalid_thresholds", [.05, .10, .15, .20, .25, .30, .35, .40, .45, .50])
+        proportion_invalid_answers = params.pop("proportion_invalid_answers", 0.01)
+        verbose = params.pop("verbose", False)
+        return AnswerMetric(
+            span_thresholds = span_thresholds,
+            invalid_thresholds = invalid_thresholds,
+            proportion_invalid_answers = proportion_invalid_answers,
+            verbose = verbose)
