@@ -95,7 +95,7 @@ class QasrlReader(DatasetReader):
         self._num_verbs = 0
 
         self._question_sources = question_sources
-        self._domains = [d.lower() for d in domains]
+        self._domains = [d.lower() for d in domains] if domains is not None else None
 
         self._include_abstract_slots = include_abstract_slots
 
