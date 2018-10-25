@@ -203,7 +203,7 @@ class AnswerMetric(Metric):
             res = {**span_dict, **valid_span_dict, **invalid_dict, **top_invalid_dict, **other_metrics}
         else:
             other_metrics = {
-                "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage)
+                "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage),
                 "span-threshold": float(best_span_dict["threshold"]),
                 "invalid-threshold": float(best_invalid_dict["threshold"])
             }
