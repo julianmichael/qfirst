@@ -8,7 +8,8 @@
             }
         },
         "min_answers": 1,
-        "min_valid_answers": 0
+        "min_valid_answers": 0,
+        "clause_info_files": ["clause-data-train-dev.jsonl"]
     },
     // "train_data_path": "dev-mini.jsonl",
     // "validation_data_path": "dev-mini.jsonl",
@@ -41,7 +42,7 @@
         },
         "question_encoder": {
             "type": "sequential",
-            "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
+            "slot_names": ["clause-subj", "clause-aux", "clause-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg"],
             "dim_rnn_hidden": 200,
             "input_dim": 300,
             "rnn_layers": 2,
@@ -58,7 +59,7 @@
         "grad_norm": 1.0,
         "patience": 3,
         "validation_metric": "+span-f1",
-        "cuda_device": -1,
+        "cuda_device": 0,
         "optimizer": {
             "type": "adadelta",
             "rho": 0.95

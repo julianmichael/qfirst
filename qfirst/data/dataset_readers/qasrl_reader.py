@@ -63,6 +63,29 @@ def get_qasrlv2_0_allowed_prepositions(tokens: List[str]) -> Set[str]:
                           if prep in qasrlv2_0_prepositions].concat(["_", "", "do", "doing"])
     set(all_possible_preps)
 
+def read_clause_info(target, file_path):
+    def get(targ, key):
+        if key not in targ:
+            targ[key] = {}
+        return targ[key]
+    def add_json(json):
+        sentence = get(target, json["sentenceId"])
+        verb = get(sentence, json["verbIndex"])
+        clause = get(verb, json["question"])
+        slot_dict = json["slots"]
+        slot_dict["qarg"] = json["answerSlot"]
+        clause["slots"] = slot_dict
+
+    if file_path.endswith('.gz'):
+        with gzip.open(file_path, 'r') as f:
+            for line in f:
+                add_json(json.loads(line))
+    elif file_path.endswith(".jsonl"):
+        with codecs.open(file_path, 'r', encoding='utf8') as f:
+            for line in f:
+                add_json(json.loads(line))
+    return
+
 @DatasetReader.register("qfirst_qasrl")
 class QasrlReader(DatasetReader):
     def __init__(self,
@@ -72,7 +95,8 @@ class QasrlReader(DatasetReader):
                  min_valid_answers = 0,
                  question_sources = None,
                  domains = None,
-                 include_abstract_slots: bool = False):
+                 include_abstract_slots: bool = False,
+                 clause_info_files: List[str] = []):
         super().__init__(False)
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer(lowercase_tokens=True)}
         self._min_answers = min_answers
@@ -98,6 +122,12 @@ class QasrlReader(DatasetReader):
         self._domains = [d.lower() for d in domains] if domains is not None else None
 
         self._include_abstract_slots = include_abstract_slots
+
+        self._clause_info = None
+        if len(clause_info_files) > 0:
+            self._clause_info = {}
+            for file_path in clause_info_files:
+                read_clause_info(self._clause_info, file_path)
 
     @overrides
     def _read(self, file_list: str):
@@ -147,10 +177,6 @@ class QasrlReader(DatasetReader):
 
         logger.info("Produced %d instances"%self._num_instances)
         logger.info("\t%d Verbs"%self._num_verbs)
-        # logger.info("\t%d QA pairs"%self._qa_pairs)
-        # logger.info("\t%d no annotation"%self._no_ann)
-        # logger.info("\t%d not enough answers"%self._not_enough_answers)
-        # logger.info("\t%d not enough valid answers"%self._not_enough_valid_answers)
 
     def _make_gold_verb_instance(self, #type: ignore
                             sentence_id: str,
@@ -277,6 +303,7 @@ class QasrlReader(DatasetReader):
             namespace = get_slot_label_namespace(slot_name)
             return LabelField(label = slots[slot_name], label_namespace = namespace)
         slots_dict = { slot_name : get_slot_value_field(slot_name) for slot_name in self._slot_names }
+
         def get_abstract_slot_value_field(slot_name, get_abstracted_value):
             abst_slot_name = "abst-%s" % slot_name
             namespace = get_slot_label_namespace(abst_slot_name)
@@ -287,6 +314,18 @@ class QasrlReader(DatasetReader):
         abst_verb_value = "verb[pss]" if question_label["isPassive"] else "verb"
         abst_verb_field = LabelField(label = abst_verb_value, label_namespace = get_slot_label_namespace("abst-verb"))
         abstract_slots_dict = {**direct_abstract_slots_dict, **{"abst-verb": abst_verb_field}}
+
+        def get_clause_slot_field(slot_name, slot_value):
+            clause_slot_name = "clause-%s" % slot_name
+            namespace = get_slot_label_namespace(clause_slot_name)
+            return LabelField(label = slot_value, label_namespace = namespace)
+        clause_slots_dict = {}
+        if self._clause_info is not None:
+            try:
+                clause_dict = self._clause_info[sentence_id][pred_index][question_label["questionString"]]
+                clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_dict["slots"].items() }
+            except KeyError:
+                print("Key error bad aah xpxpxpxaq")
 
         def get_answers_field_for_question(label):
             def get_spans(spansJson):
@@ -319,9 +358,9 @@ class QasrlReader(DatasetReader):
 
 
         if self._include_abstract_slots:
-            return Instance({**instance_dict, **slots_dict, **abstract_slots_dict })
+            return Instance({**instance_dict, **slots_dict, **abstract_slots_dict, **clause_slots_dict})
         else:
-            return Instance({**instance_dict, **slots_dict })
+            return Instance({**instance_dict, **slots_dict, **clause_slots_dict })
 
     @classmethod
     def from_params(cls, params: Params) -> 'QasrlReader':
@@ -336,8 +375,11 @@ class QasrlReader(DatasetReader):
         question_sources = params.pop("question_sources", None)
         domains = params.pop("domains", None)
 
+        clause_info_files = params.pop("clause_info_files", [])
+
         params.assert_empty(cls.__name__)
         return QasrlReader(token_indexers = token_indexers, instance_type = instance_type,
                            min_answers = min_answers, min_valid_answers = min_valid_answers,
                            question_sources = question_sources,
-                           domains = domains)
+                           domains = domains,
+                           clause_info_files = clause_info_files)

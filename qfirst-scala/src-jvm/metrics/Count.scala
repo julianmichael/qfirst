@@ -6,13 +6,13 @@ import cats.Monoid
 import cats.MonoidK
 import cats.implicits._
 
-case class Count[A](values: List[A]) {
+case class Count[A](values: Vector[A]) {
   def stats = Count.Stats(values.size, values.toSet.size)
   // TODO functorfilter
   def filter(f: A => Boolean) = Count(values.filter(f))
 }
 object Count {
-  def apply[A](a: A): Count[A] = Count(List(a))
+  def apply[A](a: A): Count[A] = Count(Vector(a))
 
   case class Stats(numInstances: Int, numTypes: Int) {
     def metrics: MapTree[String, Metric] = MapTree.fromPairs(

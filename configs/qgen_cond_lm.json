@@ -60,7 +60,7 @@
     "grad_norm": 1.0,
     "patience": 2,
     "validation_metric": "-perplexity-per-question",
-    "cuda_device": 0,
+    "cuda_device": -1,
     "optimizer": {
       "type": "adadelta",
       "rho": 0.95

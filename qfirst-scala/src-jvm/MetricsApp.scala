@@ -24,23 +24,6 @@ import HasMetrics.ops._
 
 object MetricsApp {
 
-  def filterGold(minNumAnswers: Int, maxNumInvalid: Int) = (verb: VerbEntry) => {
-    val (invalids, valids) = verb.questionLabels.toList.flatMap {
-      case (questionString, qLabel) =>
-        val judgments = qLabel.answerJudgments.toList.map(_.judgment)
-        val numInvalid = judgments.filter(_.isInvalid).size
-        val numAnswers = judgments.size
-        if(numAnswers >= minNumAnswers) {
-          if(numInvalid <= maxNumInvalid) Some(Right(questionString -> qLabel))
-          else Some(Left(questionString -> qLabel))
-        } else None
-    }.separate
-    invalids.toMap -> valids.toMap
-  }
-
-  val filterGoldNonDense = filterGold(3, 0)
-  val filterGoldDense = filterGold(6, 1)
-
   sealed trait PredClass
   object PredClass {
     case object NotPredicted extends PredClass
@@ -73,9 +56,9 @@ object MetricsApp {
           if(answerSpans.exists(predSpans.contains)) P.correct else P.wrongAnswer
         case None =>
           val qaTemplates = Instances.qaSetToQATemplateSet(question.qas)
-          val predTemplateSlots = Instances.TemplateSlots.fromQuestionSlots(predSlots)
+          val predTemplateSlots = TemplateSlots.fromQuestionSlots(predSlots)
           qaTemplates.gold.get(predTemplateSlots.toTemplateString).as(P.correctTemplate).getOrElse {
-            def abstractWh(slots: Instances.TemplateSlots) = slots.copy(wh = (if(slots.wh.toString == "what") "what" else "adv").lowerCase)
+            def abstractWh(slots: TemplateSlots) = slots.copy(wh = (if(slots.wh.toString == "what") "what" else "adv").lowerCase)
             val whAbstractedPredTemplateSlots = abstractWh(predTemplateSlots)
             val whError = qaTemplates.gold.values.toList.map(_._1).filter { goldSlots =>
               abstractWh(goldSlots) == whAbstractedPredTemplateSlots
@@ -646,7 +629,7 @@ object MetricsApp {
       println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
       println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
 
-      def writeExamples(path: NIOPath, examples: List[Instances.QuestionInstance], rand: util.Random) = {
+      def writeExamples(path: NIOPath, examples: Vector[Instances.QuestionInstance], rand: util.Random) = {
         val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
         Files.write(path, examplesString.getBytes("UTF-8"))
       }
@@ -717,7 +700,7 @@ object MetricsApp {
     import shapeless.syntax.singleton._
     import shapeless.record._
 
-    val computeMetrics =  {
+    val computeMetrics = {
       // M.bucket(verbBucketers(getVerbFrequency)) {
       M.hchoose(
         "num sentences" ->> ((vi: I.SentenceInstance) => 1),

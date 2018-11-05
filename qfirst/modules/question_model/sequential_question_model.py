@@ -31,13 +31,15 @@ class SequentialQuestionModel(QuestionModel):
             recurrent_dropout: float = 0.1,
             highway: bool = True,
             share_rnn_cell: bool =  False,
-            share_slot_hidden: bool = False):
+            share_slot_hidden: bool = False,
+            expand_all_final_slot_values: bool = False):
         super(SequentialQuestionModel, self).__init__(vocab, slot_names, input_dim)
         self._dim_embedding = dim_embedding
         self._dim_slot_hidden = dim_slot_hidden
         self._dim_rnn_hidden = dim_rnn_hidden
         self._rnn_layers = rnn_layers
         self._recurrent_dropout = recurrent_dropout
+        self._expand_all_final_slot_values = expand_all_final_slot_values
 
         slot_embedders = []
         for i, n in enumerate(self.get_slot_names()[:-1]):
