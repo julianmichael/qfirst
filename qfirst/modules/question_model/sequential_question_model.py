@@ -259,15 +259,15 @@ class SequentialQuestionModel(QuestionModel):
         if self._clause_mode:
             chosen_beam_indices = []
             for beam_index in range(final_beam_size):
-                qarg_name = self._vocab.get_token_from_index(final_slots["clause-qarg"][beam_index], get_slot_label_namespace("clause-qarg"))
+                qarg_name = self._vocab.get_token_from_index(final_slots["clause-qarg"][beam_index].item(), get_slot_label_namespace("clause-qarg"))
                 qarg = "clause-%s" % qarg_name
                 if qarg in self.get_slot_names():
                     # remove core arguments which are invalid
-                    arg_value = self._vocab.get_token_from_index(final_slots[qarg][beam_index], get_slot_label_namespace(qarg))
+                    arg_value = self._vocab.get_token_from_index(final_slots[qarg][beam_index].item(), get_slot_label_namespace(qarg))
                     should_keep = arg_value != "_"
                 else:
                     # remove adverbials with prob below the threshold
-                    should_keep = final_probs[beam_index] >= min_beam_log_probability
+                    should_keep = final_probs[beam_index].item() >= min_beam_log_probability
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
 
