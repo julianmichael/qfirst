@@ -1,5 +1,7 @@
 #!/bin/bash
 
+git submodule update --init
+
 # create project-local venv
 python3.6 -m venv env
 # install python dependencies into local venv
@@ -20,8 +22,6 @@ sed -i -e 's/data\/elmo/https:\/\/s3-us-west-2.amazonaws.com\/allennlp\/models\/
 sed -i -e 's/\/home\/nfitz\/data\/qasrl-v2/http:\/\/qasrl.org\/data\/qasrl-v2/g' config.json
 sed -i -e 's/data\/glove/https:\/\/s3-us-west-2.amazonaws.com\/allennlp\/datasets\/glove/g' config.json
 popd
-
-mv data/qasrl_parser_elmo
 
 pushd lib/nrl-qasrl
 sed -i -e 's/data\/glove/https:\/\/s3-us-west-2.amazonaws.com\/allennlp\/datasets\/glove/g' nrl/service/predictors/qasrl_parser.py

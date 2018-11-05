@@ -2,29 +2,17 @@
 
 #        --target_device cpu
 
-# python scripts/assemble_qfirst_model.py \
-#        --qg save/qg/cond-lm-2-bilstm-fixed \
-#        --qa save/qa/binary-union-1 \
-#        --config_base models/qfirst-parser-base.json \
-#        --out models/qfirst-model-1-fixed.tar.gz \
-
-# python scripts/assemble_qfirst_model.py \
-#        --qg save/qg/cond-lm-bilstm-tqa \
-#        --qa save/qa/binary-union-1 \
-#        --config_base models/qfirst-parser-base.json \
-#        --out models/qfirst-model-1-tqa.tar.gz \
-
-# python scripts/assemble_qfirst_model.py \
-#        --qg save/qg/cond-lm-bilstm-wikipedia \
-#        --qa save/qa/binary-union-1 \
-#        --config_base models/qfirst-parser-base.json \
-#        --out models/qfirst-model-1-wikipedia.tar.gz \
-
 python scripts/assemble_qfirst_model.py \
-       --qg save/qg/cond-lm-bilstm-wikinews \
-       --qa save/qa/binary-union-1 \
+       --qg save/qg/clause-cond-lm-1 \
+       --qa save/qa/clause-binary-union-1 \
        --config_base models/qfirst-parser-base.json \
-       --out models/qfirst-model-1-wikinews.tar.gz \
+       --out models/qfirst-clause-model-1.tar.gz \
+
+# python scripts/assemble_qfirst_model.py \
+#        --qg save/qg/cond-lm-bilstm-1 \
+#        --qa save/qa/binary-union-1 \
+#        --config_base models/qfirst-parser-base.json \
+#        --out models/qfirst-model-1.tar.gz \
 
 # python scripts/assemble_qfirst_model.py \
 #        --qg save/qg/cond-lm-2-bilstm \

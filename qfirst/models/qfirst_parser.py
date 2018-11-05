@@ -79,25 +79,26 @@ class QfirstParser(Model):
 
         if num_answers is not None: # we have gold datums
             metadata = metadata[0]
-            num_answers_cpu = num_answers[0].cpu()
-            num_invalids_cpu = num_invalids[0].cpu()
-            gold_qa_pairs = []
-            for qi, question_label in enumerate(metadata["question_labels"]):
-                def get_spans(spansJson):
-                    return [Span(s[0], s[1]-1) for s in spansJson]
-                all_gold_answer_spans = [s for ans in question_label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"])]
-                distinct_gold_answer_spans = list(set(all_gold_answer_spans))
-                gold_question_dict = {
-                    "question_slots": question_label["questionSlots"],
-                    "question": [question_label["questionSlots"][n] for n in self.slot_names],
-                    "answer_spans": distinct_gold_answer_spans,
-                    "num_answers": num_answers_cpu[qi],
-                    "num_gold_invalids": num_invalids_cpu[qi]
-                }
-                gold_qa_pairs.append(gold_question_dict)
+        #    num_answers_cpu = num_answers[0].cpu()
+        #    num_invalids_cpu = num_invalids[0].cpu()
+        #    gold_qa_pairs = []
+        #    for qi, question_label in enumerate(metadata["question_labels"]):
+        #        def get_spans(spansJson):
+        #            return [Span(s[0], s[1]-1) for s in spansJson]
+        #        all_gold_answer_spans = [s for ans in question_label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"])]
+        #        distinct_gold_answer_spans = list(set(all_gold_answer_spans))
+        #        gold_question_dict = {
+        #            "question_slots": question_label["questionSlots"],
+        #            "question": [question_label["questionSlots"][n] for n in self.slot_names],
+        #            "answer_spans": distinct_gold_answer_spans,
+        #            "num_answers": num_answers_cpu[qi],
+        #            "num_gold_invalids": num_invalids_cpu[qi]
+        #        }
+        #        gold_qa_pairs.append(gold_question_dict)
 
             if self.metric is not None:
-                self.metric(gold_qa_pairs, full_beam, metadata)
+                self.metric(None, full_beam, metadata)
+                # self.metric(gold_qa_pairs, full_beam, metadata)
 
         return {
             "full_beam": full_beam,

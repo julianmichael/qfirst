@@ -10,7 +10,7 @@ def main(model_path: str,
     if model_path is None or out_path is None or cuda_device is None:
         sys.exit("Arguments (model, out, device) must be present.")
 
-    eval_data_file = "http://qasrl.org/data/qasrl-v2/dense/dev.jsonl.gz"
+    eval_data_file = "qasrl-v2_1/dense/dev.jsonl.gz"
     # eval_data_file = "dev-mini.jsonl"
     overrides = {
         "dataset_reader": {

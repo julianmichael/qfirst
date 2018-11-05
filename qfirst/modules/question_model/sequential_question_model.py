@@ -271,10 +271,10 @@ class SequentialQuestionModel(QuestionModel):
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
 
-            chosen_beam_vector = torch.tensor(chosen_beam_indices)
+            chosen_beam_vector = torch.tensor(chosen_beam_indices, device = torch.cuda.current_device()).long()
             for slot_name in self._slot_names:
                 final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)
-                final_probs = final_probs.gather(0, chosen_beam_vector)
+            final_probs = final_probs.gather(0, chosen_beam_vector)
 
         return { k: v.long() for k, v in final_slots.items() }, final_probs
 
