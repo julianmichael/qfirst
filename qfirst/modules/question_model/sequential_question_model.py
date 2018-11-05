@@ -32,14 +32,21 @@ class SequentialQuestionModel(QuestionModel):
             highway: bool = True,
             share_rnn_cell: bool =  False,
             share_slot_hidden: bool = False,
-            expand_all_final_slot_values: bool = False):
+            clause_mode: bool = False):
         super(SequentialQuestionModel, self).__init__(vocab, slot_names, input_dim)
         self._dim_embedding = dim_embedding
         self._dim_slot_hidden = dim_slot_hidden
         self._dim_rnn_hidden = dim_rnn_hidden
         self._rnn_layers = rnn_layers
         self._recurrent_dropout = recurrent_dropout
-        self._expand_all_final_slot_values = expand_all_final_slot_values
+        self._clause_mode = clause_mode
+
+        if self._clause_mode:
+            adverbial_qarg_indices = []
+            for qarg_value, qarg_index in vocab.get_token_to_index_vocabulary(get_slot_label_namespace("clause-qarg")).items():
+                if "clause-%s" % qarg_value not in self.get_slot_names():
+                    adverbial_qarg_indices.append(qarg_index)
+            self._adverbial_qarg_indices = set(adverbial_qarg_indices)
 
         slot_embedders = []
         for i, n in enumerate(self.get_slot_names()[:-1]):
@@ -210,6 +217,7 @@ class SequentialQuestionModel(QuestionModel):
         current_beam_states = [(init_embedding, init_mem, 0.)]
 
         for slot_index, slot_name in enumerate(self._slot_names):
+            ending_clause_with_qarg = self._clause_mode and slot_index == (len(self._slot_names) - 1) and slot_name == "clause-qarg"
             # list of pairs (of backpointer, slot_value_index, new_embedding, new_mem, log_prob) ?
             candidate_new_beam_states = []
             for i, (emb, mem, prev_log_prob) in enumerate(current_beam_states):
@@ -225,10 +233,12 @@ class SequentialQuestionModel(QuestionModel):
                         new_input_embedding = self._slot_embedders[slot_index](pred_reps.new([pred_slot_index]).long())
                     else:
                         new_input_embedding = None
-                    if log_prob >= min_beam_log_probability:
+                    # keep all expansions of the last step --- for now --- if we're on the qarg slot of a clause
+                    if ending_clause_with_qarg or log_prob >= min_beam_log_probability:
                         candidate_new_beam_states.append((i, pred_slot_index, new_input_embedding, next_mem, log_prob))
             candidate_new_beam_states.sort(key = lambda t: t[4], reverse = True)
-            new_beam_states = candidate_new_beam_states[:max_beam_size]
+            # ditto the comment above; keeping all expansions of last step for clauses; we'll filter them later
+            new_beam_states = candidate_new_beam_states[:max_beam_size] if not ending_clause_with_qarg else candidate_new_beam_states
             backpointers[slot_name] = [t[0] for t in new_beam_states]
             slot_beam_labels[slot_name] = [t[1] for t in new_beam_states]
             current_beam_states = [(t[2], t[3], t[4]) for t in new_beam_states]
@@ -245,6 +255,27 @@ class SequentialQuestionModel(QuestionModel):
                 final_slots[slot_name][beam_index] = slot_beam_labels[slot_name][current_backpointer]
                 current_backpointer = backpointers[slot_name][current_backpointer]
 
+        # now if we're in clause mode, we need to filter the expanded beam
+        if self._clause_mode:
+            chosen_beam_indices = []
+            for beam_index in range(final_beam_size):
+                qarg_name = self._vocab.get_token_from_index(final_slots["clause-qarg"][beam_index], get_slot_label_namespace("clause-qarg"))
+                qarg = "clause-%s" % qarg_name
+                if qarg in self.get_slot_names():
+                    # remove core arguments which are invalid
+                    arg_value = self._vocab.get_token_from_index(final_slots[qarg][beam_index], get_slot_label_namespace(qarg))
+                    should_keep = arg_value != "_"
+                else:
+                    # remove adverbials with prob below the threshold
+                    should_keep = final_probs[beam_index] >= min_beam_log_probability
+                if should_keep:
+                    chosen_beam_indices.append(beam_index)
+
+            chosen_beam_vector = torch.tensor(chosen_beam_indices)
+            for slot_name in self._slot_names:
+                final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)
+                final_probs = final_probs.gather(0, chosen_beam_vector)
+
         return { k: v.long() for k, v in final_slots.items() }, final_probs
 
     @classmethod
@@ -259,7 +290,8 @@ class SequentialQuestionModel(QuestionModel):
         dim_slot_hidden = params.pop("dim_slot_hidden", 100)
         dim_embedding = params.pop("dim_embedding", 100)
         recurrent_dropout = params.pop("recurrent_dropout", 0.1)
+        clause_mode = params.pop("clause_mode", False)
 
         params.assert_empty(cls.__name__)
 
-        return SequentialQuestionModel(vocab, slot_names, input_dim=input_dim, share_slot_hidden=share_slot_hidden, rnn_layers = rnn_layers, share_rnn_cell = share_rnn_cell, dim_rnn_hidden = dim_rnn_hidden, dim_slot_hidden = dim_slot_hidden, dim_embedding = dim_embedding, recurrent_dropout = recurrent_dropout)
+        return SequentialQuestionModel(vocab, slot_names, input_dim=input_dim, share_slot_hidden=share_slot_hidden, rnn_layers = rnn_layers, share_rnn_cell = share_rnn_cell, dim_rnn_hidden = dim_rnn_hidden, dim_slot_hidden = dim_slot_hidden, dim_embedding = dim_embedding, recurrent_dropout = recurrent_dropout, clause_mode = clause_mode)
