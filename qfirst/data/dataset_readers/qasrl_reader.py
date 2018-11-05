@@ -172,7 +172,9 @@ class QasrlReader(DatasetReader):
                         elif self._instance_type == "question":
                             for l in question_labels:
                                 self._num_instances += 1
-                                yield self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
+                                next_instance = self._make_gold_question_instance(sentence_id, sentence_tokens, verb_index, l)
+                                if next_instance is not None:
+                                    yield next_instance
 
 
         logger.info("Produced %d instances"%self._num_instances)
@@ -325,7 +327,8 @@ class QasrlReader(DatasetReader):
                 clause_dict = self._clause_info[sentence_id][pred_index][question_label["questionString"]]
                 clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_dict["slots"].items() }
             except KeyError:
-                print("Key error bad aah xpxpxpxaq")
+                print("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
+                return None
 
         def get_answers_field_for_question(label):
             def get_spans(spansJson):
