@@ -327,7 +327,7 @@ class QasrlReader(DatasetReader):
                 clause_dict = self._clause_info[sentence_id][pred_index][question_label["questionString"]]
                 clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_dict["slots"].items() }
             except KeyError:
-                print("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
+                logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
                 return None
 
         def get_answers_field_for_question(label):

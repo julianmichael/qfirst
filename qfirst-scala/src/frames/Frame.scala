@@ -132,9 +132,11 @@ import monocle.macros._
   private[this] def abort: StateT[List, List[String], Unit] =
     choose(List[Unit]())
 
-  private[this] def renderNecessaryNoun(slot: ArgumentSlot.Aux[Noun]) = args.get(slot) match {
+  type ArgMap = Map[ArgumentSlot, String]
+
+  private[this] def renderNecessaryNoun(slot: ArgumentSlot.Aux[Noun], argValues: ArgMap) = args.get(slot) match {
     case None       => choose(List("someone", "something")) >>= append
-    case Some(noun) => appendAll(noun.placeholder)
+    case Some(noun) => appendAll(argValues.get(slot).fold(noun.placeholder)(List(_)))
   }
 
   private[this] def renderWhNoun(slot: ArgumentSlot.Aux[Noun]) = args.get(slot) match {
@@ -145,65 +147,81 @@ import monocle.macros._
   private[this] def renderWhOrAbort[Arg <: Argument](slot: ArgumentSlot.Aux[Arg]) =
     choose(args.get(slot) >>= (_.wh)) >>= append
 
-  private[this] def renderArgIfPresent[Arg <: Argument](slot: ArgumentSlot.Aux[Arg]) =
-    appendAll(args.get(slot).toList >>= (_.placeholder))
+  private[this] def renderArgIfPresent[Arg <: Argument](slot: ArgumentSlot.Aux[Arg], argValues: ArgMap) =
+    appendAll(args.get(slot).toList >>= (v => argValues.get(slot).fold(v.placeholder)(str => v.unGap ++ List(str))))
 
   private[this] def renderGap[Arg <: Argument](slot: ArgumentSlot.Aux[Arg]) =
     appendAll(args.get(slot).toList >>= (_.gap))
 
-  private[this] def renderAuxThroughVerb(includeSubject: Boolean) = {
+  private[this] def renderAuxThroughVerb(includeSubject: Boolean, argValues: ArgMap) = {
     val verbStack = getVerbStack
     if (includeSubject) {
       val splitVerbStack = splitVerbStackIfNecessary(verbStack)
       val (aux, verb) = (splitVerbStack.head, splitVerbStack.tail)
-      append(aux) >> renderNecessaryNoun(Subj) >> appendAll(verb)
+      append(aux) >> renderNecessaryNoun(Subj, argValues) >> appendAll(verb)
     } else appendAll(verbStack)
   }
 
-  def questionsForSlot(slot: ArgumentSlot) = {
+  def questionsForSlot(slot: ArgumentSlot) = questionsForSlotWithArgs(slot, Map())
+
+  def clauses = clausesWithArgs(Map())
+
+  def clausesWithArgs(argValues: ArgMap) = {
+    val qStateT = {
+      renderNecessaryNoun(Subj, argValues) >>
+        renderAuxThroughVerb(includeSubject = false, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
+    }
+    qStateT.runS(List.empty[String]).map(_.reverse.mkString(" "))
+  }
+
+  def questionsForSlotWithArgs(slot: ArgumentSlot, argValues: ArgMap) = {
     val qStateT = slot match {
       case Subj =>
         renderWhNoun(Subj) >>
-        renderAuxThroughVerb(includeSubject = false) >>
-        renderArgIfPresent(Obj) >>
-        renderArgIfPresent(Prep1) >>
-        renderArgIfPresent(Prep2) >>
-        renderArgIfPresent(Misc)
+        renderAuxThroughVerb(includeSubject = false, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
       case Obj =>
         renderWhNoun(Obj) >>
-        renderAuxThroughVerb(includeSubject = true) >>
+        renderAuxThroughVerb(includeSubject = true, argValues) >>
         renderGap(Obj) >>
-        renderArgIfPresent(Prep1) >>
-        renderArgIfPresent(Prep2) >>
-        renderArgIfPresent(Misc)
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
       case Prep1 =>
         renderWhOrAbort(Prep1) >>
-        renderAuxThroughVerb(includeSubject = true) >>
-        renderArgIfPresent(Obj) >>
+        renderAuxThroughVerb(includeSubject = true, argValues) >>
+        renderArgIfPresent(Obj, argValues) >>
         renderGap(Prep1) >>
-        renderArgIfPresent(Prep2) >>
-        renderArgIfPresent(Misc)
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
       case Prep2 =>
         renderWhOrAbort(Prep2) >>
-        renderAuxThroughVerb(includeSubject = true) >>
-        renderArgIfPresent(Obj) >>
-        renderArgIfPresent(Prep1) >>
+        renderAuxThroughVerb(includeSubject = true, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
         renderGap(Prep2) >>
-        renderArgIfPresent(Misc)
+        renderArgIfPresent(Misc , argValues)
       case Misc =>
         renderWhOrAbort(Misc) >>
-        renderAuxThroughVerb(includeSubject = true) >>
-        renderArgIfPresent(Obj) >>
-        renderArgIfPresent(Prep1) >>
-        renderArgIfPresent(Prep2) >>
+        renderAuxThroughVerb(includeSubject = true, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
         renderGap(Misc)
       case Adv(wh) =>
         append(wh.toString.capitalize) >>
-        renderAuxThroughVerb(includeSubject = true) >>
-        renderArgIfPresent(Obj) >>
-        renderArgIfPresent(Prep1) >>
-        renderArgIfPresent(Prep2) >>
-        renderArgIfPresent(Misc)
+        renderAuxThroughVerb(includeSubject = true, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
     }
     qStateT.runS(List.empty[String]).map(_.reverse.mkString(" ") + "?")
   }

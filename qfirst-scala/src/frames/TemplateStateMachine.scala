@@ -12,14 +12,6 @@ import nlpdata.datasets.wiktionary.InflectedForms
 
 import monocle.macros._
 
-// object VerbTemplateStateMachine {
-//   @Lenses VerbState(
-//     verbInflectedForms: InflectedForms,
-//     isPassive: Boolean,
-//     tan: TAN
-//   )
-// }
-
 object TemplateStateMachine {
 
   @Lenses case class FrameState(
@@ -440,7 +432,7 @@ class TemplateStateMachine(
       "" -> pure(haveAux(subjRequired))
     )
     val straightToVerb: TemplateTransition =
-    "" -> markAnswerSlot(Subj, makeNounForWh).as(tensedVerb)
+      "" -> markAnswerSlot(Subj, makeNounForWh).as(tensedVerb)
     val transitions = if (subjRequired) tail else straightToVerb :: tail
     TemplateProgress(transitions)
   }

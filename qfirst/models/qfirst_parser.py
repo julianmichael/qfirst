@@ -11,6 +11,7 @@ from allennlp.data import Vocabulary
 from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.models.question_answerer import QuestionAnswerer
 from qfirst.data.util import get_slot_label_namespace
+from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
 from qfirst.metrics.beam_metric import BeamMetric
 
 import math
@@ -26,6 +27,7 @@ class QfirstParser(Model):
                  max_beam_size: int = 20,
                  question_minimum_prob: float = 0.01,
                  span_minimum_prob: float = 0.01,
+                 clause_mode: bool = False,
                  metric: BeamMetric = None):
         super(QfirstParser, self).__init__(vocab)
         self.question_generator = question_generator
@@ -34,6 +36,7 @@ class QfirstParser(Model):
         self.max_beam_size = max_beam_size
         self.question_minimum_prob = question_minimum_prob
         self.span_minimum_prob = span_minimum_prob
+        self.clause_mode = clause_mode
         self.metric = metric
 
     @overrides
@@ -58,6 +61,8 @@ class QfirstParser(Model):
             text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
             predicate_index_expanded = predicate_index.expand(beam_size, -1)
             predicate_indicator_expanded = predicate_indicator.expand(beam_size, -1)
+            if self.clause_mode:
+                beam_slots = get_question_tensors_for_clause_tensors_batched(beam_size, self.vocab, beam_slots)
             answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
             answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
             for i in range(beam_size):
@@ -117,6 +122,7 @@ class QfirstParser(Model):
         max_beam_size = params.pop("max_beam_size", 20)
         question_minimum_prob = params.pop("question_minimum_prob", 0.01)
         span_minimum_prob = params.pop("span_minimum_prob", 0.01)
+        clause_mode = params.pop("clause_mode", False)
         metric_config = params.pop("metric", None)
         metric = None
         if metric_config is not None:
@@ -127,4 +133,5 @@ class QfirstParser(Model):
                             max_beam_size = max_beam_size,
                             question_minimum_prob = question_minimum_prob,
                             span_minimum_prob = span_minimum_prob,
+                            clause_mode = clause_mode,
                             metric = metric)

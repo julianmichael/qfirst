@@ -23,9 +23,13 @@ val declineVersion = "0.4.2"
 val simulacrumVersion = "0.13.0"
 val monocleVersion = "1.5.1-cats"
 // js cats libs
-val radhocVersion = "0.1.0"
+val radhocVersion = "0.1.1-SNAPSHOT"
 // jvm webby cats libs
 val http4sVersion = "0.18.14"
+
+// non-cats
+val upickleVersion = "0.5.1"
+val spacroVersion = "0.2.0"
 
 // jvm webby libs
 val scalatagsVersion = "0.6.7"
@@ -34,11 +38,15 @@ val scalacssVersion = "0.5.3"
 // jvm libs
 val ammoniteOpsVersion = "1.1.2"
 val logbackVersion = "1.2.3"
+// jvm crowd libs
+val akkaActorVersion = "2.4.20"
+val scalaLoggingVersion = "3.5.0"
+val slf4jApiVersion = "1.7.21"
 
 // js libs
 val scalajsDomVersion = "0.9.6"
-// val scalajsJqueryVersion = "0.9.3"
-val scalajsReactVersion = "1.1.0"
+val scalajsJqueryVersion = "0.9.3"
+val scalajsReactVersion = "1.2.3"
 val scalajsScalaCSSVersion = "0.5.3"
 
 val scalatestVersion = "3.0.5"
@@ -64,7 +72,7 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     "-deprecation",
     "-feature",
     "-language:higherKinds",
-    "-Ypartial-unification"
+    "-Ypartial-unification",
   )
 
   def scalacPluginIvyDeps = super.scalacPluginIvyDeps() ++ Agg(
@@ -86,10 +94,15 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     ivy"com.github.julien-truffaut::monocle-generic::$monocleVersion",
     ivy"org.julianmichael::nlpdata::$nlpdataVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
+    ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank::$qasrlBankVersion",
     ivy"org.julianmichael::qasrl-bank-service::$qasrlBankVersion",
     ivy"io.circe::circe-core::$circeVersion",
+    ivy"io.circe::circe-parser::$circeVersion",
     ivy"io.circe::circe-generic::$circeVersion",
+    // crowd stuff
+    ivy"org.julianmichael::spacro::$spacroVersion",
+    ivy"com.lihaoyi::upickle::$upickleVersion",
   )
 }
 
@@ -128,16 +141,22 @@ trait QfirstModule extends CommonModule {
 object qfirst extends Module {
   object js extends QfirstModule with JsPlatform with SimpleJSDeps {
     def ivyDeps = super.ivyDeps() ++ Agg(
+      ivy"org.julianmichael::radhoc::$radhocVersion",
       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+      ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
       ivy"com.github.japgolly.scalajs-react::core::$scalajsReactVersion",
       ivy"com.github.japgolly.scalajs-react::ext-monocle::$scalajsReactVersion",
       ivy"com.github.japgolly.scalajs-react::ext-cats::$scalajsReactVersion",
+      ivy"com.github.japgolly.scalacss::core::$scalajsScalaCSSVersion",
       ivy"com.github.japgolly.scalacss::ext-react::$scalajsScalaCSSVersion",
+      // crowd stuff
     )
     def jsDeps = Agg(
+      "https://code.jquery.com/jquery-2.1.4.min.js",
       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
     )
+    // def mainClass = T(Some("qfirst.frames.crowd.Dispatcher"))
   }
   object jvm extends QfirstModule with JvmPlatform with ScalatexModule {
     def ivyDeps = super.ivyDeps() ++ Agg(
@@ -152,6 +171,16 @@ object qfirst extends Module {
       ivy"org.http4s::http4s-dsl::$http4sVersion",
       ivy"org.http4s::http4s-blaze-server::$http4sVersion",
       ivy"ch.qos.logback:logback-classic:$logbackVersion",
+      // crowd stuff
+      ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
+      ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+      ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
+    )
+
+    def resources = T.sources(
+      millSourcePath / "resources",
+      qfirst.js.fastOpt().path / RelPath.up,
+      qfirst.js.aggregatedJSDeps().path / RelPath.up
     )
 
     def runMetrics(args: String*) = T.command {

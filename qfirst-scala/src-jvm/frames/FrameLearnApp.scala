@@ -282,6 +282,31 @@ object FrameLearnApp {
     }
   }
 
+  def writeFrameData[M: FramePredictionModel](
+    data: Dataset,
+    model: M,
+    outPath: NIOPath
+  ): IO[Unit] = {
+    import FrameDataWriter._
+    import FramePredictionModel.ops._
+    import io.circe.syntax._
+
+    val printer = io.circe.Printer.noSpaces
+
+    def jsonItemsIter = for {
+      (sentenceId, sentence) <- data.sentences.iterator
+      (verbIndex, verb) <- sentence.verbEntries.iterator
+      (questionString, (frame, answerSlot)) <- model.predictFramesWithAnswers(verb)
+    } yield {
+      val info = FrameInfo(sentenceId, verbIndex, questionString, frame, answerSlot)
+      printer.pretty(info.asJson)
+    }
+
+    val fileString = jsonItemsIter.mkString("\n")
+
+    IO(Files.write(outPath, fileString.getBytes("UTF-8")))
+  }
+
   def program(qasrlBankPath: NIOPath): IO[Unit] = {
     implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     implicit val _log = Log.console
@@ -289,7 +314,7 @@ object FrameLearnApp {
       train <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("train.jsonl.gz")))
       dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
       model <- SimpleFrameInduction.run[IO](train, dev)
-      _ <- FrameDataWriter.writeFrameData(train |+| dev, model, Paths.get("clause-data/train-dev.jsonl"))
+      _ <- writeFrameData(train |+| dev, model, Paths.get("clause-data/train-dev.jsonl"))
     } yield ()
   }
 

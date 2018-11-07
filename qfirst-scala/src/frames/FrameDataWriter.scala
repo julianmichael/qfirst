@@ -3,12 +3,8 @@ package qfirst.frames
 import cats.Id
 import cats.effect.IO
 
-import io.circe.syntax._
 import io.circe.Json
 import io.circe.Encoder
-
-import java.nio.file.Files
-import java.nio.file.Path
 
 import nlpdata.datasets.wiktionary.InflectedForms
 import nlpdata.util.LowerCaseStrings._
@@ -16,17 +12,16 @@ import nlpdata.util.LowerCaseStrings._
 import qasrl.data.Dataset
 import qasrl.util.DependentMap
 
-import FramePredictionModel.ops._
-
 object FrameDataWriter {
   val genericInflectedForms = InflectedForms(
     stem = "stem".lowerCase,
-    present = "present".lowerCase,
+    present = "presentSingular3rd".lowerCase,
     presentParticiple = "presentParticiple".lowerCase,
     past = "past".lowerCase,
     pastParticiple = "pastParticiple".lowerCase
   )
   def recapitalizeInflection(s: String): String = s match {
+    case "presentsingular3rd" => "presentSingular3rd"
     case "presentparticiple" => "presentParticiple"
     case "pastparticiple" => "pastParticiple"
     case x => x
@@ -88,27 +83,5 @@ object FrameDataWriter {
         "answerSlot" -> Json.fromString(getAnswerSlotLabel(info.answerSlot))
       )
     }
-  }
-
-  def writeFrameData[M: FramePredictionModel](
-    data: Dataset,
-    model: M,
-    outPath: Path
-  ): IO[Unit] = {
-
-    val printer = io.circe.Printer.noSpaces
-
-    def jsonItemsIter = for {
-      (sentenceId, sentence) <- data.sentences.iterator
-      (verbIndex, verb) <- sentence.verbEntries.iterator
-      (questionString, (frame, answerSlot)) <- model.predictFramesWithAnswers(verb)
-    } yield {
-      val info = FrameInfo(sentenceId, verbIndex, questionString, frame, answerSlot)
-      printer.pretty(info.asJson)
-    }
-
-    val fileString = jsonItemsIter.mkString("\n")
-
-    IO(Files.write(outPath, fileString.getBytes("UTF-8")))
   }
 }

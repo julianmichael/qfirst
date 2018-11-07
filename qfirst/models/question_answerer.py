@@ -28,6 +28,7 @@ from nrl.common.span import Span
 from qfirst.modules.question_encoder import QuestionEncoder
 from qfirst.metrics.answer_metric import AnswerMetric
 
+from qfirst.data.util import get_slot_label_namespace
 
 qa_objective_values = ["binary", "multinomial"]
 qa_span_selection_policy_values = ["union", "majority", "weighted"]
@@ -47,6 +48,8 @@ class QuestionAnswerer(Model):
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionAnswerer, self).__init__(vocab, regularizer)
+
+        self._vocab = vocab
 
         self.span_hidden_dim = span_hidden_dim
 
@@ -108,6 +111,13 @@ class QuestionAnswerer(Model):
                 question_slot_labels = None
         if question_slot_labels is None:
             raise ConfigurationError("QuestionAnswerer must receive a question as input.")
+
+        # XXX debuggy
+        # for i in range(question_slot_labels[self.slot_names[0]].size(0)):
+        #     question = ""
+        #     for slot_name in self.slot_names:
+        #         question = question + self._vocab.get_token_from_index(question_slot_labels[slot_name][i].item(), namespace = get_slot_label_namespace(slot_name)) + " "
+        #     print(question)
 
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
         mask = get_text_field_mask(text)

@@ -561,7 +561,7 @@ object MetricsApp {
 
       // choose the filter with best results that has >= 2 Qs/verb recall
       val questionTunedResults = results.updateWith("predictions")(
-        _.filter(_.get("questions per verb") >= 2.0)
+        _.filter(_.get("questions per verb") >= 0.1)
           .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
       )
 
@@ -792,12 +792,21 @@ object MetricsApp {
     }
   }
 
-  def readPredictions(path: NIOPath) = {
+  def readPredictions(
+    path: NIOPath, inputType: String
+  ): Either[io.circe.Error, Map[String, SentencePrediction]] = {
+    import qfirst.frames._
     import ammonite.ops._
     import io.circe.jawn
-    read.lines(Path(path, pwd)).toList
-      .traverse(jawn.decode[SentencePrediction])
-      .map(_.map(pred => pred.sentenceId -> pred).toMap)
+    if(inputType == "question") {
+      read.lines(Path(path, pwd)).toList
+        .traverse(jawn.decode[SentencePrediction])
+        .map(_.map(pred => pred.sentenceId -> pred).toMap)
+    } else if(inputType == "clausal") {
+      read.lines(Path(path, pwd)).toList
+        .traverse(jawn.decode[ClausalSentencePrediction])
+        .map(_.map(pred => pred.sentenceId -> pred.toSentencePrediction).toMap)
+    } else ??? // shouldn't happen since we validated the input
   }
 
   def readVerbFrequencies(data: Dataset) = {
@@ -808,10 +817,14 @@ object MetricsApp {
     }
   }
 
-  def program(qasrlBankPath: NIOPath, predDir: NIOPath, mode: String) = {
+  def program(qasrlBankPath: NIOPath, predDir: NIOPath, mode: String, inputType: String) = {
     // TODO validate using opts stuff from decline?
     if(!Set("dense", "non-dense", "dense-curve").contains(mode)) {
       System.err.println("Must specify mode of non-dense, dense-curve, or dense.")
+      System.exit(1)
+    }
+    if(!Set("question", "clausal").contains(inputType)) {
+      System.err.println("Must specify input type of of question or clausal.")
       System.exit(1)
     }
     val metadataDir = predDir.resolve(mode)
@@ -823,7 +836,7 @@ object MetricsApp {
     val predFile = if(mode == "dense" || mode == "dense-curve") {
       predDir.resolve("predictions-dense.jsonl")
     } else predDir.resolve("predictions.jsonl")
-    val predEither = readPredictions(predFile)
+    val predEither = readPredictions(predFile, inputType)
     predEither match {
       case Left(error) => System.err.println(error)
       case Right(pred) =>
@@ -853,8 +866,11 @@ object MetricsApp {
     val mode = Opts.option[String](
       "mode", metavar = "non-dense|dense-curve|dense", help = "Which eval to run."
     ).withDefault("dense")
+    val inputType = Opts.option[String](
+      "inputType", metavar = "question|clausal", help = "Which input type to handle."
+    ).withDefault("question")
 
-    (goldPath, predPath, mode).mapN(program)
+    (goldPath, predPath, mode, inputType).mapN(program)
   }
 
   def main(args: Array[String]): Unit = {

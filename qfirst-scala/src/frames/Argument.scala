@@ -5,6 +5,7 @@ import nlpdata.util.LowerCaseStrings._
 sealed trait Argument {
   def placeholder: List[String]
   def gap: List[String]
+  def unGap: List[String]
   def wh: Option[String]
 
   def isNoun: Boolean = this match {
@@ -34,36 +35,35 @@ case class Preposition(
 ) extends Argument {
   override def placeholder = preposition.toString :: objOpt.toList.flatMap(_.placeholder)
   override def gap = List(preposition.toString) ++ objOpt.toList.flatMap(_.gap)
+  override def unGap = List(preposition.toString)
   override def wh = objOpt.flatMap(_.wh)
 }
 
 sealed trait NonPrepArgument extends Argument
-
-sealed trait NounLikeArgument extends NonPrepArgument
-
-case class Noun(
-  isAnimate: Boolean
-) extends NounLikeArgument {
-  override def placeholder = List(if (isAnimate) "someone" else "something")
-  override def gap = Nil
-  override def wh = if (isAnimate) Some("Who") else Some("What")
+object NonPrepArgument {
+  def fromPlaceholder(s: LowerCaseString) =
+    Noun.fromPlaceholder(s)
+      .orElse(Gerund.fromPlaceholder(s))
+      .orElse(Complement.fromPlaceholder(s))
+      .orElse(Locative.fromPlaceholder(s))
 }
 
 case object Locative extends NonPrepArgument {
   override def placeholder = List("somewhere")
   override def gap = Nil
+  override def unGap = Nil
   override def wh = Some("Where")
-}
 
-case object Gerund extends NounLikeArgument {
-  override def placeholder = List("doing", "something")
-  override def gap = List("doing")
-  override def wh = Some("What")
+  def fromPlaceholder(s: LowerCaseString) = s.toString match {
+    case "somewhere" => Some(Locative)
+    case _ => None
+  }
 }
 
 case class Complement(conj: Complement.Form) extends NonPrepArgument {
   override def placeholder = conj.placeholder
   override def gap = conj.gap
+  override def unGap = conj.unGap
   override def wh = conj.wh
 }
 object Complement {
@@ -77,10 +77,56 @@ object Complement {
       case Infinitive => List("to", "do")
       case Bare => List("do")
     }
+    def unGap = this match {
+      case Infinitive => List("to")
+      case Bare => List()
+    }
     def wh = Some("What")
   }
   object Form {
     case object Infinitive extends Form
     case object Bare extends Form
+  }
+
+  def fromPlaceholder(s: LowerCaseString) = s.toString match {
+    case "to do something" => Some(Complement(Form.Infinitive))
+    case "do something" => Some(Complement(Form.Bare))
+    case _ => None
+  }
+}
+
+sealed trait NounLikeArgument extends NonPrepArgument
+object NounLikeArgument {
+  def fromPlaceholder(s: LowerCaseString) =
+    Noun.fromPlaceholder(s).orElse(
+      Gerund.fromPlaceholder(s)
+    )
+}
+
+case object Gerund extends NounLikeArgument {
+  override def placeholder = List("doing", "something")
+  override def gap = List("doing")
+  override def unGap = List()
+  override def wh = Some("What")
+
+  def fromPlaceholder(s: LowerCaseString) = s.toString match {
+    case "doing something" => Some(Gerund)
+    case _ => None
+  }
+}
+
+case class Noun(
+  isAnimate: Boolean
+) extends NounLikeArgument {
+  override def placeholder = List(if (isAnimate) "someone" else "something")
+  override def gap = Nil
+  override def unGap = Nil
+  override def wh = if (isAnimate) Some("Who") else Some("What")
+}
+object Noun {
+  def fromPlaceholder(s: LowerCaseString) = s.toString match {
+    case "someone"   => Some(Noun(isAnimate = true))
+    case "something" => Some(Noun(isAnimate = false))
+    case _ => None
   }
 }
