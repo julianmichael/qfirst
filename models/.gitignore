@@ -1,3 +1,4 @@
 *
 !.gitignore
 !qfirst-parser-base.json
+!qfirst-clause-parser-base.json
