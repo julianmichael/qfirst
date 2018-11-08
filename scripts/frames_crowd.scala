@@ -48,7 +48,7 @@ def exit = {
 }
 
 // TODO
-val setup = new ClausalExample(label, Paths.get("predictions/qfirst-clause-1/predictions-dense.jsonl"))
+val setup = new ClausalExample(label, Paths.get("predictions/qfirst-clause-2/predictions-dense.jsonl"))
 import setup.SentenceIdHasTokens
 
 val exp = setup.experiment
