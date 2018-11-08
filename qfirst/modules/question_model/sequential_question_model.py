@@ -266,8 +266,10 @@ class SequentialQuestionModel(QuestionModel):
                     arg_value = self._vocab.get_token_from_index(final_slots[qarg][beam_index].item(), get_slot_label_namespace(qarg))
                     should_keep = arg_value != "_"
                 else:
-                    # remove adverbials with prob below the threshold
-                    should_keep = final_probs[beam_index].item() >= min_beam_log_probability
+                    # Old approach: remove adverbials with prob below the threshold
+                    # should_keep = final_probs[beam_index].item() >= min_beam_log_probability
+                    # New approach: keep all adverbials
+                    should_keep = true
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
 
