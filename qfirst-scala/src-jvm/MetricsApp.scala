@@ -561,7 +561,7 @@ object MetricsApp {
 
       // choose the filter with best results that has >= 2 Qs/verb recall
       val questionTunedResults = results.updateWith("predictions")(
-        _.filter(_.get("questions per verb") >= 0.1)
+        _.filter(_.get("questions per verb") >= 2.0)
           .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
       )
 

@@ -129,7 +129,7 @@ class ClausalClient[SID : Writer : Reader](instructions: VdomTag)(
   }
 
   def qaField(
-    s: StateVal[State], sentence: Vector[String], verbIndex: Int, question: String, highlightedAnswers: Map[(Int, Int), Answer])(
+    s: StateVal[State], sentence: Vector[String], verbIndex: Int, question: String, prob: Double, highlightedAnswers: Map[(Int, Int), Answer])(
     index: (Int, Int)
   ) = {
     val isFocused = s.get.curFocus == index
@@ -156,7 +156,7 @@ class ClausalClient[SID : Writer : Reader](instructions: VdomTag)(
         ^.margin := "1px",
         ^.padding := "1px",
         ^.onClick --> s.modify(State.curFocus.set(index)),
-        question
+        f"($prob%.2f) $question%s"
       ),
       <.div(
         Styles.answerIndicator,
@@ -215,7 +215,7 @@ class ClausalClient[SID : Writer : Reader](instructions: VdomTag)(
           render = {
             case Loading => <.div("Retrieving data...")
             case Loaded(ClausalAjaxResponse(workerInfoSummaryOpt, sentence)) =>
-              val clauseGroups = sentence.verbs.flatMap { verb =>
+              val clauseGroups = sentence.verbs.toList.sortBy(_.verbIndex).flatMap { verb =>
                 verb.questions.groupBy(pred => pred.questionSlots.structure -> pred.questionSlots.tan).toList
                   .sortBy(-_._2.map(_.questionProb).sum)
                   .map { case ((structure, tan), qPreds) =>
@@ -412,7 +412,7 @@ class ClausalClient[SID : Writer : Reader](instructions: VdomTag)(
                                             <.li(
                                               ^.key := s"question-$clauseIndex-$questionIndex",
                                               ^.display := "block",
-                                              qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, highlightedAnswers)(
+                                              qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, prob, highlightedAnswers)(
                                                 (clauseIndex, questionIndex)
                                               ),
                                               <.div(

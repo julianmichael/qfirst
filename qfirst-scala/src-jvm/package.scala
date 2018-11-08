@@ -19,7 +19,7 @@ package object qfirst extends Implicits {
     invalids.toMap -> valids.toMap
   }
 
-  val filterGoldNonDense = filterGold(2, 0)
+  val filterGoldNonDense = filterGold(3, 0)
   val filterGoldDense = filterGold(6, 1)
 
   def overlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {

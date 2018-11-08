@@ -13,15 +13,16 @@ import qasrl.data.Dataset
 import qasrl.util.DependentMap
 
 object FrameDataWriter {
+  // TODO change to presentSingular3rd
   val genericInflectedForms = InflectedForms(
     stem = "stem".lowerCase,
-    present = "presentSingular3rd".lowerCase,
+    present = "present".lowerCase,
     presentParticiple = "presentParticiple".lowerCase,
     past = "past".lowerCase,
     pastParticiple = "pastParticiple".lowerCase
   )
   def recapitalizeInflection(s: String): String = s match {
-    case "presentsingular3rd" => "presentSingular3rd"
+    // case "presentsingular3rd" => "presentSingular3rd"
     case "presentparticiple" => "presentParticiple"
     case "pastparticiple" => "pastParticiple"
     case x => x
