@@ -12,6 +12,9 @@ class QuestionGenerator(Registrable):
     def __init__(self, vocab: Vocabulary):
         super(QuestionGenerator, self).__init__(vocab)
 
+    def get_slot_names(self):
+        raise NotImplementedError()
+
     def beam_decode_single(self,
                            text: Dict[str, torch.LongTensor],
                            predicate_indicator: torch.LongTensor,

@@ -41,7 +41,7 @@ def get_gap_for_slot_value(slot_value):
     return _placeholder_and_gap_mapping[slot_value][1]
 
 # NOTE: this has not been tested, not guaranteed to work
-def get_question_for_clause(clause_slots):
+def get_question_for_clause(clause_slots, vocab: Vocabulary):
     answer_slot = clause_slots["qarg"]
     wh = answer_slot if answer_slot not in clause_slots else get_wh_for_slot_value(clause_slots[answer_slot])
     subj = clause_slots["subj"] if answer_slot != "subj" else get_gap_for_slot_value(clause_slots["subj"])
@@ -61,6 +61,10 @@ def get_question_for_clause(clause_slots):
 
     if clause_slots["prep1"] != "_" and clause_slots["prep2"] != "_":
         prep = "%s %s" % (clause_slots["prep1"], clause_slots["prep2"])
+        try:
+            vocab.get_token_index(prep, namespace = get_slot_label_namespace("prep"))
+        except KeyError:
+            raise ValueError("Preposition bigram is not in vocabulary: %s" % prep)
         if clause_slots["prep1-obj"] != "_":
             # in something/someone for ...
             if answer_slot != "prep1-obj":
@@ -146,9 +150,11 @@ def get_question_for_clause(clause_slots):
 def get_question_tensors_for_clause_tensors_batched(
         batch_size: int,
         vocab: Vocabulary,
-        all_slots: Dict[str, torch.LongTensor]):
+        all_slots: Dict[str, torch.LongTensor],
+        all_probs: torch.LongTensor):
     clause_slots = { k[len("clause-"):] : v for k, v in all_slots.items() if k.startswith("clause-")}
     question_slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
+    clause_slot_names = ["subj", "aux", "verb", "obj", "prep1", "prep1-obj", "prep2", "prep2-obj", "misc", "qarg"]
     stringy_clause_slots = [
         {k : vocab.get_token_from_index(
                 v[i].item(),
@@ -156,22 +162,37 @@ def get_question_tensors_for_clause_tensors_batched(
             for k, v in clause_slots.items()}
         for i in range(batch_size)
     ]
+    filtered_stringy_clause_slots = []
     stringy_question_slots = []
-    for clause_slots in stringy_clause_slots:
+    question_probs = []
+    # for clause_slots, prob in zip(stringy_clause_slots, all_probs):
+    for i in range(len(stringy_clause_slots)):
         try:
-            stringy_question_slots.append(get_question_for_clause(clause_slots))
+            stringy_question_slots.append(get_question_for_clause(stringy_clause_slots[i], vocab))
+            filtered_stringy_clause_slots.append(stringy_clause_slots[i])
+            question_probs.append(all_probs[i].item())
         except ValueError as e:
             print(str(e))
-    stringy_question_slots = [
-        get_question_for_clause(clause_slots)
-        for clause_slots in stringy_clause_slots
-    ]
+
+    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda:%s" % torch.cuda.current_device())
+    filtered_clause_slots = {
+        ("clause-%s" % slot_name) : torch.tensor(
+            [vocab.get_token_index(slots[slot_name], namespace = get_slot_label_namespace("clause-%s" % slot_name))
+             for slots in stringy_clause_slots],
+            device = device
+        ).long()
+        for slot_name in clause_slot_names
+    }
     question_slots = {
         slot_name : torch.tensor(
             [vocab.get_token_index(slots[slot_name], namespace = get_slot_label_namespace(slot_name))
-             for slots in stringy_question_slots]
+             for slots in stringy_question_slots],
+            device = device
         ).long()
         for slot_name in question_slot_names
     }
-    return question_slots
+    question_probs_tensor = torch.tensor(question_probs, device = device)
+    return filtered_clause_slots, question_slots, question_probs_tensor
 

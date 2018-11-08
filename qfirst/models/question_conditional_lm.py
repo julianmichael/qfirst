@@ -49,6 +49,9 @@ class QuestionConditionalLM(Model, QuestionGenerator):
 
         self.metric = QuestionMetric(vocab, question_model.get_slot_names())
 
+    def get_slot_names(self):
+        return self.slot_names
+
     def _get_gold_slot_labels(self, instance_slot_labels_dict):
         # each of gold_slot_labels[slot_name] is of
         # Shape: batch_size

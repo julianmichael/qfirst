@@ -271,10 +271,9 @@ class SequentialQuestionModel(QuestionModel):
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
 
-            # XXX
             device = torch.device("cpu")
             if torch.cuda.is_available():
-                device = torch.device("cuda:%s" % torch.cuda.get_current_device())
+                device = torch.device("cuda:%s" % torch.cuda.current_device())
             chosen_beam_vector = torch.tensor(chosen_beam_indices, device = device).long()
             for slot_name in self._slot_names:
                 final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)

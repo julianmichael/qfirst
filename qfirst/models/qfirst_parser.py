@@ -32,7 +32,7 @@ class QfirstParser(Model):
         super(QfirstParser, self).__init__(vocab)
         self.question_generator = question_generator
         self.question_answerer = question_answerer
-        self.slot_names = question_answerer.question_encoder.get_slot_names()
+        self.slot_names = question_generator.get_slot_names()
         self.max_beam_size = max_beam_size
         self.question_minimum_prob = question_minimum_prob
         self.span_minimum_prob = span_minimum_prob
@@ -56,18 +56,19 @@ class QfirstParser(Model):
 
         beam_slots, beam_log_probs = self.question_generator.beam_decode_single(text, predicate_indicator, self.max_beam_size, self.question_minimum_prob)
         beam_size = beam_log_probs.size(0)
+        if self.clause_mode:
+            generated_beam_slots, beam_slots_for_qa, beam_log_probs = get_question_tensors_for_clause_tensors_batched(beam_size, self.vocab, beam_slots, beam_log_probs)
+            beam_size = beam_log_probs.size(0)
         full_beam = []
         if beam_size > 0:
             text_expanded = { k: v.expand(beam_size, -1, -1) for k, v in text.items() }
             predicate_index_expanded = predicate_index.expand(beam_size, -1)
             predicate_indicator_expanded = predicate_indicator.expand(beam_size, -1)
-            if self.clause_mode:
-                beam_slots = get_question_tensors_for_clause_tensors_batched(beam_size, self.vocab, beam_slots)
-            answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots)
+            answerer_forward_outputs = self.question_answerer.forward(text_expanded, predicate_index_expanded, predicate_indicator_expanded, **beam_slots_for_qa)
             answerer_outputs = self.question_answerer.decode(answerer_forward_outputs)
             for i in range(beam_size):
                 question_slots = {
-                    n: self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[beam_slots[n][i].item()]
+                    n: self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(n))[generated_beam_slots[n][i].item()]
                     for n in self.slot_names
                 }
                 question = [question_slots[n] for n in self.slot_names]
