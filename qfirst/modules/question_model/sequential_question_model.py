@@ -269,7 +269,7 @@ class SequentialQuestionModel(QuestionModel):
                     # Old approach: remove adverbials with prob below the threshold
                     # should_keep = final_probs[beam_index].item() >= min_beam_log_probability
                     # New approach: keep all adverbials
-                    should_keep = true
+                    should_keep = True
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
 
