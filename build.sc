@@ -203,6 +203,11 @@ object qfirst extends Module {
       runMain("qfirst.frames.FrameLearnApp", args)
     }
 
+    def runSandbox(args: String*) = T.command {
+      val runMain = runMainFn()
+      runMain("qfirst.SandboxApp", args)
+    }
+
     // def generateDev(port: Int, domain: String = "localhost") = T.command {
     //   val browserJSPath = browser.js.fastOpt().path.toString
     //   val browserJSDepsPath = browser.js.aggregatedJSDeps().path.toString
