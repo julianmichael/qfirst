@@ -10,6 +10,7 @@ import com.monovore.decline._
 import java.nio.file.{Path => NIOPath}
 import java.nio.file.Files
 
+import nlpdata.datasets.wiktionary.VerbForm
 import nlpdata.util.Text
 import nlpdata.util.LowerCaseStrings._
 
@@ -19,6 +20,8 @@ import qasrl.bank.SentenceId
 import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.VerbEntry
+
+import qasrl.labeling.SlotBasedLabel
 
 import HasMetrics.ops._
 
@@ -153,46 +156,6 @@ object MetricsApp {
     }
   }
 
-  case class FilterSpace(
-    oneThreshold: Option[OneThresholdFilterSpace] = None,
-    twoThreshold: Option[TwoThresholdFilterSpace] = None,
-    threeThreshold: Option[ThreeThresholdFilterSpace] = None,
-    best: Option[BeamFilter]
-  ) {
-    def withBest(filter: BeamFilter): FilterSpace = this.copy(best = Some(filter))
-    def allFilters = best.map(List(_)).getOrElse(
-      oneThreshold.foldMap(_.allFilters) ++
-        twoThreshold.foldMap(_.allFilters) ++
-        threeThreshold.foldMap(_.allFilters)
-    )
-  }
-
-  case class OneThresholdFilterSpace(thresholds: List[Double] = Nil) {
-    def allFilters = thresholds.map(BeamFilter.oneThreshold)
-  }
-  case class TwoThresholdFilterSpace(
-    qaThresholds: List[Double] = Nil,
-    invalidThresholds: List[Double] = Nil
-  ) {
-    def allFilters = for {
-      qa <- qaThresholds
-      i <- invalidThresholds
-    } yield BeamFilter.twoThreshold(qa, i)
-  }
-
-  case class ThreeThresholdFilterSpace(
-    questionThresholds: List[Double] = Nil,
-    spanThresholds: List[Double] = Nil,
-    invalidThresholds: List[Double] = Nil
-  ) {
-    def allFilters = for {
-      q <- questionThresholds
-      s <- spanThresholds
-      i <- invalidThresholds
-      b <- List(true, false)
-    } yield BeamFilter.threeThreshold(q, s, i, b)
-  }
-
   import Instances.Bucketers
 
   val questionBucketers = Map(
@@ -280,9 +243,6 @@ object MetricsApp {
     }.mkString("\n")
     s"$sentenceStr\n$verbStr\n$qasString"
   }
-
-  import qasrl.labeling.SlotBasedLabel
-  import nlpdata.datasets.wiktionary.VerbForm
 
   def renderFilteredPrediction(
     sentenceTokens: Vector[String],
