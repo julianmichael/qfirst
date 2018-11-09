@@ -249,214 +249,227 @@ class ClausalClient[SID : Writer : Reader](instructions: VdomTag)(
                 Option(settings.validationAgreementGracePeriod - summary.numAssignmentsCompleted)
                   .filter(_ > 0)
 
-              DoubleLocal.make(0.5) { clauseInclusionThreshold =>
-                DoubleLocal.make(0.5) { spanInclusionThreshold =>
-                  StateLocal.make(State.initial(clauseGroups.map(_.slotProbs.size))) { state =>
-                    import state.get._
-                    SpanHighlighting(
-                      SpanHighlightingProps(
-                        isEnabled = !isNotAssigned && answers(curFocus._1)(curFocus._2).isAnswer,
-                        enableSpanOverlap = true,
-                        update = updateCurrentAnswers(state),
-                        render = {
-                          case (hs @ SpanHighlightingState(spans, status), SpanHighlightingContext(_, hover, touch, cancelHighlight)) =>
-                            val curVerbIndex = clauseGroups(curFocus._1).verbIndex
-                            val inProgressAnswerOpt =
-                              SpanHighlightingStatus.highlighting.getOption(status).map {
-                                case Highlighting(_, anchor, endpoint) => Span(anchor, endpoint)
-                              }
-                            val curAnswers = spans(curFocus)
-                            val otherAnswers = (spans - curFocus).values.flatten
-                            val highlightedAnswers = clauseGroups.zipWithIndex.flatMap {
-                              case (cg, cIndex) => cg.slotProbs.toList.indices.map { qIndex =>
-                                (cIndex, qIndex) -> Answer(spans(cIndex -> qIndex))
-                              }
-                            }.toMap
+              DoubleLocal.make(0.4) { clauseInclusionThreshold =>
+                DoubleLocal.make(0.0) { questionInclusionThreshold =>
+                  DoubleLocal.make(0.5) { spanInclusionThreshold =>
+                    StateLocal.make(State.initial(clauseGroups.map(_.slotProbs.size))) { state =>
+                      import state.get._
+                      SpanHighlighting(
+                        SpanHighlightingProps(
+                          isEnabled = !isNotAssigned && answers(curFocus._1)(curFocus._2).isAnswer,
+                          enableSpanOverlap = true,
+                          update = updateCurrentAnswers(state),
+                          render = {
+                            case (hs @ SpanHighlightingState(spans, status), SpanHighlightingContext(_, hover, touch, cancelHighlight)) =>
+                              val curVerbIndex = clauseGroups(curFocus._1).verbIndex
+                              val inProgressAnswerOpt =
+                                SpanHighlightingStatus.highlighting.getOption(status).map {
+                                  case Highlighting(_, anchor, endpoint) => Span(anchor, endpoint)
+                                }
+                              val curAnswers = spans(curFocus)
+                              val otherAnswers = (spans - curFocus).values.flatten
+                              val highlightedAnswers = clauseGroups.zipWithIndex.flatMap {
+                                case (cg, cIndex) => cg.slotProbs.toList.indices.map { qIndex =>
+                                  (cIndex, qIndex) -> Answer(spans(cIndex -> qIndex))
+                                }
+                              }.toMap
 
-                            val isCurrentInvalid = answers(curFocus._1)(curFocus._2).isInvalid
-                            val touchWord = touch(curFocus)
+                              val isCurrentInvalid = answers(curFocus._1)(curFocus._2).isInvalid
+                              val touchWord = touch(curFocus)
 
-                            <.div(
-                              ^.classSet1("container-fluid"),
-                              ^.onClick --> cancelHighlight,
                               <.div(
-                                instructions,
-                                ^.margin := "5px"
-                              ),
-                              workerInfoSummaryOpt.whenDefined(
-                                summary =>
+                                ^.classSet1("container-fluid"),
+                                ^.onClick --> cancelHighlight,
+                                <.div(
+                                  instructions,
+                                  ^.margin := "5px"
+                                ),
+                                workerInfoSummaryOpt.whenDefined(
+                                  summary =>
+                                  <.div(
+                                    ^.classSet1("card"),
+                                    ^.margin := "5px",
+                                    <.p( // TODO
+                                      <.span(
+                                        Styles.bolded,
+                                        """Proportion of questions you marked invalid: """,
+                                        <.span(
+                                          if (summary.proportionInvalid < settings.invalidProportionEstimateLowerBound ||
+                                                summary.proportionInvalid > settings.invalidProportionEstimateUpperBound) {
+                                            Styles.badRed
+                                          } else {
+                                            Styles.goodGreen
+                                          },
+                                          f"""${summary.proportionInvalid * 100.0}%.1f%%"""
+                                        ),
+                                        "."
+                                      ),
+                                      s""" This should generally be between
+                                   ${(settings.invalidProportionEstimateLowerBound * 100).toInt}% and
+                                   ${(settings.invalidProportionEstimateUpperBound * 100).toInt}%.""",
+                                      (if (summary.proportionInvalid < 0.15)
+                                         " Please be harsher on bad questions. "
+                                       else "")
+                                    ).when(!summary.proportionInvalid.isNaN),
+                                    <.p(
+                                      <.span(
+                                        Styles.bolded,
+                                        "Agreement score: ",
+                                        <.span(
+                                          if (summary.agreement <= settings.validationAgreementBlockingThreshold) {
+                                            Styles.badRed
+                                          } else if (summary.agreement <= settings.validationAgreementBlockingThreshold + 0.025) {
+                                            TagMod(Styles.uncomfortableOrange, Styles.bolded)
+                                          } else {
+                                            Styles.goodGreen
+                                          },
+                                          f"""${summary.agreement * 100.0}%.1f%%"""
+                                        ),
+                                        "."
+                                      ),
+                                      f""" This must remain above ${settings.validationAgreementBlockingThreshold * 100.0}%.1f%%""",
+                                      getRemainingInAgreementGracePeriodOpt(summary).fold(".")(
+                                        remaining =>
+                                        s" after the end of a grace period ($remaining HITs remaining)."
+                                      )
+                                    ).when(!summary.agreement.isNaN)
+                                  )
+                                ),
                                 <.div(
                                   ^.classSet1("card"),
                                   ^.margin := "5px",
-                                  <.p( // TODO
-                                    <.span(
-                                      Styles.bolded,
-                                      """Proportion of questions you marked invalid: """,
-                                      <.span(
-                                        if (summary.proportionInvalid < settings.invalidProportionEstimateLowerBound ||
-                                              summary.proportionInvalid > settings.invalidProportionEstimateUpperBound) {
-                                          Styles.badRed
-                                        } else {
-                                          Styles.goodGreen
-                                        },
-                                        f"""${summary.proportionInvalid * 100.0}%.1f%%"""
-                                      ),
-                                      "."
-                                    ),
-                                    s""" This should generally be between
-                                   ${(settings.invalidProportionEstimateLowerBound * 100).toInt}% and
-                                   ${(settings.invalidProportionEstimateUpperBound * 100).toInt}%.""",
-                                    (if (summary.proportionInvalid < 0.15)
-                                       " Please be harsher on bad questions. "
-                                     else "")
-                                  ).when(!summary.proportionInvalid.isNaN),
-                                  <.p(
-                                    <.span(
-                                      Styles.bolded,
-                                      "Agreement score: ",
-                                      <.span(
-                                        if (summary.agreement <= settings.validationAgreementBlockingThreshold) {
-                                          Styles.badRed
-                                        } else if (summary.agreement <= settings.validationAgreementBlockingThreshold + 0.025) {
-                                          TagMod(Styles.uncomfortableOrange, Styles.bolded)
-                                        } else {
-                                          Styles.goodGreen
-                                        },
-                                        f"""${summary.agreement * 100.0}%.1f%%"""
-                                      ),
-                                      "."
-                                    ),
-                                    f""" This must remain above ${settings.validationAgreementBlockingThreshold * 100.0}%.1f%%""",
-                                    getRemainingInAgreementGracePeriodOpt(summary).fold(".")(
-                                      remaining =>
-                                      s" after the end of a grace period ($remaining HITs remaining)."
-                                    )
-                                  ).when(!summary.agreement.isNaN)
-                                )
-                              ),
-                              <.div(
-                                ^.classSet1("card"),
-                                ^.margin := "5px",
-                                ^.padding := "5px",
-                                ^.tabIndex := 0,
-                                ^.onFocus --> state.modify(State.isInterfaceFocused.set(true)),
-                                ^.onBlur --> state.modify(State.isInterfaceFocused.set(false)),
-                                ^.onKeyDown ==> (
-                                  (e: ReactKeyboardEvent) =>
-                                  handleKey(state)(questions)(highlightedAnswers)(e) >> cancelHighlight
-                                ),
-                                ^.position := "relative",
-                                // TODO fix this
-                                // <.div(
-                                //   ^.position := "absolute",
-                                //   ^.top := "20px",
-                                //   ^.left := "0px",
-                                //   ^.width := "100%",
-                                //   ^.height := "100%",
-                                //   ^.textAlign := "center",
-                                //   ^.color := "rgba(48, 140, 20, .3)",
-                                //   ^.fontSize := "48pt",
-                                //   (if (isNotAssigned) "Accept assignment to start"
-                                //    else "Click here to start")
-                                // ).when(!isInterfaceFocused),
-                                MultiContigSpanHighlightableSentence(
-                                  MultiContigSpanHighlightableSentenceProps(
-                                    sentence = sentence.sentenceTokens,
-                                    styleForIndex = i =>
-                                    TagMod(Styles.specialWord, Styles.niceBlue).when(i == curVerbIndex),
-                                    highlightedSpans =
-                                      (inProgressAnswerOpt.map(_ -> (^.backgroundColor := "#FF8000")) ::
-                                         curAnswers
-                                         .map(_ -> (^.backgroundColor := "#FFFF00"))
-                                         .map(Some(_))).flatten,
-                                    hover = hover(state.get.curFocus),
-                                    touch = touch(state.get.curFocus),
-                                    render = (
-                                      elements =>
-                                      <.p(Styles.largeText, Styles.unselectable, elements.toVdomArray)
-                                    )
-                                  )
-                                ),
-                                <.div(
-                                  <.span("Clause inclusion threshold: "),
-                                  <.input(
-                                    ^.value := f"${clauseInclusionThreshold.get}%.2f",
-                                    ^.onChange ==> ((e: ReactEventFromInput) =>
-                                      scala.util.Try(e.target.value.toDouble).toOption.fold(Callback.empty)(clauseInclusionThreshold.set)
-                                    )
-                                  )
-                                ),
-                                <.div(
-                                  <.span("Span inclusion threshold: "),
-                                  <.input(
-                                    ^.value := f"${spanInclusionThreshold.get}%.2f",
-                                    ^.onChange ==> ((e: ReactEventFromInput) =>
-                                      scala.util.Try(e.target.value.toDouble).toOption.fold(Callback.empty)(spanInclusionThreshold.set)
-                                    )
-                                  )
-                                ),
-                                clauseGroups.zipWithIndex
-                                  .filter(_._1.aggregateProb >= clauseInclusionThreshold.get)
-                                  .toVdomArray { case (clauseGroup, clauseIndex) =>
-                                    val slotsWithProbs = clauseGroup.slotProbs.toList.sortBy(-_._2)
-                                    val argValues = clauseGroup.bestSpansAboveThreshold(spanInclusionThreshold.get).map { case (slot, span) =>
-                                      slot -> Text.renderSpan(sentence.sentenceTokens, (span.begin until span.end).toSet)
-                                    }
-
-                                    <.div(
-                                      <.h5(f"(${clauseGroup.aggregateProb}%.2f) " + clauseGroup.frame.clausesWithArgs(argValues).head),
-                                      <.ul(
-                                        ^.classSet1("list-unstyled"),
-                                        slotsWithProbs.zipWithIndex.toVdomArray { case ((slot, prob), questionIndex) =>
-                                          val questionString = clauseGroup.frame.questionsForSlotWithArgs(slot, argValues).head
-                                            <.li(
-                                              ^.key := s"question-$clauseIndex-$questionIndex",
-                                              ^.display := "block",
-                                              qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, prob, highlightedAnswers)(
-                                                (clauseIndex, questionIndex)
-                                              ),
-                                              <.div(
-                                                clauseGroup.slotSpans(slot).filter(_._2 >= spanInclusionThreshold.get).sortBy(-_._2).map {
-                                                  case (span, prob) => Text.renderSpan(sentence.sentenceTokens, (span.begin until span.end).toSet) +
-                                                      f" ($prob%.2f)"
-                                                }.mkString(" / ")
-                                              )
-                                            )
-                                        }
+                                  ^.padding := "5px",
+                                  ^.tabIndex := 0,
+                                  ^.onFocus --> state.modify(State.isInterfaceFocused.set(true)),
+                                  ^.onBlur --> state.modify(State.isInterfaceFocused.set(false)),
+                                  ^.onKeyDown ==> (
+                                    (e: ReactKeyboardEvent) =>
+                                    handleKey(state)(questions)(highlightedAnswers)(e) >> cancelHighlight
+                                  ),
+                                  ^.position := "relative",
+                                  // TODO fix this
+                                  // <.div(
+                                  //   ^.position := "absolute",
+                                  //   ^.top := "20px",
+                                  //   ^.left := "0px",
+                                  //   ^.width := "100%",
+                                  //   ^.height := "100%",
+                                  //   ^.textAlign := "center",
+                                  //   ^.color := "rgba(48, 140, 20, .3)",
+                                  //   ^.fontSize := "48pt",
+                                  //   (if (isNotAssigned) "Accept assignment to start"
+                                  //    else "Click here to start")
+                                  // ).when(!isInterfaceFocused),
+                                  MultiContigSpanHighlightableSentence(
+                                    MultiContigSpanHighlightableSentenceProps(
+                                      sentence = sentence.sentenceTokens,
+                                      styleForIndex = i =>
+                                      TagMod(Styles.specialWord, Styles.niceBlue).when(i == curVerbIndex),
+                                      highlightedSpans =
+                                        (inProgressAnswerOpt.map(_ -> (^.backgroundColor := "#FF8000")) ::
+                                           curAnswers
+                                           .map(_ -> (^.backgroundColor := "#FFFF00"))
+                                           .map(Some(_))).flatten,
+                                      hover = hover(state.get.curFocus),
+                                      touch = touch(state.get.curFocus),
+                                      render = (
+                                        elements =>
+                                        <.p(Styles.largeText, Styles.unselectable, elements.toVdomArray)
                                       )
                                     )
-                                },
-                                <.p(
-                                  s"Bonus: ${dollarsToCents(settings.validationBonus(questions.size))}c"
-                                )
-                              ),
-                              <.div(
-                                ^.classSet1("form-group"),
-                                ^.margin := "5px",
-                                <.textarea(
-                                  ^.classSet1("form-control"),
-                                  ^.name := FieldLabels.feedbackLabel,
-                                  ^.rows := 3,
-                                  ^.placeholder := "Feedback? (Optional)"
-                                )
-                              ),
-                              <.input(
-                                ^.classSet1("btn btn-primary btn-lg btn-block"),
-                                ^.margin := "5px",
-                                ^.`type` := "submit",
-                                ^.disabled := !answers.forall(_.forall(_.isComplete)),
-                                ^.id := FieldLabels.submitButtonLabel,
-                                ^.value := (
-                                  if (isNotAssigned) "You must accept the HIT to submit results"
-                                  else if (!answers.forall(_.forall(_.isComplete)))
-                                    "You must respond to all questions to submit results"
-                                  else "Submit"
+                                  ),
+                                  <.div(
+                                    <.span("Clause inclusion threshold: "),
+                                    <.input(
+                                      ^.value := f"${clauseInclusionThreshold.get}%.2f",
+                                      ^.onChange ==> ((e: ReactEventFromInput) =>
+                                        scala.util.Try(e.target.value.toDouble).toOption.fold(Callback.empty)(clauseInclusionThreshold.set)
+                                      )
+                                    )
+                                  ),
+                                  <.div(
+                                    <.span("Question inclusion threshold: "),
+                                    <.input(
+                                      ^.value := f"${questionInclusionThreshold.get}%.2f",
+                                      ^.onChange ==> ((e: ReactEventFromInput) =>
+                                        scala.util.Try(e.target.value.toDouble).toOption.fold(Callback.empty)(questionInclusionThreshold.set)
+                                      )
+                                    )
+                                  ),
+                                  <.div(
+                                    <.span("Span inclusion threshold: "),
+                                    <.input(
+                                      ^.value := f"${spanInclusionThreshold.get}%.2f",
+                                      ^.onChange ==> ((e: ReactEventFromInput) =>
+                                        scala.util.Try(e.target.value.toDouble).toOption.fold(Callback.empty)(spanInclusionThreshold.set)
+                                      )
+                                    )
+                                  ),
+                                  clauseGroups.zipWithIndex
+                                    .filter(_._1.aggregateProb >= clauseInclusionThreshold.get)
+                                    .toVdomArray { case (clauseGroup, clauseIndex) =>
+                                      val slotsWithProbs = clauseGroup.slotProbs.toList.sortBy(-_._2)
+                                      val argValues = clauseGroup.bestSpansAboveThreshold(spanInclusionThreshold.get).map { case (slot, span) =>
+                                        slot -> Text.renderSpan(sentence.sentenceTokens, (span.begin until span.end).toSet)
+                                      }
+
+                                      <.div(
+                                        <.h5(f"(${clauseGroup.aggregateProb}%.2f) " + clauseGroup.frame.clausesWithArgs(argValues).head),
+                                        <.ul(
+                                          ^.classSet1("list-unstyled"),
+                                          slotsWithProbs.zipWithIndex
+                                            .filter(_._1._2 >= questionInclusionThreshold.get)
+                                            .toVdomArray { case ((slot, prob), questionIndex) =>
+                                            val questionString = clauseGroup.frame.questionsForSlotWithArgs(slot, argValues).head
+                                              <.li(
+                                                ^.key := s"question-$clauseIndex-$questionIndex",
+                                                ^.display := "block",
+                                                qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, prob, highlightedAnswers)(
+                                                  (clauseIndex, questionIndex)
+                                                ),
+                                                <.div(
+                                                  clauseGroup.slotSpans(slot).filter(_._2 >= spanInclusionThreshold.get).sortBy(-_._2).map {
+                                                    case (span, prob) => Text.renderSpan(sentence.sentenceTokens, (span.begin until span.end).toSet) +
+                                                        f" ($prob%.2f)"
+                                                  }.mkString(" / ")
+                                                )
+                                              )
+                                          }
+                                        )
+                                      )
+                                  },
+                                  <.p(
+                                    s"Bonus: ${dollarsToCents(settings.validationBonus(questions.size))}c"
+                                  )
+                                ),
+                                <.div(
+                                  ^.classSet1("form-group"),
+                                  ^.margin := "5px",
+                                  <.textarea(
+                                    ^.classSet1("form-control"),
+                                    ^.name := FieldLabels.feedbackLabel,
+                                    ^.rows := 3,
+                                    ^.placeholder := "Feedback? (Optional)"
+                                  )
+                                ),
+                                <.input(
+                                  ^.classSet1("btn btn-primary btn-lg btn-block"),
+                                  ^.margin := "5px",
+                                  ^.`type` := "submit",
+                                  ^.disabled := !answers.forall(_.forall(_.isComplete)),
+                                  ^.id := FieldLabels.submitButtonLabel,
+                                  ^.value := (
+                                    if (isNotAssigned) "You must accept the HIT to submit results"
+                                    else if (!answers.forall(_.forall(_.isComplete)))
+                                      "You must respond to all questions to submit results"
+                                    else "Submit"
+                                  )
                                 )
                               )
-                            )
-                        }
+                          }
+                        )
                       )
-                    )
+                    }
                   }
                 }
               }
