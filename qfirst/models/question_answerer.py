@@ -32,6 +32,7 @@ from qfirst.data.util import get_slot_label_namespace
 
 qa_objective_values = ["binary", "multinomial"]
 qa_span_selection_policy_values = ["union", "majority", "weighted"]
+question_injection_values = ["top", "bottom"]
 # multinomial cannot be used with weighted
 @Model.register("question_answerer")
 class QuestionAnswerer(Model):
@@ -43,6 +44,7 @@ class QuestionAnswerer(Model):
                  span_hidden_dim: int,
                  objective: str = "binary",
                  span_selection_policy: str = "weighted",
+                 question_injection: str = "top",
                  embedding_dropout: float = 0.0,
                  metric: AnswerMetric = AnswerMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -50,22 +52,53 @@ class QuestionAnswerer(Model):
         super(QuestionAnswerer, self).__init__(vocab, regularizer)
 
         self._vocab = vocab
-
         self.span_hidden_dim = span_hidden_dim
+
+        if objective not in qa_objective_values:
+            raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
+        self.objective = objective
+
+        if span_selection_policy not in qa_span_selection_policy_values:
+            raise ConfigurationError("QA span selection policy must be one of the following: " + str(qa_objective_values))
+        self.span_selection_policy = span_selection_policy
+
+        if objective == "multinomial" and span_selection_policy == "weighted":
+            raise ConfigurationError("Cannot use weighted span selection policy with multinomial objective.")
+
+        if question_injection not in question_injection_values:
+            raise ConfigurationError("Question injection must be one of the following: " + str(question_injection_values))
+        self.question_injection = question_injection
+
+        if self.objective == "binary":
+            self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
+            self.invalid_pred = Linear(self.span_hidden_dim, 1)
 
         self.text_field_embedder = text_field_embedder
         self.predicate_feature_embedding = Embedding(2, predicate_feature_dim)
+
+        self.question_encoder = question_encoder
+        self.slot_names = self.question_encoder.get_slot_names()
+
+        self.stacked_encoder = stacked_encoder
+
+        encoder_input_dim = self.stacked_encoder.get_input_dim()
+        if self.question_injection == "top":
+            token_embedding_dim = self.text_field_embedder.get_output_dim() + self.predicate_feature_embedding.get_output_dim()
+            if token_embedding_dim != encoder_input_dim:
+                raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
+        else: # self.question_injection == "bottom"
+            token_embedding_dim = self.text_field_embedder.get_output_dim() + \
+                                  self.predicate_feature_embedding.get_output_dim() + \
+                                  self.question_encoder.get_output_dim()
+            if token_embedding_dim != encoder_input_dim:
+                raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
 
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
         self.metric = metric
 
-        self.stacked_encoder = stacked_encoder
-
-        self.question_encoder = question_encoder
-        self.slot_names = self.question_encoder.get_slot_names()
-
-        self.question_lin = Linear(self.question_encoder.get_output_dim(), self.span_hidden_dim)
+        if self.question_injection == "top":
+            self.question_lin = Linear(self.question_encoder.get_output_dim(), self.span_hidden_dim)
         self.pred_lin = Linear(self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
 
         self.span_hidden = SpanRepAssembly(self.stacked_encoder.get_output_dim(), self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
@@ -77,19 +110,6 @@ class QuestionAnswerer(Model):
         self.answer_lin = TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim))
         self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
 
-        if objective not in qa_objective_values:
-            raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
-        self.objective = objective
-        if span_selection_policy not in qa_span_selection_policy_values:
-            raise ConfigurationError("QA span selection policy must be one of the following: " + str(qa_objective_values))
-        self.span_selection_policy = span_selection_policy
-        if objective == "multinomial" and span_selection_policy == "weighted":
-            raise ConfigurationError("Cannot use weighted span selection policy with multinomial objective.")
-
-        if self.objective == "binary":
-            self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
-            self.invalid_pred = Linear(self.span_hidden_dim, 1)
-
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
                 predicate_index: torch.LongTensor,
@@ -99,7 +119,6 @@ class QuestionAnswerer(Model):
                 num_invalids: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
-
         # each of gold_slot_labels[slot_name] is of
         # Shape: batch_size
         question_slot_labels = {}
@@ -113,30 +132,45 @@ class QuestionAnswerer(Model):
             raise ConfigurationError("QuestionAnswerer must receive a question as input.")
 
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
+        batch_size, num_tokens, _ = embedded_text_input.size()
         mask = get_text_field_mask(text)
+        # text_size = mask.view(batch_size, -1).sum(1)
         embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
 
-        embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        batch_size, num_tokens, embedding_dim_with_predicate_feature = embedded_text_with_predicate_indicator.size()
+        if self.question_injection == "top":
+            embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
+            encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
+            pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
+            question_embedding = self.question_encoder(pred_embedding, question_slot_labels)
 
-        encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
+            span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
+            (top_span_hidden, top_span_mask,
+            top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), 2 * num_tokens)
+            # workaround for https://github.com/allenai/allennlp/issues/1696
+            if (top_span_scores == float("-inf")).any():
+                top_span_scores[top_span_scores == float("-inf")] = -1.
 
-        span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
-        (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), 2 * num_tokens)
-        # workaround for https://github.com/allenai/allennlp/issues/1696
-        if (top_span_scores == float("-inf")).any():
-            top_span_scores[top_span_scores == float("-inf")] = -1.
+            pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
+            question_hidden = self.question_lin(question_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
+            answer_hidden = self.answer_lin(top_span_hidden)
 
-        text_size = mask.view(batch_size, -1).sum(1)
-        pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
-        pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
-        question_embedding = self.question_encoder(pred_embedding, question_slot_labels)
-        question_hidden = self.question_lin(question_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
-        answer_hidden = self.answer_lin(top_span_hidden)
+            consolidated_hidden = (pred_hidden + question_hidden) + answer_hidden
+            top_span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze(-1) + top_span_scores.squeeze(-1)
 
-        consolidated_hidden = (pred_hidden + question_hidden) + answer_hidden
-        top_span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze(-1) + top_span_scores.squeeze(-1)
+        else: # self.question_injection == "bottom"
+            pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
+            question_embedding = self.question_encoder(pred_input_embedding, question_slot_labels)
+            question_embedding_expanded = question_embedding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
+            embedded_text_with_features = torch.cat([embedded_text_input, embedded_predicate_indicator, question_embedding_expanded], -1)
+            encoded_text = self.stacked_encoder(embedded_text_with_features, mask)
+
+            span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
+            (top_span_hidden, top_span_mask,
+            top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), 2 * num_tokens)
+            # workaround for https://github.com/allenai/allennlp/issues/1696
+            if (top_span_scores == float("-inf")).any():
+                top_span_scores[top_span_scores == float("-inf")] = -1.
+            top_span_logits = top_span_scores.squeeze(-1)
 
         if answer_spans is not None:
             gold_span_labels = self.get_prediction_map(answer_spans,
@@ -156,7 +190,13 @@ class QuestionAnswerer(Model):
             top_span_probs = F.sigmoid(top_span_logits) * top_span_mask.float()
             scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
 
-            consolidated_invalid_hidden = self.invalid_embedding + question_hidden
+            if self.question_injection == "top":
+                consolidated_invalid_hidden = self.invalid_embedding + question_hidden
+            else:
+                assert self.question_injection == "bottom"
+                pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
+                pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
+                consolidated_invalid_hidden = self.invalid_embedding + pred_hidden
             invalidity_logit = self.invalid_pred(F.relu(consolidated_invalid_hidden)).squeeze(1).squeeze(1)
             invalid_prob = F.sigmoid(invalidity_logit)
 
@@ -181,21 +221,26 @@ class QuestionAnswerer(Model):
             return output_dict
         else:
             assert self.objective == "multinomial"
-            batch_size = top_span_logits.size(0)
-            invalidity_scores = predicate_indicator.new_zeros([batch_size]).float()
-            masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
-            scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), top_span_logits], -1)
-            pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
-            pred_probs = pred_log_probs.exp()
-            top_span_probs = pred_probs[..., 1:]
-            invalid_prob = pred_probs[..., 0]
-            output_dict = {
-                "span_mask": span_mask,
-                "top_span_indices": top_span_indices,
-                "top_span_mask": top_span_mask,
-                "top_span_probs": top_span_probs,
-                "invalid_prob": invalid_prob
-            }
+            if self.question_injection == "top":
+                batch_size = top_span_logits.size(0)
+                invalidity_scores = predicate_indicator.new_zeros([batch_size]).float()
+                masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
+                scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), top_span_logits], -1)
+                pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
+                pred_probs = pred_log_probs.exp()
+                top_span_probs = pred_probs[..., 1:]
+                invalid_prob = pred_probs[..., 0]
+                output_dict = {
+                    "span_mask": span_mask,
+                    "top_span_indices": top_span_indices,
+                    "top_span_mask": top_span_mask,
+                    "top_span_probs": top_span_probs,
+                    "invalid_prob": invalid_prob
+                }
+            else:
+                assert self.question_injection == "bottom"
+                raise NotImplementedError
+
             if answer_spans is not None:
                 gold_dummy_labels = None
                 gold_dummy_standin = prediction_mask.view(batch_size, -1).sum(1) == 0
@@ -297,6 +342,7 @@ class QuestionAnswerer(Model):
         span_hidden_dim = params.pop("span_hidden_dim")
         objective = params.pop("objective", "binary")
         span_selection_policy = params.pop("span_selection_policy", "weighted")
+        question_injection = params.pop("question_injection", "top")
 
         # absorb the parameter if it exists, but we don't use it anymore
         union_gold_spans = params.pop("union_gold_spans", False)
@@ -317,6 +363,7 @@ class QuestionAnswerer(Model):
                    span_hidden_dim = span_hidden_dim,
                    objective = objective,
                    span_selection_policy = span_selection_policy,
+                   question_injection = question_injection,
                    metric = metric,
                    initializer = initializer,
                    regularizer = regularizer)

@@ -86,6 +86,51 @@ def read_clause_info(target, file_path):
                 add_json(json.loads(line))
     return
 
+qasrl_slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
+
+def get_token_list_from_slot(slot_value: str) -> List[str]:
+    if slot_value == "_":
+        return []
+    elif " " in slot_value:
+        return slot_value.split(" ")
+    else:
+        return [slot_value]
+
+def get_question_tokens(question_slots):
+    return [
+        token
+        for slot_name in qasrl_slot_names
+        for token in get_token_list_from_slot(question_slots[slot_name])
+    ]
+
+def get_question_slot_fields(question_slots):
+    """
+    Input: json dicty thing from QA-SRL Bank
+    Output: dict from question slots to fields
+    """
+    def get_slot_value_field(slot_name):
+        slot_value = question_slots[slot_name]
+        namespace = get_slot_label_namespace(slot_name)
+        return LabelField(label = slot_value, label_namespace = namespace)
+    return { slot_name : get_slot_value_field(slot_name) for slot_name in qasrl_slot_names }
+
+
+def get_answer_spans_field(label, text_field):
+    def get_spans(spansJson):
+        return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
+    span_list = [s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ]
+    if len(span_list) == 0:
+        return ListField([SpanField(-1, -1, text_field)])
+    else:
+        return ListField(span_list)
+
+def get_num_answers_field(question_label):
+    return LabelField(label = len(question_label["answerJudgments"]), skip_indexing = True)
+
+def get_num_invalids_field(question_label):
+    num_invalids = len(question_label["answerJudgments"]) - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
+    return LabelField(label = num_invalids, skip_indexing = True)
+
 @DatasetReader.register("qfirst_qasrl")
 class QasrlReader(DatasetReader):
     def __init__(self,
@@ -220,25 +265,12 @@ class QasrlReader(DatasetReader):
         predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
-        def get_slot_values_field(slot_name):
-            def get_slot_label_field(value):
-                return LabelField(label = value, label_namespace = get_slot_label_namespace(slot_name))
-            return ListField([get_slot_label_field(l["questionSlots"][slot_name]) for l in question_labels])
-        slots_dict = { slot_name : get_slot_values_field(slot_name) for slot_name in self._slot_names }
+        slot_dicts = [get_question_slot_fields(l["questionSlots"]) for l in question_labels]
+        slots_dict = { slot_name : ListField([slot_dict[slot_name] for slot_dict in slot_dicts]) for slot_name in qasrl_slot_names }
 
-        def get_answers_field_for_question(label):
-            def get_spans(spansJson):
-                return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
-            span_list = [s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ]
-            if len(span_list) == 0:
-                return ListField([SpanField(-1, -1, text_field)])
-            else:
-                return ListField(span_list)
-        answer_fields_field = ListField([get_answers_field_for_question(l) for l in question_labels])
-        num_answers = [len(l["answerJudgments"]) for l in question_labels]
-        num_answers_field = ListField([LabelField(label = n, skip_indexing = True) for n in num_answers])
-        num_invalids = [len(l["answerJudgments"]) - len([aj for aj in l["answerJudgments"] if aj["isValid"]]) for l in question_labels]
-        num_invalids_field  = ListField([LabelField(label = n, skip_indexing = True) for n in num_invalids])
+        answer_fields_field = ListField([get_answer_spans_field(l, text_field) for l in question_labels])
+        num_answers_field = ListField([get_num_answers_field(l) for l in question_labels])
+        num_invalids_field = ListField([get_num_invalids_field(l) for l in question_labels])
 
         metadata = {
             'pred_index' : pred_index,
@@ -301,11 +333,10 @@ class QasrlReader(DatasetReader):
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
         slots = question_label["questionSlots"]
-        def get_slot_value_field(slot_name):
-            namespace = get_slot_label_namespace(slot_name)
-            return LabelField(label = slots[slot_name], label_namespace = namespace)
-        slots_dict = { slot_name : get_slot_value_field(slot_name) for slot_name in self._slot_names }
+        slots_dict = get_question_slot_fields(slots)
+        question_text_field = TextField([Token(t) for t in get_question_tokens(question_label["questionSlots"])], self._token_indexers)
 
+        # TODO factor out into separate method maybe
         def get_abstract_slot_value_field(slot_name, get_abstracted_value):
             abst_slot_name = "abst-%s" % slot_name
             namespace = get_slot_label_namespace(abst_slot_name)
@@ -330,19 +361,9 @@ class QasrlReader(DatasetReader):
                 logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
                 return None
 
-        def get_answers_field_for_question(label):
-            def get_spans(spansJson):
-                return [SpanField(s[0], s[1]-1, text_field) for s in spansJson]
-            span_list = [s for ans in label["answerJudgments"] if ans["isValid"] for s in get_spans(ans["spans"]) ]
-            if len(span_list) == 0:
-                return ListField([SpanField(-1, -1, text_field)])
-            else:
-                return ListField(span_list)
-        answers_field = get_answers_field_for_question(question_label)
-        num_answers = len(question_label["answerJudgments"])
-        num_invalids = num_answers - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
-        num_answers_field = LabelField(label = num_answers, skip_indexing = True)
-        num_invalids_field = LabelField(label = num_invalids, skip_indexing = True)
+        answers_field = get_answer_spans_field(question_label, text_field)
+        num_answers_field = get_num_answers_field(question_label)
+        num_invalids_field = get_num_invalids_field(question_label)
 
         metadata = {'pred_index' : pred_index, 'sent_text': " ".join(sent_tokens)}
         metadata['sentence_id'] = sentence_id
@@ -353,12 +374,12 @@ class QasrlReader(DatasetReader):
             'text': text_field,
             'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
+            'question_text': question_text_field,
             'answer_spans': answers_field,
             'num_answers': num_answers_field,
             'num_invalids': num_invalids_field,
             'metadata': MetadataField(metadata),
         }
-
 
         if self._include_abstract_slots:
             return Instance({**instance_dict, **slots_dict, **abstract_slots_dict, **clause_slots_dict})
