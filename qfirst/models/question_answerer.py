@@ -210,8 +210,6 @@ class QuestionAnswerer(Model):
                 question_encoding = self.question_encoder(embedded_question, question_mask)
                 question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
                 full_embedded_text = torch.cat([embedded_text_input, question_encoding_expanded], -1)
-            print("full_embedded_text: " + str(full_embedded_text.size()))
-            print("mask: " + str(mask.size()))
             encoded_text = self.stacked_encoder(full_embedded_text, mask)
 
             span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
