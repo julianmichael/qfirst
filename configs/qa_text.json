@@ -20,6 +20,7 @@
         "objective": "binary",
         "span_selection_policy": "union",
         "question_injection": "bottom",
+        "question_input_type": "text",
         "predicate_feature_dim": 100,
         "span_hidden_dim": 100,
         "text_field_embedder": {
@@ -34,18 +35,17 @@
         "stacked_encoder": {
             "type": "alternating_lstm",
             "use_highway": true,
-            "input_size": 1224,
+            "input_size": 1324,
             "hidden_size": 300,
             "num_layers": 8,
             "recurrent_dropout_probability": 0.1
         },
         "question_encoder": {
-            "type": "sequential",
-            "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
-            "dim_rnn_hidden": 100,
-            "input_dim": 1024,
-            "rnn_layers": 2,
-            "share_rnn_cell": false
+            "type": "cnn",
+            "embedding_dim": 1024,
+            "num_filters": 100,
+            "ngram_filter_sizes": [1, 2, 3, 4, 5],
+            "output_dim": 300
         }
     },
     "iterator": {

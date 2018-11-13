@@ -118,8 +118,8 @@ class QfirstParser(Model):
 
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QfirstParser':
-        question_generator = Model.from_params(vocab, params.pop("question_generator"))
-        question_answerer = Model.from_params(vocab, params.pop("question_answerer"))
+        question_generator = Model.from_params(params.pop("question_generator"), vocab = vocab)
+        question_answerer = Model.from_params(params.pop("question_answerer"), vocab = vocab)
         max_beam_size = params.pop("max_beam_size", 20)
         question_minimum_prob = params.pop("question_minimum_prob", 0.01)
         span_minimum_prob = params.pop("span_minimum_prob", 0.01)

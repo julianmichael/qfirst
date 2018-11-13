@@ -1,4 +1,4 @@
-from typing import Dict, List, TextIO, Optional
+from typing import Dict, List, TextIO, Optional, Union
 
 from overrides import overrides
 import torch
@@ -10,7 +10,7 @@ import math
 from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
-from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner
+from allennlp.modules import Seq2SeqEncoder, Seq2VecEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner
 from allennlp.modules.token_embedders import Embedding
 from allennlp.modules.span_extractors.endpoint_span_extractor import EndpointSpanExtractor
 from allennlp.models.model import Model
@@ -33,18 +33,20 @@ from qfirst.data.util import get_slot_label_namespace
 qa_objective_values = ["binary", "multinomial"]
 qa_span_selection_policy_values = ["union", "majority", "weighted"]
 question_injection_values = ["top", "bottom"]
+question_input_type_values = ["text", "slots"]
 # multinomial cannot be used with weighted
 @Model.register("question_answerer")
 class QuestionAnswerer(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  stacked_encoder: Seq2SeqEncoder,
-                 question_encoder: QuestionEncoder,
-                 predicate_feature_dim: int,
+                 question_encoder: Union[QuestionEncoder, Seq2VecEncoder],
                  span_hidden_dim: int,
+                 predicate_feature_dim: int = 100,
                  objective: str = "binary",
                  span_selection_policy: str = "weighted",
                  question_injection: str = "top",
+                 question_input_type: str = "slots",
                  embedding_dropout: float = 0.0,
                  metric: AnswerMetric = AnswerMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -69,6 +71,10 @@ class QuestionAnswerer(Model):
             raise ConfigurationError("Question injection must be one of the following: " + str(question_injection_values))
         self.question_injection = question_injection
 
+        if question_input_type not in question_input_type_values:
+            raise ConfigurationError("Question input type must be one of the following: " + str(question_input_type_values))
+        self.question_input_type = question_input_type
+
         if self.objective == "binary":
             self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
             self.invalid_pred = Linear(self.span_hidden_dim, 1)
@@ -77,21 +83,36 @@ class QuestionAnswerer(Model):
         self.predicate_feature_embedding = Embedding(2, predicate_feature_dim)
 
         self.question_encoder = question_encoder
-        self.slot_names = self.question_encoder.get_slot_names()
+        if self.question_input_type == "slots":
+            self.slot_names = self.question_encoder.get_slot_names()
 
         self.stacked_encoder = stacked_encoder
 
         encoder_input_dim = self.stacked_encoder.get_input_dim()
         if self.question_injection == "top":
-            token_embedding_dim = self.text_field_embedder.get_output_dim() + self.predicate_feature_embedding.get_output_dim()
-            if token_embedding_dim != encoder_input_dim:
-                raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
-        else: # self.question_injection == "bottom"
-            token_embedding_dim = self.text_field_embedder.get_output_dim() + \
-                                  self.predicate_feature_embedding.get_output_dim() + \
-                                  self.question_encoder.get_output_dim()
-            if token_embedding_dim != encoder_input_dim:
-                raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
+            if self.question_input_type == "slots":
+                token_embedding_dim = self.text_field_embedder.get_output_dim() + self.predicate_feature_embedding.get_output_dim()
+                if token_embedding_dim != encoder_input_dim:
+                    raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
+            else:
+                assert self.question_input_type == "text"
+                token_embedding_dim = self.text_field_embedder.get_output_dim()
+                if token_embedding_dim != encoder_input_dim:
+                    raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
+        else:
+            assert self.question_injection == "bottom"
+            if self.question_input_type == "slots":
+                token_embedding_dim = self.text_field_embedder.get_output_dim() + \
+                                    self.predicate_feature_embedding.get_output_dim() + \
+                                    self.question_encoder.get_output_dim()
+                if token_embedding_dim != encoder_input_dim:
+                    raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
+            else:
+                assert self.question_input_type == "text"
+                token_embedding_dim = self.text_field_embedder.get_output_dim() + \
+                                    self.question_encoder.get_output_dim()
+                if token_embedding_dim != encoder_input_dim:
+                    raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
 
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
@@ -112,24 +133,34 @@ class QuestionAnswerer(Model):
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
-                predicate_index: torch.LongTensor,
-                predicate_indicator: torch.LongTensor,
+                predicate_index: torch.LongTensor = None,
+                predicate_indicator: torch.LongTensor = None,
+                question_text = None,
                 answer_spans: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
                 num_invalids: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
-        # each of gold_slot_labels[slot_name] is of
-        # Shape: batch_size
-        question_slot_labels = {}
-        for slot_name in self.slot_names:
-            if slot_name in kwargs and kwargs[slot_name] is not None:
-                question_slot_labels[slot_name] = kwargs[slot_name]
-        for slot_name in self.slot_names:
-            if slot_name not in kwargs or kwargs[slot_name] is None:
-                question_slot_labels = None
-        if question_slot_labels is None:
-            raise ConfigurationError("QuestionAnswerer must receive a question as input.")
+        if self.question_input_type == "text":
+            if question_text is None:
+                raise ConfigurationError("QuestionAnswerer with input type text must receive question_text as input.")
+        else:
+            assert self.question_input_type == "slots"
+            if predicate_index is None:
+                raise ConfigurationError("QuestionAnswerer with input type slots must receive predicate_index as input.")
+            if predicate_indicator is None:
+                raise ConfigurationError("QuestionAnswerer with input type slots must receive predicate_indicator as input.")
+            # each of gold_slot_labels[slot_name] is of
+            # Shape: batch_size
+            question_slot_labels = {}
+            for slot_name in self.slot_names:
+                if slot_name in kwargs and kwargs[slot_name] is not None:
+                    question_slot_labels[slot_name] = kwargs[slot_name]
+            for slot_name in self.slot_names:
+                if slot_name not in kwargs or kwargs[slot_name] is None:
+                    question_slot_labels = None
+            if question_slot_labels is None:
+                raise ConfigurationError("QuestionAnswerer with input type slots must receive a question as input.")
 
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
         batch_size, num_tokens, _ = embedded_text_input.size()
@@ -138,10 +169,18 @@ class QuestionAnswerer(Model):
         embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
 
         if self.question_injection == "top":
-            embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-            encoded_text = self.stacked_encoder(embedded_text_with_predicate_indicator, mask)
-            pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
-            question_embedding = self.question_encoder(pred_embedding, question_slot_labels)
+            if self.question_input_type == "slots":
+                full_embedded_text = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
+            else: # text
+                full_embedded_text = embedded_text_input
+            encoded_text = self.stacked_encoder(full_embedded_text, mask)
+            if self.question_input_type == "slots":
+                pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
+                encoded_question = self.question_encoder(pred_embedding, question_slot_labels)
+            else: # text
+                embedded_question = self.embedding_dropout(self.text_field_embedder(question_text))
+                question_mask = get_text_field_mask(question_text)
+                question_encoding = self.question_encoder(embedded_question, question_mask)
 
             span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
             (top_span_hidden, top_span_mask,
@@ -151,18 +190,29 @@ class QuestionAnswerer(Model):
                 top_span_scores[top_span_scores == float("-inf")] = -1.
 
             pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
-            question_hidden = self.question_lin(question_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
+            question_hidden = self.question_lin(question_encoding).view(batch_size, 1, -1) # view is for broadcasting to spans
             answer_hidden = self.answer_lin(top_span_hidden)
 
             consolidated_hidden = (pred_hidden + question_hidden) + answer_hidden
             top_span_logits = self.span_pred(F.relu(consolidated_hidden)).squeeze(-1) + top_span_scores.squeeze(-1)
 
-        else: # self.question_injection == "bottom"
-            pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
-            question_embedding = self.question_encoder(pred_input_embedding, question_slot_labels)
-            question_embedding_expanded = question_embedding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
-            embedded_text_with_features = torch.cat([embedded_text_input, embedded_predicate_indicator, question_embedding_expanded], -1)
-            encoded_text = self.stacked_encoder(embedded_text_with_features, mask)
+        else:
+            assert self.question_injection == "bottom"
+            if self.question_input_type == "slots":
+                pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
+                question_encoding = self.question_encoder(pred_input_embedding, question_slot_labels)
+                question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
+                full_embedded_text = torch.cat([embedded_text_input, embedded_predicate_indicator, question_encoding_expanded], -1)
+            else:
+                assert self.question_input_type == "text"
+                embedded_question = self.text_field_embedder(question_text)
+                question_mask = get_text_field_mask(question_text)
+                question_encoding = self.question_encoder(embedded_question, question_mask)
+                question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
+                full_embedded_text = torch.cat([embedded_text_input, question_encoding_expanded], -1)
+            print("full_embedded_text: " + str(full_embedded_text.size()))
+            print("mask: " + str(mask.size()))
+            encoded_text = self.stacked_encoder(full_embedded_text, mask)
 
             span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
             (top_span_hidden, top_span_mask,
@@ -335,16 +385,23 @@ class QuestionAnswerer(Model):
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QuestionAnswerer':
         embedder_params = params.pop("text_field_embedder")
-        text_field_embedder = TextFieldEmbedder.from_params(vocab, embedder_params)
+        text_field_embedder = TextFieldEmbedder.from_params(embedder_params, vocab = vocab)
         stacked_encoder = Seq2SeqEncoder.from_params(params.pop("stacked_encoder"))
-        question_encoder = QuestionEncoder.from_params(vocab, params.pop("question_encoder"))
         predicate_feature_dim = params.pop("predicate_feature_dim")
         span_hidden_dim = params.pop("span_hidden_dim")
         objective = params.pop("objective", "binary")
         span_selection_policy = params.pop("span_selection_policy", "weighted")
         question_injection = params.pop("question_injection", "top")
+        question_input_type = params.pop("question_input_type", "slots")
 
-        # absorb the parameter if it exists, but we don't use it anymore
+        if question_input_type == "slots":
+            question_encoder = QuestionEncoder.from_params(params.pop("question_encoder"), vocab = vocab)
+        else:
+            if question_input_type != "text":
+                raise ConfigurationError("Question input type must be member of: %s" % question_input_type_values)
+            question_encoder = Seq2VecEncoder.from_params(params.pop("question_encoder"), vocab = vocab)
+
+        # absorb the parameter if it exists, though we don't use it anymore
         union_gold_spans = params.pop("union_gold_spans", False)
 
         metric_params = params.pop("metric", None)
@@ -364,6 +421,7 @@ class QuestionAnswerer(Model):
                    objective = objective,
                    span_selection_policy = span_selection_policy,
                    question_injection = question_injection,
+                   question_input_type = question_input_type,
                    metric = metric,
                    initializer = initializer,
                    regularizer = regularizer)

@@ -159,12 +159,12 @@ class QuestionConditionalLM(Model, QuestionGenerator):
     @classmethod
     def from_params(cls, vocab: Vocabulary, params: Params) -> 'QuestionConditionalLM':
         embedder_params = params.pop("text_field_embedder")
-        text_field_embedder = TextFieldEmbedder.from_params(vocab, embedder_params)
+        text_field_embedder = TextFieldEmbedder.from_params(embedder_params, vocab = vocab)
         stacked_encoder = Seq2SeqEncoder.from_params(params.pop("stacked_encoder"))
         encoder_output_projected_dim = params.pop("encoder_output_projected_dim", 100)
         predicate_feature_dim = params.pop("predicate_feature_dim", 100)
 
-        question_model = QuestionModel.from_params(vocab, params.pop("question_model"))
+        question_model = QuestionModel.from_params(params.pop("question_model"), vocab = vocab)
 
         initializer = InitializerApplicator.from_params(params.pop('initializer', []))
         regularizer = RegularizerApplicator.from_params(params.pop('regularizer', []))

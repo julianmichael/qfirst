@@ -13,8 +13,8 @@ from allennlp.common.file_utils import cached_path
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
+from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
-from allennlp.data.tokenizers import Token
 from allennlp.data.dataset_readers.dataset_utils.span_utils import enumerate_spans
 
 from nrl.common.span import Span
@@ -88,20 +88,20 @@ def read_clause_info(target, file_path):
 
 qasrl_slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
 
-def get_token_list_from_slot(slot_value: str) -> List[str]:
-    if slot_value == "_":
-        return []
-    elif " " in slot_value:
-        return slot_value.split(" ")
-    else:
-        return [slot_value]
+# def get_token_list_from_slot(slot_value: str) -> List[str]:
+#     if slot_value == "_":
+#         return []
+#     elif " " in slot_value:
+#         return slot_value.split(" ")
+#     else:
+#         return [slot_value]
 
-def get_question_tokens(question_slots):
-    return [
-        token
-        for slot_name in qasrl_slot_names
-        for token in get_token_list_from_slot(question_slots[slot_name])
-    ]
+# def get_question_tokens(question_slots):
+#     return [
+#         token
+#         for slot_name in qasrl_slot_names
+#         for token in get_token_list_from_slot(question_slots[slot_name])
+#     ]
 
 def get_question_slot_fields(question_slots):
     """
@@ -173,6 +173,8 @@ class QasrlReader(DatasetReader):
             self._clause_info = {}
             for file_path in clause_info_files:
                 read_clause_info(self._clause_info, file_path)
+
+        self._tokenizer = WordTokenizer()
 
     @overrides
     def _read(self, file_list: str):
@@ -265,6 +267,13 @@ class QasrlReader(DatasetReader):
         predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
+        question_text_field = ListField([
+            TextField(
+                self._tokenizer.tokenize(l["questionString"]),
+                self._token_indexers)
+            for l in question_labels
+        ])
+
         slot_dicts = [get_question_slot_fields(l["questionSlots"]) for l in question_labels]
         slots_dict = { slot_name : ListField([slot_dict[slot_name] for slot_dict in slot_dicts]) for slot_name in qasrl_slot_names }
 
@@ -284,6 +293,7 @@ class QasrlReader(DatasetReader):
 
         instance_dict = {
             'text': text_field,
+            'question_text': question_text_field,
             'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
             'answers': answer_fields_field,
@@ -329,12 +339,13 @@ class QasrlReader(DatasetReader):
             sent_tokens = sent_tokens.split()
         sent_tokens = cleanse_sentence_text(sent_tokens)
         text_field = TextField([Token(t) for t in sent_tokens], self._token_indexers)
+
         predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
         slots = question_label["questionSlots"]
         slots_dict = get_question_slot_fields(slots)
-        question_text_field = TextField([Token(t) for t in get_question_tokens(question_label["questionSlots"])], self._token_indexers)
+        question_text_field = TextField(self._tokenizer.tokenize(question_label["questionString"]), self._token_indexers)
 
         # TODO factor out into separate method maybe
         def get_abstract_slot_value_field(slot_name, get_abstracted_value):
@@ -372,6 +383,7 @@ class QasrlReader(DatasetReader):
 
         instance_dict = {
             'text': text_field,
+            'question_text': question_text_field,
             'predicate_index': predicate_index_field,
             'predicate_indicator': predicate_indicator_field,
             'question_text': question_text_field,
@@ -385,25 +397,3 @@ class QasrlReader(DatasetReader):
             return Instance({**instance_dict, **slots_dict, **abstract_slots_dict, **clause_slots_dict})
         else:
             return Instance({**instance_dict, **slots_dict, **clause_slots_dict })
-
-    @classmethod
-    def from_params(cls, params: Params) -> 'QasrlReader':
-        token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', Params({"tokens": {"type": "single_id", "lowercase_tokens": True}})))
-        instance_type = params.pop("instance_type")
-
-        # has_provenance = params.pop("has_provenance", False)
-
-        min_answers = params.pop("min_answers", 1)
-        min_valid_answers = params.pop("min_valid_answers", 0)
-
-        question_sources = params.pop("question_sources", None)
-        domains = params.pop("domains", None)
-
-        clause_info_files = params.pop("clause_info_files", [])
-
-        params.assert_empty(cls.__name__)
-        return QasrlReader(token_indexers = token_indexers, instance_type = instance_type,
-                           min_answers = min_answers, min_valid_answers = min_valid_answers,
-                           question_sources = question_sources,
-                           domains = domains,
-                           clause_info_files = clause_info_files)

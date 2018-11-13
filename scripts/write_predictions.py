@@ -33,8 +33,7 @@ def main(model_path: str,
 
     from subprocess import run
     run(["python", "-m", "allennlp.run", "evaluate",
-         model_path,
-         "--evaluation-data-file", eval_data_file,
+         model_path, eval_data_file,
          "--cuda-device", str(cuda_device),
          "--include-package", "qfirst",
          "--overrides", json.dumps(overrides)])

@@ -27,8 +27,3 @@ class QuestionEncoder(torch.nn.Module, Registrable):
 
     def get_output_dim(self):
         return self._output_dim
-
-    @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'QuestionEncoder':
-        choice = params.pop_choice('type', cls.list_available())
-        return cls.by_name(choice).from_params(vocab, params)
