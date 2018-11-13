@@ -118,7 +118,7 @@ class QuestionAnswerer(Model):
 
         self.metric = metric
 
-        if self.question_injection == "top":
+        if self.question_injection == "top" or self.question_input_type == "text":
             self.question_lin = Linear(self.question_encoder.get_output_dim(), self.span_hidden_dim)
         self.pred_lin = Linear(self.stacked_encoder.get_output_dim(), self.span_hidden_dim)
 
@@ -166,10 +166,10 @@ class QuestionAnswerer(Model):
         batch_size, num_tokens, _ = embedded_text_input.size()
         mask = get_text_field_mask(text)
         # text_size = mask.view(batch_size, -1).sum(1)
-        embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
 
         if self.question_injection == "top":
             if self.question_input_type == "slots":
+                embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
                 full_embedded_text = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
             else: # text
                 full_embedded_text = embedded_text_input
@@ -199,6 +199,7 @@ class QuestionAnswerer(Model):
         else:
             assert self.question_injection == "bottom"
             if self.question_input_type == "slots":
+                embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
                 pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
                 question_encoding = self.question_encoder(pred_input_embedding, question_slot_labels)
                 question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
@@ -210,6 +211,8 @@ class QuestionAnswerer(Model):
                 question_encoding = self.question_encoder(embedded_question, question_mask)
                 question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
                 full_embedded_text = torch.cat([embedded_text_input, question_encoding_expanded], -1)
+                # for later
+                question_hidden = self.question_lin(question_encoding).view(batch_size, 1, -1) # view is for broadcasting to spans
             encoded_text = self.stacked_encoder(full_embedded_text, mask)
 
             span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, mask, mask)
@@ -238,10 +241,10 @@ class QuestionAnswerer(Model):
             top_span_probs = F.sigmoid(top_span_logits) * top_span_mask.float()
             scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
 
-            if self.question_injection == "top":
+            if self.question_injection == "top" or self.question_input_type == "text":
                 consolidated_invalid_hidden = self.invalid_embedding + question_hidden
             else:
-                assert self.question_injection == "bottom"
+                assert self.question_injection == "bottom" and self.question_input_type == "slots"
                 pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
                 pred_hidden = self.pred_lin(pred_embedding).view(batch_size, 1, -1) # view is for broadcasting to spans
                 consolidated_invalid_hidden = self.invalid_embedding + pred_hidden
