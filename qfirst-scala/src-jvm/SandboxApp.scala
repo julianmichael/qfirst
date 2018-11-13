@@ -18,8 +18,11 @@ import nlpdata.util.LowerCaseStrings._
 import qasrl.bank.Data
 import qasrl.bank.SentenceId
 
+import qasrl.data.{AnswerJudgment, Answer, InvalidQuestion}
 import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
+import qasrl.data.QuestionLabel
+import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 
 import HasMetrics.ops._
@@ -59,36 +62,54 @@ object SandboxApp extends App {
 
   import qfirst.frames.TemplateStateMachine.allPrepositions
 
-  val metrics = train.sentences.values.toList.foldMap { sentence =>
+  def getPrepMetrics(sentence: Sentence, verb: VerbEntry) = (qLabel: QuestionLabel) => {
+    val hasPrep = qLabel.answerJudgments
+      .flatMap(_.judgment.getAnswer)
+      .flatMap(_.spans)
+      .map(s =>
+      (
+        if(allPrepositions.contains(sentence.sentenceTokens(s.begin).lowerCase)) 3
+        else if(sentence.sentenceTokens.lift(s.begin - 1).map(_.lowerCase).exists(allPrepositions.contains)) 2
+        else 1
+      )
+    ).max match {
+      case 1 => "N"
+      case 2 => "-"
+      case 3 => "Y"
+    }
+    Bucketed(
+      Map(
+        Map("wh" -> qLabel.questionSlots.wh.toString) ->
+          Bucketed(
+            Map(
+              Map("has prep" -> hasPrep) -> 1
+            )
+          )
+      )
+    )
+  }
+
+  val prepMetrics = train.sentences.values.toList.foldMap { sentence =>
     sentence.verbEntries.values.toList.foldMap { verb =>
-      verb.questionLabels.values.toList.foldMap { qLabel =>
-        val hasPrep = qLabel.answerJudgments
-          .flatMap(_.judgment.getAnswer)
-          .flatMap(_.spans)
-          .map(s =>
-          (
-            if(allPrepositions.contains(sentence.sentenceTokens(s.begin).lowerCase)) 3
-            else if(sentence.sentenceTokens.lift(s.begin - 1).map(_.lowerCase).exists(allPrepositions.contains)) 2
-            else 1
-          )
-        ).max match {
-          case 1 => "N"
-          case 2 => "-"
-          case 3 => "Y"
-        }
-        Bucketed(
-          Map(
-            Map("wh" -> qLabel.questionSlots.wh.toString) ->
-              Bucketed(
-                Map(
-                  Map("has prep" -> hasPrep) -> 1
-                )
-              )
-          )
-        )
+      verb.questionLabels.values.toList.foldMap {
+        getPrepMetrics(sentence, verb)
       }
     }
   }
 
-  println(getMetricsString(metrics))
+  val getSpanLengthMetrics = (aj: AnswerJudgment) => aj match {
+    case InvalidQuestion => Counts(0)
+    case Answer(spans) => spans.toList.foldMap(s => Counts(s.end - s.begin))
+  }
+
+  val spanLengthMetrics = train.sentences.values.toList.foldMap { sentence =>
+    sentence.verbEntries.values.toList.foldMap { verb =>
+      verb.questionLabels.values.toList.foldMap { qLabel =>
+        qLabel.answerJudgments.toList.map(_.judgment).foldMap(getSpanLengthMetrics)
+      }
+    }
+  }
+
+  println(getMetricsString(spanLengthMetrics))
+  println(spanLengthMetrics.histogramString(75))
 }

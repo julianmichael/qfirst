@@ -1,5 +1,7 @@
 package qfirst
 
+import cats.implicits._
+
 case class FilterSpace(
   oneThreshold: Option[OneThresholdFilterSpace] = None,
   twoThreshold: Option[TwoThresholdFilterSpace] = None,
