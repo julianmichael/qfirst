@@ -50,13 +50,21 @@ object MetricsApp {
     val other: PredClass = Other
   }
 
+  def iouMatch(x: AnswerSpan, y: AnswerSpan) = {
+    val xs = (x.begin until x.end).toSet
+    val ys = (y.begin until y.end).toSet
+    val i = xs.intersect(ys).size.toDouble
+    val u = xs.union(ys).size.toDouble
+    (i / u) >= 0.5
+  }
+
   val computePredClass = (question: Instances.QuestionInstance) => {
     val P = PredClass
     question.qas.pred.get(question.string).fold(P.notPredicted) { case (predSlots, predSpans) =>
       question.qas.goldValid.get(question.string) match {
         case Some(qLabel) =>
           val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
-          if(answerSpans.exists(predSpans.contains)) P.correct else P.wrongAnswer
+          if(answerSpans.exists(g => predSpans.exists(p => iouMatch(g, p)))) P.correct else P.wrongAnswer
         case None =>
           val qaTemplates = Instances.qaSetToQATemplateSet(question.qas)
           val predTemplateSlots = TemplateSlots.fromQuestionSlots(predSlots)
@@ -618,6 +626,11 @@ object MetricsApp {
           collapsedPredClasses.values.collect { case (PredClass.Other, q) => q },
           r
         )
+        writeExamples(
+          examplesDir.resolve("wrongans.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.WrongAnswer, q) => q },
+          r
+        )
       }
 
       // performance on verbs by frequency
@@ -643,6 +656,8 @@ object MetricsApp {
           }
           val instances = results.values.collect { case (PredClass.Other, q) => q }
           writeExamples(bucketDir.resolve("other.txt"), instances, r)
+          val ansInstances = results.values.collect { case (PredClass.WrongAnswer, q) => q }
+          writeExamples(bucketDir.resolve("wrongans.txt"), ansInstances, r)
         }
       }
     }
