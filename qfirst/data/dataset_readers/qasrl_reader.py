@@ -140,6 +140,7 @@ class QasrlReader(DatasetReader):
                  min_valid_answers = 0,
                  question_sources = None,
                  domains = None,
+                 include_slots: bool = True,
                  include_abstract_slots: bool = False,
                  clause_info_files: List[str] = []):
         super().__init__(False)
@@ -166,6 +167,7 @@ class QasrlReader(DatasetReader):
         self._question_sources = question_sources
         self._domains = [d.lower() for d in domains] if domains is not None else None
 
+        self._include_slots = include_slots
         self._include_abstract_slots = include_abstract_slots
 
         self._clause_info = None
@@ -274,8 +276,10 @@ class QasrlReader(DatasetReader):
             for l in question_labels
         ])
 
-        slot_dicts = [get_question_slot_fields(l["questionSlots"]) for l in question_labels]
-        slots_dict = { slot_name : ListField([slot_dict[slot_name] for slot_dict in slot_dicts]) for slot_name in qasrl_slot_names }
+        slots_dict = {}
+        if self._include_slots:
+            slot_dicts = [get_question_slot_fields(l["questionSlots"]) for l in question_labels]
+            slots_dict = { slot_name : ListField([slot_dict[slot_name] for slot_dict in slot_dicts]) for slot_name in qasrl_slot_names }
 
         answer_fields_field = ListField([get_answer_spans_field(l, text_field) for l in question_labels])
         num_answers_field = ListField([get_num_answers_field(l) for l in question_labels])
@@ -343,21 +347,25 @@ class QasrlReader(DatasetReader):
         predicate_index_field = IndexField(pred_index, text_field)
         predicate_indicator_field = SequenceLabelField([1 if i == pred_index else 0 for i in range(len(sent_tokens))], text_field)
 
-        slots = question_label["questionSlots"]
-        slots_dict = get_question_slot_fields(slots)
+        slots_dict = {}
+        if self._include_slots:
+            slots = question_label["questionSlots"]
+            slots_dict = get_question_slot_fields(slots)
         question_text_field = TextField(self._tokenizer.tokenize(question_label["questionString"]), self._token_indexers)
 
         # TODO factor out into separate method maybe
-        def get_abstract_slot_value_field(slot_name, get_abstracted_value):
-            abst_slot_name = "abst-%s" % slot_name
-            namespace = get_slot_label_namespace(abst_slot_name)
-            abst_slot_value = get_abstracted_value(slots[slot_name])
-            return LabelField(label = abst_slot_value, label_namespace = namespace)
-        direct_abstract_slots_dict = { ("abst-%s" % slot_name): get_abstract_slot_value_field(slot_name, get_abstracted_value)
-                                       for slot_name, get_abstracted_value in self._abstract_slots }
-        abst_verb_value = "verb[pss]" if question_label["isPassive"] else "verb"
-        abst_verb_field = LabelField(label = abst_verb_value, label_namespace = get_slot_label_namespace("abst-verb"))
-        abstract_slots_dict = {**direct_abstract_slots_dict, **{"abst-verb": abst_verb_field}}
+        abstract_slots_dict = {}
+        if self._include_abstract_slots:
+            def get_abstract_slot_value_field(slot_name, get_abstracted_value):
+                abst_slot_name = "abst-%s" % slot_name
+                namespace = get_slot_label_namespace(abst_slot_name)
+                abst_slot_value = get_abstracted_value(slots[slot_name])
+                return LabelField(label = abst_slot_value, label_namespace = namespace)
+            direct_abstract_slots_dict = { ("abst-%s" % slot_name): get_abstract_slot_value_field(slot_name, get_abstracted_value)
+                                        for slot_name, get_abstracted_value in self._abstract_slots }
+            abst_verb_value = "verb[pss]" if question_label["isPassive"] else "verb"
+            abst_verb_field = LabelField(label = abst_verb_value, label_namespace = get_slot_label_namespace("abst-verb"))
+            abstract_slots_dict = {**direct_abstract_slots_dict, **{"abst-verb": abst_verb_field}}
 
         def get_clause_slot_field(slot_name, slot_value):
             clause_slot_name = "clause-%s" % slot_name
@@ -393,7 +401,4 @@ class QasrlReader(DatasetReader):
             'metadata': MetadataField(metadata),
         }
 
-        if self._include_abstract_slots:
-            return Instance({**instance_dict, **slots_dict, **abstract_slots_dict, **clause_slots_dict})
-        else:
-            return Instance({**instance_dict, **slots_dict, **clause_slots_dict })
+        return Instance({**instance_dict, **slots_dict, **abstract_slots_dict, **clause_slots_dict})
