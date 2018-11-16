@@ -1,0 +1,76 @@
+{
+    "dataset_reader": {
+        "type": "qfirst_qasrl",
+        "instance_type": "question",
+        "token_indexers": {
+            "elmo": {
+                "type": "elmo_characters"
+            }
+        }
+    },
+    // "train_data_path": "https://s3.amazonaws.com/my89public/quac/train_v0.2.json",
+    // "train_data_path": "https://s3.amazonaws.com/my89public/quac/val_v0.2.json",
+    // "validation_data_path": "https://s3.amazonaws.com/my89public/quac/val_v0.2.json",
+    "train_data_path": "dev-mini.jsonl",
+    "validation_data_path": "dev-mini.jsonl",
+    // "train_data_path": "qasrl-v2_1/expanded/train.jsonl.gz",
+    // "validation_data_path": "qasrl-v2_1/expanded/dev.jsonl.gz",
+    "model": {
+        "type": "question_text_answerer",
+        "text_field_embedder": {
+            "elmo": {
+                "type": "elmo_token_embedder",
+                "options_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+                "weight_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+                "do_layer_norm": false,
+                "dropout": 0.5
+            }
+        },
+        "passage_encoder": {
+            "type": "gru",
+            "bidirectional": true,
+            "hidden_size": 100,
+            "input_size": 1024,
+            "num_layers": 1
+        },
+        "question_encoder": {
+            "type": "gru",
+            "bidirectional": true,
+            "hidden_size": 100,
+            "input_size": 1024,
+            "num_layers": 1
+        },
+        "residual_encoder": {
+            "type": "gru",
+            "bidirectional": true,
+            "hidden_size": 100,
+            "input_size": 200,
+            "num_layers": 1
+        },
+        "span_selector": {
+            "type": "simple",
+            "objective": "multinomial",
+            "gold_span_selection_policy": "union",
+            "input_dim": 200,
+            "span_hidden_dim": 100,
+            "pruning_ratio": 2.0
+        },
+        "variational_dropout": 0.2
+    },
+    "iterator": {
+        "type": "bucket",
+        "sorting_keys": [["text", "num_tokens"]],
+        "batch_size": 2
+    },
+    "trainer": {
+        "num_epochs": 200,
+        "grad_norm": 1.0,
+        "patience": 3,
+        "validation_metric": "+span-f1",
+        "cuda_device": -1,
+        "optimizer": {
+            "type": "adadelta",
+            "rho": 0.95
+        }
+    }
+}

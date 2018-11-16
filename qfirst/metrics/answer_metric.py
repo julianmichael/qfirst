@@ -56,6 +56,10 @@ class AnswerMetric(Metric):
             "fp": 0,
             "fn": 0
         }
+        self._top_token_f1 = {
+            "sum": 0.0,
+            "count": 0
+        }
         self._top_acc = {
             "correct": 0,
             "total": 0
@@ -104,6 +108,16 @@ class AnswerMetric(Metric):
             cov["true"] += true
             return
 
+        def get_token_f1(pred, gold):
+            p1, p2 = (pred.start(), pred.end())
+            g1, g2 = (gold.start(), gold.end())
+            precision = sum([1 for x in range(p1, p2+1) if x >= g1 and x <= g2]) / (p2 - p1 + 1)
+            recall    = sum([1 for x in range(g1, g2+1) if x >= p1 and x <= p2]) / (g2 - g1 + 1)
+            f1 = 0.
+            if precision + recall > 0.0:
+                f1 = 2 * (precision * recall) / (precision + recall)
+            return f1
+
         invalidity_labels = (num_invalids.float() / num_answers.float()) >= self._proportion_invalid_answers
         for conf in self._invalid_confs:
             invalidity_preds = invalidity_probs >= conf["threshold"]
@@ -134,6 +148,15 @@ class AnswerMetric(Metric):
 
             top_correct_relaxed = (top_invalid and gold_invalid) or (top_span in gold_spans)
             update_acc(self._top_acc_relaxed, top_correct_relaxed)
+
+            self._top_token_f1["count"] += 1
+            if gold_invalid:
+                if top_invalid:
+                    self._top_token_f1["sum"] += 1.0
+                # else add 0
+            else:
+                if not top_invalid:
+                    max_f1 = max([get_token_f1(top_span, g) for g in gold_spans])
 
             for conf in self._span_confs:
                 for span, prob in spans_with_probs:
@@ -182,6 +205,8 @@ class AnswerMetric(Metric):
             return acc["correct"] / acc["total"] if acc["total"] > 0 else 0.0
         def get_cov(cov):
             return cov["covered"] / cov["true"] if cov["true"] > 0 else 0.0
+        def get_token_f1(tok_f1):
+            return tok_f1["sum"] / tok_f1["count"] if tok_f1["count"] > 0 else 0.0
 
         best_span_dict = max([stats(conf) for conf in self._span_confs], key = lambda d: d["f1"])
         span_dict = { ("span-%s" % k): v for k, v in best_span_dict.items() if isinstance(v, float) }
@@ -196,6 +221,7 @@ class AnswerMetric(Metric):
                 "top-acc": get_acc(self._top_acc),
                 "top-span-acc": get_acc(self._top_span_acc),
                 "top-acc-relaxed": get_acc(self._top_acc_relaxed),
+                "top-token-f1": get_token_f1(self._top_token_f1),
                 "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage),
                 "span_threshold": float(best_span_dict["threshold"]),
                 "invalid_threshold": float(best_invalid_dict["threshold"])
@@ -205,7 +231,8 @@ class AnswerMetric(Metric):
             other_metrics = {
                 "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage),
                 "span-threshold": float(best_span_dict["threshold"]),
-                "invalid-threshold": float(best_invalid_dict["threshold"])
+                "invalid-threshold": float(best_invalid_dict["threshold"]),
+                "top-token-f1": get_token_f1(self._top_token_f1)
             }
             res = {**span_dict, **invalid_dict, **other_metrics}
 
