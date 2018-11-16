@@ -29,9 +29,6 @@ from qfirst.metrics.answer_metric import AnswerMetric
 
 from qfirst.data.util import get_slot_label_namespace
 
-qa_objective_values = ["binary", "multinomial"]
-qa_span_selection_policy_values = ["union", "majority", "weighted"]
-# multinomial cannot be used with weighted
 @Model.register("question_text_answerer")
 class QuestionTextAnswerer(Model):
     def __init__(self, vocab: Vocabulary,

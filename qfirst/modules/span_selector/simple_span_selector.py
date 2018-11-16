@@ -83,7 +83,6 @@ class SimpleSpanSelector(SpanSelector):
             TimeDistributed(torch.nn.ReLU()),
             TimeDistributed(Linear(self.span_hidden_dim, 1)))
         self.span_pruner = SpanPruner(self.span_scorer)
-        # self.answer_lin = TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim))
         self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
 
     def get_input_dim(self):

@@ -6,7 +6,10 @@
             "elmo": {
                 "type": "elmo_characters"
             }
-        }
+        },
+        "include_slots": false,
+        "min_answers": 1,
+        "min_valid_answers": 0
     },
     // "train_data_path": "https://s3.amazonaws.com/my89public/quac/train_v0.2.json",
     // "train_data_path": "https://s3.amazonaws.com/my89public/quac/val_v0.2.json",
@@ -60,14 +63,14 @@
     "iterator": {
         "type": "bucket",
         "sorting_keys": [["text", "num_tokens"]],
-        "batch_size": 2
+        "batch_size": 200
     },
     "trainer": {
         "num_epochs": 200,
         "grad_norm": 1.0,
         "patience": 3,
         "validation_metric": "+span-f1",
-        "cuda_device": -1,
+        "cuda_device": 0,
         "optimizer": {
             "type": "adadelta",
             "rho": 0.95
