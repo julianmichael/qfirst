@@ -1,4 +1,5 @@
 package qfirst.frames
+import qfirst.frames.implicits._
 
 import qasrl.util.DependentMap
 import qasrl.{Tense, Modal, PresentTense, PastTense}
@@ -15,19 +16,25 @@ import nlpdata.datasets.wiktionary._
 
 import monocle.macros._
 
-@Lenses case class ArgStructure(
+import io.circe.generic.JsonCodec
+
+@JsonCodec @Lenses case class ArgStructure(
   args: DependentMap[ArgumentSlot.Aux, Id],
   isPassive: Boolean
 )
+object ArgStructure
 
-@Lenses case class TAN(
+@JsonCodec @Lenses case class TAN(
   tense: Tense,
   isPerfect: Boolean,
   isProgressive: Boolean,
   isNegated: Boolean
 )
+object TAN
 
-@Lenses case class Frame(
+import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+
+@JsonCodec @Lenses case class Frame(
   structure: ArgStructure,
   verbInflectedForms: InflectedForms,
   tan: TAN

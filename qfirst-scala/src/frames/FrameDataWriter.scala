@@ -4,7 +4,8 @@ import cats.Id
 import cats.effect.IO
 
 import io.circe.Json
-import io.circe.Encoder
+import io.circe.{Encoder, Decoder}
+import io.circe.HCursor
 
 import nlpdata.datasets.wiktionary.InflectedForms
 import nlpdata.util.LowerCaseStrings._
@@ -48,6 +49,14 @@ object FrameDataWriter {
       case Prep2 => "prep2-obj"
       case x => getSlotLabel(x)
     }
+    def getAnswerSlotFromLabel(label: String): ArgumentSlot = label match {
+      case "prep1-obj" | "prep1" => Prep1
+      case "prep2-obj" | "prep2" => Prep2
+      case "subj" => Subj
+      case "obj" => Obj
+      case "misc" => Misc
+      case wh => Adv(wh.lowerCase)
+    }
 
     def getFrameObj(frame: Frame) = {
       val verbTokens = frame.copy(verbInflectedForms = genericInflectedForms).getVerbStack.map(recapitalizeInflection)
@@ -75,14 +84,28 @@ object FrameDataWriter {
       )
     }
 
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    import io.circe.syntax._
+
     implicit val frameInfoEncoder: Encoder[FrameInfo] = new Encoder[FrameInfo] {
       final def apply(info: FrameInfo): Json = Json.obj(
         "sentenceId" -> Json.fromString(info.sentenceId),
         "verbIndex" -> Json.fromInt(info.verbIndex),
         "question" -> Json.fromString(info.question),
+        "frame" -> info.frame.asJson,
+        "answerSlot" -> Json.fromString(getAnswerSlotLabel(info.answerSlot)),
         "slots" -> getFrameObj(info.frame),
-        "answerSlot" -> Json.fromString(getAnswerSlotLabel(info.answerSlot))
       )
+    }
+
+    implicit val frameInfoDecoder: Decoder[FrameInfo] = new Decoder[FrameInfo] {
+      final def apply(c: HCursor): Decoder.Result[FrameInfo] = for {
+        sentenceId <- c.get[String]("sentenceId")
+        verbIndex <- c.get[Int]("verbIndex")
+        question <- c.get[String]("question")
+        frame <- c.get[Frame]("frame")
+        answerSlot <- c.get[String]("answerSlot").map(getAnswerSlotFromLabel)
+      } yield FrameInfo(sentenceId, verbIndex, question, frame, answerSlot)
     }
   }
 }

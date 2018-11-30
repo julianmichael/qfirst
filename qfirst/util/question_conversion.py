@@ -40,7 +40,6 @@ def get_gap_for_slot_value(slot_value):
         raise ValueError("Gap can only be taken for a non-empty slot")
     return _placeholder_and_gap_mapping[slot_value][1]
 
-# NOTE: this has not been tested, not guaranteed to work
 def get_question_for_clause(clause_slots, vocab: Vocabulary):
     answer_slot = clause_slots["qarg"]
     wh = answer_slot if answer_slot not in clause_slots else get_wh_for_slot_value(clause_slots[answer_slot])

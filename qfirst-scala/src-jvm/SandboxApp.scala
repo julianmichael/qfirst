@@ -29,6 +29,7 @@ import HasMetrics.ops._
 
 object SandboxApp extends App {
   val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
+  val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
 
   val sortSpec = {
     import Metric._
@@ -110,6 +111,16 @@ object SandboxApp extends App {
     }
   }
 
+  val getSpanCounts = (sentence: Sentence) => {
+    sentence.verbEntries.values.toList.foldMap { verb =>
+      verb.questionLabels.values.toList.foldMap { qLabel =>
+        qLabel.answerJudgments.toList.map(_.sourceId).foldMap(s => Map(s -> 1))
+      }.values.toList.foldMap(Counts(_))
+    }
+  }
+
   println(getMetricsString(spanLengthMetrics))
   println(spanLengthMetrics.histogramString(75))
+  println("Train span counts: " + getMetricsString(train.sentences.values.toList.foldMap(getSpanCounts)))
+  println("Dev span counts: " + getMetricsString(dev.sentences.values.toList.foldMap(getSpanCounts)))
 }

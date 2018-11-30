@@ -234,6 +234,10 @@ object MetricsApp {
       NonEmptyList.of(0, 10, 50, 150, 250, 500, 750, 1000))
   )
 
+  def sentenceBucketers = Map(
+    "sent-length" -> Bucketers.sentenceLength(NonEmptyList.of(0, 8, 16, 24, 32)).lmap[Instances.VerbInstance](_.sentence)
+  )
+
   def domainBucketers = Map(
     "domain" -> ((verb: Instances.VerbInstance) => SentenceId.fromString(verb.sentence.gold.sentenceId).documentId.domain.toString)
   )
@@ -493,12 +497,15 @@ object MetricsApp {
 
     filterSpaceEither.map { filterSpace =>
       val computeMetrics = M.split(I.sentenceToVerbs) {
-        M.bucket(/*verbBucketers(getVerbFrequency) ++ */ domainBucketers) {
+        M.bucket(/*verbBucketers(getVerbFrequency) ++ */ domainBucketers /* ++ sentenceBucketers */) {
           M.hchoose(
+            "sentence length" ->> ((vi: I.VerbInstance) => Counts(vi.sentence.gold.sentenceTokens.size)),
             "verbs" ->> ((vi: I.VerbInstance) => Count(vi.gold.verbInflectedForms.stem)),
             "predictions" ->> (
               M.choose(filterSpace.allFilters) { filter =>
-                I.verbToQASet(filterGoldDense, filter) andThen
+                I.verbToQASet(filterGoldDense, filter,
+                              oracleAnswers = Some(0.25).filter(_ => false),
+                              oracleQuestions = Some(0.07).filter(_ => false)) andThen
                 M.split(I.qaSetToQuestions) {
                   M.hchoose(
                     "question" ->> I.getQuestionBoundedAcc,
@@ -529,8 +536,13 @@ object MetricsApp {
 
       // choose the filter with best results that has >= 2 Qs/verb recall
       val questionTunedResults = results.updateWith("predictions")(
-        _.filter(_.get("questions per verb") >= 2.0)
+        _.filter(_.get("questions per verb") >= 1.8)
           .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
+      )
+
+      val spanTunedResults = results.updateWith("predictions")(
+        _.filter(_.get("spans per verb") >= 2.3)
+          .keepMaxBy(_.get("answer span").stats.accuracyLowerBound)
       )
 
       val bestFilter = questionTunedResults.get("predictions").data.head._1
@@ -545,7 +557,8 @@ object MetricsApp {
       def getMetricsString[M: HasMetrics](m: M) =
         m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-      println("Overall at ≥2.0: " + getMetricsString(questionTunedResults))
+      println("Overall at ≥2.0 questions: " + getMetricsString(questionTunedResults))
+      // println("Overall at ≥2.3 spans: " + getMetricsString(spanTunedResults))
 
       // do automated error analysis
 
@@ -592,10 +605,10 @@ object MetricsApp {
         }.combineAll
       }
 
-      println(whConf.stats.prettyString(0))
+      // println(whConf.stats.prettyString(0))
 
-      println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
-      println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
+      // println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
+      // println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
 
       def writeExamples(path: NIOPath, examples: Vector[Instances.QuestionInstance], rand: util.Random) = {
         val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
@@ -635,12 +648,12 @@ object MetricsApp {
 
       // performance on verbs by frequency
 
-      val verbBucketedResults = raw.map(
-        _.updateWith("predictions")(
-          _.data(bestFilter).get("question with answer")
-        )
-      )
-      println("Overall by verb: " + getMetricsString(verbBucketedResults))
+      // val verbBucketedResults = raw.map(
+      //   _.updateWith("predictions")(
+      //     _.data(bestFilter).get("question with answer")
+      //   )
+      // )
+      // println("Overall by verb: " + getMetricsString(verbBucketedResults))
 
       val domainsDir = examplesDir.resolve("domain")
       if(!Files.exists(domainsDir)) {
@@ -660,6 +673,24 @@ object MetricsApp {
           writeExamples(bucketDir.resolve("wrongans.txt"), ansInstances, r)
         }
       }
+
+      val renderExamples = (si: I.SentenceInstance) => {
+        val res = Text.render(si.gold.sentenceTokens) + "\n" + I.sentenceToVerbs(si).map { verb =>
+          val verbStr = s"${verb.gold.verbInflectedForms.stem} (${verb.gold.verbIndex})"
+          verbStr + "\n" + I.verbToQASet(filterGoldDense, bestFilter)(verb).pred.toList.map {
+            case (qString, (qSlots, answerSpans)) =>
+              val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
+                Text.renderSpan(si.gold.sentenceTokens, (s.begin until s.end).toSet)
+              ).mkString(" / ")
+              f"$qString%-60s $answerSpanStr%s"
+          }.mkString("\n")
+        }.mkString("\n")
+        List(res)
+      }
+
+      // util.Random.shuffle(
+      //   Instances.foldMapInstances(gold, pred)(renderExamples)
+      // ).take(10).mkString("\n\n") <| println
     }
   }
 

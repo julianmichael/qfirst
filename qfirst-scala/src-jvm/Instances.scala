@@ -69,10 +69,21 @@ object Instances {
 
   def verbToQASet(
     filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-    filterPred: VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
+    filterPred: VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
+    oracleAnswers: Option[Double]= None,
+    oracleQuestions: Option[Double] = None
   ) = (verb: VerbInstance) => {
     val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
-    val predQAs = filterPred(verb.pred)
+    val possiblyOracleAnswersVerb = oracleAnswers.fold(verb.pred)(answerThresh =>
+      verb.pred.withOracleAnswers(goldValidQAs, answerThresh)
+    )
+    val possiblyOracleQuestionsVerb = oracleQuestions.fold(possiblyOracleAnswersVerb)(
+      questionThresh => possiblyOracleAnswersVerb.withOracleQuestions(
+        goldValidQAs.map(_._2.questionSlots).toSet, goldInvalidQAs.map(_._2.questionSlots).toSet,
+        questionThresh
+      )
+    )
+    val predQAs = filterPred(possiblyOracleQuestionsVerb)
     QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
   }
 
@@ -151,15 +162,18 @@ object Instances {
 
   val getQABoundedAcc = (qa: QAInstance) => {
     qa.question.qas.pred.get(qa.question.string).fold(BoundedAcc[QAInstance]()) { predQA =>
-      qa.question.qas.goldValid.get(qa.question.string).map { validGoldQA =>
-        val predAnswerSpans = predQA._2
-        val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
-        if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          BoundedAcc.correct(qa)
-        } else BoundedAcc.incorrect(qa)
-      }.orElse {
-        qa.question.qas.goldInvalid.get(qa.question.string).as(BoundedAcc.incorrect(qa))
-      }.getOrElse(BoundedAcc.uncertain(qa))
+      if(!predQA._2.contains(qa.span)) { BoundedAcc[QAInstance]() }
+      else {
+        qa.question.qas.goldInvalid.get(qa.question.string)
+          .as(BoundedAcc.incorrect(qa))
+          .orElse {
+          qa.question.qas.goldValid.get(qa.question.string).map { validGoldQA =>
+            val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val goldContainsSpan = goldAnswerSpans.contains(qa.span)
+            if(goldContainsSpan) BoundedAcc.correct(qa) else BoundedAcc.incorrect(qa)
+          }
+        }.getOrElse(BoundedAcc.uncertain(qa))
+      }
     }
   }
 
@@ -361,6 +375,10 @@ object Instances {
         case Some(g) => s"${g(0) + 1}-${g(1)}"
         case None => s">${bounds.last}"
       }
+    }
+
+    def sentenceLength(bounds: NonEmptyList[Int]) = (sent: SentenceInstance) => {
+      evalBucketBounds(bounds)(sent.gold.sentenceTokens.size)
     }
 
     def verbFreq(

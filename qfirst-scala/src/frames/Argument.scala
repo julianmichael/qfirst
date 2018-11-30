@@ -2,7 +2,11 @@ package qfirst.frames
 
 import nlpdata.util.LowerCaseStrings._
 
-sealed trait Argument {
+import io.circe.generic.JsonCodec
+import qfirst.frames.implicits._
+
+
+@JsonCodec sealed trait Argument {
   def placeholder: List[String]
   def gap: List[String]
   def unGap: List[String]
@@ -29,7 +33,7 @@ sealed trait Argument {
   }
 }
 
-case class Preposition(
+@JsonCodec case class Preposition(
   preposition: LowerCaseString,
   objOpt: Option[NounLikeArgument]
 ) extends Argument {
@@ -39,14 +43,7 @@ case class Preposition(
   override def wh = objOpt.flatMap(_.wh)
 }
 
-sealed trait NonPrepArgument extends Argument
-object NonPrepArgument {
-  def fromPlaceholder(s: LowerCaseString) =
-    Noun.fromPlaceholder(s)
-      .orElse(Gerund.fromPlaceholder(s))
-      .orElse(Complement.fromPlaceholder(s))
-      .orElse(Locative.fromPlaceholder(s))
-}
+@JsonCodec sealed trait NonPrepArgument extends Argument
 
 case object Locative extends NonPrepArgument {
   override def placeholder = List("somewhere")
@@ -67,7 +64,7 @@ case class Complement(conj: Complement.Form) extends NonPrepArgument {
   override def wh = conj.wh
 }
 object Complement {
-  sealed trait Form {
+  @JsonCodec sealed trait Form {
     import Form._
     def placeholder = this match {
       case Infinitive => List("to", "do", "something")
@@ -95,13 +92,7 @@ object Complement {
   }
 }
 
-sealed trait NounLikeArgument extends NonPrepArgument
-object NounLikeArgument {
-  def fromPlaceholder(s: LowerCaseString) =
-    Noun.fromPlaceholder(s).orElse(
-      Gerund.fromPlaceholder(s)
-    )
-}
+@JsonCodec sealed trait NounLikeArgument extends NonPrepArgument
 
 case object Gerund extends NounLikeArgument {
   override def placeholder = List("doing", "something")
@@ -115,7 +106,7 @@ case object Gerund extends NounLikeArgument {
   }
 }
 
-case class Noun(
+@JsonCodec case class Noun(
   isAnimate: Boolean
 ) extends NounLikeArgument {
   override def placeholder = List(if (isAnimate) "someone" else "something")
@@ -129,4 +120,19 @@ object Noun {
     case "something" => Some(Noun(isAnimate = false))
     case _ => None
   }
+}
+
+object NounLikeArgument {
+  def fromPlaceholder(s: LowerCaseString) =
+    Noun.fromPlaceholder(s).orElse(
+      Gerund.fromPlaceholder(s)
+    )
+}
+
+object NonPrepArgument {
+  def fromPlaceholder(s: LowerCaseString) =
+    Noun.fromPlaceholder(s)
+      .orElse(Gerund.fromPlaceholder(s))
+      .orElse(Complement.fromPlaceholder(s))
+      .orElse(Locative.fromPlaceholder(s))
 }

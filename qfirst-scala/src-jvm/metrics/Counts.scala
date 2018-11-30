@@ -34,7 +34,7 @@ case class Counts(hist: Map[Int, Int]) {
     //   ((numInstances / 2), (numInstances % 2 == 0), None)) {
     //   case ((remaining, isEven, prevNumOpt), (nextNum, nextCount)) =>
     //     if(remaining == 0) {
-    //       ???
+    //       ...
     //     }
     // }
     Counts.Stats(

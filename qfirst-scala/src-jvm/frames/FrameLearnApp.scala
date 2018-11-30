@@ -313,8 +313,9 @@ object FrameLearnApp {
     for {
       train <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("train.jsonl.gz")))
       dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
+      devDense <- IO(Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       model <- SimpleFrameInduction.run[IO](train, dev)
-      _ <- writeFrameData(train |+| dev, model, Paths.get("clause-data/train-dev.jsonl"))
+      _ <- writeFrameData(train |+| dev |+| devDense, model, Paths.get("clause-data-train-dev.jsonl"))
     } yield ()
   }
 

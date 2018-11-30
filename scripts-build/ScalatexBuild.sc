@@ -32,7 +32,7 @@ trait ScalatexModule extends ScalaModule {
         val intermediatePath = dest / "standin" / packageSegments / path.name
         val targetPath = dest / "target" / packageSegments / s"$objectName.scala"
 
-        val allLines = path.getLines("utf-8")
+        val allLines = read.lines(path)
         val (packagesParamsAndImports, contentLines) = allLines.span(l =>
           l.isEmpty || l.startsWith("@package ") || l.startsWith("@param ") || l.startsWith("@import ")
         )
@@ -47,7 +47,7 @@ trait ScalatexModule extends ScalaModule {
         // errors are reported at the correct line number
         write(intermediatePath, packagesParamsAndImports.map(_ => "\n").mkString + contentLines.mkString("\n"))
 
-        val reproducedCommentedLines = path.getLines("utf-8").map("//" + _).mkString("\n")
+        val reproducedCommentedLines = read.lines(path).map("//" + _).mkString("\n")
         val fileContents =
           s"""$packages
           |import scalatags.Text.all._
@@ -66,7 +66,7 @@ trait ScalatexModule extends ScalaModule {
   }
   override def generatedSources = T { Seq(compileScalatex()) }
 
-  def ivyDeps = super.ivyDeps() ++ Agg(
+  override def ivyDeps = super.ivyDeps() ++ Agg(
     ivy"com.lihaoyi::scalatex-api:$thisScalatexVersion",
     ivy"com.lihaoyi::scalatags::$thisScalatagsVersion"
   )
