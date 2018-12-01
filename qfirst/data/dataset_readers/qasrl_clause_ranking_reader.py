@@ -63,17 +63,11 @@ class QasrlClauseRankingReader(DatasetReader):
             "verbIndex": json["verbIndex"],
             "verbInflectedForms": json["verbInflectedForms"]
         }
-        for labeled_clause_json in json["labeledClauses"]:
-            clause = labeled_clause_json["clause"]
-            prob = labeled_clause_json["prob"]
-            clause_metadata = {
-                "clause": clause,
-                "prob": prob
-            }
-            metadata_field = MetadataField({**verb_metadata, **clause_metadata})
+        for clause_json in json["labeledClauses"]:
+            metadata_field = MetadataField({**verb_metadata, **clause_json})
             sentence_field = TextField([Token(t) for t in json["sentenceTokens"]], self._token_indexers)
-            clause_field = TextField([self._tokenizer.tokenize(clause["string"]), self._token_indexers])
-            label = "entailed" if prob >= 0.5 else "non-entailed"
+            clause_field = TextField([self._tokenizer.tokenize(clause_json["string"]), self._token_indexers])
+            label = "entailed" if clause_json["prob"] >= 0.5 else "non-entailed"
             label_field = LabelField(label)
             instance_dict = {
                 "premise": sentence_field,
