@@ -17,6 +17,8 @@ from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
 from allennlp.data.dataset_readers.dataset_utils.span_utils import enumerate_spans
 
+from json.decoder import JSONDecodeError
+
 from nrl.common.span import Span
 from nrl.data.util import cleanse_sentence_text
 
@@ -37,7 +39,7 @@ class QasrlClauseRankingReader(DatasetReader):
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
 
     @overrides
-    def _read(self, file_path: str):
+    def _read(self, file_list: str):
         instances = []
         for file_path in file_list.split(","):
             if file_path.strip() == "":
@@ -48,8 +50,12 @@ class QasrlClauseRankingReader(DatasetReader):
             if file_path.endswith('.gz'):
                 with gzip.open(cached_path(file_path), 'r') as f:
                     for line in f:
-                        for i in self._instances_from_json(json.loads(line)):
-                            yield i
+                        try:
+                            sentence_json = json.loads(line)
+                            for i in self._instances_from_json(sentence_json):
+                                yield i
+                        except JSONDecodeError as e:
+                            print(e)
             elif file_path.endswith(".jsonl"):
                 with codecs.open(cached_path(file_path), 'r', encoding='utf8') as f:
                     for line in f:
@@ -63,10 +69,10 @@ class QasrlClauseRankingReader(DatasetReader):
             "verbIndex": json["verbIndex"],
             "verbInflectedForms": json["verbInflectedForms"]
         }
-        for clause_json in json["labeledClauses"]:
+        for clause_json in json["clauses"]:
             metadata_field = MetadataField({**verb_metadata, **clause_json})
             sentence_field = TextField([Token(t) for t in json["sentenceTokens"]], self._token_indexers)
-            clause_field = TextField([self._tokenizer.tokenize(clause_json["string"]), self._token_indexers])
+            clause_field = TextField(self._tokenizer.tokenize(clause_json["string"]), self._token_indexers)
             label = "entailed" if clause_json["prob"] >= 0.5 else "non-entailed"
             label_field = LabelField(label)
             instance_dict = {
