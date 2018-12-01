@@ -60,14 +60,16 @@ object ClauseStructure {
   def toJson(
     sentenceTokens: Vector[String],
     verbInflectedForms: InflectedForms)(
-    struct: ClauseStructure
+    struct: ClauseStructure,
+    prob: Double
   ): Json = {
     import io.circe.syntax._
     Json.obj(
       "string" -> Json.fromString(struct.getClauseString(sentenceTokens, verbInflectedForms)),
       "structure" -> struct.structure.asJson,
       "tan" -> struct.tan.asJson,
-      "argSpans" -> struct.argSpans.asJson
+      "argSpans" -> struct.argSpans.asJson,
+      "prob" -> prob.asJson
     )
   }
 
@@ -76,41 +78,48 @@ object ClauseStructure {
   }
 }
 
-case class UnlabeledClauseInstance(
+case class ClauseInstance(
   sentenceId: String,
   sentenceTokens: Vector[String],
   verbIndex: Int,
   verbInflectedForms: InflectedForms,
-  clauses: List[ClauseStructure]
+  clauses: List[(ClauseStructure, Double)], // 0.0 negative, 1.0 positive
 )
-
-case class LabeledClauseInstance(
-  sentenceId: String,
-  sentenceTokens: Vector[String],
-  verbIndex: Int,
-  verbInflectedForms: InflectedForms,
-  positiveClauses: List[ClauseStructure],
-  negativeClauses: List[ClauseStructure]
-)
-object LabeledClauseInstance {
+object ClauseInstance {
   import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
   import io.circe.syntax._
 
-  implicit val labeledClauseInstanceEncoder: Encoder[LabeledClauseInstance] = new Encoder[LabeledClauseInstance] {
-    final def apply(instance: LabeledClauseInstance): Json = {
+  implicit val clauseInstanceEncoder: Encoder[ClauseInstance] = new Encoder[ClauseInstance] {
+    final def apply(instance: ClauseInstance): Json = {
       Json.obj(
         "sentenceId" -> Json.fromString(instance.sentenceId),
         "sentenceTokens" -> instance.sentenceTokens.asJson,
         "verbIndex" -> Json.fromInt(instance.verbIndex),
         "verbInflectedForms" -> instance.verbInflectedForms.asJson,
-        "positiveClauses" -> instance.positiveClauses.map(ClauseStructure.toJson(instance.sentenceTokens, instance.verbInflectedForms)).asJson,
-        "negativeClauses" -> instance.negativeClauses.map(ClauseStructure.toJson(instance.sentenceTokens, instance.verbInflectedForms)).asJson
+        "clauses" -> instance.clauses.map {
+          case (clause, prob) => ClauseStructure.toJson(
+            instance.sentenceTokens, instance.verbInflectedForms)(
+            clause, prob)
+        }.asJson
       )
     }
   }
 
-  implicit val labeledClauseInstanceDecoder: Decoder[LabeledClauseInstance] = {
-    io.circe.generic.semiauto.deriveDecoder[LabeledClauseInstance]
+  implicit val clauseInstanceDecoder: Decoder[ClauseInstance] = new Decoder[ClauseInstance] {
+    final def apply(c: HCursor): Decoder.Result[ClauseInstance] = for {
+      sentenceId <- c.get[String]("sentenceId")
+      sentenceTokens <- c.get[Vector[String]]("sentenceTokens")
+      verbIndex <- c.get[Int]("verbIndex")
+      verbInflectedForms <- c.get[InflectedForms]("verbInflectedForms")
+      clauseJsons <- c.get[List[Json]]("clauses")
+      clauses <- clauseJsons.traverse(lcj =>
+        lcj.hcursor.get[ClauseStructure]("clause") >>= (clause =>
+          lcj.hcursor.get[Double]("prob") map (label =>
+            (clause, label)
+          )
+        )
+      )
+    } yield ClauseInstance(sentenceId, sentenceTokens, verbIndex, verbInflectedForms, clauses)
   }
 }
 
@@ -178,7 +187,7 @@ object ClauseRankApp extends App {
     }
   }
 
-  def getLabeledInstancesForSentence(
+  def getInstancesForSentence(
     goldSentence: Sentence,
     goldSentenceFrameInfo: Map[Int, Map[String, FrameInfo]],
     sentencePred: ClausalSentencePrediction
@@ -188,13 +197,13 @@ object ClauseRankApp extends App {
     )
     val predictedClauseStructures = getPredClauseStructures(verbPred)
     val (positiveClauses, negativeClauses) = predictedClauseStructures.partition(goldClauseStructures.contains)
-    LabeledClauseInstance(
+    val clauses = positiveClauses.map(_ -> 1.0) ++ negativeClauses.map(_ -> 0.0)
+    ClauseInstance(
       goldSentence.sentenceId,
       goldSentence.sentenceTokens,
       verbPred.verbIndex,
       verbPred.verbInflectedForms,
-      positiveClauses,
-      negativeClauses)
+      clauses)
   }
 
   def readClausalPredictions(path: NIOPath) = {
@@ -220,12 +229,12 @@ object ClauseRankApp extends App {
       .handleErrorWith(e => Stream.eval(IO(println(s"Unexpected error when reading clause info JSON: $e"))).drain)
       .map(fi => Map(fi.sentenceId -> Map(fi.verbIndex -> Map(fi.question -> List(fi)))))
       .compile.foldMonoid.map(
-      // non-ideal.. would want a recursive combine that overrides and doesn't need the end mapping
+      // non-ideal.. would instead want a recursive combine that overrides and doesn't need the end mapping
       _.transform { case (sid, vs) => vs.transform { case (vi, qs) => qs.transform { case (q, fis) => fis.head } } }
     )
   }
 
-  def writeLabeledInstances(
+  def writeInstances(
     goldPath: NIOPath,
     goldClauseInfoPath: NIOPath,
     predictionsPath: NIOPath,
@@ -240,7 +249,7 @@ object ClauseRankApp extends App {
       clauseInfo <- readClauseInfo(goldClauseInfoPath)
       _ <- {
         readClausalPredictions(predictionsPath)
-          .flatMap(pred => getLabeledInstancesForSentence(
+          .flatMap(pred => getInstancesForSentence(
                      data.sentences(pred.sentenceId),
                      clauseInfo(pred.sentenceId),
                      pred
@@ -256,7 +265,7 @@ object ClauseRankApp extends App {
 
   // dense dev
   println("Dev:")
-  writeLabeledInstances(
+  writeInstances(
     goldPath = Paths.get("qasrl-v2_1/dense/dev.jsonl.gz"),
     goldClauseInfoPath = Paths.get("clause-data-train-dev.jsonl"),
     predictionsPath = Paths.get("predictions/qfirst-clause-2/predictions-dense.jsonl"),
@@ -265,7 +274,7 @@ object ClauseRankApp extends App {
 
   // train
   println("Train:")
-  writeLabeledInstances(
+  writeInstances(
     goldPath = Paths.get("qasrl-v2_1/orig/train.jsonl.gz"),
     goldClauseInfoPath = Paths.get("clause-data-train-dev.jsonl"),
     predictionsPath = Paths.get("predictions/qfirst-clause-2/predictions-train.jsonl"),

@@ -58,7 +58,7 @@ object implicits {
 
   // TODO REALLY NEED TO FIX THIS UP!!!
 
-  case class Foo[F[_], A](fa: F[A]) {
+  private case class Foo[F[_], A](fa: F[A]) {
     type Arg = A
   }
 
