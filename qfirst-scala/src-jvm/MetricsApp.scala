@@ -1,4 +1,5 @@
 package qfirst
+import qfirst.frames._
 import qfirst.metrics._
 
 import cats.implicits._
@@ -475,26 +476,27 @@ object MetricsApp {
     )
   }
 
-  def runDenseMetrics(
+  def runClauseRankingDenseMetrics(
     getVerbFrequency: => (LowerCaseString => Int),
     gold: Dataset,
     pred: Map[String, SentencePrediction],
-    metadataDir: NIOPath
+    clausePred: Map[String, Map[Int, ClauseInstance]],
+    metadataDir: NIOPath,
+    recomputeFilter: Boolean
   ) = {
     import qfirst.{Instances => I}
     import qfirst.metrics.{Transformers => M}
+    // import qfirst.metrics._
     import shapeless._
     import shapeless.syntax.singleton._
     import shapeless.record._
     import monocle.function.{all => Optics}
-
     val filtersPath = metadataDir.resolve("filters.json")
     val filterSpaceEither = {
       import io.circe.jawn
       import io.circe.generic.auto._
-      jawn.decodeFile[FilterSpace](new java.io.File(filtersPath.toString))
-    }
-
+      jawn.decodeFile[RankingFilterSpace](new java.io.File(filtersPath.toString))
+    }.map(fs => if(recomputeFilter) fs.copy(best = None) else fs)
     filterSpaceEither.map { filterSpace =>
       val computeMetrics = M.split(I.sentenceToVerbs) {
         M.bucket(/*verbBucketers(getVerbFrequency) ++ */ domainBucketers /* ++ sentenceBucketers */) {
@@ -503,9 +505,10 @@ object MetricsApp {
             "verbs" ->> ((vi: I.VerbInstance) => Count(vi.gold.verbInflectedForms.stem)),
             "predictions" ->> (
               M.choose(filterSpace.allFilters) { filter =>
-                I.verbToQASet(filterGoldDense, filter,
-                              oracleAnswers = Some(0.25).filter(_ => false),
-                              oracleQuestions = Some(0.07).filter(_ => false)) andThen
+                I.verbToQASetWithRanking(
+                  filterGoldDense, filter,
+                  v => clausePred(v.sentence.gold.sentenceId)(v.gold.verbIndex)
+                ) andThen
                 M.split(I.qaSetToQuestions) {
                   M.hchoose(
                     "question" ->> I.getQuestionBoundedAcc,
@@ -536,7 +539,234 @@ object MetricsApp {
 
       // choose the filter with best results that has >= 2 Qs/verb recall
       val questionTunedResults = results.updateWith("predictions")(
-        _.filter(_.get("questions per verb") >= 1.8)
+        _.filter(_.get("questions per verb") >= 2.0)
+          .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
+      )
+
+      val spanTunedResults = results.updateWith("predictions")(
+        _.filter(_.get("spans per verb") >= 2.3)
+          .keepMaxBy(_.get("answer span").stats.accuracyLowerBound)
+      )
+
+      val bestFilter = questionTunedResults.get("predictions").data.head._1
+
+      {
+        val printer = io.circe.Printer.spaces2
+        import io.circe.generic.auto._
+        import io.circe.syntax._
+        Files.write(filtersPath, printer.pretty(filterSpace.withBest(bestFilter).asJson).getBytes("UTF-8"))
+      }
+
+      def getMetricsString[M: HasMetrics](m: M) =
+        m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
+
+      println("Overall at ≥2.0 questions: " + getMetricsString(questionTunedResults))
+      // println("Overall at ≥2.3 spans: " + getMetricsString(spanTunedResults))
+
+      // do automated error analysis
+
+      val computePredClassesForSentences = M.split(I.sentenceToVerbs) {
+        M.bucket(/* verbBucketers(getVerbFrequency) ++ */ domainBucketers) {
+          I.verbToQASetWithRanking(
+            filterGoldDense, bestFilter,
+            v => clausePred(v.sentence.gold.sentenceId)(v.gold.verbIndex)
+          ) andThen
+          M.split(I.qaSetToQuestions) {
+            ((q: I.QuestionInstance) => computePredClass(q) -> q) andThen Count[(PredClass, I.QuestionInstance)]
+            // (computePredClass *** identity[I.QuestionInstance]) andThen Count[(PredClass, I.QuestionInstance)]
+          }
+        }
+      }
+
+      val predClasses = Instances
+        .foldMapInstances(gold, pred)(computePredClassesForSentences)
+        .map(_.filter(_._1 != PredClass.NotPredicted))
+
+      val mainErrorClasses = {
+        import PredClass._
+        predClasses.map(
+          _.values.map(_._1).filter(_ != PredClass.Correct).map {
+            case WrongWh(_, _) => WrongWh("_".lowerCase, "_".lowerCase)
+            case SwappedPrep(_, _) => SwappedPrep("_".lowerCase, "_".lowerCase)
+            case MissingPrep(_) => MissingPrep("_".lowerCase)
+            case ExtraPrep(_) => ExtraPrep("_".lowerCase)
+            case x => x
+          }
+        )
+      }
+
+      val bucketedErrorClasses = mainErrorClasses.map(
+        _.foldMap(
+          M.bucket(Map("class" -> ((x: PredClass) => x.toString))) {
+            ((_: PredClass) => 1)
+          }
+        )
+      )
+
+      val whConf = {
+        import PredClass._
+        predClasses.collapsed.values.collect {
+          case (Correct | WrongAnswer | CorrectTemplate, q) => Confusion.instance(q.slots.wh, q.slots.wh, q)
+          case (WrongWh(pred, gold), q) => Confusion.instance(gold, pred, q)
+        }.combineAll
+      }
+
+      // println(whConf.stats.prettyString(0))
+
+      // println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
+      // println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
+
+      def writeExamples(path: NIOPath, examples: Vector[Instances.QuestionInstance], rand: util.Random) = {
+        val examplesString = rand.shuffle(examples.map(renderQuestionExample(_))).mkString("\n")
+        Files.write(path, examplesString.getBytes("UTF-8"))
+      }
+
+      val collapsedPredClasses = predClasses.collapsed
+
+      val examplesDir = metadataDir.resolve("examples")
+      if(!Files.exists(examplesDir)) {
+        Files.createDirectories(examplesDir)
+      }
+
+      {
+        val r = new util.Random(235867962L)
+        writeExamples(
+          examplesDir.resolve("template.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.CorrectTemplate, q) => q },
+          r
+        )
+        writeExamples(
+          examplesDir.resolve("prep-swap.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q },
+          r
+        )
+        writeExamples(
+          examplesDir.resolve("other.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.Other, q) => q },
+          r
+        )
+        writeExamples(
+          examplesDir.resolve("wrongans.txt"),
+          collapsedPredClasses.values.collect { case (PredClass.WrongAnswer, q) => q },
+          r
+        )
+      }
+
+      // performance on verbs by frequency
+
+      // val verbBucketedResults = raw.map(
+      //   _.updateWith("predictions")(
+      //     _.data(bestFilter).get("question with answer")
+      //   )
+      // )
+      // println("Overall by verb: " + getMetricsString(verbBucketedResults))
+
+      val domainsDir = examplesDir.resolve("domain")
+      if(!Files.exists(domainsDir)) {
+        Files.createDirectories(domainsDir)
+      }
+      {
+        val r = new util.Random(22646L)
+        predClasses.data.foreach { case (buckets, results) =>
+          // val instances = results.get("predictions").incorrect ++ results.get("predictions").uncertain
+          val bucketDir = domainsDir.resolve(buckets("domain"))
+          if(!Files.exists(bucketDir)) {
+            Files.createDirectories(bucketDir)
+          }
+          val instances = results.values.collect { case (PredClass.Other, q) => q }
+          writeExamples(bucketDir.resolve("other.txt"), instances, r)
+          val ansInstances = results.values.collect { case (PredClass.WrongAnswer, q) => q }
+          writeExamples(bucketDir.resolve("wrongans.txt"), ansInstances, r)
+        }
+      }
+
+      val renderExamples = (si: I.SentenceInstance) => {
+        val res = Text.render(si.gold.sentenceTokens) + "\n" + I.sentenceToVerbs(si).map { verb =>
+          val verbStr = s"${verb.gold.verbInflectedForms.stem} (${verb.gold.verbIndex})"
+          verbStr + "\n" + I.verbToQASetWithRanking(
+            filterGoldDense, bestFilter,
+            v => clausePred(v.sentence.gold.sentenceId)(v.gold.verbIndex)
+          )(verb).pred.toList.map {
+            case (qString, (qSlots, answerSpans)) =>
+              val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
+                Text.renderSpan(si.gold.sentenceTokens, (s.begin until s.end).toSet)
+              ).mkString(" / ")
+              f"$qString%-60s $answerSpanStr%s"
+          }.mkString("\n")
+        }.mkString("\n")
+        List(res)
+      }
+
+      // util.Random.shuffle(
+      //   Instances.foldMapInstances(gold, pred)(renderExamples)
+      // ).take(10).mkString("\n\n") <| println
+    }
+  }
+
+  def runDenseMetrics(
+    getVerbFrequency: => (LowerCaseString => Int),
+    gold: Dataset,
+    pred: Map[String, SentencePrediction],
+    metadataDir: NIOPath,
+    recomputeFilter: Boolean
+  ) = {
+    import qfirst.{Instances => I}
+    import qfirst.metrics.{Transformers => M}
+    import shapeless._
+    import shapeless.syntax.singleton._
+    import shapeless.record._
+    import monocle.function.{all => Optics}
+
+    val filtersPath = metadataDir.resolve("filters.json")
+    val filterSpaceEither = {
+      import io.circe.jawn
+      import io.circe.generic.auto._
+      jawn.decodeFile[FilterSpace](new java.io.File(filtersPath.toString))
+    }.map(fs => if(recomputeFilter) fs.copy(best = None) else fs)
+
+    filterSpaceEither.map { filterSpace =>
+      val computeMetrics = M.split(I.sentenceToVerbs) {
+        M.bucket(/*verbBucketers(getVerbFrequency) ++ */ domainBucketers /* ++ sentenceBucketers */) {
+          M.hchoose(
+            "sentence length" ->> ((vi: I.VerbInstance) => Counts(vi.sentence.gold.sentenceTokens.size)),
+            "verbs" ->> ((vi: I.VerbInstance) => Count(vi.gold.verbInflectedForms.stem)),
+            "predictions" ->> (
+              M.choose(filterSpace.allFilters) { filter =>
+                // filterFunction(filter) TODO something around here needs to be factored out
+                I.verbToQASet(filterGoldDense, filter,
+                              oracleAnswers = None,
+                              oracleQuestions = None) andThen
+                M.split(I.qaSetToQuestions) {
+                  M.hchoose(
+                    "question" ->> I.getQuestionBoundedAcc,
+                    "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
+                    "answer span" ->> M.split(I.questionToQAs) {
+                      I.getQABoundedAcc
+                    }
+                  )
+                }
+              }
+            )
+          )
+        }
+      }
+
+      val raw = Instances.foldMapInstances(gold, pred)(computeMetrics)
+
+      val rawCollapsed = raw.collapsed
+
+      // compute number of questions and spans per verb
+      val results = rawCollapsed.updateWith("predictions")(
+        _.map { stats => // stats for given filter
+          val questionsPerVerb = "questions per verb" ->> stats.get("question").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
+          val spansPerVerb = "spans per verb" ->> stats.get("answer span").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
+          stats + questionsPerVerb + spansPerVerb
+        }
+      )
+
+      // choose the filter with best results that has >= 2 Qs/verb recall
+      val questionTunedResults = results.updateWith("predictions")(
+        _.filter(_.get("questions per verb") >= 2.0)
           .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
       )
 
@@ -798,20 +1028,51 @@ object MetricsApp {
     }
   }
 
+  def readRankingPredictions(
+    path: NIOPath
+  ): IO[Map[String, Map[Int, ClauseInstance]]] = {
+    import ammonite.ops._
+    import io.circe.jawn
+    IO(
+      read.lines(Path(path, pwd)).toList
+        .traverse(jawn.decode[ClauseInstance])
+        .map(_.groupBy(_.sentenceId).transform { case (_, p) => p.map(i => i.verbIndex -> i).toMap })
+        .left.map(new RuntimeException(_))
+    ).flatMap(IO.fromEither)
+  }
+
+  def readClausalPredictions(
+    path: NIOPath
+  ): IO[Map[String, ClausalSentencePrediction]] = {
+    import ammonite.ops._
+    import io.circe.jawn
+    IO(
+      read.lines(Path(path, pwd)).toList
+        .traverse(jawn.decode[ClausalSentencePrediction])
+        .map(_.map(pred => pred.sentenceId -> pred).toMap)
+        .left.map(new RuntimeException(_))
+    ).flatMap(IO.fromEither)
+  }
+
   def readPredictions(
     path: NIOPath, inputType: String
-  ): Either[io.circe.Error, Map[String, SentencePrediction]] = {
-    import qfirst.frames._
+  ): IO[Map[String, SentencePrediction]] = {
     import ammonite.ops._
     import io.circe.jawn
     if(inputType == "question") {
-      read.lines(Path(path, pwd)).toList
-        .traverse(jawn.decode[SentencePrediction])
-        .map(_.map(pred => pred.sentenceId -> pred).toMap)
+      IO(
+        read.lines(Path(path, pwd)).toList
+          .traverse(jawn.decode[SentencePrediction])
+          .map(_.map(pred => pred.sentenceId -> pred).toMap)
+          .left.map(new RuntimeException(_))
+      ).flatMap(IO.fromEither)
     } else if(inputType == "clausal") {
-      read.lines(Path(path, pwd)).toList
-        .traverse(jawn.decode[ClausalSentencePrediction])
-        .map(_.map(pred => pred.sentenceId -> pred.toSentencePrediction).toMap)
+      IO(
+        read.lines(Path(path, pwd)).toList
+          .traverse(jawn.decode[ClausalSentencePrediction])
+          .map(_.map(pred => pred.sentenceId -> pred.toSentencePrediction).toMap)
+          .left.map(new RuntimeException(_))
+      ).flatMap(IO.fromEither)
     } else ??? // shouldn't happen since we validated the input
   }
 
@@ -823,7 +1084,10 @@ object MetricsApp {
     }
   }
 
-  def program(qasrlBankPath: NIOPath, predDir: NIOPath, mode: String, inputType: String) = {
+  def program(
+    qasrlBankPath: NIOPath, predDir: NIOPath, clausePredPathOpt: Option[NIOPath],
+    mode: String, inputType: String, recomputeFilter: Boolean
+  ): IO[Unit] = {
     // TODO validate using opts stuff from decline?
     if(!Set("dense", "non-dense", "dense-curve").contains(mode)) {
       System.err.println("Must specify mode of non-dense, dense-curve, or dense.")
@@ -833,7 +1097,6 @@ object MetricsApp {
       System.err.println("Must specify input type of of question or clausal.")
       System.exit(1)
     }
-    val metadataDir = predDir.resolve(mode)
     lazy val trainData = Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz"))
     lazy val verbFrequencies = readVerbFrequencies(trainData)
     val gold = if(mode == "dense" || mode == "dense-curve") {
@@ -842,20 +1105,32 @@ object MetricsApp {
     val predFile = if(mode == "dense" || mode == "dense-curve") {
       predDir.resolve("predictions-dense.jsonl")
     } else predDir.resolve("predictions.jsonl")
-    val predEither = readPredictions(predFile, inputType)
-    predEither match {
-      case Left(error) => System.err.println(error)
-      case Right(pred) =>
-        if(mode == "non-dense") runNonDenseMetrics(verbFrequencies, gold, pred)
-        else if(mode == "dense-curve") runDenseCurveMetrics(verbFrequencies, gold, pred)
-        else if(mode == "dense") runDenseMetrics(verbFrequencies, gold, pred, metadataDir) match {
-          case Right(res) => res
-          case Left(err) =>
-            System.err.println(err)
-            System.exit(1)
-            ???
+    clausePredPathOpt match {
+      case Some(clauseRankPredPath) =>
+        val metadataDir = predDir.resolve(mode + "-ranking")
+        for {
+          pred <- readPredictions(predFile, inputType)
+          clauseInstances <- readRankingPredictions(clauseRankPredPath)
+          _ <- IO.fromEither(
+            runClauseRankingDenseMetrics(
+              verbFrequencies, gold, pred, clauseInstances, metadataDir, recomputeFilter
+            ).left.map(new RuntimeException(_))
+          )
+        } yield ()
+      case None =>
+        val metadataDir = predDir.resolve(mode)
+        readPredictions(predFile, inputType) map { pred =>
+          if(mode == "non-dense") runNonDenseMetrics(verbFrequencies, gold, pred)
+          else if(mode == "dense-curve") runDenseCurveMetrics(verbFrequencies, gold, pred)
+          else if(mode == "dense") runDenseMetrics(verbFrequencies, gold, pred, metadataDir, recomputeFilter) match {
+            case Right(res) => res
+            case Left(err) =>
+              System.err.println(err)
+              System.exit(1)
+                ???
+          }
+          else ???
         }
-        else ???
     }
   }
 
@@ -869,20 +1144,26 @@ object MetricsApp {
     val predPath = Opts.option[NIOPath](
       "pred", metavar = "path", help = "Path to the directory of predictions."
     )
+    val clausePredPathOpt = Opts.option[NIOPath](
+      "clause-pred", metavar = "path", help = "Path to the directory of clause ranker predictions."
+    ).orNone
     val mode = Opts.option[String](
       "mode", metavar = "non-dense|dense-curve|dense", help = "Which eval to run."
     ).withDefault("dense")
     val inputType = Opts.option[String](
       "inputType", metavar = "question|clausal", help = "Which input type to handle."
     ).withDefault("question")
+    val recomputeFilter = Opts.flag(
+      "recomputeFilter", help = "Whether to recompute the best filter as opposed to using the cached one."
+    ).orFalse
 
-    (goldPath, predPath, mode, inputType).mapN(program)
+    (goldPath, predPath, clausePredPathOpt, mode, inputType, recomputeFilter).mapN(program)
   }
 
   def main(args: Array[String]): Unit = {
     val result = runMetrics.parse(args) match {
       case Left(help) => IO { System.err.println(help) }
-      case Right(main) => IO { main }
+      case Right(main) => main
     }
     result.unsafeRunSync
   }

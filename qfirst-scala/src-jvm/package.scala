@@ -22,7 +22,7 @@ package object qfirst extends Implicits {
   val filterGoldNonDense = filterGold(3, 0)
   val filterGoldDense = filterGold(6, 1)
 
-  def overlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
+  def overlaps(x: AnswerSpan)(y: AnswerSpan): Boolean = {
     x.begin <= y.end && y.begin <= x.end
   }
 

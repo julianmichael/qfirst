@@ -46,7 +46,6 @@ class QasrlClauseRankingReader(DatasetReader):
                 continue
 
             logger.info("Reading QA-SRL clause ranking instances from file at: %s", file_path)
-            data = []
             if file_path.endswith('.gz'):
                 with gzip.open(cached_path(file_path), 'r') as f:
                     for line in f:

@@ -8,12 +8,13 @@ val thisScalaJSVersion = "0.6.23"
 
 val macroParadiseVersion = "2.1.0"
 val kindProjectorVersion = "0.9.4"
+val splainVersion = "0.3.4"
 
 val shapelessVersion = "2.3.3"
 
 // cats libs -- maintain version agreement or whatever
 val catsVersion = "1.1.0"
-val catsEffectVersion = "0.10.1"
+val catsEffectVersion = "1.0.0"
 val kittensVersion = "1.1.1"
 val nlpdataVersion = "0.2.1-SNAPSHOT"
 val qasrlVersion = "0.1.1-SNAPSHOT"
@@ -22,7 +23,7 @@ val circeVersion = "0.9.3"
 val declineVersion = "0.4.2"
 val simulacrumVersion = "0.13.0"
 val monocleVersion = "1.5.1-cats"
-val fs2Version = "0.10.6"
+val fs2Version = "1.0.0"
 // js cats libs
 val radhocVersion = "0.1.1-SNAPSHOT"
 // jvm webby cats libs
@@ -78,7 +79,8 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
 
   override def scalacPluginIvyDeps = super.scalacPluginIvyDeps() ++ Agg(
     ivy"org.scalamacros:::paradise:$macroParadiseVersion",
-    ivy"org.spire-math::kind-projector:$kindProjectorVersion"
+    ivy"org.spire-math::kind-projector:$kindProjectorVersion",
+    ivy"io.tryp:::splain:$splainVersion"
   )
 
   // add back in when necessary

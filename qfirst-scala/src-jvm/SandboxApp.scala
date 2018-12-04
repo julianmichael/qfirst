@@ -119,8 +119,16 @@ object SandboxApp extends App {
     }
   }
 
-  println(getMetricsString(spanLengthMetrics))
-  println(spanLengthMetrics.histogramString(75))
-  println("Train span counts: " + getMetricsString(train.sentences.values.toList.foldMap(getSpanCounts)))
-  println("Dev span counts: " + getMetricsString(dev.sentences.values.toList.foldMap(getSpanCounts)))
+  val getSentenceLength = (sentence: Sentence) => {
+    Counts(sentence.sentenceTokens.size)
+  }
+
+  // println(getMetricsString(spanLengthMetrics))
+  // println(spanLengthMetrics.histogramString(75))
+  // println("Train span counts: " + getMetricsString(train.sentences.values.toList.foldMap(getSpanCounts)))
+  // println("Dev span counts: " + getMetricsString(dev.sentences.values.toList.foldMap(getSpanCounts)))
+
+  val trainMetrics = train.sentences.values.toList.foldMap(getSentenceLength)
+  println("Train sentence lengths: " + getMetricsString(trainMetrics))
+  println(trainMetrics.histogramString(75))
 }

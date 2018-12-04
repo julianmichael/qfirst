@@ -13,7 +13,12 @@ import nlpdata.datasets.wiktionary.VerbForm
 import qasrl.data.AnswerSpan
 import qasrl.labeling.SlotBasedLabel
 
-sealed trait BeamFilter extends (VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])])
+sealed trait BeamFilter {
+  def apply(
+    verb: VerbPrediction,
+    extraFilter: BeamFilter.QAPrediction => Boolean = (_ => true)
+  ): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
+}
 object BeamFilter {
   // TODO
   implicit val beamFilterShow: Show[BeamFilter] = Show.show {
@@ -36,14 +41,14 @@ object BeamFilter {
 
   // private[this] def hasOverlap(acc: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])], span: AnswerSpan) = {
   //   val allAccSpans = acc.toList.flatMap(_._2._2).toSet
-  //   allAccSpans.exists(overlaps(_, span))
+  //   allAccSpans.exists(overlaps(span))
   // }
 
   private[this] def hasOverlap(acc: List[QAPrediction], span: AnswerSpan) = {
-    acc.map(_.answerSpan).toSet.exists(overlaps(_, span))
+    acc.map(_.answerSpan).toSet.exists(overlaps(span))
   }
 
-  private[this] case class QAPrediction(
+  case class QAPrediction(
     questionSlots: SlotBasedLabel[VerbForm],
     answerSpan: AnswerSpan,
     questionProb: Double,
@@ -95,8 +100,11 @@ object BeamFilter {
   case class OneThreshold(
     threshold: Double
   ) extends BeamFilter {
-    def apply(verb: VerbPrediction): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
-      filterBeam(verb, Order.by[QAPrediction, Double](_.validQAProb), (_.validQAProb >= threshold))
+    override def apply(
+      verb: VerbPrediction,
+      extraFilter: QAPrediction => Boolean = _ => true
+    ): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+      filterBeam(verb, Order.by[QAPrediction, Double](_.validQAProb), (qa => qa.validQAProb >= threshold && extraFilter(qa)))
     }
   }
 
@@ -104,9 +112,12 @@ object BeamFilter {
     qaThreshold: Double,
     invalidThreshold: Double
   ) extends BeamFilter {
-    def apply(verb: VerbPrediction): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+    override def apply(
+      verb: VerbPrediction,
+      extraFilter: QAPrediction => Boolean = _ => true
+    ): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
       filterBeam(verb, Order.by[QAPrediction, Double](_.qaProb),
-                 (p => p.qaProb >= qaThreshold && p.invalidProb < invalidThreshold))
+                 (p => p.qaProb >= qaThreshold && p.invalidProb < invalidThreshold && extraFilter(p)))
     }
   }
 
@@ -116,10 +127,14 @@ object BeamFilter {
     invalidThreshold: Double,
     shouldRemoveSpansBelowInvalidProb: Boolean
   ) extends BeamFilter {
-    def apply(verb: VerbPrediction) = {
+    def apply(
+      verb: VerbPrediction,
+      extraFilter: QAPrediction => Boolean = _ => true
+    ) = {
       filterBeam(
         verb, questionProbOrder,
-        (p => p.questionProb >= questionThreshold &&
+        (p => extraFilter(p) &&
+           p.questionProb >= questionThreshold &&
            p.spanProb >= spanThreshold &&
            p.invalidProb < invalidThreshold &&
            (!shouldRemoveSpansBelowInvalidProb || p.spanProb > p.invalidProb))

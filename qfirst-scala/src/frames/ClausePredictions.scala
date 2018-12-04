@@ -214,7 +214,7 @@ case class ClausalVerbPrediction(
 ) {
   def toVerbPrediction = {
     val (qPredErrors, questionPredictions) = questions.map(_.toQuestionPrediction).separate
-    qPredErrors.foreach(println)
+    // qPredErrors.foreach(println) // TODO report in a more principled way
     VerbPrediction(verbIndex, verbInflectedForms, questionPredictions)
   }
 }
@@ -238,7 +238,7 @@ object ClausalVerbPrediction {
       )
     } yield {
       val (questionErrors, questions) = questionsEithers.separate
-      questionErrors.map(e => s"[Question Error] $e").foreach(println)
+      // questionErrors.map(e => s"[Question Error] $e").foreach(println) // TODO report in a more principled way
       ClausalVerbPrediction(verbIndex, verbInflectedForms, questions.toList)
     }
   }

@@ -69,8 +69,8 @@ object Instances {
 
   def verbToQASet(
     filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-    filterPred: VerbPrediction => Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
-    oracleAnswers: Option[Double]= None,
+    filterPred: BeamFilter,
+    oracleAnswers: Option[Double] = None,
     oracleQuestions: Option[Double] = None
   ) = (verb: VerbInstance) => {
     val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
@@ -84,6 +84,17 @@ object Instances {
       )
     )
     val predQAs = filterPred(possiblyOracleQuestionsVerb)
+    QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
+  }
+
+  def verbToQASetWithRanking(
+    filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
+    filterPred: RankingBeamFilter,
+    getClause: VerbInstance => ClauseInstance
+  ) = (verb: VerbInstance) => {
+    val clause = getClause(verb)
+    val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
+    val predQAs = filterPred(verb.pred, clause)
     QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
   }
 
@@ -306,7 +317,7 @@ object Instances {
       conf: BinaryConf.Stats)
     val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, BinaryConf.Stats())) {
       case (SpanAlignment(preds, conf), goldSpanSet) =>
-        preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
+        preds.find(_.exists(s => goldSpanSet.exists(overlaps(s)))) match {
           case None => (SpanAlignment(preds, conf |+| BinaryConf.Stats(fn = 1)))
           case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| BinaryConf.Stats(tp = 1)))
         }
@@ -328,7 +339,7 @@ object Instances {
       remainingPred: Set[Set[AnswerSpan]])
     val SpanAlignment(partialAlignment, unmatchedPreds) = spanSet.gold.foldLeft(SpanAlignment(Nil, spanSet.pred.toSet)) {
       case (SpanAlignment(alignment, preds), goldSpanSet) =>
-        preds.find(_.exists(s => goldSpanSet.exists(overlaps(_, s)))) match {
+        preds.find(_.exists(s => goldSpanSet.exists(overlaps(s)))) match {
           case None => SpanAlignment(Ior.right(goldSpanSet) :: alignment, preds)
           case Some(predSpanSet) => SpanAlignment(Ior.both(predSpanSet, goldSpanSet) :: alignment, preds - predSpanSet)
         }
