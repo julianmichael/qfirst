@@ -54,6 +54,7 @@ class ESIM(Model):
                  output_feedforward: FeedForward,
                  output_logit: FeedForward,
                  dropout: float = 0.5,
+                 prediction_out_path: str = None,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None) -> None:
         super().__init__(vocab, regularizer)
@@ -86,7 +87,9 @@ class ESIM(Model):
                                "proj feedforward output dim", "inference lstm input dim")
 
         self._accuracy = CategoricalAccuracy()
-        self._writer = RankerSavingMetric("ranker-predictions.jsonl")
+        self._writer = None
+        if prediction_out_path is not None:
+            self._writer = RankerSavingMetric(prediction_out_path)
         self._loss = torch.nn.CrossEntropyLoss()
 
         initializer(self)
@@ -213,4 +216,6 @@ class ESIM(Model):
         return output_dict
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        return {'accuracy': self._accuracy.get_metric(reset), **self._writer.get_metric(reset)}
+        if self._writer is not None:
+            self._writer.get_metric(reset)
+        return {'accuracy': self._accuracy.get_metric(reset)}
