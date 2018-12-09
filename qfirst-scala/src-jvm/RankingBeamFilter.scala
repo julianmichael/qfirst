@@ -43,15 +43,17 @@ object RankingBeamFilter {
             } yield (qString -> (qSlots -> span), slot -> span)
           }
         }.unzip
-        val revisedRest = rest.map {
-          // find any other possible structures that include the current one...
-          case (cs @ ClauseStructure(`struct`, `tan`, args2), prob2) if usedArgPairs.forall(args2.toList.contains) =>
-            // and adjust their probabilities to condition on the current one, assuming consistency
-            cs -> (prob2 / prob)
-          case x => x
-        }
-        val newSpans = qas.map(_._2._2).toSet
-        qas ++ drawQAs(verbInflectedForms, revisedRest, threshold, usedSpans ++ newSpans)
+        if(usedArgPairs.nonEmpty) {
+          val revisedRest = rest.map {
+            // find any other possible structures that include the current one...
+            case (cs @ ClauseStructure(`struct`, `tan`, args2), prob2) if usedArgPairs.forall(args2.toList.contains) =>
+              // and adjust their probabilities to condition on the current one, assuming consistency
+              cs -> (prob2 / prob)
+            case x => x
+          }
+          val newSpans = qas.map(_._2._2).toSet
+          qas ++ drawQAs(verbInflectedForms, revisedRest, threshold, usedSpans ++ newSpans)
+        } else drawQAs(verbInflectedForms, rest, threshold, usedSpans)
       case _ => Nil
     }
   }

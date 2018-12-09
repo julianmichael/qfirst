@@ -1,14 +1,19 @@
 {
     "dataset_reader": {
         "type": "qfirst_qasrl",
-        "instance_type": "question",
         "token_indexers": {
             "elmo": {
                 "type": "elmo_characters"
             }
         },
-        "min_answers": 1,
-        "min_valid_answers": 0
+        "qasrl_filter": {
+            "min_answers": 1,
+            "min_valid_answers": 0
+        },
+        "instance_reader": {
+            "type": "question"
+        },
+        "include_metadata": true
     },
     "train_data_path": "dev-mini.jsonl",
     "validation_data_path": "dev-mini.jsonl",

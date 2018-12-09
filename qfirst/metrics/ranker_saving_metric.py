@@ -33,7 +33,7 @@ class RankerSavingMetric(Metric):
             "tan": metadata["tan"],
             "argSpans": metadata["argSpans"],
             "prob": prob.item()
-        }
+        })
 
     def get_metric(self, reset = False):
         if reset:

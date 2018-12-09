@@ -128,7 +128,47 @@ object SandboxApp extends App {
   // println("Train span counts: " + getMetricsString(train.sentences.values.toList.foldMap(getSpanCounts)))
   // println("Dev span counts: " + getMetricsString(dev.sentences.values.toList.foldMap(getSpanCounts)))
 
-  val trainMetrics = train.sentences.values.toList.foldMap(getSentenceLength)
-  println("Train sentence lengths: " + getMetricsString(trainMetrics))
-  println(trainMetrics.histogramString(75))
+  // val trainMetrics = train.sentences.values.toList.foldMap(getSentenceLength)
+  // println("Train sentence lengths: " + getMetricsString(trainMetrics))
+  // println(trainMetrics.histogramString(75))
+
+  def printInstanceExample(vi: Int, instance: ClauseInstance) = IO {
+    println(Text.render(instance.sentenceTokens))
+    println(instance.sentenceTokens(vi) + s" (${instance.sentenceTokens(vi)}) ")
+    instance.clauses.sortBy(-_._2).foreach { case (clause, prob) =>
+      println(f"$prob%.3f ${clause.getClauseString(instance.sentenceTokens, instance.verbInflectedForms)}")
+    }
+  }
+
+  def printExamplesWithString(
+    instances: Map[String, Map[Int, ClauseInstance]],
+    verbString: String,
+    string: String
+  ) = {
+    instances
+      .filter(t => Text.render(t._2.head._2.sentenceTokens).contains(string))
+      .toList.flatMap(t => t._2.toList.filter(p => p._2.sentenceTokens(p._1) == verbString))
+      .traverse(Function.tupled(printInstanceExample))
+  }
+
+  def printExamples(path: String, n: Int) = for {
+    clauseInstances <- MetricsApp.readRankingPredictions(Paths.get(path))
+    _ <- clauseInstances.iterator.take(n).toList.traverse { case (sid, verbs) =>
+      verbs.toList.traverse(Function.tupled(printInstanceExample))
+    }
+  } yield ()
+
+  val exStrings = List(
+    "qualified" -> "The game was the first for Great Britain",
+    "consumed" -> "The theory of supply and demand is an organizing principle",
+    "seen" -> "New South Wales have seen"
+  )
+
+  def printChosenExamples(path: String) = for {
+    clauseInstances <- MetricsApp.readRankingPredictions(Paths.get(path))
+    _ <- exStrings.traverse { case (vs, s) => printExamplesWithString(clauseInstances, vs, s) }
+  } yield ()
+
+  // printExamples(args(0), args(1).toInt).unsafeRunSync
+  printChosenExamples(args(0)).unsafeRunSync
 }

@@ -837,7 +837,7 @@ object MetricsApp {
 
       // println(whConf.stats.prettyString(0))
 
-      // println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
+      println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
       // println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
 
       def writeExamples(path: NIOPath, examples: Vector[Instances.QuestionInstance], rand: util.Random) = {

@@ -5,6 +5,8 @@ import nlpdata.util.LowerCaseStrings._
 import io.circe.generic.JsonCodec
 import qfirst.frames.implicits._
 
+import monocle.macros.Lenses
+import monocle.macros.GenPrism
 
 @JsonCodec sealed trait Argument {
   def placeholder: List[String]
@@ -33,7 +35,7 @@ import qfirst.frames.implicits._
   }
 }
 
-@JsonCodec case class Preposition(
+@JsonCodec @Lenses case class Preposition(
   preposition: LowerCaseString,
   objOpt: Option[NounLikeArgument]
 ) extends Argument {
@@ -42,6 +44,7 @@ import qfirst.frames.implicits._
   override def unGap = List(preposition.toString)
   override def wh = objOpt.flatMap(_.wh)
 }
+object Preposition
 
 @JsonCodec sealed trait NonPrepArgument extends Argument
 
@@ -106,7 +109,7 @@ case object Gerund extends NounLikeArgument {
   }
 }
 
-@JsonCodec case class Noun(
+@JsonCodec @Lenses case class Noun(
   isAnimate: Boolean
 ) extends NounLikeArgument {
   override def placeholder = List(if (isAnimate) "someone" else "something")
@@ -127,6 +130,9 @@ object NounLikeArgument {
     Noun.fromPlaceholder(s).orElse(
       Gerund.fromPlaceholder(s)
     )
+
+  val noun = GenPrism[NounLikeArgument, Noun]
+  val gerund = GenPrism[NounLikeArgument, Gerund.type]
 }
 
 object NonPrepArgument {
@@ -135,4 +141,6 @@ object NonPrepArgument {
       .orElse(Gerund.fromPlaceholder(s))
       .orElse(Complement.fromPlaceholder(s))
       .orElse(Locative.fromPlaceholder(s))
+
+  val nounLikeArgument = GenPrism[NonPrepArgument, NounLikeArgument]
 }

@@ -21,7 +21,29 @@ import io.circe.generic.JsonCodec
 @JsonCodec @Lenses case class ArgStructure(
   args: DependentMap[ArgumentSlot.Aux, Id],
   isPassive: Boolean
-)
+) {
+  def forgetAnimacy = {
+    val nounLikeAnim = NounLikeArgument.noun
+      .composeLens(Noun.isAnimate)
+    val prepObjAnim = Preposition.objOpt
+      .composePrism(monocle.std.option.some)
+      .composeOptional(nounLikeAnim)
+    val miscObjAnim = NonPrepArgument.nounLikeArgument
+      .composeOptional(nounLikeAnim)
+
+    val newArgs = args.keys.foldLeft(DependentMap.empty[ArgumentSlot.Aux, Id]) {
+      (m, k) => k match {
+        case Subj   => m.put(Subj, Noun.isAnimate.set(false)(args.get(Subj).get))
+        case Obj    => m.put(Obj, Noun.isAnimate.set(false)(args.get(Obj).get))
+        case Prep1  => m.put(Prep1, prepObjAnim.set(false)(args.get(Prep1).get))
+        case Prep2  => m.put(Prep2, prepObjAnim.set(false)(args.get(Prep2).get))
+        case Misc   => m.put(Misc, miscObjAnim.set(false)(args.get(Misc).get))
+        case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
+      }
+    }
+    this.copy(args = newArgs)
+  }
+}
 object ArgStructure
 
 @JsonCodec @Lenses case class TAN(

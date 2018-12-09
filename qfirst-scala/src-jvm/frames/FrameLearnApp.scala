@@ -13,6 +13,8 @@ import cats.data.NonEmptyList
 import cats.data.Writer
 import cats.implicits._
 import cats.effect.IO
+import cats.effect.IOApp
+import cats.effect.ExitCode
 
 import com.monovore.decline._
 
@@ -149,10 +151,10 @@ object FrameLearnApp {
       def emStep(instances: List[Instance]): Model = {
         val verbCounts = instances.foldMap { input =>
           val output = chooseBestFrames(input)
-          val framePsuedoCounts = output.allFramesWithAnswer.values.toList.foldMap { setOfFramesWithAnswer =>
+          val framePseudoCounts = output.allFramesWithAnswer.values.toList.foldMap { setOfFramesWithAnswer =>
             setOfFramesWithAnswer.toList.foldMap(fa => Map(fa._1.structure -> (1.0 / setOfFramesWithAnswer.size)))
           }
-          Map(output.verbInflectedForms -> framePsuedoCounts)
+          Map(output.verbInflectedForms -> framePseudoCounts)
         }
         val globalCounts = verbCounts.values.toList.combineAll
         Model(verbCounts, globalCounts)
@@ -227,11 +229,14 @@ object FrameLearnApp {
       val output = model.chooseBestFrames(i)
       "frames per question" ->> output.allFramesWithAnswer.toList.map(_._2.size).foldMap(Counts(_)) ::
         "questions per verb instance" ->> Counts(output.allFramesWithAnswer.size) ::
+        "frames per verb instance" ->> Counts(output.allFramesWithAnswer.toList.foldMap(_._2.map(_._1)).size) ::
         "arg structures per verb instance" ->> Counts(output.allFramesWithAnswer.toList.foldMap(_._2.map(_._1.structure)).size) ::
-        "frames with answer slot" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(p => p._1.structure -> p._1.tan -> p._2))) ::
+        "arg structures (no animacy) per verb instance" ->> Counts(output.allFramesWithAnswer.toList.foldMap(_._2.map(_._1.structure.forgetAnimacy)).size) ::
         "frames" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(p => p._1.structure -> p._1.tan))) ::
-        "argument structures with answer slot" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(p => p._1.structure -> p._2))) ::
         "argument structures" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(_._1.structure))) ::
+        "argument structures (no animacy)" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(_._1.structure.forgetAnimacy))) ::
+        "frames with answer slot" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(p => p._1.structure -> p._1.tan -> p._2))) ::
+        "argument structures with answer slot" ->> Count(output.allFramesWithAnswer.values.toList.foldMap(_.toVector.map(p => p._1.structure -> p._2))) ::
         HNil
     }
 
@@ -307,7 +312,7 @@ object FrameLearnApp {
     IO(Files.write(outPath, fileString.getBytes("UTF-8")))
   }
 
-  def program(qasrlBankPath: NIOPath): IO[Unit] = {
+  def program(qasrlBankPath: NIOPath, outPath: NIOPath): IO[Unit] = {
     implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     implicit val _log = Log.console
     for {
@@ -315,7 +320,7 @@ object FrameLearnApp {
       dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
       devDense <- IO(Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       model <- SimpleFrameInduction.run[IO](train, dev)
-      _ <- writeFrameData(train |+| dev |+| devDense, model, Paths.get("clause-data-train-dev.jsonl"))
+      _ <- writeFrameData(train |+| dev |+| devDense, model, outPath)
     } yield ()
   }
 
@@ -326,15 +331,17 @@ object FrameLearnApp {
     val goldPath = Opts.option[NIOPath](
       "gold", metavar = "path", help = "Path to the QA-SRL Bank."
     )
+    val goldPath = Opts.option[NIOPath](
+      "out", metavar = "path", help = "Path where to write the output file."
+    )
 
-    (goldPath).map(program)
+    (goldPath, outPath).map(program)
   }
 
-  def main(args: Array[String]): Unit = {
-    val result = runFrameLearn.parse(args) match {
-      case Left(help) => IO { System.err.println(help) }
-      case Right(run) => run
+  def main(args: Array[String]): IO[ExitCode] = {
+    runFrameLearn.parse(args) match {
+      case Left(help) => IO { System.err.println(help); ExitCode.Failure }
+      case Right(run) => run >> ExitCode.Success
     }
-    result.unsafeRunSync
   }
 }
