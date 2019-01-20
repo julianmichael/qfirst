@@ -12,6 +12,8 @@ from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, masked_softmax, weighted_sum, replace_masked_values
 from allennlp.training.metrics import CategoricalAccuracy
 
+from qfirst.metrics.ranker_saving_metric import RankerSavingMetric
+
 
 @Model.register("clause_ranker")
 class ESIM(Model):
@@ -212,6 +214,12 @@ class ESIM(Model):
             loss = self._loss(label_logits, label.long().view(-1))
             self._accuracy(label_logits, label)
             output_dict["loss"] = loss
+
+        if metadata is not None and self._writer is not None:
+            positive_index = self.vocab.get_token_index("entailed", namespace = "labels")
+            for i, meta in enumerate(metadata):
+                prob = label_probs[i, positive_index].item()
+                self._writer(prob, meta)
 
         return output_dict
 

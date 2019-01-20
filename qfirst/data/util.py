@@ -3,6 +3,7 @@ from allennlp.data.token_indexers import TokenIndexer
 from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
 from allennlp.data.tokenizers import Token
 import codecs
+import gzip
 
 from nrl.data.util import cleanse_sentence_text
 

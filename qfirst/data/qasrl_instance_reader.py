@@ -15,6 +15,9 @@ from qfirst.data.util import *
 
 from overrides import overrides
 
+import logging
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
 class QasrlInstanceReader(Registrable):
     def read_instances(self,
                        token_indexers: Dict[str, TokenIndexer],
@@ -54,10 +57,10 @@ class QasrlQuestionReader(QasrlInstanceReader):
             abstract_slots_dict = get_abstract_question_slot_fields(question_label) if self._include_abstract_slots else {}
             if self._clause_info is not None:
                 try:
-                    clause_dict = self._clause_info[sentence_id][pred_index][question_label["questionString"]]
+                    clause_dict = self._clause_info[sentence_id][verb_index][question_label["questionString"]]
                     clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_dict["slots"].items() }
                 except KeyError:
-                    logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
+                    logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
                     continue
             else:
                 clause_slots_dict = {}
@@ -125,7 +128,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             try:
                 clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
             except KeyError:
-                logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, pred_index, question_label["questionString"]))
+                logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
                 continue
 
             def abst_noun(x):
@@ -165,19 +168,20 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 if s.span_start > -1:
                     gold_tuples.append((clause_string, clause_slots["qarg"], (s.span_start, s.span_end)))
 
-        yield {
-            **verb_fields,
-            "clause_strings": ListField(clause_string_fields),
-            "tan_strings": ListField(tan_string_fields),
-            "qargs": ListField(qarg_fields),
-            "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
-            "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
-            "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
-            "animacy_flags": ListField(animacy_fields),
-            "metadata": MetadataField({
-                "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
-            })
-        }
+        if len(clause_string_fields) > 0:
+            yield {
+                **verb_fields,
+                "clause_strings": ListField(clause_string_fields),
+                "tan_strings": ListField(tan_string_fields),
+                "qargs": ListField(qarg_fields),
+                "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
+                "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
+                "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
+                "animacy_flags": ListField(animacy_fields),
+                "metadata": MetadataField({
+                    "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
+                })
+            }
 
 # @QasrlInstanceReader.register("question_only_clause_filling")
 # class QasrlClauseFillingReader(QasrlInstanceReader):

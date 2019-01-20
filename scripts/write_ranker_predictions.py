@@ -13,6 +13,7 @@ def main(model_path: str,
             "include_metadata": True
         },
         "model": {
+            "type": "clause_ranker",
             "prediction_out_path": out_path
         }
     }

@@ -132,7 +132,7 @@ class E2EParser(Model):
         # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
         _, _, top_clause_indices, top_clause_scores = self.score_pruner(
             clause_scores.unsqueeze(-1),
-            torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64),
+            torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = pred_rep.device),
             self.num_pruned_clauses
         )
 
@@ -140,7 +140,7 @@ class E2EParser(Model):
         # Shape: batch_size, num_pruned_qargs; batch_size, num_pruned_qargs, 1
         _, _, top_qarg_indices, top_qarg_scores = self.score_pruner(
             qarg_scores.unsqueeze(-1),
-            torch.ones([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float64),
+            torch.ones([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float64, device = pred_rep.device),
             self.num_pruned_qargs
         )
 
@@ -182,6 +182,8 @@ class E2EParser(Model):
         final_span_indices    = batched_index_select(top_span_indices.unsqueeze(-1), final_span_index_indices).squeeze(-1)
         final_span_embeddings = batched_index_select(top_span_hidden,                final_span_index_indices)
         final_span_mask = batched_index_select(top_span_mask.unsqueeze(-1), final_span_index_indices).squeeze(-1)
+        final_beam_mask = top_summed_mask
+        beam_sizes = final_beam_mask.long().sum(1)
 
         # We finally construct their embeddings under a concat + linear transformation,
         expanded_pred_embedding = self.pred_final_hidden(pred_rep) \
@@ -194,7 +196,7 @@ class E2EParser(Model):
         # pass them to the joint scorer,
         joint_scores = self.joint_scorer(F.relu(joint_embeddings))
         # and compute the final scores.
-        final_scores = top_summed_scores + joint_scores
+        final_scores = (top_summed_scores + joint_scores).squeeze(-1)
 
         # Totally separately, we make the TAN prediction for the verb and and animacy predictions for each answer span.
         # TODO: we could also do this on the joint embedding to get QA-pair-specific TAN predictions.
@@ -205,7 +207,7 @@ class E2EParser(Model):
         animacy_logits = self.animacy_scorer(final_span_embeddings)
 
         # Now we produce the output data structures.
-        scored_spans = self._to_scored_spans(span_mask, final_span_indices, final_span_mask)
+        scored_spans = self._to_scored_spans(span_mask, final_span_indices, final_beam_mask)
         def get_beam_item_in_batch(batch_index, beam_index):
             return {
                 "clause": self.vocab.get_token_from_index(final_clauses[batch_index, beam_index].item(), "abst-clause-labels"),
@@ -214,7 +216,7 @@ class E2EParser(Model):
                 "score":  final_scores[batch_index, beam_index].item()
             }
         batch_of_beams = [
-            [get_beam_item_in_batch(batch_index, beam_index) for beam_index in range(self.final_beam_size)]
+            [get_beam_item_in_batch(batch_index, beam_index) for beam_index in range(beam_sizes[batch_index].item())]
             for batch_index in range(batch_size)
         ]
 
@@ -226,13 +228,13 @@ class E2EParser(Model):
             for batch_index in range(batch_size):
                 gold_set = metadata[batch_index]["gold_set"]
                 predicted_beam = batch_of_beams[batch_index]
-                for beam_index in range(self.final_beam_size):
+                for beam_index in range(beam_sizes[batch_index].item()):
                     i = predicted_beam[beam_index]
                     predicted_tuple = (i["clause"], i["qarg"], (i["span"].start(), i["span"].end()))
                     if predicted_tuple in gold_set:
                         prediction_mask[batch_index, beam_index] = 1
             # Binary classification loss
-            loss_dict["loss"] = F.binary_cross_entropy_with_logits(final_scores, prediction_mask, size_average = True)
+            loss_dict["loss"] = F.binary_cross_entropy_with_logits(final_scores, prediction_mask, weight = final_beam_mask, size_average = True)
             self.metric(final_scores.detach().long(), prediction_mask.detach().long(), metadata)
 
         return {
@@ -251,17 +253,14 @@ class E2EParser(Model):
                       predicate_indicator: torch.LongTensor):
         # Shape: batch_size, num_tokens, embedding_dim
         embedded_text_input = self.embedding_dropout(self.text_field_embedder(text))
-        # print("embedded text: " + str(embedded_text_input.size()))
 
         # Shape: batch_size, num_tokens ?
         text_mask = get_text_field_mask(text)
         # Shape: batch_size, num_tokens, predicate_feature_dim ?
         embedded_predicate_indicator = self.predicate_feature_embedding(predicate_indicator.long())
-        # print("embedded predicate indicator: " + str(embedded_predicate_indicator.size()))
 
         # Shape: batch_size, num_tokens, embedding_dim + predicate_feature_dim
         embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        # print("embedded text with predicate indicator: " + str(embedded_text_with_predicate_indicator.size()))
 
         batch_size, num_tokens, embedding_dim_with_predicate_feature = embedded_text_with_predicate_indicator.size()
 
