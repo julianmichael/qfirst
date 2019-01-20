@@ -25,15 +25,16 @@ def read_clause_info(target, file_path):
         if key not in targ:
             targ[key] = {}
         return targ[key]
-    def add_json(json):
-        sentence = get(target, json["sentenceId"])
-        verb = get(sentence, json["verbIndex"])
-        clause = get(verb, json["question"])
-        slot_dict = json["slots"]
-        slot_dict["qarg"] = json["answerSlot"]
+    def add_json(obj):
+        sentence = get(target, obj["sentenceId"])
+        verb = get(sentence, obj["verbIndex"])
+        clause = get(verb, obj["question"])
+        slot_dict = obj["slots"]
+        slot_dict["qarg"] = obj["answerSlot"]
         clause["slots"] = slot_dict
 
-    for line in read_lines:
+    import json
+    for line in read_lines(file_path):
         add_json(json.loads(line))
     return
 
@@ -70,6 +71,14 @@ def get_question_slot_fields(question_slots):
         namespace = get_slot_label_namespace(slot_name)
         return LabelField(label = slot_value, label_namespace = namespace)
     return { slot_name : get_slot_value_field(slot_name) for slot_name in qasrl_slot_names }
+
+# def get_abstract_question_slots(question_label):
+#     def get_abstract_slot_value(slot_name, get_abstracted_value):
+#         return get_abstracted_value(question_label["questionSlots"][slot_name])
+#     abstract_slots_dict = { ("abst-%s" % slot_name): get_abstract_slot_value(slot_name, get_abstracted_value)
+#                                    for slot_name, get_abstracted_value in abstract_slot_names }
+#     abst_verb_value = "verb[pss]" if question_label["isPassive"] else "verb"
+#     return {**abstract_slots_dict, **{"abst-verb": abst_verb_value}}
 
 def get_abstract_question_slot_fields(question_label):
     def get_abstract_slot_value_field(slot_name, get_abstracted_value):

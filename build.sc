@@ -122,7 +122,7 @@ trait JvmPlatform extends CommonModule {
     import mill.modules.Jvm
     import mill.eval.Result
     try Result.Success(
-      Jvm.interactiveSubprocess(
+      Jvm.runSubprocess(
         mainClass,
         runClasspath().map(_.path),
         forkArgs(),

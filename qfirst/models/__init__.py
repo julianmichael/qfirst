@@ -3,3 +3,4 @@ from qfirst.models.question_conditional_lm import QuestionConditionalLM
 from qfirst.models.question_answerer import QuestionAnswerer
 from qfirst.models.qfirst_parser import QfirstParser
 from qfirst.models.afirst_parser import AfirstParser
+from qfirst.models.e2e_parser import E2EParser

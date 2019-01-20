@@ -272,10 +272,10 @@ object ClauseRankApp extends IOApp {
                      pred
                    ).map(IO(_)).foldMap(Stream.eval))
           .flatMap(i => Stream.eval(numInstances.update(_ + i.clauses.size).as(i)))
-          // .map(instance => printer.pretty(instance.asJson))
-          // .intersperse("\n")
-          // .through(text.utf8Encode)
-          // .through(fs2.io.file.writeAll(outPath, ec))
+          .map(instance => printer.pretty(instance.asJson))
+          .intersperse("\n")
+          .through(text.utf8Encode)
+          .through(fs2.io.file.writeAll(outPath, ec))
       }.compile.drain
       _ <- numInstances.get.flatMap(n =>
         IO(println(s"q = $questionThreshold, s = $spanThreshold \nNumber of instances: $n"))

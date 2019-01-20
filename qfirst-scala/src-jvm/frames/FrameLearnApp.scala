@@ -37,7 +37,7 @@ import qasrl.data.Sentence
 
 import HasMetrics.ops._
 
-object FrameLearnApp {
+object FrameLearnApp extends IOApp {
 
   val sortSpec = {
     import Metric._
@@ -287,6 +287,34 @@ object FrameLearnApp {
     }
   }
 
+  def printFrameStats[M: FramePredictionModel](
+    data: Dataset,
+    model: M
+  ): IO[Unit] = {
+    import FrameDataWriter._
+    import FramePredictionModel.ops._
+
+    import shapeless._
+    import shapeless.syntax.singleton._
+    import shapeless.record._
+
+    lazy val stats = data.sentences.toList.foldMap { case (sentenceId, sentence) =>
+      sentence.verbEntries.toList.foldMap { case (verbIndex, verb) =>
+        val predictions = model.predictFramesWithAnswers(verb)
+        val clauseSet = predictions.map(_._2._1.args.keys.toSet).toSet
+        val qslotSet = predictions.map(_._2._2).toSet
+        "abstracted clauses" ->> Counts(clauseSet.size) ::
+          "question answer slots" ->> Counts(qslotSet.size) :: HNil
+      }
+    }
+
+    for {
+      // _ <- IO(println("Clause stats: " + qfirst.SandboxApp.getMetricsString(stats)))
+      _ <- IO(println("Clause hist:\n" + stats("abstracted clauses").histogramString(75)))
+      _ <- IO(println("Qslot hist:\n" + stats("question answer slots").histogramString(75)))
+    } yield ()
+  }
+
   def writeFrameData[M: FramePredictionModel](
     data: Dataset,
     model: M,
@@ -312,7 +340,7 @@ object FrameLearnApp {
     IO(Files.write(outPath, fileString.getBytes("UTF-8")))
   }
 
-  def program(qasrlBankPath: NIOPath, outPath: NIOPath): IO[Unit] = {
+  def program(qasrlBankPath: NIOPath, outPath: NIOPath): IO[ExitCode] = {
     implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     implicit val _log = Log.console
     for {
@@ -320,8 +348,9 @@ object FrameLearnApp {
       dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
       devDense <- IO(Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       model <- SimpleFrameInduction.run[IO](train, dev)
-      _ <- writeFrameData(train |+| dev |+| devDense, model, outPath)
-    } yield ()
+      // _ <- writeFrameData(train |+| dev |+| devDense, model, outPath)
+      _ <- printFrameStats(train |+| dev |+| devDense, model)
+    } yield ExitCode.Success
   }
 
   val runFrameLearn = Command(
@@ -331,17 +360,17 @@ object FrameLearnApp {
     val goldPath = Opts.option[NIOPath](
       "gold", metavar = "path", help = "Path to the QA-SRL Bank."
     )
-    val goldPath = Opts.option[NIOPath](
+    val outPath = Opts.option[NIOPath](
       "out", metavar = "path", help = "Path where to write the output file."
     )
 
-    (goldPath, outPath).map(program)
+    (goldPath, outPath).mapN(program)
   }
 
-  def main(args: Array[String]): IO[ExitCode] = {
+   def run(args: List[String]): IO[ExitCode] = {
     runFrameLearn.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Failure }
-      case Right(run) => run >> ExitCode.Success
+      case Left(help) => IO { System.err.println(help); ExitCode.Error }
+      case Right(run) => run
     }
   }
 }
