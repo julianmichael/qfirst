@@ -2,7 +2,7 @@ from typing import List, Dict
 
 from allennlp.common import Registrable
 from allennlp.data.token_indexers import TokenIndexer
-from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
+from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField, MultiLabelField
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
@@ -116,6 +116,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
         # qarg as LabelField
         # construct mapping between clauses and sets of appropriate question slots
         clause_string_fields = []
+        clause_strings = []
         tan_string_fields = []
         qarg_fields = []
         all_answer_fields = []
@@ -142,6 +143,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             abst_slot_names = ["abst-subj", "abst-verb", "abst-obj", "prep1", "abst-prep1-obj", "prep2", "abst-prep2-obj", "abst-misc"]
             clause_string = " ".join([clause_slots[slot_name] for slot_name in abst_slot_names])
             clause_string_field = LabelField(label = clause_string, label_namespace = "abst-clause-labels")
+            clause_strings.append(clause_string)
             clause_string_fields.append(clause_string_field)
 
             tense_string = question_label["tense"]
@@ -172,6 +174,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             yield {
                 **verb_fields,
                 "clause_strings": ListField(clause_string_fields),
+                "clause_set": MultiLabelField(clause_strings, label_namespace = "abst-clause-labels"),
                 "tan_strings": ListField(tan_string_fields),
                 "qargs": ListField(qarg_fields),
                 "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),

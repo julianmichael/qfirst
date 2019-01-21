@@ -18,7 +18,7 @@ from allennlp.nn.util import batched_index_select, get_text_field_mask, sequence
 from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.data.util import get_slot_label_namespace
 from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
-from qfirst.metrics import E2EMetric
+from qfirst.metrics import E2EMetric, E2EPretrainingMetric
 
 import math
 
@@ -43,6 +43,7 @@ class E2EParser(Model):
                  final_embedding_dim: int = 128,
                  tan_hidden_dim: int = 128,
                  metric_thresholds: List[float] = [0.25, 0.5, 0.75],
+                 is_pretraining: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(E2EParser, self).__init__(vocab, regularizer)
@@ -98,7 +99,11 @@ class E2EParser(Model):
         self.animacy_scorer = Linear(self.span_hidden_dim, 1)
         self.tan_scorer = Linear(self.encoder_output_projected_dim, self.vocab.get_vocab_size("tan-string-labels"))
 
-        self.metric = E2EMetric(metric_thresholds)
+        self.is_pretraining = is_pretraining
+        if self.is_pretraining:
+            self.metric = E2EPretrainingMetric(metric_thresholds)
+        else:
+            self.metric = E2EMetric(metric_thresholds)
 
     @overrides
     def forward(self,
@@ -106,6 +111,7 @@ class E2EParser(Model):
                 predicate_indicator: torch.LongTensor,
                 predicate_index: torch.LongTensor,
                 clause_strings: torch.LongTensor = None,
+                clause_set: torch.LongTensor = None,
                 tan_strings: torch.LongTensor = None,
                 qargs: torch.LongTensor = None,
                 animacy_flags: torch.LongTensor = None,
@@ -129,6 +135,42 @@ class E2EParser(Model):
 
         # We make predictions of which clauses, qargs, and answer spans are most likely to be used for this verb, and prune each into its own beam.
         clause_scores = self.clause_scorer(pred_rep)
+
+        # Shape: batch_size, 2 * num_tokens; batch_size, 2 * num_tokens; batch_size, 2 * num_tokens, 1
+        top_span_hidden, top_span_mask, top_span_indices, top_span_scores = self.span_pruner(
+            span_hidden, span_mask.float(), 2 * num_tokens
+        )
+
+        # If we're pretraining, we stop and calculate losses for the clause and span scores just against the gold sets.
+        if self.is_pretraining:
+            if clause_strings is None:
+                raise ConfigurationError("Must give gold labels during pretraining")
+            clause_probs = torch.sigmoid(clause_scores)
+            clause_loss = F.binary_cross_entropy_with_logits(clause_scores, clause_set, size_average = False)
+            span_probs = torch.sigmoid(top_span_scores).squeeze(-1) * top_span_mask.float()
+            gold_span_labels = self._get_prediction_map(
+                answer_spans.view(batch_size, -1, 2),
+                num_tokens,
+                num_answers.view(batch_size, -1, 1),
+            ).unsqueeze(-1)
+            print()
+            print("answer_spans: " + str(answer_spans.size()))
+            print("gold_span_labels: " + str(gold_span_labels.size()))
+            print("top_span_indices: " + str(top_span_indices.size()))
+            print("top_span_scores: " + str(top_span_scores.size()))
+            print("top_span_mask: " + str(top_span_mask.size()))
+            span_prediction_mask = batched_index_select(
+                gold_span_labels,
+                top_span_indices
+            ).squeeze(-1)
+            print("span_prediction_mask: " + str(span_prediction_mask.size()))
+            span_loss = F.binary_cross_entropy_with_logits(
+                top_span_scores.squeeze(-1), span_prediction_mask,
+                weight = top_span_mask.float(), size_average = False
+            )
+            self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, metadata)
+            return { "loss": clause_loss + span_loss }
+
         # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
         _, _, top_clause_indices, top_clause_scores = self.score_pruner(
             clause_scores.unsqueeze(-1),
@@ -142,11 +184,6 @@ class E2EParser(Model):
             qarg_scores.unsqueeze(-1),
             torch.ones([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float64, device = pred_rep.device),
             self.num_pruned_qargs
-        )
-
-        # Shape: batch_size, 2 * num_tokens; batch_size, 2 * num_tokens; batch_size, 2 * num_tokens, 1
-        top_span_hidden, top_span_mask, top_span_indices, top_span_scores = self.span_pruner(
-            span_hidden, span_mask.float(), 2 * num_tokens
         )
 
         # Then we take the cartesian product of these beams --- but to save memory, we just do it with their scores, using broadcasting.
@@ -308,3 +345,19 @@ class E2EParser(Model):
                 i += 1
 
         return result
+
+    def _get_prediction_map(self, spans, seq_length, num_answerers):
+        batchsize, num_spans, _ = spans.size()
+        span_mask = (spans[:, :, 0] >= 0).view(batchsize, num_spans).long()
+        num_labels = int((seq_length * (seq_length+1))/2)
+        labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
+        spans = spans.data
+        arg_indexes = (2 * spans[:,:,0] * seq_length - spans[:,:,0].float().pow(2).long() + spans[:,:,0]) / 2 + (spans[:,:,1] - spans[:,:,0])
+        arg_indexes = arg_indexes * span_mask.data
+
+        for b in range(batchsize):
+            for s in range(num_spans):
+                if span_mask.data[b, s] > 0:
+                        labels[b, arg_indexes[b, s]] = 1
+
+        return torch.autograd.Variable(labels.float())
