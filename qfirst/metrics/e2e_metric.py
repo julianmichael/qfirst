@@ -32,12 +32,12 @@ class E2EMetric(Metric):
         return
 
     def __call__(self,
-                 scores,
+                 probs,
                  labels,
                  metadata):
         for conf in self._all_confs:
             t = conf["threshold"]
-            predictions = (scores >= t).long()
+            predictions = (probs >= t).long()
             num_positive = predictions.sum().item()
             num_true = labels.sum().item()
             num_tp = torch.min(predictions, labels).sum().item()
