@@ -19,7 +19,7 @@ from allennlp.nn import util
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
 from allennlp.nn.util import batched_index_select
-from allennlp.nn.util import last_dim_log_softmax
+from allennlp.nn.util import masked_log_softmax
 from allennlp.training.metrics import SpanBasedF1Measure
 
 from nrl.modules.span_rep_assembly import SpanRepAssembly
@@ -277,7 +277,7 @@ class QuestionAnswerer(Model):
                 invalidity_scores = predicate_indicator.new_zeros([batch_size]).float()
                 masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
                 scores_with_dummy = torch.cat([invalidity_scores.unsqueeze(-1), top_span_logits], -1)
-                pred_log_probs = last_dim_log_softmax(scores_with_dummy) # don't need a mask; already did it above
+                pred_log_probs = masked_log_softmax(scores_with_dummy) # don't need a mask; already did it above
                 pred_probs = pred_log_probs.exp()
                 top_span_probs = pred_probs[..., 1:]
                 invalid_prob = pred_probs[..., 0]

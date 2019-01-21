@@ -265,7 +265,7 @@ class E2EParser(Model):
         ]
 
         import random
-        if random.random() < 0.01:
+        if random.random() < 1.0:
             batch_index = int(random.random() * batch_size)
             beam = sorted(batch_of_beams[batch_index], key = lambda x: -x["score"])
             tokens = metadata[batch_index]["sentence_tokens"]
@@ -277,8 +277,8 @@ class E2EParser(Model):
                 print("%.5f" % x["score"])
                 print("%10.5f  %s" % (x["clause_score"], x["clause"]))
                 print("%10.5f  %s" % (x["qarg_score"],   x["qarg"]))
-                print("%10.5f  %s" % (x["span_score"],   " ".join(tokens[x["span"].start() : x["span"].end()])))
-                print("%10.5f  joint factor" % x["joint_score"])
+                print("%10.5f  %s" % (x["span_score"],   " ".join(tokens[x["span"].start() : x["span"].end()]) + " (%s, %s)" % (x["span"].start(), x["span"].end())))
+                print("%10.5f    (joint factor)" % x["joint_score"])
 
         # Finally, if gold data is present, we compute the loss of our beam against the gold, and pass the results to the metric.
         loss_dict = {}
