@@ -44,6 +44,7 @@ class E2EParser(Model):
                  tan_hidden_dim: int = 128,
                  metric_thresholds: List[float] = [0.25, 0.5, 0.75],
                  is_pretraining: bool = False,
+                 is_logging: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(E2EParser, self).__init__(vocab, regularizer)
@@ -100,6 +101,8 @@ class E2EParser(Model):
         self.tan_scorer = Linear(self.encoder_output_projected_dim, self.vocab.get_vocab_size("tan-string-labels"))
 
         self.is_pretraining = is_pretraining
+        self.is_logging = is_logging
+
         if self.is_pretraining:
             self.metric = E2EPretrainingMetric(metric_thresholds)
         else:
@@ -141,6 +144,31 @@ class E2EParser(Model):
             span_hidden, span_mask.float(), 2 * num_tokens
         )
 
+        import random
+        logging_batch_index = int(random.random() * batch_size)
+
+        # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
+        _, _, top_clause_indices, top_clause_scores = self.score_pruner(
+            clause_scores.unsqueeze(-1),
+            torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = pred_rep.device),
+            self.num_pruned_clauses
+        )
+
+        if self.is_logging:
+            tokens = metadata[logging_batch_index]["sentence_tokens"]
+            print("----------")
+            print(" ".join(tokens))
+            print(tokens[metadata[logging_batch_index]["verb_index"]])
+            clause_beam = top_clause_indices[logging_batch_index]
+            clause_beam_scores = top_clause_scores[logging_batch_index]
+            for i in sorted(range(min(self.num_pruned_clauses, 10)), key = lambda i: -clause_beam_scores[i]):
+                print("%10.5f  %s" % (clause_beam_scores[i], self.vocab.get_token_from_index(clause_beam[i].item(), namespace = "abst-clause-labels")))
+            print()
+            prelim_scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask)[logging_batch_index]
+            for i in sorted(range(int(top_span_mask[logging_batch_index].sum().item())), key = lambda i: -top_span_scores[logging_batch_index, i])[0:10]:
+                s = prelim_scored_spans[i]
+                print("%10.5f  %s" % (top_span_scores[logging_batch_index, i], " ".join(tokens[s.start() : s.end() + 1]) + " " + str(s)))
+
         # If we're pretraining, we stop and calculate losses for the clause and span scores just against the gold sets.
         if self.is_pretraining:
             if clause_strings is None:
@@ -153,17 +181,17 @@ class E2EParser(Model):
                 num_tokens,
                 num_answers.view(batch_size, -1, 1),
             ).unsqueeze(-1)
-            print()
-            print("answer_spans: " + str(answer_spans.size()))
-            print("gold_span_labels: " + str(gold_span_labels.size()))
-            print("top_span_indices: " + str(top_span_indices.size()))
-            print("top_span_scores: " + str(top_span_scores.size()))
-            print("top_span_mask: " + str(top_span_mask.size()))
+            # print()
+            # print("answer_spans: " + str(answer_spans.size()))
+            # print("gold_span_labels: " + str(gold_span_labels.size()))
+            # print("top_span_indices: " + str(top_span_indices.size()))
+            # print("top_span_scores: " + str(top_span_scores.size()))
+            # print("top_span_mask: " + str(top_span_mask.size()))
             span_prediction_mask = batched_index_select(
                 gold_span_labels,
                 top_span_indices
             ).squeeze(-1)
-            print("span_prediction_mask: " + str(span_prediction_mask.size()))
+            # print("span_prediction_mask: " + str(span_prediction_mask.size()))
             span_loss = F.binary_cross_entropy_with_logits(
                 top_span_scores.squeeze(-1), span_prediction_mask,
                 weight = top_span_mask.float(), size_average = False
@@ -171,14 +199,10 @@ class E2EParser(Model):
             self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, metadata)
             return { "loss": clause_loss + span_loss }
 
-        # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
-        _, _, top_clause_indices, top_clause_scores = self.score_pruner(
-            clause_scores.unsqueeze(-1),
-            torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = pred_rep.device),
-            self.num_pruned_clauses
-        )
-
+        # Shape: batch_size, vocab.get_vocab_size("qarg
         qarg_scores = self.qarg_scorer(pred_rep)
+        # XXX: zero out scores for debugging
+        # qarg_scores = torch.zeros([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float32, device = pred_rep.device)
         # Shape: batch_size, num_pruned_qargs; batch_size, num_pruned_qargs, 1
         _, _, top_qarg_indices, top_qarg_scores = self.score_pruner(
             qarg_scores.unsqueeze(-1),
@@ -235,6 +259,8 @@ class E2EParser(Model):
                            self.span_final_hidden(final_span_embeddings)
         # pass them to the joint scorer,
         joint_scores = self.joint_scorer(F.relu(joint_embeddings))
+        # XXX zero out joint scores for debugging
+        # joint_scores = torch.zeros([batch_size, self.final_beam_size, 1], dtype = torch.float32, device = joint_embeddings.device)
         # and compute the final scores.
         final_scores = (top_summed_scores + joint_scores).squeeze(-1)
 
@@ -264,20 +290,14 @@ class E2EParser(Model):
             for batch_index in range(batch_size)
         ]
 
-        import random
-        if random.random() < 1.0:
-            batch_index = int(random.random() * batch_size)
-            beam = sorted(batch_of_beams[batch_index], key = lambda x: -x["score"])
-            tokens = metadata[batch_index]["sentence_tokens"]
-            print()
-            print(" ".join(tokens))
-            print(tokens[metadata[batch_index]["verb_index"]])
+        if self.is_logging:
+            beam = sorted(batch_of_beams[logging_batch_index], key = lambda x: -x["score"])
             for i in range(0, min(10, len(beam))):
                 x = beam[i]
                 print("%.5f" % x["score"])
                 print("%10.5f  %s" % (x["clause_score"], x["clause"]))
                 print("%10.5f  %s" % (x["qarg_score"],   x["qarg"]))
-                print("%10.5f  %s" % (x["span_score"],   " ".join(tokens[x["span"].start() : x["span"].end()]) + " (%s, %s)" % (x["span"].start(), x["span"].end())))
+                print("%10.5f  %s" % (x["span_score"],   " ".join(tokens[x["span"].start() : x["span"].end() + 1]) + " (%s, %s)" % (x["span"].start(), x["span"].end())))
                 print("%10.5f    (joint factor)" % x["joint_score"])
 
         # Finally, if gold data is present, we compute the loss of our beam against the gold, and pass the results to the metric.
