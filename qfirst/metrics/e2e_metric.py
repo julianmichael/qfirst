@@ -35,17 +35,16 @@ class E2EMetric(Metric):
                  probs,
                  labels,
                  metadata):
+        num_true = sum([len(m["gold_set"]) for m in metadata])
         for conf in self._all_confs:
             t = conf["threshold"]
             predictions = (probs >= t).long()
             num_positive = predictions.sum().item()
-            num_true = labels.sum().item()
             num_tp = torch.min(predictions, labels).sum().item()
             conf["tp"] += num_tp
             conf["fn"] += num_true - num_tp
             conf["fp"] += num_positive - num_tp
-        for meta_dict in metadata:
-            self._gold_qa_coverage["true"] += len(meta_dict["gold_set"])
+        self._gold_qa_coverage["true"] += num_true
         self._gold_qa_coverage["covered"] += labels.sum().item()
 
     def get_metric(self, reset = False):
