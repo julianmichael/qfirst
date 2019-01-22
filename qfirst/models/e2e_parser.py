@@ -166,8 +166,9 @@ class E2EParser(Model):
         tan_scores, tan_probs, tan_loss = self._predict_tan(pred_rep, tan_set)
 
         # and the animacy properties of all of the spans.
+        animacy_mask = (animacy_spans[:, :, 0] >= 0).float()
         animacy_scores, animacy_probs, animacy_loss = self._predict_animacy(
-            encoded_text, text_mask, animacy_spans, animacy_labels
+            encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels
         )
 
         import random
@@ -241,8 +242,6 @@ class E2EParser(Model):
                 .unsqueeze(-1) \
                 .expand(batch_size, num_pretrain_instances, self.vocab.get_vocab_size("qarg-labels")) \
                 .float()
-            # multinomial loss:
-            # binary loss:
 
             total_num_qarg_instances = final_qarg_pretrain_mask.sum().item()
             qarg_loss = F.binary_cross_entropy_with_logits(
@@ -343,6 +342,16 @@ class E2EParser(Model):
             for batch_index in range(batch_size)
         ]
 
+        # batch_of_tans = [
+        #     [get_animacy_label(batch_index, span_index) for span_index in ]
+        #     for batch_index in range(batch_size)
+        # ]
+
+        # batch_of_animacy = [
+        #     ___
+        #     for batch_index in range(batch_size)
+        # ]
+
         if self.is_logging:
             beam = sorted(
                 batch_of_beams[logging_batch_index],
@@ -378,14 +387,15 @@ class E2EParser(Model):
             # Binary classification loss
             total_num_beam_items = final_beam_mask.sum().item()
             if self.use_product_of_probs:
+                final_probs = final_scores.exp().squeeze(-1) * final_beam_mask.float()
                 beam_loss = F.binary_cross_entropy(
-                    final_scores.exp(), prediction_mask, weight = final_beam_mask, size_average = False
+                    final_probs.unsqueeze(-1), prediction_mask, weight = final_beam_mask, size_average = False
                 ) / total_num_beam_items
             else:
                 beam_loss = F.binary_cross_entropy_with_logits(
                     final_scores, prediction_mask, weight = final_beam_mask, size_average = False
                 ) / total_num_beam_items
-            final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
+                final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
             self.metric(final_probs.detach().long(), prediction_mask.detach().long(), metadata)
             loss_dict["loss"] = (5 * beam_loss) + tan_loss + animacy_loss
 
@@ -486,9 +496,8 @@ class E2EParser(Model):
         tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
         return tan_scores, tan_probs, tan_loss
 
-    def _predict_animacy(self, encoded_text, text_mask, animacy_spans, animacy_labels):
+    def _predict_animacy(self, encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels):
         _, num_animacy_instances, _ = animacy_spans.size()
-        animacy_mask = (animacy_spans[:, :, 0] >= 0).float()
         # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
         animacy_span_pre_embeddings = self.span_extractor(encoded_text, animacy_spans, text_mask, animacy_mask.long())
         spanemb_A, spanemb_B = torch.chunk(animacy_span_pre_embeddings, 2, dim = -1)
