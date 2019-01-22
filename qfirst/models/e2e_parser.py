@@ -255,7 +255,7 @@ class E2EParser(Model):
                 tan_probs, tan_set,
                 animacy_probs, animacy_labels,
                 metadata)
-            return { "loss": clause_loss + span_loss + qarg_loss + tan_loss + animacy_loss }
+            return { "loss": (3 * (clause_loss + span_loss)) + qarg_loss + tan_loss + animacy_loss }
 
         # We take the cartesian product of clause/span beams --- but to save memory, we just do it with their scores, using broadcasting.
         top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = num_pruned_clauses

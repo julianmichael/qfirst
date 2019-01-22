@@ -108,7 +108,7 @@ class E2EPretrainingMetric(Metric):
         span_metric_dict = max([get_stats(conf) for conf in self._all_span_confs], key = lambda d: d["f1"])
         qarg_metric_dict = max([get_stats(conf) for conf in self._all_qarg_confs], key = lambda d: d["f1"])
         tan_metric_dict = max([get_stats(conf) for conf in self._all_tan_confs], key = lambda d: d["f1"])
-        animacy_metric_dict = max([get_stats(conf) for conf in self._all_tan_confs], key = lambda d: d["f1"])
+        animacy_metric_dict = max([get_stats(conf) for conf in self._all_animacy_confs], key = lambda d: d["f1"])
         metric_dict = {
             **{  ("clause-%s" % k) : v for k, v in  clause_metric_dict.items() },
             **{    ("span-%s" % k) : v for k, v in    span_metric_dict.items() },
