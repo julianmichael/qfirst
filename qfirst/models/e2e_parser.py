@@ -79,6 +79,7 @@ class E2EParser(Model):
         )
         self.qarg_scorer = Sequential(
             Linear(self.final_embedding_dim, self.qarg_hidden_dim), ReLU(),
+            Linear(self.qarg_hidden_dim, self.qarg_hidden_dim), ReLU(),
             Linear(self.qarg_hidden_dim, self.vocab.get_vocab_size("qarg-labels"))
         )
 
@@ -93,14 +94,12 @@ class E2EParser(Model):
             Linear(self.span_hidden_dim, self.final_embedding_dim), ReLU()
         )
 
-        self.tan_scorer = Sequential(
-            Linear(self.encoder_output_projected_dim, self.tan_hidden_dim), ReLU(),
-            Linear(self.tan_hidden_dim, self.vocab.get_vocab_size("tan-string-labels"))
-        )
+        # self.tan_scorer = Sequential(
+        #     Linear(self.encoder_output_projected_dim, self.tan_hidden_dim), ReLU(),
+        #     Linear(self.tan_hidden_dim, self.vocab.get_vocab_size("tan-string-labels"))
+        # )
 
         self.score_pruner = Pruner(lambda x: x)
-
-        self.joint_scorer = Linear(self.final_embedding_dim, 1)
 
         self.animacy_scorer = Linear(self.span_hidden_dim, 1)
         self.tan_scorer = Linear(self.encoder_output_projected_dim, self.vocab.get_vocab_size("tan-string-labels"))
