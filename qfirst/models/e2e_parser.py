@@ -193,7 +193,7 @@ class E2EParser(Model):
             clause_probs = torch.sigmoid(clause_scores)
             clause_loss = F.binary_cross_entropy_with_logits(
                 clause_scores, clause_set, size_average = False
-            ) / self.vocab.get_vocab_size("abst-clause-labels")
+            ) / (batch_size * self.vocab.get_vocab_size("abst-clause-labels"))
             span_probs = torch.sigmoid(top_span_scores).squeeze(-1) * top_span_mask.float()
             gold_span_labels = self._get_prediction_map(
                 answer_spans.view(batch_size, -1, 2),
@@ -241,9 +241,11 @@ class E2EParser(Model):
                 .float()
             # multinomial loss:
             # binary loss:
+
+            total_num_qarg_instances = final_qarg_pretrain_mask.sum().item()
             qarg_loss = F.binary_cross_entropy_with_logits(
-                qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = True
-            ) / self.vocab.get_vocab_size("qarg-labels")
+                qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = False
+            ) / total_num_qarg_instances
             pretrain_qarg_probs = torch.sigmoid(qarg_pretrain_scores).squeeze(-1) * final_qarg_pretrain_mask
 
             self.metric(
@@ -310,14 +312,6 @@ class E2EParser(Model):
             .unsqueeze(-1) \
             .expand(batch_size, self.final_beam_size, self.vocab.get_vocab_size("qarg-labels"))
 
-        # Totally separately, we make the TAN prediction for the verb and and animacy predictions for each answer span.
-        # TODO: we could also do this on the joint embedding to get QA-pair-specific TAN predictions.
-        # TODO: right now I'm not bothering to do anything with these. I must incorporate them into output/loss at some point.
-        # Shape: batch_size, vocab.get_vocab_size("tan-string-labels")
-        tan_logits = self.tan_scorer(pred_rep)
-        # Shape: batch_size, final_beam_size, 1 ?
-        animacy_logits = self.animacy_scorer(final_span_embeddings)
-
         # Now we produce the output data structures.
         scored_spans = self._to_scored_spans(span_mask, final_span_indices, intermediate_beam_mask)
         def get_beam_item_in_batch(batch_index, beam_index):
@@ -373,9 +367,13 @@ class E2EParser(Model):
                         if predicted_tuple in gold_set:
                             prediction_mask[batch_index, beam_index, qarg_index] = 1
             # Binary classification loss
-            loss_dict["loss"] = F.binary_cross_entropy_with_logits(final_scores, prediction_mask, weight = final_beam_mask, size_average = True)
+            total_num_beam_items = final_beam_mask.sum().item()
+            beam_loss = F.binary_cross_entropy_with_logits(
+                final_scores, prediction_mask, weight = final_beam_mask, size_average = False
+            ) / total_num_beam_items
             final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
             self.metric(final_probs.detach().long(), prediction_mask.detach().long(), metadata)
+            loss_dict["loss"] = beam_loss + tan_loss + animacy_loss
 
         return {
             "full_beam": batch_of_beams,
@@ -466,10 +464,11 @@ class E2EParser(Model):
         return torch.autograd.Variable(labels.float())
 
     def _predict_tan(self, pred_rep, tan_set):
+        batch_size = pred_rep.size(0)
         tan_scores = self.tan_scorer(pred_rep)
         tan_loss = F.binary_cross_entropy_with_logits(
-            tan_scores, tan_set, size_average = True
-        ) / self.vocab.get_vocab_size("tan-string-labels")
+            tan_scores, tan_set, size_average = False
+        ) / (batch_size * self.vocab.get_vocab_size("tan-string-labels"))
         tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
         return tan_scores, tan_probs, tan_loss
 
@@ -484,7 +483,7 @@ class E2EParser(Model):
         animacy_scores = self.animacy_scorer(animacy_spans_hidden).squeeze(-1)
         actual_num_animacy_instances = animacy_mask.sum().item()
         animacy_loss = F.binary_cross_entropy_with_logits(
-            animacy_scores, animacy_labels.float(), weight = animacy_mask, size_average = True
+            animacy_scores, animacy_labels.float(), weight = animacy_mask, size_average = False
         ) / actual_num_animacy_instances
         animacy_probs = torch.sigmoid(animacy_scores).squeeze(-1) * animacy_mask
         return animacy_scores, animacy_probs, animacy_loss
