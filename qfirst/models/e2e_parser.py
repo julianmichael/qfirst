@@ -11,6 +11,7 @@ from allennlp.models.model import Model
 from allennlp.common import Params
 from allennlp.data import Vocabulary
 from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder, Pruner
+from allennlp.modules.span_extractors import EndpointSpanExtractor
 from allennlp.modules.token_embedders import Embedding
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import batched_index_select, get_text_field_mask, sequence_cross_entropy_with_logits
@@ -105,6 +106,11 @@ class E2EParser(Model):
         self.is_logging = is_logging
         self.is_outputting_full_data = is_outputting_full_data
 
+        self.pretraining_span_extractor = EndpointSpanExtractor(
+            input_dim = self.span_hidden_dim,
+            combination = "x,y"
+        )
+
         if self.is_pretraining:
             self.metric = E2EPretrainingMetric(metric_thresholds)
         else:
@@ -124,6 +130,9 @@ class E2EParser(Model):
                 num_answers: torch.LongTensor = None,
                 num_invalids: torch.LongTensor = None,
                 metadata = None,
+                qarg_pretrain_clauses = None,
+                qarg_pretrain_spans = None,
+                qarg_pretrain_labels = None,
                 **kwargs):
 
         # Shape: batch_size, num_tokens, encoder_output_projected_dim
@@ -173,7 +182,7 @@ class E2EParser(Model):
 
         # If we're pretraining, we stop and calculate losses for the clause and span scores just against the gold sets.
         if self.is_pretraining:
-            if clause_strings is None:
+            if clause_strings is None or qarg_pretrain_clauses is None:
                 raise ConfigurationError("Must give gold labels during pretraining")
             clause_probs = torch.sigmoid(clause_scores)
             clause_loss = F.binary_cross_entropy_with_logits(clause_scores, clause_set, size_average = False)
@@ -191,8 +200,47 @@ class E2EParser(Model):
                 top_span_scores.squeeze(-1), span_prediction_mask,
                 weight = top_span_mask.float(), size_average = False
             )
-            self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, metadata)
-            return { "loss": clause_loss + span_loss }
+
+            # qarg classifier pretraining
+            _, num_pretrain_instances, _ = qarg_pretrain_spans.size()
+            qarg_pretrain_mask = (qarg_pretrain_spans[:, :, 0] >= 0).squeeze(-1).long()
+
+            # get clauses of input instances
+            # max to prevent the padded labels from messing up the embedding module
+            input_clauses = self.clause_embedding(qarg_pretrain_clauses.max(torch.zeros_like(qarg_pretrain_clauses)))
+
+            # get spans of input instances
+            # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
+            span_pre_embeddings = self.pretraining_span_extractor(encoded_text, qarg_pretrain_spans, text_mask, qarg_pretrain_mask)
+            spanemb_A, spanemb_B = torch.chunk(span_pre_embeddings, 2, dim = -1)
+            input_spans_hidden = self.span_hidden.hiddenA(spanemb_A) + \
+                                 self.span_hidden.hiddenB(spanemb_B)
+
+            # construct input embeddings
+            expanded_pred_embedding = self.pred_final_hidden(pred_rep) \
+                                        .view(   batch_size,                    1, self.final_embedding_dim) \
+                                        .expand( batch_size, num_pretrain_instances, self.final_embedding_dim)
+            qarg_inputs = expanded_pred_embedding + \
+                          input_clauses + \
+                          self.span_final_hidden(input_spans_hidden)
+
+            # score and compute qarg loss
+            qarg_pretrain_scores = self.qarg_scorer(qarg_inputs)
+            print("-----")
+            print(qarg_pretrain_scores.size())
+            print(qarg_pretrain_labels.size())
+            final_qarg_pretrain_mask = qarg_pretrain_mask \
+                .unsqueeze(-1) \
+                .expand(batch_size, num_pretrain_instances, self.vocab.get_vocab_size("qarg-labels")) \
+                .float()
+            print(final_qarg_pretrain_mask.size())
+            qarg_loss = F.binary_cross_entropy_with_logits(
+                qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = True
+            )
+            pretrain_qarg_probs = torch.sigmoid(qarg_pretrain_scores).squeeze(-1) * final_qarg_pretrain_mask
+
+            self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, pretrain_qarg_probs, qarg_pretrain_labels, metadata)
+            return { "loss": clause_loss + span_loss + qarg_loss }
 
         # We take the cartesian product of clause/span beams --- but to save memory, we just do it with their scores, using broadcasting.
         top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = num_pruned_clauses

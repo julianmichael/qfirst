@@ -33,6 +33,13 @@ class E2EPretrainingMetric(Metric):
             "fp": 0,
             "fn": 0
         } for threshold in self._thresholds]
+        self._all_qarg_confs = [{
+            "threshold": threshold,
+            "tp": 0,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0
+        } for threshold in self._thresholds]
         self._gold_span_coverage = {
             "covered": 0,
             "true": 0
@@ -44,6 +51,8 @@ class E2EPretrainingMetric(Metric):
                  clause_labels,
                  span_probs, # List[List[(Span, float)]]
                  span_labels,
+                 qarg_probs,
+                 qarg_labels,
                  metadata):
         for conf in self._all_clause_confs:
             t = conf["threshold"]
@@ -76,6 +85,16 @@ class E2EPretrainingMetric(Metric):
         self._gold_span_coverage["true"] += num_gold_spans
         self._gold_span_coverage["covered"] += span_labels.sum().item()
 
+        for conf in self._all_qarg_confs:
+            t = conf["threshold"]
+            qarg_predictions = (qarg_probs >= t).long()
+            qarg_num_positive = qarg_predictions.sum().item()
+            qarg_num_true = qarg_labels.sum().item()
+            qarg_num_tp = torch.min(qarg_predictions, qarg_labels.long()).sum().item()
+            conf["tp"] += qarg_num_tp
+            conf["fn"] += qarg_num_true - qarg_num_tp
+            conf["fp"] += qarg_num_positive - qarg_num_tp
+
     def get_metric(self, reset = False):
         def get_stats(conf):
             # thresh = "%.2f" % conf["threshold"] if isinstance(conf["threshold"], float) else str(conf["threshold"])
@@ -103,9 +122,11 @@ class E2EPretrainingMetric(Metric):
 
         clause_metric_dict = max([get_stats(conf) for conf in self._all_clause_confs], key = lambda d: d["f1"])
         span_metric_dict = max([get_stats(conf) for conf in self._all_span_confs], key = lambda d: d["f1"])
+        qarg_metric_dict = max([get_stats(conf) for conf in self._all_qarg_confs], key = lambda d: d["f1"])
         metric_dict = {
             **{ ("clause-%s" % k) : v for k, v in clause_metric_dict.items() },
             **{   ("span-%s" % k) : v for k, v in   span_metric_dict.items() },
+            **{   ("qarg-%s" % k) : v for k, v in   qarg_metric_dict.items() },
             "gold_spans_in_beam": get_cov(self._gold_span_coverage)
         }
 

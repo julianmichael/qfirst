@@ -170,6 +170,19 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 if s.span_start > -1:
                     gold_tuples.append((clause_string, clause_slots["qarg"], (s.span_start, s.span_end)))
 
+        all_clause_strings = set(clause_strings)
+        all_spans = set([t[2] for t in gold_tuples])
+        all_qargs = set([t[1] for t in gold_tuples])
+        qarg_pretrain_clause_fields = []
+        qarg_pretrain_span_fields = []
+        qarg_pretrain_multilabel_fields = []
+        for clause_string in all_clause_strings:
+            for span in all_spans:
+                valid_qargs = [qarg for qarg in all_qargs if (clause_string, qarg, span) in gold_tuples]
+                qarg_pretrain_clause_fields.append(LabelField(clause_string, label_namespace = "abst-clause-labels"))
+                qarg_pretrain_span_fields.append(SpanField(span[0], span[1], verb_fields["text"]))
+                qarg_pretrain_multilabel_fields.append(MultiLabelField(valid_qargs, label_namespace = "qarg-labels"))
+
         if len(clause_string_fields) > 0:
             yield {
                 **verb_fields,
@@ -183,7 +196,10 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "animacy_flags": ListField(animacy_fields),
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
-                })
+                }),
+                "qarg_pretrain_clauses": ListField(qarg_pretrain_clause_fields),
+                "qarg_pretrain_spans": ListField(qarg_pretrain_span_fields),
+                "qarg_pretrain_labels": ListField(qarg_pretrain_multilabel_fields),
             }
 
 # @QasrlInstanceReader.register("question_only_clause_filling")
