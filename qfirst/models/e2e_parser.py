@@ -42,7 +42,7 @@ class E2EParser(Model):
                  final_beam_size: int = 128,
                  final_embedding_dim: int = 128,
                  tan_hidden_dim: int = 128,
-                 metric_thresholds: List[float] = [0.25, 0.5, 0.75],
+                 metric_thresholds: List[float] = [0.05, 0.15, 0.25, 0.4, 0.5, 0.6, 0.75, 0.85, 0.95],
                  is_pretraining: bool = False,
                  is_logging: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -93,11 +93,6 @@ class E2EParser(Model):
         self.span_final_hidden = Sequential(
             Linear(self.span_hidden_dim, self.final_embedding_dim), ReLU()
         )
-
-        # self.tan_scorer = Sequential(
-        #     Linear(self.encoder_output_projected_dim, self.tan_hidden_dim), ReLU(),
-        #     Linear(self.tan_hidden_dim, self.vocab.get_vocab_size("tan-string-labels"))
-        # )
 
         self.score_pruner = Pruner(lambda x: x)
 
@@ -196,7 +191,9 @@ class E2EParser(Model):
             if clause_strings is None or qarg_pretrain_clauses is None:
                 raise ConfigurationError("Must give gold labels during pretraining")
             clause_probs = torch.sigmoid(clause_scores)
-            clause_loss = F.binary_cross_entropy_with_logits(clause_scores, clause_set, size_average = False)
+            clause_loss = F.binary_cross_entropy_with_logits(
+                clause_scores, clause_set, size_average = False
+            ) / self.vocab.get_vocab_size("abst-clause-labels")
             span_probs = torch.sigmoid(top_span_scores).squeeze(-1) * top_span_mask.float()
             gold_span_labels = self._get_prediction_map(
                 answer_spans.view(batch_size, -1, 2),
@@ -207,10 +204,11 @@ class E2EParser(Model):
                 gold_span_labels,
                 top_span_indices
             ).squeeze(-1)
+            total_num_spans = top_span_mask.sum().item()
             span_loss = F.binary_cross_entropy_with_logits(
                 top_span_scores.squeeze(-1), span_prediction_mask,
                 weight = top_span_mask.float(), size_average = False
-            )
+            ) / total_num_spans
 
             # qarg classifier pretraining
             _, num_pretrain_instances, _ = qarg_pretrain_spans.size()
@@ -241,9 +239,11 @@ class E2EParser(Model):
                 .unsqueeze(-1) \
                 .expand(batch_size, num_pretrain_instances, self.vocab.get_vocab_size("qarg-labels")) \
                 .float()
+            # multinomial loss:
+            # binary loss:
             qarg_loss = F.binary_cross_entropy_with_logits(
                 qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = True
-            )
+            ) / self.vocab.get_vocab_size("qarg-labels")
             pretrain_qarg_probs = torch.sigmoid(qarg_pretrain_scores).squeeze(-1) * final_qarg_pretrain_mask
 
             self.metric(
@@ -467,7 +467,9 @@ class E2EParser(Model):
 
     def _predict_tan(self, pred_rep, tan_set):
         tan_scores = self.tan_scorer(pred_rep)
-        tan_loss = F.binary_cross_entropy_with_logits(tan_scores, tan_set, size_average = True)
+        tan_loss = F.binary_cross_entropy_with_logits(
+            tan_scores, tan_set, size_average = True
+        ) / self.vocab.get_vocab_size("tan-string-labels")
         tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
         return tan_scores, tan_probs, tan_loss
 
@@ -480,8 +482,9 @@ class E2EParser(Model):
         animacy_spans_hidden = self.span_hidden.hiddenA(spanemb_A) + \
                                self.span_hidden.hiddenB(spanemb_B)
         animacy_scores = self.animacy_scorer(animacy_spans_hidden).squeeze(-1)
+        actual_num_animacy_instances = animacy_mask.sum().item()
         animacy_loss = F.binary_cross_entropy_with_logits(
             animacy_scores, animacy_labels.float(), weight = animacy_mask, size_average = True
-        )
+        ) / actual_num_animacy_instances
         animacy_probs = torch.sigmoid(animacy_scores).squeeze(-1) * animacy_mask
         return animacy_scores, animacy_probs, animacy_loss
