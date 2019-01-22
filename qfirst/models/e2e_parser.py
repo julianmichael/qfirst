@@ -253,7 +253,7 @@ class E2EParser(Model):
                 span_probs, span_prediction_mask,
                 pretrain_qarg_probs, qarg_pretrain_labels,
                 tan_probs, tan_set,
-                animacy_probs, animacy_labels,
+                animacy_probs, animacy_labels.max(torch.zeros_like(animacy_labels)),
                 metadata)
             return { "loss": (3 * (clause_loss + span_loss)) + qarg_loss + tan_loss + animacy_loss }
 
