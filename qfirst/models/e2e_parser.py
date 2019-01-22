@@ -79,8 +79,8 @@ class E2EParser(Model):
             Linear(self.clause_hidden_dim, self.vocab.get_vocab_size("abst-clause-labels"))
         )
         self.qarg_scorer = Sequential(
-            Linear(self.encoder_output_projected_dim, self.clause_hidden_dim), ReLU(),
-            Linear(self.clause_hidden_dim, self.vocab.get_vocab_size("qarg-labels"))
+            Linear(self.final_embedding_dim, self.qarg_hidden_dim), ReLU(),
+            Linear(self.qarg_hidden_dim, self.vocab.get_vocab_size("qarg-labels"))
         )
 
         self.span_hidden = SpanRepAssembly(self.encoder_output_projected_dim, self.encoder_output_projected_dim, self.span_hidden_dim)
@@ -138,7 +138,7 @@ class E2EParser(Model):
         # Shapes: batch_size, num_spans, span_hidden_dim; batch_size, num_spans
         span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, text_mask, text_mask)
 
-        # We make predictions of which clauses, qargs, and answer spans are most likely to be used for this verb, and prune each into its own beam.
+        # We make predictions of which clauses and answer spans are most likely to be used for this verb, and prune each into its own beam.
         clause_scores = self.clause_scorer(pred_rep)
 
         # Shape: batch_size, 2 * num_tokens; batch_size, 2 * num_tokens; batch_size, 2 * num_tokens, 1
@@ -146,15 +146,15 @@ class E2EParser(Model):
             span_hidden, span_mask.float(), 2 * num_tokens
         )
 
-        import random
-        logging_batch_index = int(random.random() * batch_size)
-
         # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
         _, _, top_clause_indices, top_clause_scores = self.score_pruner(
             clause_scores.unsqueeze(-1),
             torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = pred_rep.device),
             self.num_pruned_clauses
         )
+
+        import random
+        logging_batch_index = int(random.random() * batch_size)
 
         if self.is_logging:
             tokens = metadata[logging_batch_index]["sentence_tokens"]
@@ -183,17 +183,10 @@ class E2EParser(Model):
                 num_tokens,
                 num_answers.view(batch_size, -1, 1),
             ).unsqueeze(-1)
-            # print()
-            # print("answer_spans: " + str(answer_spans.size()))
-            # print("gold_span_labels: " + str(gold_span_labels.size()))
-            # print("top_span_indices: " + str(top_span_indices.size()))
-            # print("top_span_scores: " + str(top_span_scores.size()))
-            # print("top_span_mask: " + str(top_span_mask.size()))
             span_prediction_mask = batched_index_select(
                 gold_span_labels,
                 top_span_indices
             ).squeeze(-1)
-            # print("span_prediction_mask: " + str(span_prediction_mask.size()))
             span_loss = F.binary_cross_entropy_with_logits(
                 top_span_scores.squeeze(-1), span_prediction_mask,
                 weight = top_span_mask.float(), size_average = False
@@ -201,74 +194,61 @@ class E2EParser(Model):
             self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, metadata)
             return { "loss": clause_loss + span_loss }
 
-        # Shape: batch_size, vocab.get_vocab_size("qarg
-        qarg_scores = self.qarg_scorer(pred_rep)
-
-        # XXX: zero out scores for debugging
-        # qarg_scores = torch.zeros([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float32, device = pred_rep.device)
-
-        # Shape: batch_size, num_pruned_qargs; batch_size, num_pruned_qargs, 1
-        _, _, top_qarg_indices, top_qarg_scores = self.score_pruner(
-            qarg_scores.unsqueeze(-1),
-            torch.ones([batch_size, self.vocab.get_vocab_size("qarg-labels")], dtype = torch.float64, device = pred_rep.device),
-            self.num_pruned_qargs
-        )
-
-        # Then we take the cartesian product of these beams --- but to save memory, we just do it with their scores, using broadcasting.
-        top_clauses_reshaped = top_clause_scores.view(batch_size, -1,  1,  1) # -1 = num_pruned_clauses
-        top_qargs_reshaped   =   top_qarg_scores.view(batch_size,  1, -1,  1) # -1 = num_pruned_qargs
-        top_spans_reshaped   =   top_span_scores.view(batch_size,  1,  1, -1) # -1 = 2 * num_tokens
-        # We construct a cube of scores, then flatten it for the next step.
+        # We take the cartesian product of clause/span beams --- but to save memory, we just do it with their scores, using broadcasting.
+        top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = num_pruned_clauses
+        top_spans_reshaped   =   top_span_scores.view(batch_size,   1, -1) # -1 = 2 * num_tokens
+        # We construct a square of scores, then flatten it for the next step.
         # Shape: batch_size, num_pruned_clauses, num_pruned_qargs, 2 * num_tokens
-        summed_scores = (top_clauses_reshaped + top_qargs_reshaped + top_spans_reshaped) \
-            .view(  batch_size,                                                             -1, 1)
+        summed_scores = (top_clauses_reshaped + top_spans_reshaped) \
+            .view(  batch_size,                          -1, 1)
         summed_mask = top_span_mask \
-            .view(  batch_size,                       1,                     1, 2 * num_tokens) \
-            .expand(batch_size, self.num_pruned_clauses, self.num_pruned_qargs, 2 * num_tokens) \
+            .view(  batch_size,                       1, 2 * num_tokens) \
+            .expand(batch_size, self.num_pruned_clauses, 2 * num_tokens) \
             .contiguous() \
-            .view(  batch_size,                                                             -1)
+            .view(  batch_size,                          -1)
 
-        # We prune the list of summed scores before constructing the joint embeddings for final scoring of the best ones.
+        # We prune the list of summed scores before constructing the joint embeddings for qarg scoring.
         # Shape: batch_size, final_beam_size; batch_size, final_beam_size; batch_size, final_beam_size, 1
         _, top_summed_mask, top_summed_indices, top_summed_scores = self.score_pruner(
             summed_scores, summed_mask.float(), self.final_beam_size
         )
 
         # We reconstruct the final jointly scorable items using the indices from both pruning steps.
-        # indices in flattened cube = (clause_index * num_pruned_qargs * 2 * num_tokens) + (qarg_index * 2 * num_tokens) + span_index
+        # indices in flattened cube = (clause_index * 2 * num_tokens) + span_index
+        final_clause_index_indices = top_summed_indices.div(2 * num_tokens)
         final_span_index_indices = top_summed_indices.remainder(2 * num_tokens)
-        final_qarg_index_indices = top_summed_indices.div(2 * num_tokens).remainder(self.num_pruned_qargs)
-        final_clause_index_indices = top_summed_indices.div(2 * num_tokens * self.num_pruned_qargs)
 
         # the indices of the summed scores are into the cube whose axes are the component beams with indices into the original vocabs,
         # so we recover those here
         final_clauses = batched_index_select(top_clause_indices.unsqueeze(-1), final_clause_index_indices).squeeze(-1)
-        final_qargs   = batched_index_select(top_qarg_indices.unsqueeze(-1),   final_qarg_index_indices).squeeze(-1)
         final_span_indices    = batched_index_select(top_span_indices.unsqueeze(-1), final_span_index_indices).squeeze(-1)
         final_span_embeddings = batched_index_select(top_span_hidden,                final_span_index_indices)
         # final_span_mask = batched_index_select(top_span_mask.unsqueeze(-1), final_span_index_indices).squeeze(-1)
-        final_beam_mask = top_summed_mask
-        beam_sizes = final_beam_mask.long().sum(1)
+        intermediate_beam_mask = top_summed_mask
+        beam_sizes = intermediate_beam_mask.long().sum(1)
 
         if self.is_outputting_full_data or self.is_logging:
             final_clause_scores = batched_index_select(top_clause_scores, final_clause_index_indices).squeeze(-1)
-            final_qarg_scores = batched_index_select(top_qarg_scores, final_qarg_index_indices).squeeze(-1)
             final_span_scores = batched_index_select(top_span_scores, final_span_index_indices).squeeze(-1)
 
-        # We finally construct their embeddings under a concat + linear transformation,
+        # We construct their embeddings under a concat + linear transformation,
         expanded_pred_embedding = self.pred_final_hidden(pred_rep) \
                                       .view(   batch_size,                    1, self.final_embedding_dim) \
                                       .expand( batch_size, self.final_beam_size, self.final_embedding_dim)
         joint_embeddings = expanded_pred_embedding + \
                            self.clause_embedding(final_clauses) + \
-                           self.qarg_embedding(final_qargs) + \
                            self.span_final_hidden(final_span_embeddings)
-        # pass them to the joint scorer,
-        joint_scores = self.joint_scorer(F.relu(joint_embeddings))
-        # XXX zero out joint scores for debugging
-        # joint_scores = torch.zeros([batch_size, self.final_beam_size, 1], dtype = torch.float32, device = joint_embeddings.device)
-        # and compute the final scores.
-        final_scores = (top_summed_scores + joint_scores).squeeze(-1)
+
+        # then pass them to the qarg scorer, adding the original scores to get the final logits.
+        # Shape: batch_size, final_beam_size, vocab_size("qarg-labels")
+        qarg_scores = self.qarg_scorer(joint_embeddings)
+        final_scores = top_summed_scores \
+            .expand(batch_size, self.final_beam_size, self.vocab.get_vocab_size("qarg-labels")) + \
+            qarg_scores
+        final_scores = final_scores.squeeze(-1)
+        final_beam_mask = intermediate_beam_mask \
+            .unsqueeze(-1) \
+            .expand(batch_size, self.final_beam_size, self.vocab.get_vocab_size("qarg-labels"))
 
         # Totally separately, we make the TAN prediction for the verb and and animacy predictions for each answer span.
         # TODO: we could also do this on the joint embedding to get QA-pair-specific TAN predictions.
@@ -279,22 +259,21 @@ class E2EParser(Model):
         animacy_logits = self.animacy_scorer(final_span_embeddings)
 
         # Now we produce the output data structures.
-        scored_spans = self._to_scored_spans(span_mask, final_span_indices, final_beam_mask)
+        scored_spans = self._to_scored_spans(span_mask, final_span_indices, intermediate_beam_mask)
         def get_beam_item_in_batch(batch_index, beam_index):
-            extra_dict = {}
-            if self.is_outputting_full_data or self.is_logging:
-                extra_dict = {
-                    "clause_score": final_clause_scores[batch_index, beam_index].item(),
-                    "qarg_score": final_qarg_scores[batch_index, beam_index].item(),
-                    "span_score": final_span_scores[batch_index, beam_index].item(),
-                    "joint_score": joint_scores[batch_index, beam_index].item()
-                }
+            clause_score = final_clause_scores[batch_index, beam_index].item()
+            span_score = final_span_scores[batch_index, beam_index].item()
+            item_qarg_scores = qarg_scores[batch_index, beam_index]
+            qarg_items = [
+                (self.vocab.get_token_from_index(i, namespace = "qarg-labels"), item_qarg_scores[i].item(), item_qarg_scores[i].item() + clause_score + span_score)
+                for i in range(self.vocab.get_vocab_size("qarg-labels"))
+            ]
             return {
                 "clause": self.vocab.get_token_from_index(final_clauses[batch_index, beam_index].item(), "abst-clause-labels"),
-                "qarg": self.vocab.get_token_from_index(final_qargs[batch_index, beam_index].item(), "qarg-labels"),
+                "clause_score": clause_score,
                 "span":  scored_spans[batch_index][beam_index],
-                "score": final_scores[batch_index, beam_index].item(),
-                **extra_dict
+                "span_score": span_score,
+                "qargs": qarg_items
             }
         batch_of_beams = [
             [get_beam_item_in_batch(batch_index, beam_index) for beam_index in range(beam_sizes[batch_index].item())]
@@ -302,14 +281,16 @@ class E2EParser(Model):
         ]
 
         if self.is_logging:
-            beam = sorted(batch_of_beams[logging_batch_index], key = lambda x: -x["score"])
+            beam = sorted(
+                batch_of_beams[logging_batch_index],
+                key = lambda x: -(x["clause_score"] + x["span_score"] + max([s for _, _, s in x["qargs"]]))
+            )
             for i in range(0, min(10, len(beam))):
                 x = beam[i]
-                print("%.5f" % x["score"])
+                print("-----")
                 print("%10.5f  %s" % (x["clause_score"], x["clause"]))
-                print("%10.5f  %s" % (x["qarg_score"],   x["qarg"]))
                 print("%10.5f  %s" % (x["span_score"],   " ".join(tokens[x["span"].start() : x["span"].end() + 1]) + " (%s, %s)" % (x["span"].start(), x["span"].end())))
-                print("%10.5f    (joint factor)" % x["joint_score"])
+                print(" ".join(["%10.5f  %-10s" % (full_score, qarg) for qarg, _, full_score in sorted(x["qargs"], key = lambda x: -x[2])][0:4]))
 
         # Finally, if gold data is present, we compute the loss of our beam against the gold, and pass the results to the metric.
         loss_dict = {}
@@ -318,7 +299,7 @@ class E2EParser(Model):
                 logging_gold_set = metadata[logging_batch_index]["gold_set"]
                 print("Gold:")
                 for clause, qarg, (start, end) in logging_gold_set:
-                    print("%40s %-15s %s" % (clause, qarg, " ".join(tokens[start : end + 1] + (" (%s, %s)" % (start, end)))))
+                    print("%40s %-15s %s" % (clause, qarg, " ".join(tokens[start : end + 1]) + (" (%s, %s)" % (start, end))))
             # Identify the beam items that were present in gold to get a prediction mask.
             prediction_mask = torch.zeros_like(final_scores)
             for batch_index in range(batch_size):
@@ -326,9 +307,11 @@ class E2EParser(Model):
                 predicted_beam = batch_of_beams[batch_index]
                 for beam_index in range(beam_sizes[batch_index].item()):
                     i = predicted_beam[beam_index]
-                    predicted_tuple = (i["clause"], i["qarg"], (i["span"].start(), i["span"].end()))
-                    if predicted_tuple in gold_set:
-                        prediction_mask[batch_index, beam_index] = 1
+                    for qarg_index in range(self.vocab.get_vocab_size("qarg-labels")):
+                        qarg = self.vocab.get_token_from_index(qarg_index, namespace = "qarg-labels")
+                        predicted_tuple = (i["clause"], qarg, (i["span"].start(), i["span"].end()))
+                        if predicted_tuple in gold_set:
+                            prediction_mask[batch_index, beam_index, qarg_index] = 1
             # Binary classification loss
             loss_dict["loss"] = F.binary_cross_entropy_with_logits(final_scores, prediction_mask, weight = final_beam_mask, size_average = True)
             final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
