@@ -45,6 +45,7 @@ class E2EParser(Model):
                  metric_thresholds: List[float] = [0.05, 0.15, 0.25, 0.4, 0.5, 0.6, 0.75, 0.85, 0.95],
                  is_pretraining: bool = False,
                  is_logging: bool = False,
+                 use_product_of_probs: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(E2EParser, self).__init__(vocab, regularizer)
@@ -101,6 +102,7 @@ class E2EParser(Model):
 
         self.is_pretraining = is_pretraining
         self.is_logging = is_logging
+        self.use_product_of_probs = use_product_of_probs
 
         self.span_extractor = EndpointSpanExtractor(
             input_dim = self.span_hidden_dim,
@@ -255,7 +257,12 @@ class E2EParser(Model):
                 tan_probs, tan_set,
                 animacy_probs, animacy_labels.max(torch.zeros_like(animacy_labels)),
                 metadata)
-            return { "loss": (3 * (clause_loss + span_loss)) + qarg_loss + tan_loss + animacy_loss }
+            return { "loss": (3 * clause_loss) + (2 * span_loss) + qarg_loss + tan_loss + animacy_loss }
+
+        if self.use_product_of_probs:
+            top_clause_scores = torch.sigmoid(top_clause_scores).log()
+        if self.use_product_of_probs:
+            top_span_scores = torch.sigmoid(top_span_scores).log()
 
         # We take the cartesian product of clause/span beams --- but to save memory, we just do it with their scores, using broadcasting.
         top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = num_pruned_clauses
@@ -304,6 +311,8 @@ class E2EParser(Model):
         # then pass them to the qarg scorer, adding the original scores to get the final logits.
         # Shape: batch_size, final_beam_size, vocab_size("qarg-labels")
         qarg_scores = self.qarg_scorer(joint_embeddings)
+        if self.use_product_of_probs:
+            qarg_scores = torch.sigmoid(qarg_scores).log()
         final_scores = top_summed_scores \
             .expand(batch_size, self.final_beam_size, self.vocab.get_vocab_size("qarg-labels")) + \
             qarg_scores
@@ -337,7 +346,7 @@ class E2EParser(Model):
         if self.is_logging:
             beam = sorted(
                 batch_of_beams[logging_batch_index],
-                key = lambda x: -(x["clause_score"] + x["span_score"] + max([s for _, _, s in x["qargs"]]))
+                key = lambda x: -(max([s for _, _, s in x["qargs"]]))
             )
             for i in range(0, min(10, len(beam))):
                 x = beam[i]
@@ -368,12 +377,17 @@ class E2EParser(Model):
                             prediction_mask[batch_index, beam_index, qarg_index] = 1
             # Binary classification loss
             total_num_beam_items = final_beam_mask.sum().item()
-            beam_loss = F.binary_cross_entropy_with_logits(
-                final_scores, prediction_mask, weight = final_beam_mask, size_average = False
-            ) / total_num_beam_items
+            if self.use_product_of_probs:
+                beam_loss = F.binary_cross_entropy(
+                    final_scores.exp(), prediction_mask, weight = final_beam_mask, size_average = False
+                ) / total_num_beam_items
+            else:
+                beam_loss = F.binary_cross_entropy_with_logits(
+                    final_scores, prediction_mask, weight = final_beam_mask, size_average = False
+                ) / total_num_beam_items
             final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
             self.metric(final_probs.detach().long(), prediction_mask.detach().long(), metadata)
-            loss_dict["loss"] = beam_loss + tan_loss + animacy_loss
+            loss_dict["loss"] = (5 * beam_loss) + tan_loss + animacy_loss
 
         return {
             "full_beam": batch_of_beams,
