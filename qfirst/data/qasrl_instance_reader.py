@@ -117,11 +117,13 @@ class QasrlQuestionReader(QasrlInstanceReader):
         # construct mapping between clauses and sets of appropriate question slots
         clause_string_fields = []
         clause_strings = []
+        tan_strings = []
         tan_string_fields = []
         qarg_fields = []
         all_answer_fields = []
-        animacy_fields = []
+        # animacy_fields = []
         gold_tuples = []
+        animacy_label_map = {}
         for question_label in question_labels:
             # question_text_field = TextField(self._tokenizer.tokenize(question_label["questionString"]), token_indexers)
             # question_slots_dict = get_question_slot_fields(question_label["questionSlots"]) if self._include_slots else {}
@@ -152,6 +154,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             negation_string = "+neg" if question_label["isNegated"] else "-neg"
             tan_string = " ".join([tense_string, perfect_string, progressive_string, negation_string])
             tan_string_field = LabelField(label = tan_string, label_namespace = "tan-string-labels")
+            tan_strings.append(tan_string)
             tan_string_fields.append(tan_string_field)
 
             qarg_fields.append(LabelField(label = clause_slots["qarg"], label_namespace = "qarg-labels"))
@@ -159,16 +162,17 @@ class QasrlQuestionReader(QasrlInstanceReader):
             answer_fields = get_answer_fields(question_label, verb_fields["text"])
             all_answer_fields.append(answer_fields)
 
-            animacy_flag = -1
-            if clause_slots["qarg"] in clause_slots and clause_slots["qarg"] == "someone":
-                animacy_flag = 1
-            elif clause_slots["qarg"] in clause_slots and clause_slots["qarg"] == "something":
-                animacy_flag = 0
-            animacy_fields.append(LabelField(label = animacy_flag, skip_indexing = True))
+            for span_field in answer_fields["answer_spans"]:
+                if span_field.span_start > -1:
+                    s = (span_field.span_start, span_field.span_end)
+                    gold_tuples.append((clause_string, clause_slots["qarg"], s))
 
-            for s in answer_fields["answer_spans"]:
-                if s.span_start > -1:
-                    gold_tuples.append((clause_string, clause_slots["qarg"], (s.span_start, s.span_end)))
+                    if s not in animacy_label_map:
+                        animacy_label_map[s] = []
+                    if clause_slots["qarg"] in clause_slots and clause_slots[clause_slots["qarg"]] == "someone":
+                        animacy_label_map[s].append(1)
+                    elif clause_slots["qarg"] in clause_slots and clause_slots[clause_slots["qarg"]] == "something":
+                        animacy_label_map[s].append(0)
 
         all_clause_strings = set(clause_strings)
         all_spans = set([t[2] for t in gold_tuples])
@@ -183,6 +187,19 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 qarg_pretrain_span_fields.append(SpanField(span[0], span[1], verb_fields["text"]))
                 qarg_pretrain_multilabel_fields.append(MultiLabelField(valid_qargs, label_namespace = "qarg-labels"))
 
+        animacy_span_fields = []
+        animacy_label_fields = []
+        for s, labels in animacy_label_map.items():
+            if len(labels) > 0 and not (0 in labels and 1 in labels):
+                animacy_span_fields.append(SpanField(s[0], s[1], verb_fields["text"]))
+                animacy_label_fields.append(LabelField(label = labels[0], skip_indexing = True))
+
+        tan_multilabel_field = MultiLabelField(list(set(tan_strings)), label_namespace = "tan-string-labels")
+
+        if len(animacy_span_fields) == 0:
+            animacy_span_fields = [SpanField(-1, -1, verb_fields["text"])]
+            animacy_label_fields = [LabelField(label = -1, skip_indexing = True)]
+
         if len(clause_string_fields) > 0:
             yield {
                 **verb_fields,
@@ -193,7 +210,9 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
                 "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
                 "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
-                "animacy_flags": ListField(animacy_fields),
+                "tan_set": tan_multilabel_field,
+                "animacy_spans": ListField(animacy_span_fields),
+                "animacy_labels": ListField(animacy_label_fields),
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
                 }),

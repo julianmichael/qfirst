@@ -19,31 +19,23 @@ class E2EPretrainingMetric(Metric):
         self.reset()
 
     def reset(self):
-        self._all_clause_confs = [{
-            "threshold": threshold,
-            "tp": 0,
-            "tn": 0,
-            "fp": 0,
-            "fn": 0
-        } for threshold in self._thresholds]
-        self._all_span_confs = [{
-            "threshold": threshold,
-            "tp": 0,
-            "tn": 0,
-            "fp": 0,
-            "fn": 0
-        } for threshold in self._thresholds]
-        self._all_qarg_confs = [{
-            "threshold": threshold,
-            "tp": 0,
-            "tn": 0,
-            "fp": 0,
-            "fn": 0
-        } for threshold in self._thresholds]
+        def make_confs():
+            return [{
+                "threshold": threshold,
+                "tp": 0,
+                "tn": 0,
+                "fp": 0,
+                "fn": 0
+            } for threshold in self._thresholds]
+        self._all_clause_confs = make_confs()
+        self._all_span_confs = make_confs()
         self._gold_span_coverage = {
             "covered": 0,
             "true": 0
         }
+        self._all_qarg_confs = make_confs()
+        self._all_tan_confs = make_confs()
+        self._all_animacy_confs = make_confs()
         return
 
     def __call__(self,
@@ -53,16 +45,22 @@ class E2EPretrainingMetric(Metric):
                  span_labels,
                  qarg_probs,
                  qarg_labels,
+                 tan_probs, tan_labels,
+                 animacy_probs, animacy_labels,
                  metadata):
-        for conf in self._all_clause_confs:
-            t = conf["threshold"]
-            clause_predictions = (clause_probs >= t).long()
-            clause_num_positive = clause_predictions.sum().item()
-            clause_num_true = clause_labels.sum().item()
-            clause_num_tp = torch.min(clause_predictions, clause_labels.long()).sum().item()
-            conf["tp"] += clause_num_tp
-            conf["fn"] += clause_num_true - clause_num_tp
-            conf["fp"] += clause_num_positive - clause_num_tp
+        def compute_confs(confs, probs, labels, num_true = None):
+            if num_true is None:
+                num_true = labels.sum().item()
+            for conf in confs:
+                t = conf["threshold"]
+                predictions = (probs >= t).long()
+                num_positive = predictions.sum().item()
+                num_tp = torch.min(predictions, labels.long()).sum().item()
+                conf["tp"] += num_tp
+                conf["fn"] += num_true - num_tp
+                conf["fp"] += num_positive - num_tp
+
+        compute_confs(self._all_clause_confs, clause_probs, clause_labels)
 
         num_gold_spans = sum(
             len(set([
@@ -73,27 +71,13 @@ class E2EPretrainingMetric(Metric):
             ]))
             for m in metadata
         )
-        for conf in self._all_span_confs:
-            t = conf["threshold"]
-            span_predictions = (span_probs >= t).long()
-            span_num_positive = span_predictions.sum().item()
-            span_num_true = num_gold_spans
-            span_num_tp = torch.min(span_predictions, span_labels.long()).sum().item()
-            conf["tp"] += span_num_tp
-            conf["fn"] += span_num_true - span_num_tp
-            conf["fp"] += span_num_positive - span_num_tp
+        compute_confs(self._all_span_confs, span_probs, span_labels, num_gold_spans)
         self._gold_span_coverage["true"] += num_gold_spans
         self._gold_span_coverage["covered"] += span_labels.sum().item()
 
-        for conf in self._all_qarg_confs:
-            t = conf["threshold"]
-            qarg_predictions = (qarg_probs >= t).long()
-            qarg_num_positive = qarg_predictions.sum().item()
-            qarg_num_true = qarg_labels.sum().item()
-            qarg_num_tp = torch.min(qarg_predictions, qarg_labels.long()).sum().item()
-            conf["tp"] += qarg_num_tp
-            conf["fn"] += qarg_num_true - qarg_num_tp
-            conf["fp"] += qarg_num_positive - qarg_num_tp
+        compute_confs(self._all_qarg_confs, qarg_probs, qarg_labels)
+        compute_confs(self._all_tan_confs, tan_probs, tan_labels)
+        compute_confs(self._all_animacy_confs, animacy_probs, animacy_labels)
 
     def get_metric(self, reset = False):
         def get_stats(conf):
@@ -123,10 +107,14 @@ class E2EPretrainingMetric(Metric):
         clause_metric_dict = max([get_stats(conf) for conf in self._all_clause_confs], key = lambda d: d["f1"])
         span_metric_dict = max([get_stats(conf) for conf in self._all_span_confs], key = lambda d: d["f1"])
         qarg_metric_dict = max([get_stats(conf) for conf in self._all_qarg_confs], key = lambda d: d["f1"])
+        tan_metric_dict = max([get_stats(conf) for conf in self._all_tan_confs], key = lambda d: d["f1"])
+        animacy_metric_dict = max([get_stats(conf) for conf in self._all_tan_confs], key = lambda d: d["f1"])
         metric_dict = {
-            **{ ("clause-%s" % k) : v for k, v in clause_metric_dict.items() },
-            **{   ("span-%s" % k) : v for k, v in   span_metric_dict.items() },
-            **{   ("qarg-%s" % k) : v for k, v in   qarg_metric_dict.items() },
+            **{  ("clause-%s" % k) : v for k, v in  clause_metric_dict.items() },
+            **{    ("span-%s" % k) : v for k, v in    span_metric_dict.items() },
+            **{    ("qarg-%s" % k) : v for k, v in    qarg_metric_dict.items() },
+            **{     ("tan-%s" % k) : v for k, v in     tan_metric_dict.items() },
+            **{ ("animacy-%s" % k) : v for k, v in animacy_metric_dict.items() },
             "gold_spans_in_beam": get_cov(self._gold_span_coverage)
         }
 

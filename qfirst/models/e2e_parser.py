@@ -38,7 +38,6 @@ class E2EParser(Model):
                  clause_hidden_dim: int = 128,
                  num_pruned_clauses: int = 4,
                  qarg_hidden_dim: int = 128,
-                 num_pruned_qargs: int = 5,
                  span_hidden_dim: int = 128,
                  final_beam_size: int = 128,
                  final_embedding_dim: int = 128,
@@ -46,7 +45,6 @@ class E2EParser(Model):
                  metric_thresholds: List[float] = [0.25, 0.5, 0.75],
                  is_pretraining: bool = False,
                  is_logging: bool = False,
-                 is_outputting_full_data: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(E2EParser, self).__init__(vocab, regularizer)
@@ -55,13 +53,13 @@ class E2EParser(Model):
         self.span_hidden_dim = span_hidden_dim
         self.clause_hidden_dim = clause_hidden_dim
         self.qarg_hidden_dim = qarg_hidden_dim
+        self.tan_hidden_dim = tan_hidden_dim
         self.final_embedding_dim = final_embedding_dim
 
         self.predicate_feature_embedding = Embedding(2, predicate_feature_dim)
         self.embedding_dropout = Dropout(p=embedding_dropout)
 
         self.num_pruned_clauses = num_pruned_clauses
-        self.num_pruned_qargs = num_pruned_qargs
         self.final_beam_size = final_beam_size
 
         self.clause_embedding = Embedding(vocab.get_vocab_size("abst-clause-labels"), final_embedding_dim)
@@ -95,6 +93,11 @@ class E2EParser(Model):
             Linear(self.span_hidden_dim, self.final_embedding_dim), ReLU()
         )
 
+        self.tan_scorer = Sequential(
+            Linear(self.encoder_output_projected_dim, self.tan_hidden_dim), ReLU(),
+            Linear(self.tan_hidden_dim, self.vocab.get_vocab_size("tan-string-labels"))
+        )
+
         self.score_pruner = Pruner(lambda x: x)
 
         self.joint_scorer = Linear(self.final_embedding_dim, 1)
@@ -104,9 +107,8 @@ class E2EParser(Model):
 
         self.is_pretraining = is_pretraining
         self.is_logging = is_logging
-        self.is_outputting_full_data = is_outputting_full_data
 
-        self.pretraining_span_extractor = EndpointSpanExtractor(
+        self.span_extractor = EndpointSpanExtractor(
             input_dim = self.span_hidden_dim,
             combination = "x,y"
         )
@@ -125,10 +127,12 @@ class E2EParser(Model):
                 clause_set: torch.LongTensor = None,
                 tan_strings: torch.LongTensor = None,
                 qargs: torch.LongTensor = None,
-                animacy_flags: torch.LongTensor = None,
                 answer_spans: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
                 num_invalids: torch.LongTensor = None,
+                tan_set = None,
+                animacy_spans = None,
+                animacy_labels = None,
                 metadata = None,
                 qarg_pretrain_clauses = None,
                 qarg_pretrain_spans = None,
@@ -143,23 +147,31 @@ class E2EParser(Model):
         # Shape: batch_size, encoder_output_projected_dim
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
 
-        # From the same encoded text, we also assemble a representation for every answer span.
-        # Shapes: batch_size, num_spans, span_hidden_dim; batch_size, num_spans
-        span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, text_mask, text_mask)
-
         # We make predictions of which clauses and answer spans are most likely to be used for this verb, and prune each into its own beam.
         clause_scores = self.clause_scorer(pred_rep)
-
-        # Shape: batch_size, 2 * num_tokens; batch_size, 2 * num_tokens; batch_size, 2 * num_tokens, 1
-        top_span_hidden, top_span_mask, top_span_indices, top_span_scores = self.span_pruner(
-            span_hidden, span_mask.float(), 2 * num_tokens
-        )
 
         # Shapes: batch_size, num_pruned_clauses; batch_size, num_pruned_clauses, 1
         _, _, top_clause_indices, top_clause_scores = self.score_pruner(
             clause_scores.unsqueeze(-1),
             torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = pred_rep.device),
             self.num_pruned_clauses
+        )
+
+        # From the same encoded text, we also assemble a representation for every answer span.
+        # Shapes: batch_size, num_spans, span_hidden_dim; batch_size, num_spans
+        span_hidden, span_mask = self.span_hidden(encoded_text, encoded_text, text_mask, text_mask)
+
+        # Shape: batch_size, 2 * num_tokens; batch_size, 2 * num_tokens; batch_size, 2 * num_tokens, 1
+        top_span_hidden, top_span_mask, top_span_indices, top_span_scores = self.span_pruner(
+            span_hidden, span_mask.float(), 2 * num_tokens
+        )
+
+        # We also predict the TAN properties of the clause...
+        tan_scores, tan_probs, tan_loss = self._predict_tan(pred_rep, tan_set)
+
+        # and the animacy properties of all of the spans.
+        animacy_scores, animacy_probs, animacy_loss = self._predict_animacy(
+            encoded_text, text_mask, animacy_spans, animacy_labels
         )
 
         import random
@@ -211,7 +223,7 @@ class E2EParser(Model):
 
             # get spans of input instances
             # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
-            span_pre_embeddings = self.pretraining_span_extractor(encoded_text, qarg_pretrain_spans, text_mask, qarg_pretrain_mask)
+            span_pre_embeddings = self.span_extractor(encoded_text, qarg_pretrain_spans, text_mask, qarg_pretrain_mask)
             spanemb_A, spanemb_B = torch.chunk(span_pre_embeddings, 2, dim = -1)
             input_spans_hidden = self.span_hidden.hiddenA(spanemb_A) + \
                                  self.span_hidden.hiddenB(spanemb_B)
@@ -226,27 +238,29 @@ class E2EParser(Model):
 
             # score and compute qarg loss
             qarg_pretrain_scores = self.qarg_scorer(qarg_inputs)
-            print("-----")
-            print(qarg_pretrain_scores.size())
-            print(qarg_pretrain_labels.size())
             final_qarg_pretrain_mask = qarg_pretrain_mask \
                 .unsqueeze(-1) \
                 .expand(batch_size, num_pretrain_instances, self.vocab.get_vocab_size("qarg-labels")) \
                 .float()
-            print(final_qarg_pretrain_mask.size())
             qarg_loss = F.binary_cross_entropy_with_logits(
                 qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = True
             )
             pretrain_qarg_probs = torch.sigmoid(qarg_pretrain_scores).squeeze(-1) * final_qarg_pretrain_mask
 
-            self.metric(clause_probs, clause_set, span_probs, span_prediction_mask, pretrain_qarg_probs, qarg_pretrain_labels, metadata)
-            return { "loss": clause_loss + span_loss + qarg_loss }
+            self.metric(
+                clause_probs, clause_set,
+                span_probs, span_prediction_mask,
+                pretrain_qarg_probs, qarg_pretrain_labels,
+                tan_probs, tan_set,
+                animacy_probs, animacy_labels,
+                metadata)
+            return { "loss": clause_loss + span_loss + qarg_loss + tan_loss + animacy_loss }
 
         # We take the cartesian product of clause/span beams --- but to save memory, we just do it with their scores, using broadcasting.
         top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = num_pruned_clauses
         top_spans_reshaped   =   top_span_scores.view(batch_size,   1, -1) # -1 = 2 * num_tokens
         # We construct a square of scores, then flatten it for the next step.
-        # Shape: batch_size, num_pruned_clauses, num_pruned_qargs, 2 * num_tokens
+        # Shape: batch_size, num_pruned_clauses, 2 * num_tokens
         summed_scores = (top_clauses_reshaped + top_spans_reshaped) \
             .view(  batch_size,                          -1, 1)
         summed_mask = top_span_mask \
@@ -275,9 +289,8 @@ class E2EParser(Model):
         intermediate_beam_mask = top_summed_mask
         beam_sizes = intermediate_beam_mask.long().sum(1)
 
-        if self.is_outputting_full_data or self.is_logging:
-            final_clause_scores = batched_index_select(top_clause_scores, final_clause_index_indices).squeeze(-1)
-            final_span_scores = batched_index_select(top_span_scores, final_span_index_indices).squeeze(-1)
+        final_clause_scores = batched_index_select(top_clause_scores, final_clause_index_indices).squeeze(-1)
+        final_span_scores = batched_index_select(top_span_scores, final_span_index_indices).squeeze(-1)
 
         # We construct their embeddings under a concat + linear transformation,
         expanded_pred_embedding = self.pred_final_hidden(pred_rep) \
@@ -452,3 +465,24 @@ class E2EParser(Model):
                         labels[b, arg_indexes[b, s]] = 1
 
         return torch.autograd.Variable(labels.float())
+
+    def _predict_tan(self, pred_rep, tan_set):
+        tan_scores = self.tan_scorer(pred_rep)
+        tan_loss = F.binary_cross_entropy_with_logits(tan_scores, tan_set, size_average = True)
+        tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
+        return tan_scores, tan_probs, tan_loss
+
+    def _predict_animacy(self, encoded_text, text_mask, animacy_spans, animacy_labels):
+        _, num_animacy_instances, _ = animacy_spans.size()
+        animacy_mask = (animacy_spans[:, :, 0] >= 0).float()
+        # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
+        animacy_span_pre_embeddings = self.span_extractor(encoded_text, animacy_spans, text_mask, animacy_mask.long())
+        spanemb_A, spanemb_B = torch.chunk(animacy_span_pre_embeddings, 2, dim = -1)
+        animacy_spans_hidden = self.span_hidden.hiddenA(spanemb_A) + \
+                               self.span_hidden.hiddenB(spanemb_B)
+        animacy_scores = self.animacy_scorer(animacy_spans_hidden).squeeze(-1)
+        animacy_loss = F.binary_cross_entropy_with_logits(
+            animacy_scores, animacy_labels.float(), weight = animacy_mask, size_average = True
+        )
+        animacy_probs = torch.sigmoid(animacy_scores).squeeze(-1) * animacy_mask
+        return animacy_scores, animacy_probs, animacy_loss
