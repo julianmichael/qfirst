@@ -30,24 +30,29 @@ class QasrlReader(DatasetReader):
         self._instance_reader = instance_reader
         self._include_metadata = include_metadata
         self._tokenizer = WordTokenizer()
+        self._num_verbs = 0
+        self._num_instances = 0
 
     @overrides
     def _read(self, file_list: str):
-        num_verbs = 0
-        num_instances = 0
+        self._num_verbs = 0
+        self._num_instances = 0
         for file_path in file_list.split(","):
             if file_path.strip() == "":
                 continue
             logger.info("Reading QASRL instances from dataset file at: %s", file_path)
             for line in read_lines(cached_path(file_path)):
-                item = json.loads(line)
-                for verb_dict in self._qasrl_filter.filter_sentence(item):
-                    num_verbs += 1
-                    for instance_dict in self._instance_reader.read_instances(self._token_indexers, **verb_dict):
-                        num_instances += 1
-                        instance_metadata = instance_dict.pop("metadata", {})
-                        if self._include_metadata:
-                            instance_dict["metadata"] = MetadataField({**instance_metadata, **verb_dict})
-                        yield Instance(instance_dict)
-        logger.info("Produced %d instances for %d verbs." % (num_instances, num_verbs))
+                for instance in self.sentence_json_to_instances(json.loads(line)):
+                    yield instance
+        logger.info("Produced %d instances for %d verbs." % (self._num_instances, self._num_verbs))
+
+    def sentence_json_to_instances(self, sentence_json):
+        for verb_dict in self._qasrl_filter.filter_sentence(sentence_json):
+            self._num_verbs += 1
+            for instance_dict in self._instance_reader.read_instances(self._token_indexers, **verb_dict):
+                self._num_instances += 1
+                instance_metadata = instance_dict.pop("metadata", {})
+                if self._include_metadata:
+                    instance_dict["metadata"] = MetadataField({**instance_metadata, **verb_dict})
+                yield Instance(instance_dict)
 

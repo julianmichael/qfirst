@@ -46,6 +46,7 @@ class E2EParser(Model):
                  is_pretraining: bool = False,
                  is_logging: bool = False,
                  use_product_of_probs: bool = False,
+                 num_tans_to_output: int = 10,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(E2EParser, self).__init__(vocab, regularizer)
@@ -103,6 +104,7 @@ class E2EParser(Model):
         self.is_pretraining = is_pretraining
         self.is_logging = is_logging
         self.use_product_of_probs = use_product_of_probs
+        self.num_tans_to_output = num_tans_to_output
 
         self.span_extractor = EndpointSpanExtractor(
             input_dim = self.span_hidden_dim,
@@ -161,6 +163,7 @@ class E2EParser(Model):
         top_span_hidden, top_span_mask, top_span_indices, top_span_scores = self.span_pruner(
             span_hidden, span_mask.float(), 2 * num_tokens
         )
+        initial_scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask)
 
         # We also predict the TAN properties of the clause...
         tan_scores, tan_probs, tan_loss = self._predict_tan(pred_rep, tan_set)
@@ -184,9 +187,8 @@ class E2EParser(Model):
             for i in sorted(range(min(self.num_pruned_clauses, 10)), key = lambda i: -clause_beam_scores[i]):
                 print("%10.5f  %s" % (clause_beam_scores[i], self.vocab.get_token_from_index(clause_beam[i].item(), namespace = "abst-clause-labels")))
             print()
-            prelim_scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask)[logging_batch_index]
             for i in sorted(range(int(top_span_mask[logging_batch_index].sum().item())), key = lambda i: -top_span_scores[logging_batch_index, i])[0:10]:
-                s = prelim_scored_spans[i]
+                s = initial_scored_spans[logging_batch_index][i]
                 print("%10.5f  %s" % (top_span_scores[logging_batch_index, i], " ".join(tokens[s.start() : s.end() + 1]) + " " + str(s)))
 
         # If we're pretraining, we stop and calculate losses for the clause and span scores just against the gold sets.
@@ -195,7 +197,7 @@ class E2EParser(Model):
                 raise ConfigurationError("Must give gold labels during pretraining")
             clause_probs = torch.sigmoid(clause_scores)
             clause_loss = F.binary_cross_entropy_with_logits(
-                clause_scores, clause_set, size_average = False
+                clause_scores, clause_set, reduction = "sum"
             ) / (batch_size * self.vocab.get_vocab_size("abst-clause-labels"))
             span_probs = torch.sigmoid(top_span_scores).squeeze(-1) * top_span_mask.float()
             gold_span_labels = self._get_prediction_map(
@@ -210,7 +212,7 @@ class E2EParser(Model):
             total_num_spans = top_span_mask.sum().item()
             span_loss = F.binary_cross_entropy_with_logits(
                 top_span_scores.squeeze(-1), span_prediction_mask,
-                weight = top_span_mask.float(), size_average = False
+                weight = top_span_mask.float(), reduction = "sum"
             ) / total_num_spans
 
             # qarg classifier pretraining
@@ -245,7 +247,7 @@ class E2EParser(Model):
 
             total_num_qarg_instances = final_qarg_pretrain_mask.sum().item()
             qarg_loss = F.binary_cross_entropy_with_logits(
-                qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, size_average = False
+                qarg_pretrain_scores, qarg_pretrain_labels, weight = final_qarg_pretrain_mask, reduction = "sum"
             ) / total_num_qarg_instances
             pretrain_qarg_probs = torch.sigmoid(qarg_pretrain_scores).squeeze(-1) * final_qarg_pretrain_mask
 
@@ -323,34 +325,62 @@ class E2EParser(Model):
         # Now we produce the output data structures.
         scored_spans = self._to_scored_spans(span_mask, final_span_indices, intermediate_beam_mask)
         def get_beam_item_in_batch(batch_index, beam_index):
-            clause_score = final_clause_scores[batch_index, beam_index].item()
-            span_score = final_span_scores[batch_index, beam_index].item()
+            clause_score = final_clause_scores[batch_index, beam_index]
+            span_score = final_span_scores[batch_index, beam_index]
             item_qarg_scores = qarg_scores[batch_index, beam_index]
             qarg_items = [
-                (self.vocab.get_token_from_index(i, namespace = "qarg-labels"), item_qarg_scores[i].item(), item_qarg_scores[i].item() + clause_score + span_score)
+                (self.vocab.get_token_from_index(i, namespace = "qarg-labels"), item_qarg_scores[i].item())
                 for i in range(self.vocab.get_vocab_size("qarg-labels"))
             ]
+            qarg, qarg_score = max(qarg_items, key = lambda t: t[1])
+            total_score = clause_score + span_score + qarg_score
+            if self.use_product_of_probs:
+                total_prob = total_score.exp()
+            else:
+                total_prob = torch.sigmoid(total_score)
             return {
                 "clause": self.vocab.get_token_from_index(final_clauses[batch_index, beam_index].item(), "abst-clause-labels"),
-                "clause_score": clause_score,
+                "clause_score": clause_score.item(),
                 "span":  scored_spans[batch_index][beam_index],
-                "span_score": span_score,
-                "qargs": qarg_items
+                "span_score": span_score.item(),
+                "qarg": qarg,
+                "qarg_score": qarg_score,
+                "total_prob": total_prob.item(),
+                "all_qargs": qarg_items
             }
         batch_of_beams = [
             [get_beam_item_in_batch(batch_index, beam_index) for beam_index in range(beam_sizes[batch_index].item())]
             for batch_index in range(batch_size)
         ]
 
-        # batch_of_tans = [
-        #     [get_animacy_label(batch_index, span_index) for span_index in ]
-        #     for batch_index in range(batch_size)
-        # ]
 
-        # batch_of_animacy = [
-        #     ___
-        #     for batch_index in range(batch_size)
-        # ]
+        top_span_animacy_scores = self.animacy_scorer(top_span_hidden).squeeze(-1)
+        top_span_animacy_probs = torch.sigmoid(top_span_animacy_scores).squeeze(-1) * top_span_mask
+        def get_animacy_info(batch_index, span_index):
+            span = initial_scored_spans[batch_index][span_index]
+            prob = top_span_animacy_probs[batch_index, span_index].item()
+            return (span, prob)
+        batch_of_animacies = [
+            [get_animacy_info(batch_index, span_index) for span_index in range(len(initial_scored_spans[batch_index]))]
+            for batch_index in range(batch_size)
+        ]
+
+        batch_of_tans = [
+            [(self.vocab.get_token_from_index(i, namespace = "tan-string-labels"), tan_probs[batch_index, i].item())
+             for i in sorted(
+                range(self.vocab.get_vocab_size("tan-string-labels")),
+                key = lambda i: -tan_probs[batch_index, i].item()
+             )[0:self.num_tans_to_output]]
+            for batch_index in range(batch_size)
+        ]
+
+        full_batch = []
+        for i in range(batch_size):
+            full_batch.append({
+                "beam": batch_of_beams[i],
+                "animacies": batch_of_animacies[i],
+                "tans": batch_of_tans[i]
+            })
 
         if self.is_logging:
             beam = sorted(
@@ -389,18 +419,18 @@ class E2EParser(Model):
             if self.use_product_of_probs:
                 final_probs = final_scores.exp().squeeze(-1) * final_beam_mask.float()
                 beam_loss = F.binary_cross_entropy(
-                    final_probs.unsqueeze(-1), prediction_mask, weight = final_beam_mask, size_average = False
+                    final_probs, prediction_mask, weight = final_beam_mask, reduction = "sum"
                 ) / total_num_beam_items
             else:
                 beam_loss = F.binary_cross_entropy_with_logits(
-                    final_scores, prediction_mask, weight = final_beam_mask, size_average = False
+                    final_scores, prediction_mask, weight = final_beam_mask, reduction = "sum"
                 ) / total_num_beam_items
                 final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
-            self.metric(final_probs.detach().long(), prediction_mask.detach().long(), metadata)
+            self.metric(prediction_mask.sum().item(), full_batch, metadata)
             loss_dict["loss"] = (5 * beam_loss) + tan_loss + animacy_loss
 
         return {
-            "full_beam": batch_of_beams,
+            "full_beams": full_batch,
             **loss_dict
         }
 
@@ -491,12 +521,12 @@ class E2EParser(Model):
         batch_size = pred_rep.size(0)
         tan_scores = self.tan_scorer(pred_rep)
         tan_loss = F.binary_cross_entropy_with_logits(
-            tan_scores, tan_set, size_average = False
+            tan_scores, tan_set, reduction = "sum"
         ) / (batch_size * self.vocab.get_vocab_size("tan-string-labels"))
         tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
         return tan_scores, tan_probs, tan_loss
 
-    def _predict_animacy(self, encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels):
+    def _predict_animacy(self, encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels = None):
         _, num_animacy_instances, _ = animacy_spans.size()
         # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
         animacy_span_pre_embeddings = self.span_extractor(encoded_text, animacy_spans, text_mask, animacy_mask.long())
@@ -505,8 +535,11 @@ class E2EParser(Model):
                                self.span_hidden.hiddenB(spanemb_B)
         animacy_scores = self.animacy_scorer(animacy_spans_hidden).squeeze(-1)
         actual_num_animacy_instances = animacy_mask.sum().item()
-        animacy_loss = F.binary_cross_entropy_with_logits(
-            animacy_scores, animacy_labels.float(), weight = animacy_mask, size_average = False
-        ) / actual_num_animacy_instances
         animacy_probs = torch.sigmoid(animacy_scores).squeeze(-1) * animacy_mask
-        return animacy_scores, animacy_probs, animacy_loss
+        if animacy_labels is not None:
+            animacy_loss = F.binary_cross_entropy_with_logits(
+                animacy_scores, animacy_labels.float(), weight = animacy_mask, reduction = "sum"
+            ) / actual_num_animacy_instances
+            return animacy_scores, animacy_probs, animacy_loss
+        else:
+            return animacy_scores, animacy_probs
