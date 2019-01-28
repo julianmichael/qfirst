@@ -43,7 +43,7 @@ object Instances {
   )
 
   case class VerbInstance(
-    sentence: SentenceInstance,
+    goldSentence: Sentence,
     gold: VerbEntry,
     pred: VerbPrediction
   )
@@ -54,12 +54,13 @@ object Instances {
       case (verbIndex, goldVerb) =>
         val predVerb = sentence.pred.verbs.find(_.verbIndex == verbIndex)
         if(predVerb.isEmpty) System.err.println("Could not find predicted verb: TODO better error message")
-        predVerb.map(VerbInstance(sentence, goldVerb, _))
+        predVerb.map(VerbInstance(sentence.gold, goldVerb, _))
     }
   }
 
   case class QASetInstance(
-    verb: VerbInstance,
+    goldSentence: Sentence,
+    goldVerb: VerbEntry,
     goldValid: Map[String, QuestionLabel],
     goldInvalid: Map[String, QuestionLabel],
     pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
@@ -84,7 +85,7 @@ object Instances {
       )
     )
     val predQAs = filterPred(possiblyOracleQuestionsVerb)
-    QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
+    QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
   }
 
   def verbToQASetWithRanking(
@@ -95,7 +96,7 @@ object Instances {
     val clause = getClause(verb)
     val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
     val predQAs = filterPred(verb.pred, clause)
-    QASetInstance(verb, goldValidQAs, goldInvalidQAs, predQAs)
+    QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
   }
 
   case class QuestionInstance(
@@ -388,8 +389,8 @@ object Instances {
       }
     }
 
-    def sentenceLength(bounds: NonEmptyList[Int]) = (sent: SentenceInstance) => {
-      evalBucketBounds(bounds)(sent.gold.sentenceTokens.size)
+    def sentenceLength(bounds: NonEmptyList[Int]) = (sent: Sentence) => {
+      evalBucketBounds(bounds)(sent.sentenceTokens.size)
     }
 
     def verbFreq(
@@ -403,7 +404,7 @@ object Instances {
     def goldDepLength(bounds: NonEmptyList[Int]) = (alignedSpan: AlignedSpanInstance) => {
       alignedSpan.span.right.fold("n/a")(
         _.flatMap(s => List(s.begin, s.end - 1))
-          .map(_ - alignedSpan.spanSet.qaSet.verb.gold.verbIndex)
+          .map(_ - alignedSpan.spanSet.qaSet.goldVerb.verbIndex)
           .map(math.abs).min <| evalBucketBounds(bounds)
       )
     }
@@ -411,7 +412,7 @@ object Instances {
     def predDepLength(bounds: NonEmptyList[Int]) = (alignedSpan: AlignedSpanInstance) => {
       alignedSpan.span.left.fold("n/a")(
         _.flatMap(s => List(s.begin, s.end - 1))
-          .map(_ - alignedSpan.spanSet.qaSet.verb.gold.verbIndex)
+          .map(_ - alignedSpan.spanSet.qaSet.goldVerb.verbIndex)
           .map(math.abs).min <| evalBucketBounds(bounds)
       )
     }

@@ -219,35 +219,6 @@ object ClauseRankApp extends IOApp {
       clauses)
   }
 
-  def readClausalPredictions(path: NIOPath, ec: ExecutionContext) = {
-    import io.circe.jawn
-    import fs2.{io, text}
-    io.file.readAll[IO](path, ec, 4096)
-      .through(text.utf8Decode)
-      .through(text.lines)
-      .filter(_.nonEmpty)
-      .flatMap(line => Stream.fromEither[IO](jawn.decode[ClausalSentencePrediction](line).left.map(new RuntimeException(_))))
-      .handleErrorWith(e => Stream.eval(IO(println(s"Unexpected error when reading prediction JSON: $e"))).drain)
-  }
-
-  def readClauseInfo(path: NIOPath, ec: Resource[IO, ExecutionContextExecutorService]) = {
-    import qfirst.frames._
-    import io.circe.jawn
-    import fs2.{io, text}
-    Stream.resource(ec).flatMap { _ec =>
-      io.file.readAll[IO](path, _ec, 4096)
-        .through(text.utf8Decode)
-        .through(text.lines)
-        .filter(_.nonEmpty)
-        .flatMap(line => Stream.fromEither[IO](jawn.decode[FrameInfo](line).left.map(new RuntimeException(_))))
-        .handleErrorWith(e => Stream.eval(IO(println(s"Unexpected error when reading clause info JSON: $e"))).drain)
-        .map(fi => Map(fi.sentenceId -> Map(fi.verbIndex -> Map(fi.question -> List(fi)))))
-    }.compile.foldMonoid.map(
-      // non-ideal.. would instead want a recursive combine that overrides and doesn't need the end mapping
-      _.transform { case (sid, vs) => vs.transform { case (vi, qs) => qs.transform { case (q, fis) => fis.head } } }
-    )
-  }
-
   def writeInstances(
     goldPath: NIOPath,
     goldClauseInfoPath: NIOPath,
@@ -256,16 +227,13 @@ object ClauseRankApp extends IOApp {
   ): IO[Unit] = {
     import io.circe.syntax._
     import fs2.text
-    import io.circe.jawn
     val printer = io.circe.Printer.noSpaces
-    val blockingExecutionContext =
-      Resource.make(IO(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(2))))(ec => IO(ec.shutdown()))
     for {
       numInstances <- Ref[IO].of(0)
       data <- IO(Data.readDataset(goldPath))
-      clauseInfo <- readClauseInfo(goldClauseInfoPath, blockingExecutionContext)
-      _ <- Stream.resource(blockingExecutionContext).flatMap { ec =>
-        readClausalPredictions(predictionsPath, ec)
+      clauseInfo <- FileUtil.readClauseInfo(goldClauseInfoPath)
+      _ <- Stream.resource(FileUtil.blockingExecutionContext).flatMap { ec =>
+        FileUtil.streamJsonLines[ClausalSentencePrediction](predictionsPath, ec)
           .flatMap(pred => getInstancesForSentence(
                      data.sentences(pred.sentenceId),
                      clauseInfo(pred.sentenceId),

@@ -101,7 +101,7 @@ object ClausalQuestion {
     pastParticiple = "pastParticiple".lowerCase
   )
 
-  private def getAnswerSlotFromString(str: LowerCaseString): ArgumentSlot = str.toString match {
+  def getAnswerSlotFromString(str: LowerCaseString): ArgumentSlot = str.toString match {
     case "subj" => Subj
     case "obj" => Obj
     case "prep1-obj" => Prep1

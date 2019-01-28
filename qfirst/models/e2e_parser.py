@@ -169,10 +169,11 @@ class E2EParser(Model):
         tan_scores, tan_probs, tan_loss = self._predict_tan(pred_rep, tan_set)
 
         # and the animacy properties of all of the spans.
-        animacy_mask = (animacy_spans[:, :, 0] >= 0).float()
-        animacy_scores, animacy_probs, animacy_loss = self._predict_animacy(
-            encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels
-        )
+        if animacy_labels is not None:
+            animacy_mask = (animacy_spans[:, :, 0] >= 0).float()
+            animacy_scores, animacy_probs, animacy_loss = self._predict_animacy(
+                encoded_text, text_mask, animacy_spans, animacy_mask, animacy_labels
+            )
 
         import random
         logging_batch_index = int(random.random() * batch_size)
@@ -374,14 +375,6 @@ class E2EParser(Model):
             for batch_index in range(batch_size)
         ]
 
-        full_batch = []
-        for i in range(batch_size):
-            full_batch.append({
-                "beam": batch_of_beams[i],
-                "animacies": batch_of_animacies[i],
-                "tans": batch_of_tans[i]
-            })
-
         if self.is_logging:
             beam = sorted(
                 batch_of_beams[logging_batch_index],
@@ -426,11 +419,13 @@ class E2EParser(Model):
                     final_scores, prediction_mask, weight = final_beam_mask, reduction = "sum"
                 ) / total_num_beam_items
                 final_probs = torch.sigmoid(final_scores).squeeze(-1) * final_beam_mask.float()
-            self.metric(prediction_mask.sum().item(), full_batch, metadata)
+            self.metric(prediction_mask.sum().item(), batch_of_beams, metadata)
             loss_dict["loss"] = (5 * beam_loss) + tan_loss + animacy_loss
 
         return {
-            "full_beams": full_batch,
+            "beam": batch_of_beams,
+            "animacies": batch_of_animacies,
+            "tans": batch_of_tans,
             **loss_dict
         }
 
@@ -520,9 +515,11 @@ class E2EParser(Model):
     def _predict_tan(self, pred_rep, tan_set):
         batch_size = pred_rep.size(0)
         tan_scores = self.tan_scorer(pred_rep)
-        tan_loss = F.binary_cross_entropy_with_logits(
-            tan_scores, tan_set, reduction = "sum"
-        ) / (batch_size * self.vocab.get_vocab_size("tan-string-labels"))
+        tan_loss = None
+        if tan_set is not None:
+            tan_loss = F.binary_cross_entropy_with_logits(
+                tan_scores, tan_set, reduction = "sum"
+            ) / (batch_size * self.vocab.get_vocab_size("tan-string-labels"))
         tan_probs = torch.sigmoid(tan_scores).squeeze(-1)
         return tan_scores, tan_probs, tan_loss
 
@@ -536,10 +533,9 @@ class E2EParser(Model):
         animacy_scores = self.animacy_scorer(animacy_spans_hidden).squeeze(-1)
         actual_num_animacy_instances = animacy_mask.sum().item()
         animacy_probs = torch.sigmoid(animacy_scores).squeeze(-1) * animacy_mask
+        animacy_loss = None
         if animacy_labels is not None:
             animacy_loss = F.binary_cross_entropy_with_logits(
                 animacy_scores, animacy_labels.float(), weight = animacy_mask, reduction = "sum"
             ) / actual_num_animacy_instances
-            return animacy_scores, animacy_probs, animacy_loss
-        else:
-            return animacy_scores, animacy_probs
+        return animacy_scores, animacy_probs, animacy_loss

@@ -18,6 +18,7 @@ import monocle.macros._
 
 import io.circe.generic.JsonCodec
 
+// TODO: restrict argument slots to non-adv
 @JsonCodec @Lenses case class ArgStructure(
   args: DependentMap[ArgumentSlot.Aux, Id],
   isPassive: Boolean

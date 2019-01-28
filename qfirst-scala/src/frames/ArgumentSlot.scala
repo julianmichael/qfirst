@@ -28,8 +28,8 @@ object ArgumentSlot {
   def fromString(str: String): Option[ArgumentSlot] = str match {
     case "subj"  => Some(Subj)
     case "obj"   => Some(Obj)
-    case "prep1" => Some(Prep1)
-    case "prep2" => Some(Prep2)
+    case "prep1" | "prep1-obj" => Some(Prep1)
+    case "prep2" | "prep2-obj" => Some(Prep2)
     case "misc"  => Some(Misc)
     case wh if allAdvSlots.contains(wh.lowerCase) => Some(Adv(wh.lowerCase))
     case _ => None
@@ -37,6 +37,7 @@ object ArgumentSlot {
 
   import io.circe.{KeyEncoder, KeyDecoder}
   import io.circe.{Encoder, Decoder}
+  import io.circe.Json
 
   implicit val argumentSlotKeyEncoder = KeyEncoder.instance(ArgumentSlot.toString)
   implicit val argumentSlotKeyDecoder = KeyDecoder.instance(ArgumentSlot.fromString)

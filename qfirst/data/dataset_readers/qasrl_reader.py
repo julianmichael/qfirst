@@ -11,7 +11,7 @@ from allennlp.data import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, WordTokenizer
 
-from qfirst.data.util import read_lines
+from qfirst.data.util import read_lines, get_verb_fields
 from qfirst.data import QasrlFilter, QasrlInstanceReader
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -46,13 +46,19 @@ class QasrlReader(DatasetReader):
                     yield instance
         logger.info("Produced %d instances for %d verbs." % (self._num_instances, self._num_verbs))
 
-    def sentence_json_to_instances(self, sentence_json):
+    def sentence_json_to_instances(self, sentence_json, verbs_only = False):
         for verb_dict in self._qasrl_filter.filter_sentence(sentence_json):
             self._num_verbs += 1
-            for instance_dict in self._instance_reader.read_instances(self._token_indexers, **verb_dict):
-                self._num_instances += 1
-                instance_metadata = instance_dict.pop("metadata", {})
-                if self._include_metadata:
-                    instance_dict["metadata"] = MetadataField({**instance_metadata, **verb_dict})
-                yield Instance(instance_dict)
+            if verbs_only:
+                yield Instance({
+                    **get_verb_fields(self._token_indexers, verb_dict["sentence_tokens"], verb_dict["verb_index"]),
+                    "metadata": MetadataField(verb_dict)
+                })
+            else:
+                for instance_dict in self._instance_reader.read_instances(self._token_indexers, **verb_dict):
+                    self._num_instances += 1
+                    instance_metadata = instance_dict.pop("metadata", {})
+                    if self._include_metadata:
+                        instance_dict["metadata"] = MetadataField({**instance_metadata, **verb_dict})
+                    yield Instance(instance_dict)
 

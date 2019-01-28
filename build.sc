@@ -78,9 +78,9 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   )
 
   override def scalacPluginIvyDeps = super.scalacPluginIvyDeps() ++ Agg(
+    // ivy"io.tryp:::splain:$splainVersion",
     ivy"org.scalamacros:::paradise:$macroParadiseVersion",
     ivy"org.spire-math::kind-projector:$kindProjectorVersion",
-    ivy"io.tryp:::splain:$splainVersion"
   )
 
   // add back in when necessary

@@ -45,9 +45,8 @@ class E2EMetric(Metric):
         self._gold_qa_coverage["covered"] += num_gold_covered
 
         for batch_index in range(len(batch_of_beams)):
-            beam = batch_of_beams[batch_index]["beam"]
+            beam = batch_of_beams[batch_index]
             gold_set = metadata[batch_index]["gold_set"]
-            print(beam)
             sorted_beam = sorted(beam, key = lambda x: -x["total_prob"])
             chosen_entries = []
 
