@@ -882,24 +882,22 @@ object MetricsApp extends IOApp {
     // )
     // println("Overall by verb: " + getMetricsString(verbBucketedResults))
 
-    // val renderExamples = (si: I.SentenceInstance) => {
-    //   val res = Text.render(si.gold.sentenceTokens) + "\n" + I.sentenceToVerbs(si).map { verb =>
-    //     val verbStr = s"${verb.gold.verbInflectedForms.stem} (${verb.gold.verbIndex})"
-    //     verbStr + "\n" + I.verbToQASet(filterGoldDense, bestFilter)(verb).pred.toList.map {
-    //       case (qString, (qSlots, answerSpans)) =>
-    //         val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
-    //           Text.renderSpan(si.gold.sentenceTokens, (s.begin until s.end).toSet)
-    //         ).mkString(" / ")
-    //         f"$qString%-60s $answerSpanStr%s"
-    //     }.mkString("\n")
-    //   }.mkString("\n")
-    //   List(res)
-    // }
-
     // util.Random.shuffle(
     //   Instances.foldMapInstances(gold, pred)(renderExamples)
     // ).take(10).mkString("\n\n") <| println
 
+    val renderExamples = (si: I.QASetInstance) => {
+      Text.render(si.goldSentence.sentenceTokens) + "\n" + {
+        val verbStr = s"${si.goldVerb.verbInflectedForms.stem} (${si.goldVerb.verbIndex})"
+        verbStr + "\n" + si.pred.toList.map {
+          case (qString, (qSlots, answerSpans)) =>
+            val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
+              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+            ).mkString(" / ")
+            f"$qString%-60s $answerSpanStr%s"
+        }.mkString("\n")
+      }
+    }
 
     for {
 
@@ -935,7 +933,20 @@ object MetricsApp extends IOApp {
       //     .keepMaxBy(_.get("answer span").stats.accuracyLowerBound)
       // )
 
-      bestFilter = questionTunedResults.get("predictions").data.head._1
+      bestFilter <- {
+        questionTunedResults.get("predictions").data.headOption match {
+          case Some(f) => IO.pure(f._1)
+          case None => IO(throw new RuntimeException("No filter in the specified space satisfies the recall threshold."))
+        }
+      }
+
+      _ <- {
+        predStream.take(5)
+          .flatMap(p => Stream.emits(constructInstances(filterGoldDense, bestFilter)(p)))
+          .map(renderExamples)
+          .flatMap(s => Stream.eval(IO(println(s))))
+          .compile.drain
+      }
 
       _ <- {
         import io.circe.generic.auto._

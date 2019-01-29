@@ -6,6 +6,7 @@ import qfirst.frames.ArgStructure
 import qfirst.frames.ClausalQuestion
 
 import io.circe.{Encoder, Decoder}
+import io.circe.HCursor
 
 import nlpdata.datasets.wiktionary.InflectedForms
 import nlpdata.datasets.wiktionary.VerbForm
@@ -43,7 +44,7 @@ case class E2EVerbPrediction(
 
 object E2EVerbPrediction {
   import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-  import qasrl.data.JsonCodecs.{spanEncoder, spanDecoder}
+  // import qasrl.data.JsonCodecs.{spanEncoder, spanDecoder}
   // implicit val verbPredictionEncoder: Encoder[E2EVerbPrediction] = {
   //   import io.circe.generic.semiauto._
   //   deriveEncoder[E2EVerbPrediction]
@@ -63,6 +64,13 @@ object E2EVerbPrediction {
     isProgressive = s.contains("+prog"),
     isNegated = s.contains("+neg")
   )
+  implicit val spanDecoder: Decoder[AnswerSpan] = new Decoder[AnswerSpan] {
+    final def apply(c: HCursor): Decoder.Result[AnswerSpan] =
+      for {
+        begin <- c.downN(0).as[Int].right
+        end   <- c.downN(1).as[Int].right
+      } yield AnswerSpan(begin, end + 1)
+  }
 
   implicit val tanDecoder: Decoder[TAN] = Decoder.decodeString.map(getTANFromString)
 
@@ -81,6 +89,7 @@ case class E2EQAPrediction(
   answerSlotScores: Map[ArgumentSlot, Double],
 ) {
   val (answerSlot, answerSlotScore) = answerSlotScores.maxBy(_._2)
+  def totalScore = clauseScore + spanScore + answerSlotScore
 }
 object E2EQAPrediction {
   def decoder(getArgStructureFromString: Map[String, ArgStructure]): Decoder[E2EQAPrediction] = {
@@ -92,7 +101,7 @@ object E2EQAPrediction {
 
       E2EQAPrediction(
         argStructure, raw.clause_score,
-        AnswerSpan(raw.span._1, raw.span._2), raw.span_score,
+        AnswerSpan(raw.span._1, raw.span._2 + 1), raw.span_score,
         answerSlotScores
       )
     }

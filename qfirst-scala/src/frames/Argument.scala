@@ -44,7 +44,11 @@ import monocle.macros.GenPrism
   override def unGap = List(preposition.toString)
   override def wh = objOpt.flatMap(_.wh)
 }
-object Preposition
+object Preposition {
+  val isAnimate = Preposition.objOpt
+    .composePrism(monocle.std.option.some)
+    .composeOptional(NounLikeArgument.isAnimate)
+}
 
 @JsonCodec sealed trait NonPrepArgument extends Argument
 
@@ -133,6 +137,8 @@ object NounLikeArgument {
 
   val noun = GenPrism[NounLikeArgument, Noun]
   val gerund = GenPrism[NounLikeArgument, Gerund.type]
+
+  val isAnimate = noun.composeLens(Noun.isAnimate)
 }
 
 object NonPrepArgument {
@@ -143,4 +149,5 @@ object NonPrepArgument {
       .orElse(Locative.fromPlaceholder(s))
 
   val nounLikeArgument = GenPrism[NonPrepArgument, NounLikeArgument]
+  val isAnimate = nounLikeArgument.composeOptional(NounLikeArgument.isAnimate)
 }

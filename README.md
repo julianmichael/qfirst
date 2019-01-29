@@ -75,7 +75,7 @@ specific one to try.
 
 Then run 
 ```
-mill qfirst.runMetrics --gold <path/to/qasrl-bank/qasrl-v2> --pred predictions/<model-name> --mode dense
+mill qfirst.jvm.runMetrics --gold <path/to/qasrl-bank/qasrl-v2> --pred predictions/<model-name> --mode dense
 ```
 to do the dense eval using the specified space of filters.
 

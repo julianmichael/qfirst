@@ -1,6 +1,7 @@
 package qfirst
 
 import qfirst.frames.Frame
+import qfirst.frames.ArgumentSlot
 
 import qfirst.metrics.HasMetrics
 import qfirst.metrics.Metric
@@ -22,17 +23,27 @@ import io.circe.generic.JsonCodec
 case class E2EBeamFilterSpace(
   qaOrders: List[E2EBeamFilter.BeamOrder],
   scoreTransforms: List[E2EBeamFilter.ScoreTransform],
-  predicates: List[E2EBeamFilter.Predicate],
+  clauseThresholds: List[Double],
+  spanThresholds: List[Double],
+  answerSlotThresholds: List[Double],
+  totalThresholds: List[Double],
   best: Option[E2EBeamFilter]
 ) {
   def withBest(filter: E2EBeamFilter): E2EBeamFilterSpace = this.copy(best = Some(filter))
-  def allFilters = best.fold(
+  def allFilters = best.fold {
+    val threes = for {
+      c <- clauseThresholds
+      s <- spanThresholds
+      as <- answerSlotThresholds
+    } yield E2EBeamFilter.Predicate.ThreeThreshold(c, s, as)
+    val ones = totalThresholds.map(E2EBeamFilter.Predicate.OneThreshold(_))
+    val preds = threes ++ ones
     for {
       order <- qaOrders
       transform <- scoreTransforms
-      predicate <- predicates
+      predicate <- preds
     } yield E2EBeamFilter(order, transform, predicate)
-  )(List(_))
+  }(List(_))
 }
 
 @JsonCodec case class E2EBeamFilter(
@@ -52,10 +63,50 @@ object E2EBeamFilter {
 
   def qaToString(
     verb: E2EVerbPrediction,
-    qa: E2EQAPrediction
+    qa: E2EQAPrediction,
+    order: Order[E2EQAPrediction],
+    filterPred: E2EQAPrediction => Boolean
   ): String = {
     val tan = verb.tans.maxBy(_._2)._1
-    val frame = Frame(qa.clause, verb.verbInflectedForms, tan)
+    val animacyMap = verb.animacies.toMap
+    // possible filtery scheme below
+    // .sorted(BeamOrder.Total.get.toOrdering)
+    val argAnimaciesPrelim = verb.beam
+      .flatMap(qa => qa.answerSlotScores.toList.map(pair => qa.copy(answerSlotScores = Map(pair)))) // TODO is this necessary, should we sort more carefully, etc.
+      .sorted(order.toOrdering)
+      .filter(_.clause == qa.clause)
+      .filter(filterPred)
+      .foldLeft(Map.empty[ArgumentSlot, Double]) { (args, pred) =>
+        if(!args.contains(pred.answerSlot)) args + (pred.answerSlot -> animacyMap(pred.span))
+        else args
+      }
+    val argAnimaciesBackup = verb.beam
+      .flatMap(qa => qa.answerSlotScores.toList.map(pair => qa.copy(answerSlotScores = Map(pair)))) // TODO is this necessary, should we sort more carefully, etc.
+      .sorted(order.toOrdering)
+      .filter(_.clause == qa.clause)
+      .foldLeft(Map.empty[ArgumentSlot, Double]) { (args, pred) =>
+        if(!args.contains(pred.answerSlot)) args + (pred.answerSlot -> animacyMap(pred.span))
+        else args
+      }
+    val argAnimacies = argAnimaciesBackup.foldLeft(argAnimaciesPrelim) {
+      case (m, (slot, prob)) => if(m.contains(slot)) m else m + (slot -> prob)
+    }
+    import qfirst.frames._
+    import qasrl.util.DependentMap
+    import cats.Id
+    val animacyAdjustedArgs = qa.clause.args.keys.foldLeft(
+      DependentMap.empty[ArgumentSlot.Aux, Id]) {
+      (args, slot) => (slot, argAnimacies.get(slot).fold(false)(_ >= 0.5)) match {
+        case (Subj,  animate) => args.put(Subj, Noun(animate))
+        case (Obj,   animate) => args.put(Obj, Noun(animate))
+        case (Prep1, animate) => args.put(Prep1, Preposition.isAnimate.set(animate)(qa.clause.args.get(Prep1).get))
+        case (Prep2, animate) => args.put(Prep2, Preposition.isAnimate.set(animate)(qa.clause.args.get(Prep2).get))
+        case (Misc,  animate) => args.put(Misc, NonPrepArgument.isAnimate.set(animate)(qa.clause.args.get(Misc).get))
+        case (a @ Adv(_), _) => args.put(a, qa.clause.args.get(a).get) // TODO why does the compiler know this is unreachable?
+      }
+    }
+    val animacyAdjustedClause = qa.clause.copy(args = animacyAdjustedArgs)
+    val frame = Frame(animacyAdjustedClause, verb.verbInflectedForms, tan)
     frame.questionsForSlot(qa.answerSlot).head
   }
 
@@ -75,7 +126,7 @@ object E2EBeamFilter {
       SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
         Vector(), verb.verbInflectedForms, List(question)
       ).head.get
-    allQAs.map(qa => qaToString(verb, qa) -> qa)
+    allQAs.map(qa => qaToString(verb, qa, order, filterPred) -> qa)
       .groupBy(_._1)
       .map { case (k, vs) => k -> (getQuestionSlots(k) -> vs.map(_._2.span).toSet) }
   }
@@ -138,7 +189,7 @@ object E2EBeamFilter {
       def get = Order.by[E2EQAPrediction, Double](-_.answerSlotScore)
     }
     case object Total extends BasicBeamOrder {
-      def get = Order.by[E2EQAPrediction, Double](qa => -(qa.clauseScore + qa.spanScore + qa.answerSlotScore))
+      def get = Order.by[E2EQAPrediction, Double](_.totalScore)
     }
     case class Composite(head: BasicBeamOrder, tail: BeamOrder) extends BeamOrder {
       def get = Order.whenEqual(head.get, tail.get)

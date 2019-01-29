@@ -34,7 +34,6 @@ object FileUtil {
     .through(text.lines)
     .filter(_.nonEmpty)
     .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(new RuntimeException(_))))
-    .handleErrorWith(e => Stream.eval(IO(println(s"Unexpected error when reading JSON: $e"))).drain)
 
   def readJsonLines[A](
     path: NIOPath)(
