@@ -9,7 +9,7 @@ from qfirst.metrics.beam_metric import BeamMetric
 
 import json
 
-from nrl.common.span import Span
+from qfirst.common.span import Span
 
 class E2EMetric(Metric):
     def __init__(self,

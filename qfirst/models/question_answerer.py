@@ -22,11 +22,11 @@ from allennlp.nn.util import batched_index_select
 from allennlp.nn.util import masked_log_softmax
 from allennlp.training.metrics import SpanBasedF1Measure
 
-from nrl.modules.span_rep_assembly import SpanRepAssembly
-from nrl.common.span import Span
+from qfirst.modules.span_rep_assembly import SpanRepAssembly
+from qfirst.common.span import Span
 
 from qfirst.modules.question_encoder import QuestionEncoder
-from qfirst.metrics.answer_metric import AnswerMetric
+from qfirst.metrics.span_metric import SpanMetric
 
 from qfirst.data.util import get_slot_label_namespace
 
@@ -48,7 +48,7 @@ class QuestionAnswerer(Model):
                  question_injection: str = "top",
                  question_input_type: str = "slots",
                  embedding_dropout: float = 0.0,
-                 metric: AnswerMetric = AnswerMetric(),
+                 metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionAnswerer, self).__init__(vocab, regularizer)

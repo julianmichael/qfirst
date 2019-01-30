@@ -1,0 +1,63 @@
+{
+    "dataset_reader": {
+        "type": "qfirst_qasrl",
+        "token_indexers": {
+            "elmo": {
+                "type": "elmo_characters"
+            }
+        },
+        "qasrl_filter": {
+            "min_answers": 1,
+            "min_valid_answers": 1
+        },
+        "instance_reader": {
+            "type": "verb_answers"
+        },
+        "include_metadata": true
+    },
+    "train_data_path": "dev-mini.jsonl",
+    "validation_data_path": "dev-mini.jsonl",
+    // "train_data_path": "qasrl-v2_1/expanded/train.jsonl.gz",
+    // "validation_data_path": "qasrl-v2_1/expanded/dev.jsonl.gz",
+    "model": {
+        "type": "afirst_span_detector",
+        "text_field_embedder": {
+            "elmo": {
+                "type": "elmo_token_embedder",
+                "options_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+                "weight_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+                "do_layer_norm": false,
+                "dropout": 0.5
+            }
+        },
+        "sentence_encoder": {
+            "type": "alternating_lstm",
+            "input_size": 1124,
+            "hidden_size": 300,
+            "num_layers": 8,
+            "recurrent_dropout_probability": 0.1,
+            "use_highway": true
+        },
+        "span_selector": {
+            "input_dim": 300,
+            "span_hidden_dim": 100,
+        },
+        "predicate_feature_dim": 100
+  },
+  "iterator": {
+    "type": "bucket",
+    "sorting_keys": [["text", "num_tokens"]],
+    "batch_size" : 80
+  },
+  "trainer": {
+    "num_epochs": 200,
+    "grad_norm": 1.0,
+    "patience": 10,
+    "validation_metric": "+f1",
+    "cuda_device": -1,
+    "optimizer": {
+      "type": "adadelta",
+      "rho": 0.95
+    }
+  }
+}

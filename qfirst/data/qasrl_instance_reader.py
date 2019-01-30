@@ -8,8 +8,8 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 
-from nrl.common.span import Span
-from nrl.data.util import cleanse_sentence_text
+from qfirst.common.span import Span
+from qfirst.data.util import cleanse_sentence_text
 
 from qfirst.data.util import *
 
@@ -27,6 +27,37 @@ class QasrlInstanceReader(Registrable):
                        verb_inflected_forms: Dict[str, str],
                        question_labels): # Iterable[Dict[str, ?Field]]
         raise NotImplementedError
+
+@QasrlInstanceReader.register("verb_only")
+class QasrlVerbReader(QasrlInstanceReader):
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # Iterable[Instance]
+        yield get_verb_fields(token_indexers, sentence_tokens, verb_index)
+
+@QasrlInstanceReader.register("verb_answers")
+class QasrlVerbReader(QasrlInstanceReader):
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # -> Iterable[Instance]
+        verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        answer_spans = [s for ql in question_labels for s in get_answer_spans(ql)]
+        answer_spans_field = ListField(get_answer_span_fields(answer_spans, verb_dict["text"]))
+        yield {
+            **verb_dict,
+            "answer_spans": answer_spans_field,
+            "metadata": MetadataField({"gold_spans": set(answer_spans)})
+        }
 
 @QasrlInstanceReader.register("question")
 class QasrlQuestionReader(QasrlInstanceReader):
@@ -79,18 +110,6 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 **verb_fields, **question_fields, **answer_fields
             }
 
-@QasrlInstanceReader.register("verb_only")
-class QasrlVerbReader(QasrlInstanceReader):
-    @overrides
-    def read_instances(self,
-                       token_indexers: Dict[str, TokenIndexer],
-                       sentence_id: str,
-                       sentence_tokens: List[str],
-                       verb_index: int,
-                       verb_inflected_forms: Dict[str, str],
-                       question_labels): # Iterable[Instance]
-        yield Instance(get_verb_fields(token_indexers, sentence_tokens, verb_index))
-
 @QasrlInstanceReader.register("question_factored")
 class QasrlQuestionReader(QasrlInstanceReader):
     def __init__(self,
@@ -110,23 +129,15 @@ class QasrlQuestionReader(QasrlInstanceReader):
                        verb_inflected_forms: Dict[str, str],
                        question_labels): # Iterable[Dict[str, ?Field]]
         verb_fields = get_verb_fields(token_indexers, sentence_tokens, verb_index)
-        # abstracted clause as LabelField
-        # tense/aspect/modality as LabelField
-        # negation as LabelField
-        # qarg as LabelField
-        # construct mapping between clauses and sets of appropriate question slots
         clause_string_fields = []
         clause_strings = []
         tan_strings = []
         tan_string_fields = []
         qarg_fields = []
         all_answer_fields = []
-        # animacy_fields = []
         gold_tuples = []
         animacy_label_map = {}
         for question_label in question_labels:
-            # question_text_field = TextField(self._tokenizer.tokenize(question_label["questionString"]), token_indexers)
-            # question_slots_dict = get_question_slot_fields(question_label["questionSlots"]) if self._include_slots else {}
             clause_slots = {}
             try:
                 clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
@@ -220,15 +231,3 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "qarg_pretrain_spans": ListField(qarg_pretrain_span_fields),
                 "qarg_pretrain_labels": ListField(qarg_pretrain_multilabel_fields),
             }
-
-# @QasrlInstanceReader.register("question_only_clause_filling")
-# class QasrlClauseFillingReader(QasrlInstanceReader):
-#     def __init__(self,
-#                  clause_info_files: List[str] = []):
-#         self._include_slots = include_slots
-#         self._include_abstract_slots = include_abstract_slots
-#         self._clause_info = {}
-#         if len(clause_info_files) == 0:
-#             raise ConfigurationError("Must provide clause_info_files to QasrlClauseFillingReader")
-#         for file_path in clause_info_files:
-#             read_clause_info(self._clause_info, file_path)

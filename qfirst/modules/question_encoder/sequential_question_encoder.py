@@ -13,7 +13,7 @@ from allennlp.data import Vocabulary
 from allennlp.common import Params
 from allennlp.modules import TimeDistributed
 
-from nrl.util.model_utils import block_orthonormal_initialization
+from qfirst.util.model_utils import block_orthonormal_initialization
 from qfirst.data.util import get_slot_label_namespace
 
 @QuestionEncoder.register("sequential")

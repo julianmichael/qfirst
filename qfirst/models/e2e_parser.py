@@ -23,8 +23,8 @@ from qfirst.metrics import E2EMetric, E2EPretrainingMetric
 
 import math
 
-from nrl.common.span import Span
-from nrl.modules.span_rep_assembly import SpanRepAssembly
+from qfirst.common.span import Span
+from qfirst.modules.span_rep_assembly import SpanRepAssembly
 
 # should receive verb instances from the qasrl dataset reader
 @Model.register("e2e_qasrl")

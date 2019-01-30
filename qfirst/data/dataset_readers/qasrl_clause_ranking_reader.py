@@ -19,8 +19,8 @@ from allennlp.data.dataset_readers.dataset_utils.span_utils import enumerate_spa
 
 from json.decoder import JSONDecodeError
 
-from nrl.common.span import Span
-from nrl.data.util import cleanse_sentence_text
+from qfirst.common.span import Span
+from qfirst.data.util import cleanse_sentence_text
 
 from qfirst.data.util import get_slot_label_namespace
 

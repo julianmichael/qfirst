@@ -21,8 +21,3 @@ class QuestionGenerator(Registrable):
                            max_beam_size: int,
                            min_beam_probability: float):
         raise NotImplementedError()
-
-    @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'QuestionGenerator':
-        choice = params.pop_choice('type', cls.list_available())
-        return cls.by_name(choice).from_params(vocab, params)

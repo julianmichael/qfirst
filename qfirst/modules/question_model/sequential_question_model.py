@@ -15,7 +15,7 @@ from allennlp.data import Vocabulary
 from allennlp.common import Params
 from allennlp.modules import TimeDistributed
 
-from nrl.util.model_utils import block_orthonormal_initialization
+from qfirst.util.model_utils import block_orthonormal_initialization
 from qfirst.data.util import get_slot_label_namespace
 
 @QuestionModel.register("sequential")
@@ -139,12 +139,12 @@ class SequentialQuestionModel(QuestionModel):
     def _slot_quasi_recurrence(self,
                               slot_index,
                               slot_name,
-                              pred_reps,
+                              inputs,
                               curr_embedding,
                               curr_mem):
 
         next_mem  = []
-        curr_input = torch.cat([pred_reps, curr_embedding], -1)
+        curr_input = torch.cat([inputs, curr_embedding], -1)
         for l in range(self._rnn_layers):
             new_h, new_c = self._rnn_cells[l][slot_index](curr_input, curr_mem[l])
             if self._recurrent_dropout > 0:
@@ -164,28 +164,28 @@ class SequentialQuestionModel(QuestionModel):
             "logits": logits
         }
 
-    def _init_recurrence(self, pred_reps):
+    def _init_recurrence(self, inputs):
         # start with batch_size start symbols and init multi-layer memory cell
-        batch_size, _ = pred_reps.size()
+        batch_size, _ = inputs.size()
         emb = self._start_symbol.view(1, -1).expand(batch_size, -1)
         mem = []
         for l in range(self._rnn_layers):
-            mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
-                        Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+            mem.append((Variable(inputs.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
+                        Variable(inputs.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
         return emb, mem
 
     def forward(self,
-                pred_reps,
+                inputs,
                 slot_labels: Dict[str, torch.LongTensor],
                 **kwargs):
-        batch_size, pred_rep_dim = pred_reps.size()
+        batch_size, input_dim = inputs.size()
 
-        # TODO check input_dim == pred_rep_dim
+        # TODO check input_dim == input_dim
 
-        curr_embedding, curr_mem = self._init_recurrence(pred_reps)
+        curr_embedding, curr_mem = self._init_recurrence(inputs)
         slot_logits = {}
         for i, n in enumerate(self._slot_names):
-            recurrence_dict = self._slot_quasi_recurrence(i, n, pred_reps, curr_embedding, curr_mem)
+            recurrence_dict = self._slot_quasi_recurrence(i, n, inputs, curr_embedding, curr_mem)
             slot_logits[n] = recurrence_dict["logits"]
             curr_mem = recurrence_dict["next_mem"]
 
@@ -195,14 +195,14 @@ class SequentialQuestionModel(QuestionModel):
         return slot_logits
 
     def beam_decode_single(self,
-                           pred_reps, # shape: 1, input_dim
+                           inputs, # shape: 1, input_dim
                            max_beam_size,
                            min_beam_probability):
         min_beam_log_probability = math.log(min_beam_probability)
-        batch_size, pred_rep_dim = pred_reps.size()
+        batch_size, input_dim = inputs.size()
         if batch_size != 1:
             raise ConfigurationError("beam_decode_single must be run with a batch size of 1.")
-        if pred_rep_dim != self.get_input_dim():
+        if input_dim != self.get_input_dim():
             raise ConfigurationError("predicate representation must match dimensionality of question model input.")
 
         ## metadata to recover sequences
@@ -212,7 +212,7 @@ class SequentialQuestionModel(QuestionModel):
         slot_beam_labels = {}
 
         ## initialization for beam search loop
-        init_embedding, init_mem = self._init_recurrence(pred_reps)
+        init_embedding, init_mem = self._init_recurrence(inputs)
         # current state of the beam search: list of (input embedding, memory cells, log_prob), ordered by probability
         current_beam_states = [(init_embedding, init_mem, 0.)]
 
@@ -221,7 +221,7 @@ class SequentialQuestionModel(QuestionModel):
             # list of pairs (of backpointer, slot_value_index, new_embedding, new_mem, log_prob) ?
             candidate_new_beam_states = []
             for i, (emb, mem, prev_log_prob) in enumerate(current_beam_states):
-                recurrence_dict = self._slot_quasi_recurrence(slot_index, slot_name, pred_reps, emb, mem)
+                recurrence_dict = self._slot_quasi_recurrence(slot_index, slot_name, inputs, emb, mem)
                 next_mem = recurrence_dict["next_mem"]
                 logits = recurrence_dict["logits"].squeeze()
                 log_probabilities = F.log_softmax(logits, -1)
@@ -230,7 +230,7 @@ class SequentialQuestionModel(QuestionModel):
                 for pred_slot_index in range(0, num_slot_values):
                     log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
                     if slot_index < len(self._slot_names) - 1:
-                        new_input_embedding = self._slot_embedders[slot_index](pred_reps.new([pred_slot_index]).long())
+                        new_input_embedding = self._slot_embedders[slot_index](inputs.new([pred_slot_index]).long())
                     else:
                         new_input_embedding = None
                     # keep all expansions of the last step --- for now --- if we're on the qarg slot of a clause
@@ -246,8 +246,8 @@ class SequentialQuestionModel(QuestionModel):
         final_beam_size = len(current_beam_states)
         final_slots = {}
         for slot_name in reversed(self._slot_names):
-            final_slots[slot_name] = pred_reps.new_zeros([final_beam_size], dtype = torch.int32)
-        final_probs = pred_reps.new_zeros([final_beam_size], dtype = torch.float64)
+            final_slots[slot_name] = inputs.new_zeros([final_beam_size], dtype = torch.int32)
+        final_probs = inputs.new_zeros([final_beam_size], dtype = torch.float64)
         for beam_index in range(final_beam_size):
             final_probs[beam_index] = current_beam_states[beam_index][2]
             current_backpointer = beam_index
@@ -282,21 +282,3 @@ class SequentialQuestionModel(QuestionModel):
             final_probs = final_probs.gather(0, chosen_beam_vector)
 
         return { k: v.long() for k, v in final_slots.items() }, final_probs
-
-    @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'SequentialQuestionModel':
-        slot_names = params.pop("slot_names")
-        input_dim = params.pop("input_dim")
-        dim_slot_hidden = params.pop("dim_slot_hidden")
-        share_slot_hidden = params.pop("share_slot_hidden", False)
-        rnn_layers = params.pop("rnn_layers", 1)
-        share_rnn_cell = params.pop("share_rnn_cell", True)
-        dim_rnn_hidden = params.pop("dim_rnn_hidden", 200)
-        dim_slot_hidden = params.pop("dim_slot_hidden", 100)
-        dim_embedding = params.pop("dim_embedding", 100)
-        recurrent_dropout = params.pop("recurrent_dropout", 0.1)
-        clause_mode = params.pop("clause_mode", False)
-
-        params.assert_empty(cls.__name__)
-
-        return SequentialQuestionModel(vocab, slot_names, input_dim=input_dim, share_slot_hidden=share_slot_hidden, rnn_layers = rnn_layers, share_rnn_cell = share_rnn_cell, dim_rnn_hidden = dim_rnn_hidden, dim_slot_hidden = dim_slot_hidden, dim_embedding = dim_embedding, recurrent_dropout = recurrent_dropout, clause_mode = clause_mode)

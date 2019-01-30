@@ -21,9 +21,8 @@ from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.modules.question_model import QuestionModel
 from qfirst.metrics.question_metric import QuestionMetric
 
-@QuestionGenerator.register("conditional_lm")
 @Model.register("question_conditional_lm")
-class QuestionConditionalLM(Model, QuestionGenerator):
+class QuestionConditionalLM(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  question_model: QuestionModel,

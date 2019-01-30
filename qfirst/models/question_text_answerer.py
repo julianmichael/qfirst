@@ -20,12 +20,11 @@ from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn import util
 from allennlp.training.metrics import SpanBasedF1Measure
 
-from nrl.modules.span_rep_assembly import SpanRepAssembly
-from nrl.common.span import Span
+from qfirst.modules.span_rep_assembly import SpanRepAssembly
+from qfirst.common.span import Span
 
 from qfirst.modules.question_encoder import QuestionEncoder
 from qfirst.modules.span_selector import SpanSelector
-from qfirst.metrics.answer_metric import AnswerMetric
 
 from qfirst.data.util import get_slot_label_namespace
 

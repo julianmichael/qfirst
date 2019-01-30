@@ -9,20 +9,22 @@ from allennlp.common import Params
 from allennlp.data import Vocabulary
 
 from qfirst.modules.question_generator import QuestionGenerator
+from qfirst.models.question_conditional_lm import QuestionConditionalLM
 from qfirst.models.question_answerer import QuestionAnswerer
 from qfirst.data.util import get_slot_label_namespace
 from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
 from qfirst.metrics.beam_metric import BeamMetric
 
+
 import math
 
-from nrl.common.span import Span
+from qfirst.common.span import Span
 
 # should receive verb instances from the qasrl dataset reader
 @Model.register("qfirst_parser")
 class QfirstParser(Model):
     def __init__(self, vocab: Vocabulary,
-                 question_generator: QuestionGenerator,
+                 question_generator: QuestionConditionalLM,
                  question_answerer: QuestionAnswerer,
                  max_beam_size: int = 20,
                  question_minimum_prob: float = 0.01,
