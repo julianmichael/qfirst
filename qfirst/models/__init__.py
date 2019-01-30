@@ -6,3 +6,4 @@ from qfirst.models.qfirst_parser import QfirstParser
 from qfirst.models.e2e_parser import E2EParser
 # Answer-first
 from qfirst.models.afirst.afirst_span_detector import AfirstSpanDetector
+from qfirst.models.afirst.afirst_question_generator import AfirstQuestionGenerator

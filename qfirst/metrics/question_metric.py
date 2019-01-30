@@ -28,17 +28,20 @@ class QuestionMetric(Metric):
     def __call__(self,
                  slot_logits: Dict[str, torch.Tensor],
                  slot_labels: Dict[str, torch.Tensor],
+                 mask: torch.Tensor,
                  negative_log_likelihood: float):
-        # slot_logits[slot_name] Shape: batch_size, slot_name_vocab_size
-        # slot_labels[slot_name] Shape: batch_size, 1?
+        mask, negative_log_likelihood = self.unwrap_to_tensors(mask.long(), negative_log_likelihood)
+        batch_size, num_questions = mask.size()
+        # slot_logits[slot_name] Shape: batch_size, num_questions, slot name vocab size
+        # slot_labels[slot_name] Shape: batch_size, num_questions, 1?
 
-        num_questions = slot_logits[self._slot_names[0]].size(0)
+        num_total_questions = mask.sum().item()
 
-        self._total_questions += num_questions
+        self._total_questions += num_total_questions
         self._negative_log_likelihood += negative_log_likelihood
 
         # we'll mask out questions as we miss slots to get the full question accuracy
-        correct_questions = torch.ones(num_questions)
+        correct_questions = mask.clone()
 
         for slot_name in self._slot_names:
             # logits Shape: batch_size, slot_name_vocab_size
@@ -46,11 +49,13 @@ class QuestionMetric(Metric):
             logits, gold_labels = self.unwrap_to_tensors(slot_logits[slot_name], slot_labels[slot_name])
             # Shape: batch_size, question_length, 1?
             argmax_predictions = logits.argmax(-1)
-            for i in range(num_questions):
-                if argmax_predictions[i] == gold_labels[i]:
-                    self._slot_correct[slot_name] += 1
-                else:
-                    correct_questions[i] = 0.
+            for bi in range(batch_size):
+                for qi in range(num_questions):
+                    if mask[bi, qi].item() > 0:
+                        if argmax_predictions[bi, qi] == gold_labels[bi, qi]:
+                            self._slot_correct[slot_name] += 1
+                        else:
+                            correct_questions[bi, qi] = 0
 
         self._questions_correct = correct_questions.sum().item()
 
@@ -67,7 +72,6 @@ class QuestionMetric(Metric):
         other_metrics = {
             "avg-slot-accuracy": avg_slot_accuracy,
             "full-question-accuracy": full_question_accuracy,
-            "negative-log-likelihood": self._negative_log_likelihood,
             "perplexity-per-question": perplexity_per_question
         }
 

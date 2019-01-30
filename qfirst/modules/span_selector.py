@@ -38,6 +38,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                  top_injection_dim: int = 0,
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
+                 pruning_ratio: float = 2.0,
                  # add_invalid_span: bool = True,
                  metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -47,6 +48,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         self.input_dim = input_dim
         self.span_hidden_dim = span_hidden_dim
         self.top_injection_dim = top_injection_dim
+        self._pruning_ratio = pruning_ratio
         # self.add_invalid_span = add_invalid_span
 
         if objective not in objective_values:
@@ -106,7 +108,7 @@ class SpanSelector(torch.nn.Module, Registrable):
             full_span_hidden = span_hidden
 
         (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_scores) = self.span_pruner(full_span_hidden, span_mask.float(), 2 * num_tokens)
+         top_span_indices, top_span_scores) = self.span_pruner(full_span_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
         top_span_mask = top_span_mask.unsqueeze(-1).float()
 
         # workaround for https://github.com/allenai/allennlp/issues/1696

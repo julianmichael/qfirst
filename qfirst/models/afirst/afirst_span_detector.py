@@ -52,7 +52,6 @@ class AfirstSpanDetector(Model):
                 answer_spans: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
-
         embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
         batch_size, num_tokens, _ = embedded_text_input.size()
         text_mask = get_text_field_mask(text)

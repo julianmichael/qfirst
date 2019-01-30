@@ -29,7 +29,7 @@ class QasrlInstanceReader(Registrable):
         raise NotImplementedError
 
 @QasrlInstanceReader.register("verb_only")
-class QasrlVerbReader(QasrlInstanceReader):
+class QasrlVerbOnlyReader(QasrlInstanceReader):
     @overrides
     def read_instances(self,
                        token_indexers: Dict[str, TokenIndexer],
@@ -41,7 +41,7 @@ class QasrlVerbReader(QasrlInstanceReader):
         yield get_verb_fields(token_indexers, sentence_tokens, verb_index)
 
 @QasrlInstanceReader.register("verb_answers")
-class QasrlVerbReader(QasrlInstanceReader):
+class QasrlVerbAnswersReader(QasrlInstanceReader):
     @overrides
     def read_instances(self,
                        token_indexers: Dict[str, TokenIndexer],
@@ -57,6 +57,38 @@ class QasrlVerbReader(QasrlInstanceReader):
             **verb_dict,
             "answer_spans": answer_spans_field,
             "metadata": MetadataField({"gold_spans": set(answer_spans)})
+        }
+
+@QasrlInstanceReader.register("verb_qas")
+class QasrlVerbQAsReader(QasrlInstanceReader):
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # -> Iterable[Instance]
+        verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        question_slot_field_lists = {}
+        answer_span_fields = []
+        for question_label in question_labels:
+            question_slots_dict = get_question_slot_fields(question_label["questionSlots"])
+            for span in set(get_answer_spans(question_label)):
+                answer_span_fields.append(SpanField(span.start(), span.end(), verb_dict["text"]))
+                for k, v in question_slots_dict.items():
+                    if k not in question_slot_field_lists:
+                        question_slot_field_lists[k] = []
+                    question_slot_field_lists[k].append(v)
+
+        question_slot_list_fields = {
+            k : ListField(v) for k, v in question_slot_field_lists.items()
+        }
+
+        yield {
+            **verb_dict,
+            **question_slot_list_fields,
+            "answer_spans": ListField(answer_span_fields)
         }
 
 @QasrlInstanceReader.register("question")
