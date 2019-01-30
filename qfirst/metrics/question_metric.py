@@ -57,7 +57,7 @@ class QuestionMetric(Metric):
                         else:
                             correct_questions[bi, qi] = 0
 
-        self._questions_correct = correct_questions.sum().item()
+        self._questions_correct += correct_questions.sum().item()
 
     def get_metric(self, reset=False):
 

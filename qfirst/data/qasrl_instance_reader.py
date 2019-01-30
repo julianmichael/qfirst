@@ -85,11 +85,12 @@ class QasrlVerbQAsReader(QasrlInstanceReader):
             k : ListField(v) for k, v in question_slot_field_lists.items()
         }
 
-        yield {
-            **verb_dict,
-            **question_slot_list_fields,
-            "answer_spans": get_answer_spans_field(answer_spans, verb_dict["text"])
-        }
+        if len(answer_spans) > 0:
+            yield {
+                **verb_dict,
+                **question_slot_list_fields,
+                "answer_spans": get_answer_spans_field(answer_spans, verb_dict["text"])
+            }
 
 @QasrlInstanceReader.register("question")
 class QasrlQuestionReader(QasrlInstanceReader):
