@@ -52,7 +52,7 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
                        question_labels): # -> Iterable[Instance]
         verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
         answer_spans = [s for ql in question_labels for s in get_answer_spans(ql)]
-        answer_spans_field = ListField(get_answer_span_fields(answer_spans, verb_dict["text"]))
+        answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
         yield {
             **verb_dict,
             "answer_spans": answer_spans_field,
@@ -71,11 +71,11 @@ class QasrlVerbQAsReader(QasrlInstanceReader):
                        question_labels): # -> Iterable[Instance]
         verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
         question_slot_field_lists = {}
-        answer_span_fields = []
+        answer_spans = []
         for question_label in question_labels:
             question_slots_dict = get_question_slot_fields(question_label["questionSlots"])
             for span in set(get_answer_spans(question_label)):
-                answer_span_fields.append(SpanField(span.start(), span.end(), verb_dict["text"]))
+                answer_spans.append(span)
                 for k, v in question_slots_dict.items():
                     if k not in question_slot_field_lists:
                         question_slot_field_lists[k] = []
@@ -88,7 +88,7 @@ class QasrlVerbQAsReader(QasrlInstanceReader):
         yield {
             **verb_dict,
             **question_slot_list_fields,
-            "answer_spans": ListField(answer_span_fields)
+            "answer_spans": get_answer_spans_field(answer_spans, verb_dict["text"])
         }
 
 @QasrlInstanceReader.register("question")

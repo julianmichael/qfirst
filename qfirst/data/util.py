@@ -112,12 +112,12 @@ def get_clause_slot_field(slot_name: str, slot_value: str):
 def get_answer_spans(question_label):
     return [Span(s[0], s[1]-1) for ans in question_label["answerJudgments"] if ans["isValid"] for s in ans["spans"]]
 
-def get_answer_span_fields(answer_spans, text_field):
+def get_answer_spans_field(answer_spans, text_field):
     span_list = [SpanField(s.start(), s.end(), text_field) for s in answer_spans]
     if len(span_list) == 0:
-        return [SpanField(-1, -1, text_field)]
+        return ListField([SpanField(-1, -1, text_field)])
     else:
-        return span_list
+        return ListField(span_list)
 
 def get_num_answers_field(question_label):
     return LabelField(label = len(question_label["answerJudgments"]), skip_indexing = True)
