@@ -66,7 +66,7 @@ object E2EBeamFilter {
     qa: E2EQAPrediction,
     order: Order[E2EQAPrediction],
     filterPred: E2EQAPrediction => Boolean
-  ): String = {
+  ): Option[String] = {
     val tan = verb.tans.maxBy(_._2)._1
     val animacyMap = verb.animacies.toMap
     // possible filtery scheme below
@@ -107,7 +107,8 @@ object E2EBeamFilter {
     }
     val animacyAdjustedClause = qa.clause.copy(args = animacyAdjustedArgs)
     val frame = Frame(animacyAdjustedClause, verb.verbInflectedForms, tan)
-    frame.questionsForSlot(qa.answerSlot).head
+    val questions = frame.questionsForSlot(qa.answerSlot)
+    questions.headOption
   }
 
   private def filterBeam(
@@ -126,7 +127,7 @@ object E2EBeamFilter {
       SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
         Vector(), verb.verbInflectedForms, List(question)
       ).head.get
-    allQAs.map(qa => qaToString(verb, qa, order, filterPred) -> qa)
+    allQAs.flatMap(qa => qaToString(verb, qa, order, filterPred).map(_ -> qa))
       .groupBy(_._1)
       .map { case (k, vs) => k -> (getQuestionSlots(k) -> vs.map(_._2.span).toSet) }
   }
