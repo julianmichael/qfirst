@@ -1,2 +1,0 @@
-from qfirst.modules.question_model.question_model import QuestionModel
-from qfirst.modules.question_model.sequential_question_model import SequentialQuestionModel
