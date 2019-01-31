@@ -22,7 +22,7 @@ class QasrlReader(DatasetReader):
                  token_indexers: Dict[str, TokenIndexer] = { "tokens": SingleIdTokenIndexer(lowercase_tokens = True) },
                  qasrl_filter: QasrlFilter = QasrlFilter(),
                  instance_reader: QasrlInstanceReader = QasrlInstanceReader(),
-                 include_metadata: bool = False,
+                 include_metadata: bool = True,
                  lazy: bool = False):
         super().__init__(lazy)
         self._token_indexers = token_indexers
@@ -50,10 +50,10 @@ class QasrlReader(DatasetReader):
         for verb_dict in self._qasrl_filter.filter_sentence(sentence_json):
             self._num_verbs += 1
             if verbs_only:
-                yield Instance({
-                    **get_verb_fields(self._token_indexers, verb_dict["sentence_tokens"], verb_dict["verb_index"]),
-                    "metadata": MetadataField(verb_dict)
-                })
+                instance_dict = get_verb_fields(self._token_indexers, verb_dict["sentence_tokens"], verb_dict["verb_index"])
+                if self._include_metadata:
+                    instance_dict["metadata"] = MetadataField(verb_dict)
+                yield Instance(instance_dict)
             else:
                 for instance_dict in self._instance_reader.read_instances(self._token_indexers, **verb_dict):
                     self._num_instances += 1

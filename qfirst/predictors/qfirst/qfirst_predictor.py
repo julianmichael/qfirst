@@ -1,42 +1,47 @@
-# from typing import Dict
+from typing import Dict
 
-# from overrides import overrides
+from overrides import overrides
 
-# import torch
+import torch
 
-# from allennlp.models.model import Model
-# from allennlp.common import Params
-# from allennlp.data import Vocabulary
+from allennlp.models.model import Model
+from allennlp.common import Params
+from allennlp.data import Vocabulary
 
-# from qfirst.modules.question_generator import QuestionGenerator
-# from qfirst.models.question_answerer import QuestionAnswerer
-# from qfirst.data.util import get_slot_label_namespace
-# from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
+from qfirst.modules.question_generator import QuestionGenerator
+from qfirst.models.question_answerer import QuestionAnswerer
+from qfirst.data.util import get_slot_label_namespace
+from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
 
-# import math
+import math
 
-# from qfirst.common.span import Span
+from qfirst.common.span import Span
 
-# # should receive verb instances from the qasrl dataset reader
-# @Model.register("qfirst_parser")
-# class QfirstParser(Model):
-#     def __init__(self, vocab: Vocabulary,
-#                  question_generator: QuestionConditionalLM,
-#                  question_answerer: QuestionAnswerer,
-#                  max_beam_size: int = 20,
-#                  question_minimum_prob: float = 0.01,
-#                  span_minimum_prob: float = 0.01,
-#                  clause_mode: bool = False,
-#                  metric: BeamMetric = None):
-#         super(QfirstParser, self).__init__(vocab)
-#         self.question_generator = question_generator
-#         self.question_answerer = question_answerer
-#         self.slot_names = question_generator.get_slot_names()
-#         self.max_beam_size = max_beam_size
-#         self.question_minimum_prob = question_minimum_prob
-#         self.span_minimum_prob = span_minimum_prob
-#         self.clause_mode = clause_mode
-#         self.metric = metric
+# should receive verb instances from the qasrl dataset reader
+@Predictor.register("qfirst_predictor")
+class QfirstPredictor(Predictor):
+    def __init__(self,
+                 model: QfirstParser,
+                 max_beam_size: int = 20,
+                 question_minimum_prob: float = 0.01,
+                 span_minimum_prob: float = 0.01,
+                 clause_mode: bool = False):
+        super(QfirstPredictor, self).__init__()
+        self._question_generator = question_generator
+        self._question_answerer = question_answerer
+        # TODO check if QA slots are subset of QG slots
+        self._max_beam_size = max_beam_size
+        self._question_minimum_prob = question_minimum_prob
+        self._span_minimum_prob = span_minimum_prob
+        self._clause_mode = clause_mode
+
+    @overrides
+    def predict_json(self, inputs: JsonDict) -> List[JsonDict]:
+        raise NotImplementedError # TODO
+
+    @overrides
+    def predict_batch_json(self, inputs: List[JsonDict]) -> List[JsonDict]:
+        return map(inputs, self.predict_json)
 
 #     @overrides
 #     def forward(self,

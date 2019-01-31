@@ -68,4 +68,4 @@ class AfirstSpanDetector(Model):
         return self._span_selector.decode(output_dict)
 
     def get_metrics(self, reset: bool = False):
-        return self._span_selector.metric.get_metric(reset = reset)
+        return self._span_selector.get_metrics(reset = reset)

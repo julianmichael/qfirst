@@ -1,5 +1,3 @@
-from qfirst.modules.question_encoder.question_encoder import QuestionEncoder
-
 from typing import List, Dict
 
 import torch
@@ -9,30 +7,34 @@ from torch.nn import Parameter
 from torch.nn.modules import Linear, Dropout, Embedding, LSTMCell
 import torch.nn.functional as F
 
+from allennlp.common import Params, Registrable
 from allennlp.data import Vocabulary
-from allennlp.common import Params
 from allennlp.modules import TimeDistributed
 
 from qfirst.util.model_utils import block_orthonormal_initialization
 from qfirst.data.util import get_slot_label_namespace
 
-@QuestionEncoder.register("sequential")
-class SequentialQuestionEncoder(QuestionEncoder):
+class SlotSequenceEncoder(torch.nn.Module, Registrable):
     def __init__(self,
             vocab: Vocabulary,
             slot_names: List[str],
             input_dim: int,
-            dim_rnn_hidden: int = 200,
             dim_embedding: int = 100,
+            dim_rnn_hidden: int = 200,
             rnn_layers: int = 1,
             recurrent_dropout: float = 0.1,
             highway: bool = True,
             share_rnn_cell: bool =  False):
-        super(SequentialQuestionEncoder, self).__init__(vocab, slot_names, input_dim, dim_rnn_hidden)
+        super(SlotSequenceEncoder, self).__init__()
+        self._vocab = vocab
+        self._slot_names = slot_names
+        self._input_dim = input_dim
         self._dim_embedding = dim_embedding
         self._dim_rnn_hidden = dim_rnn_hidden
         self._rnn_layers = rnn_layers
         self._recurrent_dropout = recurrent_dropout
+        self._highway = highway
+        self._share_rnn_cell = share_rnn_cell
 
         slot_embedders = []
         for i, n in enumerate(self.get_slot_names()[:-1]):
@@ -41,10 +43,7 @@ class SequentialQuestionEncoder(QuestionEncoder):
             embedder = Embedding(num_labels, self._dim_embedding)
             self.add_module('embedder_%s'%n, embedder)
             slot_embedders.append(embedder)
-
         self._slot_embedders = slot_embedders
-
-        self._highway = highway
 
         rnn_cells = []
         highway_nonlin = []
@@ -90,16 +89,9 @@ class SequentialQuestionEncoder(QuestionEncoder):
             highway_lin.append(layer_highway_lin)
 
         self._rnn_cells = rnn_cells
-        if highway:
+        if self._highway:
             self._highway_nonlin = highway_nonlin
             self._highway_lin = highway_lin
-
-        slot_num_labels = []
-        for i, n in enumerate(self._slot_names):
-            num_labels = self._vocab.get_vocab_size(get_slot_label_namespace(n))
-            slot_num_labels.append(num_labels)
-
-        self._slot_num_labels = slot_num_labels
 
         self._start_symbol = Parameter(torch.Tensor(self._dim_embedding).normal_(0, 1))
 
@@ -111,7 +103,6 @@ class SequentialQuestionEncoder(QuestionEncoder):
 
         # hidden state: start with batch size start symbols
         curr_embedding = self._start_symbol.view(1, -1).expand(batch_size, -1)
-        # print("curr_embedding: " + str(curr_embedding.size()))
 
         # initialize the memory cells
         curr_mem = []
@@ -140,18 +131,14 @@ class SequentialQuestionEncoder(QuestionEncoder):
             if i < len(self._slot_names) - 1:
                 curr_embedding = self._slot_embedders[i](slot_labels[n])
 
+        # TODO: make sure this sees the last slot?
         return last_h
 
-    @classmethod
-    def from_params(cls, vocab: Vocabulary, params: Params) -> 'SequentialQuestionEncoder':
-        slot_names = params.pop("slot_names")
-        input_dim = params.pop("input_dim")
-        rnn_layers = params.pop("rnn_layers", 1)
-        share_rnn_cell = params.pop("share_rnn_cell", True)
-        dim_rnn_hidden = params.pop("dim_rnn_hidden", 200)
-        dim_embedding = params.pop("dim_embedding", 100)
-        recurrent_dropout = params.pop("recurrent_dropout", 0.1)
+    def get_slot_names(self):
+        return self._slot_names
 
-        params.assert_empty(cls.__name__)
+    def get_input_dim(self):
+        return self._input_dim
 
-        return SequentialQuestionEncoder(vocab, slot_names, input_dim=input_dim, rnn_layers = rnn_layers, share_rnn_cell = share_rnn_cell, dim_rnn_hidden = dim_rnn_hidden, dim_embedding = dim_embedding, recurrent_dropout = recurrent_dropout)
+    def get_output_dim(self):
+        return self._dim_rnn_hidden

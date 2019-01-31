@@ -56,7 +56,7 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
         yield {
             **verb_dict,
             "answer_spans": answer_spans_field,
-            "metadata": MetadataField({"gold_spans": set(answer_spans)})
+            "metadata": {"gold_spans": set(answer_spans)}
         }
 
 @QasrlInstanceReader.register("verb_qas")
@@ -134,13 +134,17 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 'question_text': question_text_field,
             }
 
+            answer_spans = [s for ql in question_labels for s in get_answer_spans(ql)]
             answer_fields = get_answer_fields(question_label, verb_fields["text"])
 
-            metadata = { "question_label": question_label }
+            metadata = {
+                "question_label": question_label,
+                "gold_spans": set(answer_spans)
+            }
 
             yield {
-                "metadata": metadata,
-                **verb_fields, **question_fields, **answer_fields
+                **verb_fields, **question_fields, **answer_fields,
+                "metadata": metadata
             }
 
 @QasrlInstanceReader.register("question_factored")
