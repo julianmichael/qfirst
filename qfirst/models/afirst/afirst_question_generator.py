@@ -59,15 +59,15 @@ class AfirstQuestionGenerator(Model):
                 **kwargs):
         span_reps, span_mask = self._get_span_reps(text, predicate_indicator, answer_spans)
         gold_slot_labels = self._get_gold_slot_labels(span_mask, **kwargs)
-        slot_logits = self._time_distributed_question_generator(**{"inputs": span_reps, **gold_slot_labels})
-        output_dict = {**slot_logits, "span_mask": span_mask}
         if gold_slot_labels is not None:
+            slot_logits = self._time_distributed_question_generator(**{"inputs": span_reps, **gold_slot_labels})
             neg_log_likelihood = self._get_total_cross_entropy(slot_logits, gold_slot_labels, span_mask)
             self.metric(slot_logits, gold_slot_labels, span_mask, neg_log_likelihood)
-            output_dict["loss"] = neg_log_likelihood
-        return output_dict
+            return {**slot_logits, "span_mask": span_mask, "loss": neg_log_likelihood}
+        else:
+            raise ConfigurationError("AfirstQuestionGenerator requires gold labels for teacher forcing when running forward. "
+                                     "You may wish to run beam_decode instead.")
 
-    # NOTE: cannot be run batched
     def beam_decode(self,
                     text: Dict[str, torch.LongTensor],
                     predicate_indicator: torch.LongTensor,

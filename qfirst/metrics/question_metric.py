@@ -31,9 +31,14 @@ class QuestionMetric(Metric):
                  mask: torch.Tensor,
                  negative_log_likelihood: float):
         mask, negative_log_likelihood = self.unwrap_to_tensors(mask.long(), negative_log_likelihood)
-        batch_size, num_questions = mask.size()
-        # slot_logits[slot_name] Shape: batch_size, num_questions, slot name vocab size
-        # slot_labels[slot_name] Shape: batch_size, num_questions, 1?
+
+        # this metric handles the case where each instance has a sequence of questions
+        # as well as the case where each instance has a single question (where the mask is, I assume, all ones).
+        has_sequence = len(list(mask.size())) > 1
+        if has_sequence:
+            batch_size, num_questions = mask.size()
+        else:
+            batch_size = mask.size(0)
 
         num_total_questions = mask.sum().item()
 
@@ -49,13 +54,23 @@ class QuestionMetric(Metric):
             logits, gold_labels = self.unwrap_to_tensors(slot_logits[slot_name], slot_labels[slot_name])
             # Shape: batch_size, question_length, 1?
             argmax_predictions = logits.argmax(-1)
-            for bi in range(batch_size):
-                for qi in range(num_questions):
-                    if mask[bi, qi].item() > 0:
-                        if argmax_predictions[bi, qi] == gold_labels[bi, qi]:
+
+            if has_sequence:
+                for bi in range(batch_size):
+                    for qi in range(num_questions):
+                        if mask[bi, qi].item() > 0:
+                            if argmax_predictions[bi, qi].item() == gold_labels[bi, qi].item():
+                                self._slot_correct[slot_name] += 1
+                            else:
+                                correct_questions[bi, qi] = 0
+            else:
+                for bi in range(batch_size):
+                    if mask[bi].item() > 0:
+                        if argmax_predictions[bi].item() == gold_labels[bi].item():
                             self._slot_correct[slot_name] += 1
                         else:
-                            correct_questions[bi, qi] = 0
+                            correct_questions[bi] = 0
+
 
         self._questions_correct += correct_questions.sum().item()
 

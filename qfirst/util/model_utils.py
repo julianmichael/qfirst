@@ -1,5 +1,17 @@
 import torch, numpy
 
+# TODO: is there a useful version of this to be had?
+# def get_slot_labels(slot_names, instance_kwargs):
+#         # each of gold_slot_labels[slot_name] is of Shape: batch_size
+#         gold_slot_labels = {}
+#         for slot_name in slot_names:
+#                 if slot_name in instance_slot_labels_dict and instance_slot_labels_dict[slot_name] is not None:
+#                         gold_slot_labels[slot_name] = instance_slot_labels_dict[slot_name]
+#         for slot_name in slot_names:
+#                 if slot_name not in instance_slot_labels_dict or instance_slot_labels_dict[slot_name] is None:
+#                         gold_slot_labels = None
+#         return gold_slot_labels
+
 def cross_product_combine(hiddenA, hiddenB, maskA, maskB, ordered = False):
         batchA, timeA, embsizeA = hiddenA.size()
         batchB, timeB, embsizeB = hiddenB.size()

@@ -1,4 +1,4 @@
-from typing import Dict, List, TextIO, Optional, Union
+from typing import Dict, Optional
 
 import torch
 from torch.nn.modules import Dropout
@@ -11,12 +11,9 @@ from allennlp.modules import Seq2SeqEncoder, TextFieldEmbedder
 from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
-from allennlp.nn import util
 from allennlp.nn.util import get_text_field_mask
 
-from qfirst.modules.span_rep_assembly import SpanRepAssembly
 from qfirst.modules.span_selector import SpanSelector
-from qfirst.common.span import Span
 
 # Slightly modified re-implementation of Nicholas's span detector
 @Model.register("afirst_span_detector")

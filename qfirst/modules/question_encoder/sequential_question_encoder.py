@@ -130,7 +130,7 @@ class SequentialQuestionEncoder(QuestionEncoder):
                 next_mem.append((new_h, new_c))
                 if self._highway:
                     nonlin = self._highway_nonlin[l][i](torch.cat([curr_input, new_h], -1))
-                    gate = F.sigmoid(nonlin)
+                    gate = torch.sigmoid(nonlin)
                     curr_input = gate * new_h + (1. - gate) * self._highway_lin[l][i](curr_input)
                 else:
                     curr_input = new_h

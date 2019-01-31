@@ -127,7 +127,7 @@ def get_num_invalids_field(question_label):
     return LabelField(label = num_invalids, skip_indexing = True)
 
 def get_answer_fields(question_label, text_field):
-    answer_spans_field = get_answer_spans_field(question_label, text_field)
+    answer_spans_field = get_answer_spans_field(get_answer_spans(question_label), text_field)
     num_answers_field = get_num_answers_field(question_label)
     num_invalids_field = get_num_invalids_field(question_label)
     return {
