@@ -11,8 +11,9 @@ from torch.nn import Parameter
 from torch.nn.modules import Linear, Dropout, Embedding, LSTMCell
 import torch.nn.functional as F
 
-from allennlp.data import Vocabulary
 from allennlp.common import Registrable
+from allennlp.common.checks import ConfigurationError
+from allennlp.data import Vocabulary
 from allennlp.modules import TimeDistributed
 
 from qfirst.util.model_utils import block_orthonormal_initialization
@@ -36,7 +37,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
             share_slot_hidden: bool = False,
             clause_mode: bool = False):
         super(SlotSequenceGenerator, self).__init__()
-        self._vocab = vocab
+        self.vocab = vocab
         self._slot_names = slot_names
         self._input_dim = input_dim
         self._dim_embedding = dim_embedding
@@ -48,21 +49,21 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
 
         question_space_size = 1
         for slot_name in self._slot_names:
-            num_values_for_slot = len(self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name)))
+            num_values_for_slot = len(self.vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name)))
             question_space_size *= num_values_for_slot
             logger.info("%s values for slot %s" % (num_values_for_slot, slot_name))
         logger.info("Slot sequence generation space: %s possible sequences" % question_space_size)
 
         if self._clause_mode:
             adverbial_qarg_indices = []
-            for qarg_value, qarg_index in vocab.get_token_to_index_vocabulary(get_slot_label_namespace("clause-qarg")).items():
+            for qarg_value, qarg_index in self.vocab.get_token_to_index_vocabulary(get_slot_label_namespace("clause-qarg")).items():
                 if "clause-%s" % qarg_value not in self.get_slot_names():
                     adverbial_qarg_indices.append(qarg_index)
             self._adverbial_qarg_indices = set(adverbial_qarg_indices)
 
         slot_embedders = []
         for i, n in enumerate(self.get_slot_names()[:-1]):
-            num_labels = self._vocab.get_vocab_size(get_slot_label_namespace(n))
+            num_labels = self.vocab.get_vocab_size(get_slot_label_namespace(n))
             assert num_labels > 0, "Slot named %s has 0 vocab size"%(n)
             embedder = Embedding(num_labels, self._dim_embedding)
             self.add_module('embedder_%s'%n, embedder)
@@ -125,7 +126,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         slot_preds = []
         slot_num_labels = []
         for i, n in enumerate(self._slot_names):
-            num_labels = self._vocab.get_vocab_size(get_slot_label_namespace(n))
+            num_labels = self.vocab.get_vocab_size(get_slot_label_namespace(n))
             slot_num_labels.append(num_labels)
 
             if share_slot_hidden:
@@ -218,10 +219,10 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
 
         return slot_logits
 
-    def beam_decode_single(self,
-                           inputs, # shape: 1, input_dim
-                           max_beam_size,
-                           min_beam_probability):
+    def beam_decode(self,
+                    inputs, # shape: 1, input_dim
+                    max_beam_size,
+                    min_beam_probability):
         min_beam_log_probability = math.log(min_beam_probability)
         batch_size, input_dim = inputs.size()
         if batch_size != 1:
@@ -249,8 +250,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                 next_mem = recurrence_dict["next_mem"]
                 logits = recurrence_dict["logits"].squeeze()
                 log_probabilities = F.log_softmax(logits, -1)
-                num_slot_values = self._vocab.get_vocab_size(get_slot_label_namespace(slot_name))
-                slot_name_dict = self._vocab.get_index_to_token_vocabulary(get_slot_label_namespace(slot_name))
+                num_slot_values = self.vocab.get_vocab_size(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, num_slot_values):
                     log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
                     if slot_index < len(self._slot_names) - 1:
@@ -283,11 +283,11 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         if self._clause_mode:
             chosen_beam_indices = []
             for beam_index in range(final_beam_size):
-                qarg_name = self._vocab.get_token_from_index(final_slots["clause-qarg"][beam_index].item(), get_slot_label_namespace("clause-qarg"))
+                qarg_name = self.vocab.get_token_from_index(final_slots["clause-qarg"][beam_index].item(), get_slot_label_namespace("clause-qarg"))
                 qarg = "clause-%s" % qarg_name
                 if qarg in self.get_slot_names():
                     # remove core arguments which are invalid
-                    arg_value = self._vocab.get_token_from_index(final_slots[qarg][beam_index].item(), get_slot_label_namespace(qarg))
+                    arg_value = self.vocab.get_token_from_index(final_slots[qarg][beam_index].item(), get_slot_label_namespace(qarg))
                     should_keep = arg_value != "_"
                 else:
                     # Old approach: remove adverbials with prob below the threshold
@@ -305,4 +305,12 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                 final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)
             final_probs = final_probs.gather(0, chosen_beam_vector)
 
-        return { k: v.long() for k, v in final_slots.items() }, final_probs
+        final_slot_indices = {
+            slot_name: slot_indices.long().tolist()
+            for slot_name, slot_indices in final_slots.items() }
+        final_slot_labels = {
+            slot_name: [self.vocab.get_token_from_index(index, get_slot_label_namespace(slot_name))
+                        for index in slot_indices]
+            for slot_name, slot_indices in final_slot_indices.items()
+        }
+        return final_slot_indices, final_slot_labels, final_probs.tolist()

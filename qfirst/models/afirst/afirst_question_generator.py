@@ -67,18 +67,25 @@ class AfirstQuestionGenerator(Model):
             output_dict["loss"] = neg_log_likelihood
         return output_dict
 
-    def beam_decode_single(self,
-                           text: Dict[str, torch.LongTensor],
-                           predicate_indicator: torch.LongTensor,
-                           answer_spans: torch.LongTensor,
-                           max_beam_size: int,
-                           min_beam_probability: float):
-        # Shape: batch_size, num_spans, question generator input dim
+    # NOTE: cannot be run batched
+    def beam_decode(self,
+                    text: Dict[str, torch.LongTensor],
+                    predicate_indicator: torch.LongTensor,
+                    answer_spans: torch.LongTensor,
+                    max_beam_size: int,
+                    min_beam_probability: float):
+        # Shape: 1, num_spans, question generator input dim
         span_reps, _ = self._get_span_reps(text, predicate_indicator, answer_spans)
         batch_size, num_spans, _ = span_reps.size()
-        if batch_size > 1 or num_spans > 1:
-            raise ConfigurationError("Must have only 1 span per batch and batch size of 1 for beam decoding (had %s spans and batch size %s)" % (num_spans, batch_size))
-        return self._question_generator.beam_decode_single(span_reps.squeeze(0), max_beam_size, min_beam_probability)
+        if batch_size > 1:
+            raise ConfigurationError("Must have a batch size of 1 for beam decoding (had batch size %s)" % (num_spans, batch_size))
+        span_reps = span_reps.squeeze(0)
+        return [self._question_generator.beam_decode(
+            span_reps[i].unsqueeze(0), max_beam_size, min_beam_probability
+        ) for i in range(num_spans)]
+
+    def get_slot_names(self):
+        return self._question_generator.get_slot_names()
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset=reset)

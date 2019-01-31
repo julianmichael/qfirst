@@ -28,6 +28,8 @@ from qfirst.common.span import Span
 
 from qfirst.metrics.span_metric import SpanMetric
 
+# TODO!!!: fix weighted span selection policy.
+# right now it determines the targets. instead it should determine the loss weights.
 objective_values = ["binary", "multinomial"]
 gold_span_selection_policy_values = ["union", "majority", "weighted"]
 # multinomial cannot be used with weighted
