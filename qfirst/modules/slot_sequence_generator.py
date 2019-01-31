@@ -1,5 +1,3 @@
-from qfirst.modules.question_model.question_model import QuestionModel
-
 from typing import List, Dict
 
 import torch

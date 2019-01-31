@@ -5,8 +5,6 @@ import torch
 from allennlp.common import Params
 from allennlp.training.metrics.metric import Metric
 
-from qfirst.metrics.beam_metric import BeamMetric
-
 import json
 
 from qfirst.common.span import Span

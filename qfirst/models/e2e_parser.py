@@ -16,7 +16,6 @@ from allennlp.modules.token_embedders import Embedding
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import batched_index_select, get_text_field_mask, sequence_cross_entropy_with_logits
 
-from qfirst.modules.question_generator import QuestionGenerator
 from qfirst.data.util import get_slot_label_namespace
 from qfirst.util.question_conversion import get_question_tensors_for_clause_tensors_batched
 from qfirst.metrics import E2EMetric, E2EPretrainingMetric
