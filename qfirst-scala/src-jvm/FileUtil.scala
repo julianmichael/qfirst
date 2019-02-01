@@ -50,7 +50,8 @@ object FileUtil {
 
   def writeJson[A: Encoder](path: NIOPath, printer: Printer)(a: A): IO[Unit] = {
     import io.circe.syntax._
-    IO(java.nio.file.Files.write(path, printer.pretty(a.asJson).getBytes("UTF-8")))
+    IO(java.nio.file.Files.createDirectories(path.getParent)) >>
+      IO(java.nio.file.Files.write(path, printer.pretty(a.asJson).getBytes("UTF-8")))
   }
 
   def readClauseInfo(

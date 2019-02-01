@@ -70,6 +70,15 @@ sealed trait MapTree[A, B] {
     case l @ Leaf(_) => Some(l)
     case _ => None
   }
+
+  def branches: List[(List[A], B)] = this match {
+    case Leaf(value) => List((Nil, value))
+    case Fork(children) => children.toList.flatMap {
+      case (node, child) => child.branches.map {
+        case (childBranch, value) => (node :: childBranch, value)
+      }
+    }
+  }
 }
 object MapTree {
   case class Fork[A, B](children: Map[A, MapTree[A, B]]) extends MapTree[A, B]
