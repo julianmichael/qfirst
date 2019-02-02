@@ -54,10 +54,10 @@ class AfirstPredictor(Predictor):
                         for slot_name in self._model.get_question_generator().get_slot_names()
                     }
                     beam.append({
-                        "question_slots": question_slots,
-                        "question_prob": question_probs[i],
+                        "questionSlots": question_slots,
+                        "questionProb": question_probs[i],
                         "span": [span.start(), span.end() + 1],
-                        "span_prob": span_prob
+                        "spanProb": span_prob
                     })
             verb_dicts.append({
                 "verbIndex": verb_instance["metadata"]["verb_index"],

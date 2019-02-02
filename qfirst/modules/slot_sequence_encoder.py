@@ -19,9 +19,9 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
             vocab: Vocabulary,
             slot_names: List[str],
             input_dim: int,
-            dim_embedding: int = 100,
-            dim_rnn_hidden: int = 200,
-            rnn_layers: int = 1,
+            slot_embedding_dim: int = 100,
+            output_dim: int = 200,
+            num_layers: int = 1,
             recurrent_dropout: float = 0.1,
             highway: bool = True,
             share_rnn_cell: bool =  False):
@@ -29,9 +29,9 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         self._vocab = vocab
         self._slot_names = slot_names
         self._input_dim = input_dim
-        self._dim_embedding = dim_embedding
-        self._dim_rnn_hidden = dim_rnn_hidden
-        self._rnn_layers = rnn_layers
+        self._slot_embedding_dim = slot_embedding_dim
+        self._output_dim = output_dim
+        self._num_layers = num_layers
         self._recurrent_dropout = recurrent_dropout
         self._highway = highway
         self._share_rnn_cell = share_rnn_cell
@@ -40,7 +40,7 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         for i, n in enumerate(self.get_slot_names()[:-1]):
             num_labels = self._vocab.get_vocab_size(get_slot_label_namespace(n))
             assert num_labels > 0, "Slot named %s has 0 vocab size"%(n)
-            embedder = Embedding(num_labels, self._dim_embedding)
+            embedder = Embedding(num_labels, self._slot_embedding_dim)
             self.add_module('embedder_%s'%n, embedder)
             slot_embedders.append(embedder)
         self._slot_embedders = slot_embedders
@@ -48,20 +48,20 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         rnn_cells = []
         highway_nonlin = []
         highway_lin = []
-        for l in range(self._rnn_layers):
+        for l in range(self._num_layers):
             layer_cells = []
             layer_highway_nonlin = []
             layer_highway_lin = []
             shared_cell = None
-            layer_input_size = self.get_input_dim() + self._dim_embedding if l == 0 else self._dim_rnn_hidden
+            layer_input_size = self.get_input_dim() + self._slot_embedding_dim if l == 0 else self._output_dim
             for i, n in enumerate(self._slot_names):
                 if share_rnn_cell:
                     if shared_cell is None:
-                        shared_cell = LSTMCell(layer_input_size, self._dim_rnn_hidden)
+                        shared_cell = LSTMCell(layer_input_size, self._output_dim)
                         self.add_module('layer_%d_cell'%l, shared_cell)
                         if highway:
-                            shared_highway_nonlin = Linear(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden)
-                            shared_highway_lin = Linear(layer_input_size, self._dim_rnn_hidden, bias = False)
+                            shared_highway_nonlin = Linear(layer_input_size + self._output_dim, self._output_dim)
+                            shared_highway_lin = Linear(layer_input_size, self._output_dim, bias = False)
                             self.add_module('layer_%d_highway_nonlin'%l, shared_highway_nonlin)
                             self.add_module('layer_%d_highway_lin'%l, shared_highway_lin)
                     layer_cells.append(shared_cell)
@@ -69,16 +69,16 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
                         layer_highway_nonlin.append(shared_highway_nonlin)
                         layer_highway_lin.append(shared_highway_lin)
                 else:
-                    cell = LSTMCell(layer_input_size, self._dim_rnn_hidden)
-                    cell.weight_ih.data.copy_(block_orthonormal_initialization(layer_input_size, self._dim_rnn_hidden, 4).t())
-                    cell.weight_hh.data.copy_(block_orthonormal_initialization(self._dim_rnn_hidden, self._dim_rnn_hidden, 4).t())
+                    cell = LSTMCell(layer_input_size, self._output_dim)
+                    cell.weight_ih.data.copy_(block_orthonormal_initialization(layer_input_size, self._output_dim, 4).t())
+                    cell.weight_hh.data.copy_(block_orthonormal_initialization(self._output_dim, self._output_dim, 4).t())
                     self.add_module('layer_%d_cell_%s'%(l, n), cell)
                     layer_cells.append(cell)
                     if highway:
-                        nonlin = Linear(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden)
-                        lin = Linear(layer_input_size, self._dim_rnn_hidden, bias = False)
-                        nonlin.weight.data.copy_(block_orthonormal_initialization(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden, 1).t())
-                        lin.weight.data.copy_(block_orthonormal_initialization(layer_input_size, self._dim_rnn_hidden, 1).t())
+                        nonlin = Linear(layer_input_size + self._output_dim, self._output_dim)
+                        lin = Linear(layer_input_size, self._output_dim, bias = False)
+                        nonlin.weight.data.copy_(block_orthonormal_initialization(layer_input_size + self._output_dim, self._output_dim, 1).t())
+                        lin.weight.data.copy_(block_orthonormal_initialization(layer_input_size, self._output_dim, 1).t())
                         self.add_module('layer_%d_highway_nonlin_%s'%(l, n), nonlin)
                         self.add_module('layer_%d_highway_lin_%s'%(l, n), lin)
                         layer_highway_nonlin.append(nonlin)
@@ -93,7 +93,7 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
             self._highway_nonlin = highway_nonlin
             self._highway_lin = highway_lin
 
-        self._start_symbol = Parameter(torch.Tensor(self._dim_embedding).normal_(0, 1))
+        self._start_symbol = Parameter(torch.Tensor(self._slot_embedding_dim).normal_(0, 1))
 
     def forward(self,
                 pred_reps,
@@ -106,15 +106,15 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
 
         # initialize the memory cells
         curr_mem = []
-        for l in range(self._rnn_layers):
-            curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
-                             Variable(pred_reps.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+        for l in range(self._num_layers):
+            curr_mem.append((Variable(pred_reps.data.new().resize_(batch_size, self._output_dim).zero_()),
+                             Variable(pred_reps.data.new().resize_(batch_size, self._output_dim).zero_())))
 
         last_h = None
         for i, n in enumerate(self._slot_names):
             next_mem  = []
             curr_input = torch.cat([pred_reps, curr_embedding], -1)
-            for l in range(self._rnn_layers):
+            for l in range(self._num_layers):
                 new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
                 if self._recurrent_dropout > 0:
                     new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
@@ -141,4 +141,4 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         return self._input_dim
 
     def get_output_dim(self):
-        return self._dim_rnn_hidden
+        return self._output_dim

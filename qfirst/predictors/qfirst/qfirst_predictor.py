@@ -68,10 +68,10 @@ class QfirstPredictor(Predictor):
                 scored_spans = [(s, p) for s, p in span_output["spans"] if p >= self._span_minimum_prob]
                 for span, span_prob in scored_spans:
                     beam.append({
-                        "question_slots": question_slots,
-                        "question_prob": question_probs[i],
+                        "questionSlots": question_slots,
+                        "questionProb": question_probs[i],
                         "span": [span.start(), span.end() + 1],
-                        "span_prob": span_prob
+                        "spanProb": span_prob
                     })
             verb_dicts.append({
                 "verbIndex": verb_instance["metadata"]["verb_index"],

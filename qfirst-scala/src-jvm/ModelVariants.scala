@@ -66,6 +66,7 @@ object ModelVariants {
     val sentenceEncoderNumLayers = List(2, 4, 8)
     val questionGeneratorSlotHiddenDim = List(100)
     val questionGeneratorRNNHiddenDim = List(200)
+    val questionGeneratorSlotEmbeddingDim = List(200)
     val questionGeneratorNumLayers = List(2, 4, 8)
     val spanSelectorHiddenDim = List(100)
     val predicateFeatureDim = List(100)
@@ -124,7 +125,7 @@ object ModelVariants {
       _ <- param("input_dim", List(inputDim))
       _ <- param("slot_embedding_dim", H.questionEncoderSlotEmbeddingDim)
       _ <- param("output_dim", List(outputDim))
-      _ <- param("layers", H.questionEncoderNumLayers)
+      _ <- param("num_layers", H.questionEncoderNumLayers)
     } yield ()
   }
 
@@ -145,7 +146,8 @@ object ModelVariants {
       _ <- param("input_dim", List(inputDim))
       _ <- param("slot_hidden_dim", H.questionGeneratorSlotHiddenDim)
       _ <- param("rnn_hidden_dim", H.questionGeneratorRNNHiddenDim)
-      _ <- param("layers", H.questionGeneratorNumLayers)
+      _ <- param("slot_embedding_dim", H.questionGeneratorSlotEmbeddingDim)
+      _ <- param("num_layers", H.questionGeneratorNumLayers)
     } yield ()
   }
 

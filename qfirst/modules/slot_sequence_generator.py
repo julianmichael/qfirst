@@ -25,10 +25,10 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
             vocab: Vocabulary,
             slot_names: List[str],
             input_dim: int,
-            dim_slot_hidden: int = 100,
-            dim_rnn_hidden: int = 200,
-            dim_embedding: int = 100,
-            rnn_layers: int = 1,
+            slot_hidden_dim: int = 100,
+            rnn_hidden_dim: int = 200,
+            slot_embedding_dim: int = 100,
+            num_layers: int = 1,
             recurrent_dropout: float = 0.1,
             highway: bool = True,
             share_rnn_cell: bool =  False,
@@ -38,10 +38,10 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         self.vocab = vocab
         self._slot_names = slot_names
         self._input_dim = input_dim
-        self._dim_embedding = dim_embedding
-        self._dim_slot_hidden = dim_slot_hidden
-        self._dim_rnn_hidden = dim_rnn_hidden
-        self._rnn_layers = rnn_layers
+        self._slot_embedding_dim = slot_embedding_dim
+        self._slot_hidden_dim = slot_hidden_dim
+        self._rnn_hidden_dim = rnn_hidden_dim
+        self._num_layers = num_layers
         self._recurrent_dropout = recurrent_dropout
         self._clause_mode = clause_mode
 
@@ -63,7 +63,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         for i, n in enumerate(self.get_slot_names()[:-1]):
             num_labels = self.vocab.get_vocab_size(get_slot_label_namespace(n))
             assert num_labels > 0, "Slot named %s has 0 vocab size"%(n)
-            embedder = Embedding(num_labels, self._dim_embedding)
+            embedder = Embedding(num_labels, self._slot_embedding_dim)
             self.add_module('embedder_%s'%n, embedder)
             slot_embedders.append(embedder)
 
@@ -74,20 +74,20 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         rnn_cells = []
         highway_nonlin = []
         highway_lin = []
-        for l in range(self._rnn_layers):
+        for l in range(self._num_layers):
             layer_cells = []
             layer_highway_nonlin = []
             layer_highway_lin = []
             shared_cell = None
-            layer_input_size = self._input_dim + self._dim_embedding if l == 0 else self._dim_rnn_hidden
+            layer_input_size = self._input_dim + self._slot_embedding_dim if l == 0 else self._rnn_hidden_dim
             for i, n in enumerate(self._slot_names):
                 if share_rnn_cell:
                     if shared_cell is None:
-                        shared_cell = LSTMCell(layer_input_size, self._dim_rnn_hidden)
+                        shared_cell = LSTMCell(layer_input_size, self._rnn_hidden_dim)
                         self.add_module('layer_%d_cell'%l, shared_cell)
                         if highway:
-                            shared_highway_nonlin = Linear(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden)
-                            shared_highway_lin = Linear(layer_input_size, self._dim_rnn_hidden, bias = False)
+                            shared_highway_nonlin = Linear(layer_input_size + self._rnn_hidden_dim, self._rnn_hidden_dim)
+                            shared_highway_lin = Linear(layer_input_size, self._rnn_hidden_dim, bias = False)
                             self.add_module('layer_%d_highway_nonlin'%l, shared_highway_nonlin)
                             self.add_module('layer_%d_highway_lin'%l, shared_highway_lin)
                     layer_cells.append(shared_cell)
@@ -95,16 +95,16 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                         layer_highway_nonlin.append(shared_highway_nonlin)
                         layer_highway_lin.append(shared_highway_lin)
                 else:
-                    cell = LSTMCell(layer_input_size, self._dim_rnn_hidden)
-                    cell.weight_ih.data.copy_(block_orthonormal_initialization(layer_input_size, self._dim_rnn_hidden, 4).t())
-                    cell.weight_hh.data.copy_(block_orthonormal_initialization(self._dim_rnn_hidden, self._dim_rnn_hidden, 4).t())
+                    cell = LSTMCell(layer_input_size, self._rnn_hidden_dim)
+                    cell.weight_ih.data.copy_(block_orthonormal_initialization(layer_input_size, self._rnn_hidden_dim, 4).t())
+                    cell.weight_hh.data.copy_(block_orthonormal_initialization(self._rnn_hidden_dim, self._rnn_hidden_dim, 4).t())
                     self.add_module('layer_%d_cell_%s'%(l, n), cell)
                     layer_cells.append(cell)
                     if highway:
-                        nonlin = Linear(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden)
-                        lin = Linear(layer_input_size, self._dim_rnn_hidden, bias = False)
-                        nonlin.weight.data.copy_(block_orthonormal_initialization(layer_input_size + self._dim_rnn_hidden, self._dim_rnn_hidden, 1).t())
-                        lin.weight.data.copy_(block_orthonormal_initialization(layer_input_size, self._dim_rnn_hidden, 1).t())
+                        nonlin = Linear(layer_input_size + self._rnn_hidden_dim, self._rnn_hidden_dim)
+                        lin = Linear(layer_input_size, self._rnn_hidden_dim, bias = False)
+                        nonlin.weight.data.copy_(block_orthonormal_initialization(layer_input_size + self._rnn_hidden_dim, self._rnn_hidden_dim, 1).t())
+                        lin.weight.data.copy_(block_orthonormal_initialization(layer_input_size, self._rnn_hidden_dim, 1).t())
                         self.add_module('layer_%d_highway_nonlin_%s'%(l, n), nonlin)
                         self.add_module('layer_%d_highway_lin_%s'%(l, n), lin)
                         layer_highway_nonlin.append(nonlin)
@@ -129,15 +129,15 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
 
             if share_slot_hidden:
                 if shared_slot_hidden is None:
-                    shared_slot_hidden = Linear(self._dim_rnn_hidden, self._dim_slot_hidden)
+                    shared_slot_hidden = Linear(self._rnn_hidden_dim, self._slot_hidden_dim)
                     self.add_module('slot_hidden', shared_slot_hidden)
                 slot_hiddens.append(shared_slot_hidden)
             else:
-                slot_hidden = Linear(self._dim_rnn_hidden, self._dim_slot_hidden)
+                slot_hidden = Linear(self._rnn_hidden_dim, self._slot_hidden_dim)
                 slot_hiddens.append(slot_hidden)
                 self.add_module('slot_hidden_%s'%n, slot_hidden)
 
-            slot_pred = Linear(self._dim_slot_hidden, num_labels)
+            slot_pred = Linear(self._slot_hidden_dim, num_labels)
             slot_preds.append(slot_pred)
             self.add_module('slot_pred_%s'%n, slot_pred)
 
@@ -145,7 +145,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         self._slot_preds = slot_preds
         self._slot_num_labels = slot_num_labels
 
-        self._start_symbol = Parameter(torch.Tensor(self._dim_embedding).normal_(0, 1))
+        self._start_symbol = Parameter(torch.Tensor(self._slot_embedding_dim).normal_(0, 1))
 
     def get_slot_names(self):
         return self._slot_names
@@ -162,7 +162,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
 
         next_mem  = []
         curr_input = torch.cat([inputs, curr_embedding], -1)
-        for l in range(self._rnn_layers):
+        for l in range(self._num_layers):
             new_h, new_c = self._rnn_cells[l][slot_index](curr_input, curr_mem[l])
             if self._recurrent_dropout > 0:
                 new_h = F.dropout(new_h, p = self._recurrent_dropout, training = self.training)
@@ -186,9 +186,9 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         batch_size, _ = inputs.size()
         emb = self._start_symbol.view(1, -1).expand(batch_size, -1)
         mem = []
-        for l in range(self._rnn_layers):
-            mem.append((Variable(inputs.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_()),
-                        Variable(inputs.data.new().resize_(batch_size, self._dim_rnn_hidden).zero_())))
+        for l in range(self._num_layers):
+            mem.append((Variable(inputs.data.new().resize_(batch_size, self._rnn_hidden_dim).zero_()),
+                        Variable(inputs.data.new().resize_(batch_size, self._rnn_hidden_dim).zero_())))
         return emb, mem
 
     def forward(self,

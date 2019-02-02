@@ -41,9 +41,10 @@
         "question_generator": {
             "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
             "input_dim": 300,
-            "dim_slot_hidden":100,
-            "dim_rnn_hidden": 200,
-            "rnn_layers": 4,
+            "slot_hidden_dim":100,
+            "rnn_hidden_dim": 200,
+            "slot_embedding_dim":100,
+            "num_layers": 4,
             "share_rnn_cell": false
         },
         "predicate_feature_dim": 100

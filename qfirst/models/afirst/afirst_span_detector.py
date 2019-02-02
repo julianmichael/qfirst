@@ -52,7 +52,6 @@ class AfirstSpanDetector(Model):
         embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
         batch_size, num_tokens, _ = embedded_text_input.size()
         text_mask = get_text_field_mask(text)
-        # text_size = mask.view(batch_size, -1).sum(1)
         embedded_predicate_indicator = self._predicate_feature_embedding(predicate_indicator.long())
         embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
         encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)

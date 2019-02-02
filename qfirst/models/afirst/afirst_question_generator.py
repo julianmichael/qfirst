@@ -42,13 +42,16 @@ class AfirstQuestionGenerator(Model):
         self._embedding_dropout = Dropout(p=embedding_dropout)
 
         self._span_extractor = EndpointSpanExtractor(self._sentence_encoder.get_output_dim(), combination="x,y")
-        self._span_rep_projection = TimeDistributed(
-            Linear(2 * self._sentence_encoder.get_output_dim(), self._question_generator.get_input_dim())
-        )
 
         embedding_dim_with_predicate_feature = self._text_field_embedder.get_output_dim() + self._predicate_feature_dim
         if embedding_dim_with_predicate_feature != self._sentence_encoder.get_input_dim():
-            raise ConfigurationError("Input dimension of sentence encoder must be the sum of predicate feature dim and text embedding dim.")
+            raise ConfigurationError(
+                ("Input dimension of sentence encoder (%s) must be " % self._sentence_encoder.get_input_dim()) + \
+                ("the sum of predicate feature dim and text embedding dim (%s)." % (embedding_dim_with_predicate_feature)))
+        if (2 * self._sentence_encoder.get_output_dim()) != self._question_generator.get_input_dim():
+            raise ConfigurationError(
+                ("Input dimension of question generator (%s) must be " % self._question_generator.get_input_dim()) + \
+                ("double the output dimension of the sentence encoder (%s)." % (2 * self._sentence_encoder.get_output_dim())))
         self.metric = QuestionMetric(vocab, self._question_generator.get_slot_names())
 
     @overrides
@@ -117,5 +120,4 @@ class AfirstQuestionGenerator(Model):
         encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)
         span_mask = (answer_spans[:, :, 0] >= 0).long()
         span_reps = self._span_extractor(encoded_text, answer_spans, sequence_mask = text_mask, span_indices_mask = span_mask)
-        projected_span_reps = self._span_rep_projection(span_reps)
-        return projected_span_reps, span_mask
+        return span_reps, span_mask
