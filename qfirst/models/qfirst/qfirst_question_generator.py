@@ -93,10 +93,13 @@ class QfirstQuestionGenerator(Model):
         return self.metric.get_metric(reset=reset)
 
     def _get_cross_entropy(self, slot_logits, gold_slot_labels):
-            xe = torch.tensor(0.)
+            xe = None
             for slot_name in self.get_slot_names():
                 slot_xe = F.cross_entropy(slot_logits[slot_name], gold_slot_labels[slot_name].squeeze(-1), reduction = "sum")
-                xe += slot_xe
+                if xe is None:
+                    xe = slot_xe
+                else:
+                    xe += slot_xe
             return xe
 
     def _get_gold_slot_labels(self, instance_slot_labels_dict):
