@@ -34,31 +34,32 @@ class AfirstPredictor(Predictor):
         span_outputs = self._model.get_span_detector().forward_on_instances(verb_instances)
         verb_dicts = []
         for (verb_instance, span_output) in zip(verb_instances, span_outputs):
+            beam = []
             scored_spans = [(s, p) for s, p in span_output["spans"] if p >= self._span_minimum_threshold]
             span_fields = [SpanField(span.start(), span.end(), verb_instance["text"]) for span, _ in scored_spans]
-            verb_instance.add_field("answer_spans", ListField(span_fields), self._model.get_question_generator().vocab)
-            qgen_input_tensors = move_to_device(
-                Batch([verb_instance]).as_tensor_dict(),
-                self._model.get_question_generator()._get_prediction_device())
-            question_beams = self._model.get_question_generator().beam_decode(
-                text = qgen_input_tensors["text"],
-                predicate_indicator = qgen_input_tensors["predicate_indicator"],
-                answer_spans = qgen_input_tensors["answer_spans"],
-                max_beam_size = self._question_beam_size,
-                min_beam_probability = self._question_minimum_threshold)
-            beam = []
-            for (span, span_prob), (_, slot_values, question_probs) in zip(scored_spans, question_beams):
-                for i in range(len(question_probs)):
-                    question_slots = {
-                        slot_name: slot_values[slot_name][i]
-                        for slot_name in self._model.get_question_generator().get_slot_names()
-                    }
-                    beam.append({
-                        "questionSlots": question_slots,
-                        "questionProb": question_probs[i],
-                        "span": [span.start(), span.end() + 1],
-                        "spanProb": span_prob
-                    })
+            if len(span_fields) > 0:
+                verb_instance.add_field("answer_spans", ListField(span_fields), self._model.get_question_generator().vocab)
+                qgen_input_tensors = move_to_device(
+                    Batch([verb_instance]).as_tensor_dict(),
+                    self._model.get_question_generator()._get_prediction_device())
+                question_beams = self._model.get_question_generator().beam_decode(
+                    text = qgen_input_tensors["text"],
+                    predicate_indicator = qgen_input_tensors["predicate_indicator"],
+                    answer_spans = qgen_input_tensors["answer_spans"],
+                    max_beam_size = self._question_beam_size,
+                    min_beam_probability = self._question_minimum_threshold)
+                for (span, span_prob), (_, slot_values, question_probs) in zip(scored_spans, question_beams):
+                    for i in range(len(question_probs)):
+                        question_slots = {
+                            slot_name: slot_values[slot_name][i]
+                            for slot_name in self._model.get_question_generator().get_slot_names()
+                        }
+                        beam.append({
+                            "questionSlots": question_slots,
+                            "questionProb": question_probs[i],
+                            "span": [span.start(), span.end() + 1],
+                            "spanProb": span_prob
+                        })
             verb_dicts.append({
                 "verbIndex": verb_instance["metadata"]["verb_index"],
                 "verbInflectedForms": verb_instance["metadata"]["verb_inflected_forms"],
@@ -72,4 +73,4 @@ class AfirstPredictor(Predictor):
 
     @overrides
     def predict_batch_json(self, inputs: List[JsonDict]) -> List[JsonDict]:
-        return map(inputs, self.predict_json)
+        return list(map(inputs, self.predict_json))
