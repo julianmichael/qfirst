@@ -50,7 +50,8 @@
           "span_hidden_dim": 100
       },
       "predicate_feature_dim": 100,
-      "question_injection": "top"
+      "question_injection": "top",
+      "classify_invalids": true
   },
   "iterator": {
     "type": "bucket",
@@ -61,7 +62,7 @@
     "num_epochs": 200,
     "grad_norm": 1.0,
     "patience": 10,
-    "validation_metric": "+f1",
+    "validation_metric": "+span-f1",
     "cuda_device": -1,
     "optimizer": {
       "type": "adadelta",
