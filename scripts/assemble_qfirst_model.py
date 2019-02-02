@@ -1,35 +1,25 @@
 import torch, os, json, tarfile, argparse, uuid, shutil
 
-def main(qg_dir, qa_dir, config_base, outfile, target_device):
+def main(config_base, qg_dir, qa_dir, outfile):
     def load(targ):
-        if target_device is not None:
-            return torch.load(targ, map_location = target_device)
-        else:
-            return torch.load(targ)
+        return torch.load(targ, map_location = "cpu")
+
+    config = json.loads(open(config_base).read())
+    weights = {}
 
     qg_weights = load(os.path.join(qg_dir, "best.th"))
     qg_config = json.loads(open(os.path.join(qg_dir, "config.json"), 'r').read())
-    # TODO remove when old model is retrained
-    question_model_config_if_old = qg_config["model"].pop("question_generator", None)
-    if question_model_config_if_old is not None:
-        qg_config["model"]["question_model"] = question_model_config_if_old
-
-    weights = {}
     for name, w in qg_weights.items():
-        # TODO remove when old model is retrained
-        if name.startswith('question_generator'):
-            name = name.replace('question_generator', 'question_model')
-        weights['question_generator.' + name] = w
+        weights['_question_generator.' + name] = w
+    config["model"]["question_generator"] = qg_config["model"]
+    del config["model"]["question_generator"]["type"]
 
     qa_weights = load(os.path.join(qa_dir, "best.th"))
     qa_config = json.loads(open(os.path.join(qa_dir, "config.json"), 'r').read())
-
     for name, w in qa_weights.items():
-        weights['question_answerer.' + name] = w
-
-    config = json.loads(open(config_base).read())
-    config["model"]["question_generator"] = qg_config["model"]
+        weights['_question_answerer.' + name] = w
     config["model"]["question_answerer"] = qa_config["model"]
+    del config["model"]["question_answerer"]["type"]
 
     tmpdir = os.path.join("tmp", str(uuid.uuid4()))
     os.makedirs(tmpdir)
@@ -51,12 +41,11 @@ def main(qg_dir, qa_dir, config_base, outfile, target_device):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Combine trained question-generation and answering models"
                                                  "into a question-first QA-SRL parser.")
-    parser.add_argument('--qg', type=str)
-    parser.add_argument('--qa', type=str)
     parser.add_argument('--config_base', type=str)
+    parser.add_argument('--question_generator', type=str)
+    parser.add_argument('--question_answerer', type=str)
     parser.add_argument('--out', type=str)
-    parser.add_argument('--target_device', type=str)
 
     args = parser.parse_args()
-    main(args.qg, args.qa, args.config_base, args.out, args.target_device)
+    main(args.config_base, args.question_generator, args.question_answerer, args.out)
 

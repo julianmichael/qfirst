@@ -30,6 +30,8 @@ allennlp predict \
          $AFIRST_PARSER_DIR/model.tar.gz \
          qasrl-v2_1/dense/dev.jsonl
 
+# TODO: run Scala evaluation code to get full results
+
 ### QUESTION-FIRST ###
 
 $QFIRST_QUESTION_GENERATOR_DIR=save/qfirst/question_generator

@@ -49,9 +49,10 @@ class AfirstPredictor(Predictor):
             beam = []
             for (span, span_prob), (_, slot_values, question_probs) in zip(scored_spans, question_beams):
                 for i in range(len(question_probs)):
-                    question_slots = [
-                        slot_values[slot_name][i]
-                        for slot_name in self._model.get_question_generator().get_slot_names()]
+                    question_slots = {
+                        slot_name: slot_values[slot_name][i]
+                        for slot_name in self._model.get_question_generator().get_slot_names()
+                    }
                     beam.append({
                         "question_slots": question_slots,
                         "question_prob": question_probs[i],

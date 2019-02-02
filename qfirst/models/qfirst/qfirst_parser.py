@@ -4,7 +4,6 @@ from allennlp.data import Vocabulary
 from qfirst.models.qfirst.qfirst_question_generator import QfirstQuestionGenerator
 from qfirst.models.qfirst.qfirst_question_answerer import QfirstQuestionAnswerer
 
-# should receive verb instances from the qasrl dataset reader
 @Model.register("qfirst_parser")
 class QfirstParser(Model):
     def __init__(self, vocab: Vocabulary,
