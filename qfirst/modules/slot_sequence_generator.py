@@ -269,9 +269,9 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         final_slots = {}
         for slot_name in reversed(self._slot_names):
             final_slots[slot_name] = inputs.new_zeros([final_beam_size], dtype = torch.int32)
-        final_probs = inputs.new_zeros([final_beam_size], dtype = torch.float64)
+        final_log_probs = inputs.new_zeros([final_beam_size], dtype = torch.float64)
         for beam_index in range(final_beam_size):
-            final_probs[beam_index] = current_beam_states[beam_index][2]
+            final_log_probs[beam_index] = current_beam_states[beam_index][2]
             current_backpointer = beam_index
             for slot_name in reversed(self._slot_names):
                 final_slots[slot_name][beam_index] = slot_beam_labels[slot_name][current_backpointer]
@@ -289,7 +289,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                     should_keep = arg_value != "_"
                 else:
                     # Old approach: remove adverbials with prob below the threshold
-                    # should_keep = final_probs[beam_index].item() >= min_beam_log_probability
+                    # should_keep = final_log_probs[beam_index].item() >= min_beam_log_probability
                     # New approach: keep all adverbials
                     should_keep = True
                 if should_keep:
@@ -301,7 +301,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
             chosen_beam_vector = torch.tensor(chosen_beam_indices, device = device).long()
             for slot_name in self._slot_names:
                 final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)
-            final_probs = final_probs.gather(0, chosen_beam_vector)
+            final_probs = final_log_probs.gather(0, chosen_beam_vector).exp()
 
         final_slot_indices = {
             slot_name: slot_indices.long().tolist()

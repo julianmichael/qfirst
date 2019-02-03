@@ -45,7 +45,12 @@ object FileUtil {
   }
 
   def readJson[A: Decoder](path: NIOPath): IO[A] = {
-    IO(io.circe.jawn.decodeFile[A](new java.io.File(path.toString)).right.get)
+    IO(
+      io.circe.jawn.decodeFile[A](new java.io.File(path.toString)) match {
+        case Right(a) => a
+        case Left(e) => throw new RuntimeException(s"${e.show}")
+      }
+    )
   }
 
   def writeJson[A: Encoder](path: NIOPath, printer: Printer)(a: A): IO[Unit] = {

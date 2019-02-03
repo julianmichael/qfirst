@@ -193,19 +193,19 @@ object MetricsApp extends IOApp {
   import monocle.function.{all => Optics}
 
 
-  def constructQASetInstances(
-    protocol: BeamProtocol)(
+  def constructQASetInstances[Beam, Filter, FilterSpace](
+    protocol: BeamProtocol[Beam, Filter, FilterSpace])(
     gold: Dataset,
     filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-    filterPred: protocol.Filter,
+    filterPred: Filter,
   ) = (
-    pred: SentencePrediction[protocol.Beam]
+    pred: SentencePrediction[Beam]
   ) => {
     val goldSentence = gold.sentences(pred.sentenceId)
     pred.verbs.map { predVerb =>
       val goldVerb = goldSentence.verbEntries(predVerb.verbIndex)
       val (goldInvalidQAs, goldValidQAs) = filterGold(goldVerb)
-      val predQAs = protocol.filterBeam(filterPred, predVerb.beam)
+      val predQAs = protocol.filterBeam(filterPred, predVerb)
       I.QASetInstance(goldSentence, goldVerb, goldValidQAs, goldInvalidQAs, predQAs)
     }: List[I.QASetInstance]
   }
@@ -224,15 +224,15 @@ object MetricsApp extends IOApp {
     "domain" -> ((pred: SentencePrediction[A]) => SentenceId.fromString(pred.sentenceId).documentId.domain.toString)
   )
 
-  def computeSentenceMetricsForAllFilters(
-    protocol: BeamProtocol)(
+  def computeSentenceMetricsForAllFilters[Beam, Filter, FilterSpace](
+    protocol: BeamProtocol[Beam, Filter, FilterSpace])(
     gold: Dataset,
-    filterSpace: protocol.FilterSpace,
+    filterSpace: FilterSpace,
   ) = {
-    M.bucket(sentenceDomainBucketers[protocol.Beam]) {
+    M.bucket(sentenceDomainBucketers[Beam]) {
       M.hchoose(
-        "verbs" ->> M.split(((s: SentencePrediction[protocol.Beam]) => s.verbs)) {
-          (v: VerbPrediction[protocol.Beam]) => Count(v.verbInflectedForms)
+        "verbs" ->> M.split(((s: SentencePrediction[Beam]) => s.verbs)) {
+          (v: VerbPrediction[Beam]) => Count(v.verbInflectedForms)
         },
         "predictions" ->> M.choose(protocol.getAllFilters(filterSpace)) { filter =>
           M.split(constructQASetInstances(protocol)(gold, filterGoldDense, filter)) {
@@ -243,12 +243,12 @@ object MetricsApp extends IOApp {
     }
   }
 
-  def computePredClassesForSentences(
-    protocol: BeamProtocol)(
+  def computePredClassesForSentences[Beam, Filter, FilterSpace](
+    protocol: BeamProtocol[Beam, Filter, FilterSpace])(
     gold: Dataset,
-    filter: protocol.Filter,
+    filter: Filter,
   ) = {
-    M.bucket(sentenceDomainBucketers[protocol.Beam]) {
+    M.bucket(sentenceDomainBucketers[Beam]) {
       M.split(constructQASetInstances(protocol)(gold, filterGoldDense, filter)) {
         M.split(I.qaSetToQuestions) {
           ((q: I.QuestionInstance) => computePredClass(q) -> q) andThen Count[(PredClass, I.QuestionInstance)]
@@ -266,15 +266,13 @@ object MetricsApp extends IOApp {
   def getMetricsString[M: HasMetrics](m: M) =
     m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-  def runDenseMetrics(
-    protocol: BeamProtocol)(
+  def runDenseMetrics[Beam, Filter: Show, FilterSpace: Encoder : Decoder](
+    protocol: BeamProtocol[Beam, Filter, FilterSpace])(
     gold: Dataset,
-    predStream: Stream[IO, SentencePrediction[protocol.Beam]],
+    predStream: Stream[IO, SentencePrediction[Beam]],
     metadataDir: NIOPath,
     recomputeFilter: Boolean
   ) = {
-    import protocol.{Beam, Filter, FilterSpace}
-    import protocol.codecs._
     val filtersPath = metadataDir.resolve("filters.json")
     val filterSpaceIO = FileUtil.readJson[FilterSpace](filtersPath)
       .map(fs => if(recomputeFilter) protocol.withBestFilter(fs, None) else fs)
@@ -463,12 +461,12 @@ object MetricsApp extends IOApp {
   case object Dense extends MetricsMode
   case object DenseCurve extends MetricsMode
 
-  def programInternal(
+  def programInternal[Beam: Decoder, Filter: Show, FilterSpace: Encoder : Decoder](
+    protocol: BeamProtocol[Beam, Filter, FilterSpace])(
     verbFrequencies: IO[LowerCaseString => Int], devDense: Dataset,
     predDir: NIOPath,
     clauseInfoOpt: Option[IO[Map[String, Map[Int, Map[String, FrameInfo]]]]],
     mode: MetricsMode, recomputeFilter: Boolean,
-    protocol: BeamProtocol
   ) = {
     val predFile = predDir.resolve("predictions.jsonl")
     val metadataDir = predDir.resolve(mode.toString)
@@ -480,8 +478,7 @@ object MetricsApp extends IOApp {
         // } yield ()
         IO(())
       case None =>
-        import protocol.codecs._
-        val pred = FileUtil.readJsonLines[SentencePrediction[protocol.Beam]](predFile)
+        val pred = FileUtil.readJsonLines[SentencePrediction[Beam]](predFile)
         mode match {
           case Dense => runDenseMetrics(protocol)(devDense, pred, metadataDir, recomputeFilter)
           case DenseCurve => IO(()) // TODO
@@ -501,23 +498,22 @@ object MetricsApp extends IOApp {
         case _ => throw new RuntimeException("Must specify mode of dense-curve or dense.")
       }
     }
-    beamProtocol <- IO {
-      import qfirst.protocols._
-      protocolName match {
-        case "simple-qa" => SimpleQAProtocol
-        case _ => throw new RuntimeException("Must specify a known beam protocol type.")
-      }
-    }
     trainIO = IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
     verbFrequenciesIO = trainIO.map(getVerbFrequencies)
     dev <- IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
     clauseInfoOpt = clauseInfoPathOpt.map(FileUtil.readClauseInfo)
-    _ <- programInternal(
-      verbFrequenciesIO, dev,
-      predDir, clauseInfoOpt,
-      metricsMode, recomputeFilter,
-      beamProtocol
-    )
+    beamProtocol <- {
+      import qfirst.protocols._
+      import qasrl.data.JsonCodecs._
+      import io.circe.generic.auto._
+      protocolName match {
+        case "simple-qa" => programInternal(SimpleQAs.protocol)(
+          verbFrequenciesIO, dev,
+          predDir, clauseInfoOpt,
+          metricsMode, recomputeFilter)
+        case _ => throw new RuntimeException("Must specify a known beam protocol type.")
+      }
+    }
   } yield ExitCode.Success
 
   val runMetrics = Command(
