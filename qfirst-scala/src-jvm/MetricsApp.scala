@@ -292,7 +292,7 @@ object MetricsApp extends IOApp {
             stats + questionsPerVerb + spansPerVerb
           }
         )
-        // choose the filter with best results that has >= 2 Qs/verb recall
+        // Recall restriction: choose the filter with best results that has >= 2 Qs/verb and >= 2.3 spans/verb
         allResults.updateWith("predictions")(
           _.filter(_.get("questions per verb") >= 2.0)
             .filter(_.get("spans per verb") >= 2.3)
