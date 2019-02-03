@@ -507,7 +507,11 @@ object MetricsApp extends IOApp {
       import qasrl.data.JsonCodecs._
       import io.circe.generic.auto._
       protocolName match {
-        case "simple-qa" => programInternal(SimpleQAs.protocol)(
+        case "qa" => programInternal(SimpleQAs.protocol)(
+          verbFrequenciesIO, dev,
+          predDir, clauseInfoOpt,
+          metricsMode, recomputeFilter)
+        case "qa+inv" => programInternal(QAsWithInv.protocol)(
           verbFrequenciesIO, dev,
           predDir, clauseInfoOpt,
           metricsMode, recomputeFilter)

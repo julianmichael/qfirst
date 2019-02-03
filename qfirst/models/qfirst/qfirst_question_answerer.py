@@ -82,6 +82,9 @@ class QfirstQuestionAnswerer(Model):
                 Linear(self._invalid_hidden_dim, 1))
             self._invalid_metric = BinaryF1()
 
+    def classifies_invalids(self):
+        return self._classify_invalids
+
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
                 predicate_indicator: torch.LongTensor,

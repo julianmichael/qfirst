@@ -64,12 +64,16 @@ class QfirstPredictor(Predictor):
                     question_slots[slot_name] = slot_label
                     slot_label_field = LabelField(slot_label, get_slot_label_namespace(slot_name))
                     verb_instance.add_field(slot_name, slot_label_field, self._model.vocab)
-                span_output = self._model.get_question_answerer().forward_on_instance(verb_instance)
-                scored_spans = [(s, p) for s, p in span_output["spans"] if p >= self._span_minimum_prob]
+                qa_output = self._model.get_question_answerer().forward_on_instance(verb_instance)
+                scored_spans = [(s, p) for s, p in qa_output["spans"] if p >= self._span_minimum_prob]
+                invalid_dict = {}
+                if self._model.get_question_answerer().classifies_invalids:
+                    invalid_dict["invalidProb"] = qa_output["invalid_prob"].item()
                 for span, span_prob in scored_spans:
                     beam.append({
                         "questionSlots": question_slots,
                         "questionProb": question_probs[i],
+                        **invalid_dict,
                         "span": [span.start(), span.end() + 1],
                         "spanProb": span_prob
                     })
