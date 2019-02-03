@@ -115,7 +115,7 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         if self.top_injection_dim > 0:
             top_injection_hidden = self.top_injection_lin(top_injection_embedding).view(batch_size, 1, -1) # broadcast to spans
-            top_span_secondary_hidden = self.span_secondary_lin(top_span_hidden)
+            top_span_secondary_hidden = self.span_secondary_lin(F.relu(top_span_hidden))
             top_span_consolidated_hidden = top_injection_hidden + top_span_secondary_hidden
             top_span_logits = self.span_pred(F.relu(top_span_consolidated_hidden)) + top_span_scores
         else:

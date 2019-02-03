@@ -57,11 +57,11 @@ class QfirstQuestionAnswerer(Model):
             encoder_input_dim = self._sentence_encoder.get_input_dim()
             if token_embedding_dim != encoder_input_dim:
                 raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
-            question_embedding_dim = self._question_encoder.get_output_dim()
+            injected_embedding_dim = self._sentence_encoder.get_output_dim() + self._question_encoder.get_output_dim()
             top_injection_dim = self._span_selector.get_top_injection_dim()
-            if question_embedding_dim != top_injection_dim:
-                raise ConfigurationError("Question embedding dim %s did not match span selector top injection dim of %s" % (question_embedding_dim, top_injection_dim))
-            invalid_input_dim = question_embedding_dim
+            if injected_embedding_dim != top_injection_dim:
+                raise ConfigurationError("Sum of pred rep and question embedding dim %s did not match span selector top injection dim of %s" % (question_embedding_dim, top_injection_dim))
+            invalid_input_dim = injected_embedding_dim
         else:
             assert self._question_injection == "bottom"
             token_embedding_dim = self._text_field_embedder.get_output_dim() + \
@@ -115,8 +115,8 @@ class QfirstQuestionAnswerer(Model):
             pred_embedding = batched_index_select(encoded_text, predicate_index).squeeze(1)
             encoded_question = self._question_encoder(pred_embedding, slot_labels)
             # used below
-            invalid_input = encoded_question
-            top_injection = encoded_question
+            top_injection = torch.cat([pred_embedding,encoded_question], -1)
+            invalid_input = top_injection
         else:
             assert self._question_injection == "bottom"
             pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
@@ -125,8 +125,8 @@ class QfirstQuestionAnswerer(Model):
             full_embedded_text = torch.cat([embedded_text_input, embedded_predicate_indicator, question_encoding_expanded], -1)
             encoded_text = self._sentence_encoder(full_embedded_text, text_mask)
             # used below
-            invalid_input = batched_index_select(encoded_text, predicate_index).squeeze(1)
             top_injection = None
+            invalid_input = batched_index_select(encoded_text, predicate_index).squeeze(1)
 
         output_dict = self._span_selector(
             encoded_text, text_mask,

@@ -33,7 +33,7 @@
           "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
           "input_dim": 300,
           "slot_embedding_dim": 100,
-          "output_dim": 100,
+          "output_dim": 200,
           "num_layers": 2
       },
       "sentence_encoder": {
@@ -46,7 +46,7 @@
       },
       "span_selector": {
           "input_dim": 300,
-          "top_injection_dim": 100,
+          "top_injection_dim": 500,
           "span_hidden_dim": 100
       },
       "predicate_feature_dim": 100,
