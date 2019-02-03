@@ -2,15 +2,14 @@ from typing import List, Dict
 
 from allennlp.common import Registrable
 from allennlp.data.token_indexers import TokenIndexer
-from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField, MultiLabelField
+from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelField, LabelField, ListField, MetadataField, SpanField
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 
 from qfirst.common.span import Span
-from qfirst.data.util import cleanse_sentence_text
-
+from qfirst.data.fields.multilabel_field_new import MultiLabelField_New
 from qfirst.data.util import *
 
 from overrides import overrides
@@ -233,7 +232,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 valid_qargs = [qarg for qarg in all_qargs if (clause_string, qarg, span) in gold_tuples]
                 qarg_pretrain_clause_fields.append(LabelField(clause_string, label_namespace = "abst-clause-labels"))
                 qarg_pretrain_span_fields.append(SpanField(span[0], span[1], verb_fields["text"]))
-                qarg_pretrain_multilabel_fields.append(MultiLabelField(valid_qargs, label_namespace = "qarg-labels"))
+                qarg_pretrain_multilabel_fields.append(MultiLabelField_New(valid_qargs, label_namespace = "qarg-labels"))
 
         animacy_span_fields = []
         animacy_label_fields = []
@@ -242,7 +241,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 animacy_span_fields.append(SpanField(s[0], s[1], verb_fields["text"]))
                 animacy_label_fields.append(LabelField(label = labels[0], skip_indexing = True))
 
-        tan_multilabel_field = MultiLabelField(list(set(tan_strings)), label_namespace = "tan-string-labels")
+        tan_multilabel_field = MultiLabelField_New(list(set(tan_strings)), label_namespace = "tan-string-labels")
 
         if len(animacy_span_fields) == 0:
             animacy_span_fields = [SpanField(-1, -1, verb_fields["text"])]
@@ -252,7 +251,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             yield {
                 **verb_fields,
                 "clause_strings": ListField(clause_string_fields),
-                "clause_set": MultiLabelField(clause_strings, label_namespace = "abst-clause-labels"),
+                "clause_set": MultiLabelField_New(clause_strings, label_namespace = "abst-clause-labels"),
                 "tan_strings": ListField(tan_string_fields),
                 "qargs": ListField(qarg_fields),
                 "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
