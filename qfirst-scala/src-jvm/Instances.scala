@@ -37,25 +37,25 @@ import HasMetrics.ops._
 
 object Instances {
 
-  case class SentenceInstance(
+  case class SentenceInstance[A](
     gold: Sentence,
-    pred: SentencePrediction
+    pred: SentencePrediction[A]
   )
 
-  case class VerbInstance(
+  case class VerbInstance[A](
     goldSentence: Sentence,
     gold: VerbEntry,
-    pred: VerbPrediction
+    pred: VerbPrediction[A]
   )
 
-  val sentenceToVerbs = (sentence: SentenceInstance) => {
+  def sentenceToVerbs[A] = (sentence: SentenceInstance[A]) => {
     // NOTE: filtering out "empty" verbs which are mistakenly present in the data
     sentence.gold.verbEntries.toList.filter(_._2.questionLabels.nonEmpty).flatMap {
       case (verbIndex, goldVerb) =>
         val predVerb = sentence.pred.verbs.find(_.verbIndex == verbIndex)
         if(predVerb.isEmpty) System.err.println("Could not find predicted verb: TODO better error message")
         predVerb.map(VerbInstance(sentence.gold, goldVerb, _))
-    }
+    }: List[VerbInstance[A]]
   }
 
   case class QASetInstance(
@@ -68,36 +68,36 @@ object Instances {
     def allQuestionStrings = (goldValid.keySet ++ goldInvalid.keySet ++ pred.keySet)
   }
 
-  def verbToQASet(
-    filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-    filterPred: BeamFilter,
-    oracleAnswers: Option[Double] = None,
-    oracleQuestions: Option[Double] = None
-  ) = (verb: VerbInstance) => {
-    val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
-    val possiblyOracleAnswersVerb = oracleAnswers.fold(verb.pred)(answerThresh =>
-      verb.pred.withOracleAnswers(goldValidQAs, answerThresh)
-    )
-    val possiblyOracleQuestionsVerb = oracleQuestions.fold(possiblyOracleAnswersVerb)(
-      questionThresh => possiblyOracleAnswersVerb.withOracleQuestions(
-        goldValidQAs.map(_._2.questionSlots).toSet, goldInvalidQAs.map(_._2.questionSlots).toSet,
-        questionThresh
-      )
-    )
-    val predQAs = filterPred(possiblyOracleQuestionsVerb)
-    QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
-  }
+  // def verbToQASet[A](
+  //   filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
+  //   filterPred: BeamFilter,
+  //   oracleAnswers: Option[Double] = None,
+  //   oracleQuestions: Option[Double] = None
+  // ) = (verb: VerbInstance[A]) => {
+  //   val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
+  //   val possiblyOracleAnswersVerb = oracleAnswers.fold(verb.pred)(answerThresh =>
+  //     verb.pred.withOracleAnswers(goldValidQAs, answerThresh)
+  //   )
+  //   val possiblyOracleQuestionsVerb = oracleQuestions.fold(possiblyOracleAnswersVerb)(
+  //     questionThresh => possiblyOracleAnswersVerb.withOracleQuestions(
+  //       goldValidQAs.map(_._2.questionSlots).toSet, goldInvalidQAs.map(_._2.questionSlots).toSet,
+  //       questionThresh
+  //     )
+  //   )
+  //   val predQAs = filterPred(possiblyOracleQuestionsVerb)
+  //   QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
+  // }
 
-  def verbToQASetWithRanking(
-    filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-    filterPred: RankingBeamFilter,
-    getClause: VerbInstance => ClauseInstance
-  ) = (verb: VerbInstance) => {
-    val clause = getClause(verb)
-    val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
-    val predQAs = filterPred(verb.pred, clause)
-    QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
-  }
+  // def verbToQASetWithRanking(
+  //   filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
+  //   filterPred: RankingBeamFilter,
+  //   getClause: VerbInstance => ClauseInstance
+  // ) = (verb: VerbInstance) => {
+  //   val clause = getClause(verb)
+  //   val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
+  //   val predQAs = filterPred(verb.pred, clause)
+  //   QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
+  // }
 
   case class QuestionInstance(
     qas: QASetInstance,
@@ -357,23 +357,23 @@ object Instances {
     }
   }
 
-  def foldMapInstances[A: Monoid](
-    gold: Dataset,
-    pred: Map[String, SentencePrediction])(
-    mapping: SentenceInstance => A
-  ): A = {
-    gold.sentences.toList
-      .filter(_._2.verbEntries.values.exists(_.questionLabels.nonEmpty)) // NOTE due to some "empty sentences" -- to fix in data
-      .foldMap { case (sentenceId, goldSentence) =>
-        pred.get(sentenceId) match {
-          case None =>
-            System.err.println("Could not find sentence; TODO better error message")
-            Monoid[A].empty
-          case Some(predSentence) =>
-            mapping(SentenceInstance(goldSentence, predSentence))
-        }
-    }
-  }
+  // def foldMapInstances[A: Monoid](
+  //   gold: Dataset,
+  //   pred: Map[String, SentencePrediction])(
+  //   mapping: SentenceInstance => A
+  // ): A = {
+  //   gold.sentences.toList
+  //     .filter(_._2.verbEntries.values.exists(_.questionLabels.nonEmpty)) // NOTE due to some "empty sentences" -- to fix in data
+  //     .foldMap { case (sentenceId, goldSentence) =>
+  //       pred.get(sentenceId) match {
+  //         case None =>
+  //           System.err.println("Could not find sentence; TODO better error message")
+  //           Monoid[A].empty
+  //         case Some(predSentence) =>
+  //           mapping(SentenceInstance(goldSentence, predSentence))
+  //       }
+  //   }
+  // }
 
   object Bucketers {
 
@@ -393,10 +393,10 @@ object Instances {
       evalBucketBounds(bounds)(sent.sentenceTokens.size)
     }
 
-    def verbFreq(
+    def verbFreq[A](
       getFreq: LowerCaseString => Int,
       bounds: NonEmptyList[Int]
-    ) = (verb: VerbInstance) => {
+    ) = (verb: VerbInstance[A]) => {
       val freq = getFreq(verb.gold.verbInflectedForms.stem)
       evalBucketBounds(bounds)(freq)
     }

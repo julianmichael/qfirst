@@ -66,61 +66,61 @@ object FileUtil {
     )
   }
 
-  def readClausalPredictions(
-    path: NIOPath)(
-    implicit cs: ContextShift[IO]
-  ): IO[Map[String, ClausalSentencePrediction]] = {
-    readJsonLines[ClausalSentencePrediction](path)
-      .compile.fold(Map.empty[String, ClausalSentencePrediction]) {
-        (m, pred) => m + (pred.sentenceId -> pred)
-      }
-  }
+  // def readClausalPredictions(
+  //   path: NIOPath)(
+  //   implicit cs: ContextShift[IO]
+  // ): IO[Map[String, ClausalSentencePrediction]] = {
+  //   readJsonLines[ClausalSentencePrediction](path)
+  //     .compile.fold(Map.empty[String, ClausalSentencePrediction]) {
+  //       (m, pred) => m + (pred.sentenceId -> pred)
+  //     }
+  // }
 
-  def readPredictions(
-    path: NIOPath, clausalInputType: Boolean)(
-    implicit cs: ContextShift[IO]
-  ): IO[Map[String, SentencePrediction]] = {
-    if(!clausalInputType) {
-      readJsonLines[SentencePrediction](path)
-        .compile.fold(Map.empty[String, SentencePrediction]) {
-          (m, pred) => m + (pred.sentenceId -> pred)
-        }
-    } else {
-      readJsonLines[ClausalSentencePrediction](path)
-        .compile.fold(Map.empty[String, SentencePrediction]) {
-          (m, pred) => m + (pred.sentenceId -> pred.toSentencePrediction)
-        }
-    }
-  }
+  // def readPredictions(
+  //   path: NIOPath, clausalInputType: Boolean)(
+  //   implicit cs: ContextShift[IO]
+  // ): IO[Map[String, SentencePrediction]] = {
+  //   if(!clausalInputType) {
+  //     readJsonLines[SentencePrediction](path)
+  //       .compile.fold(Map.empty[String, SentencePrediction]) {
+  //         (m, pred) => m + (pred.sentenceId -> pred)
+  //       }
+  //   } else {
+  //     readJsonLines[ClausalSentencePrediction](path)
+  //       .compile.fold(Map.empty[String, SentencePrediction]) {
+  //         (m, pred) => m + (pred.sentenceId -> pred.toSentencePrediction)
+  //       }
+  //   }
+  // }
 
-  def streamE2EPredictions(
-    clauseStringToStructure: Map[String, ArgStructure],
-    path: NIOPath)(
-    implicit cs: ContextShift[IO]
-  ): Stream[IO, E2ESentencePrediction] = {
-    Stream.resource(blockingExecutionContext).flatMap { _ec =>
-      streamJsonLines[E2ESentencePrediction](path, _ec)(cs, E2ESentencePrediction.decoder(clauseStringToStructure))
-    }
-  }
+  // def streamE2EPredictions(
+  //   clauseStringToStructure: Map[String, ArgStructure],
+  //   path: NIOPath)(
+  //   implicit cs: ContextShift[IO]
+  // ): Stream[IO, E2ESentencePrediction] = {
+  //   Stream.resource(blockingExecutionContext).flatMap { _ec =>
+  //     streamJsonLines[E2ESentencePrediction](path, _ec)(cs, E2ESentencePrediction.decoder(clauseStringToStructure))
+  //   }
+  // }
 
-  def readE2EPredictions(
-    clauseStringToStructure: Map[String, ArgStructure],
-    path: NIOPath)(
-    implicit cs: ContextShift[IO]
-  ): IO[Map[String, E2ESentencePrediction]] = {
-    readJsonLines[E2ESentencePrediction](path)(cs, E2ESentencePrediction.decoder(clauseStringToStructure))
-      .compile.fold(Map.empty[String, E2ESentencePrediction]) {
-        (m, pred) => m + (pred.sentenceId -> pred)
-      }
-  }
+  // def readE2EPredictions(
+  //   clauseStringToStructure: Map[String, ArgStructure],
+  //   path: NIOPath)(
+  //   implicit cs: ContextShift[IO]
+  // ): IO[Map[String, E2ESentencePrediction]] = {
+  //   readJsonLines[E2ESentencePrediction](path)(cs, E2ESentencePrediction.decoder(clauseStringToStructure))
+  //     .compile.fold(Map.empty[String, E2ESentencePrediction]) {
+  //       (m, pred) => m + (pred.sentenceId -> pred)
+  //     }
+  // }
 
-  def readRankingPredictions(
-    path: NIOPath)(
-    implicit cs: ContextShift[IO]
-  ): IO[Map[String, Map[Int, ClauseInstance]]] = {
-    readJsonLines[ClauseInstance](path)
-      .compile.toList
-      .map(_.groupBy(_.sentenceId).transform { case (_, p) => p.map(i => i.verbIndex -> i).toMap })
-  }
+  // def readRankingPredictions(
+  //   path: NIOPath)(
+  //   implicit cs: ContextShift[IO]
+  // ): IO[Map[String, Map[Int, ClauseInstance]]] = {
+  //   readJsonLines[ClauseInstance](path)
+  //     .compile.toList
+  //     .map(_.groupBy(_.sentenceId).transform { case (_, p) => p.map(i => i.verbIndex -> i).toMap })
+  // }
 
 }

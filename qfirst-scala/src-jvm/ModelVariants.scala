@@ -95,7 +95,7 @@ object ModelVariants {
   val elmoIndexerJson = Json.obj("type" -> "elmo_characters".asJson)
   val elmoIndexer = param("elmo", List(elmoIndexerJson))
 
-  // TODO: will have BERT option for TextFieldEmbedder
+  // TODO: will have BERT option for TextFieldEmbedder and TokenIndexer
   // returns token dimensionality
 
   case class AllenNLPIterator(batchSizes: List[Int]) extends Component[Unit] {
