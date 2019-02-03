@@ -73,6 +73,10 @@ class QfirstQuestionAnswerer(Model):
             top_injection_dim = self._span_selector.get_top_injection_dim()
             if top_injection_dim > 0:
                 raise ConfigurationError("Span selector top injection dim (%s) must be zero when doing bottom injection" % top_injection_dim)
+            text_embedder_dim = self._text_field_embedder.get_output_dim()
+            question_encoder_input_dim = self._question_encoder.get_output_dim()
+            if token_embedding_dim != encoder_input_dim:
+                raise ConfigurationError("Text embedder dim %s did not match question encoder input dim %s" % (text_embedder_dim, question_encoder_input_dim))
             invalid_input_dim = self._sentence_encoder.get_output_dim()
 
         if self._classify_invalids:
