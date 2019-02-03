@@ -120,10 +120,10 @@ class QfirstQuestionAnswerer(Model):
         else:
             assert self._question_injection == "bottom"
             pred_input_embedding = batched_index_select(embedded_text_input, predicate_index).squeeze(1)
-            question_encoding = self._question_encoder(pred_input_embedding, question_slot_labels)
+            question_encoding = self._question_encoder(pred_input_embedding, slot_labels)
             question_encoding_expanded = question_encoding.view(batch_size, 1, -1).expand(-1, num_tokens, -1)
             full_embedded_text = torch.cat([embedded_text_input, embedded_predicate_indicator, question_encoding_expanded], -1)
-            encoded_text = self._sentence_encoder(full_embedded_text, mask)
+            encoded_text = self._sentence_encoder(full_embedded_text, text_mask)
             # used below
             invalid_input = batched_index_select(encoded_text, predicate_index).squeeze(1)
             top_injection = None

@@ -73,9 +73,6 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         self.metric = metric
 
-        if self.top_injection_dim > 0:
-            self.top_injection_lin = Linear(self.top_injection_dim, self.span_hidden_dim)
-
         self.span_hidden = SpanRepAssembly(input_dim, input_dim, self.span_hidden_dim)
         self.span_scorer = torch.nn.Sequential(
             TimeDistributed(torch.nn.ReLU()),
@@ -83,6 +80,11 @@ class SpanSelector(torch.nn.Module, Registrable):
             TimeDistributed(torch.nn.ReLU()),
             TimeDistributed(Linear(self.span_hidden_dim, 1)))
         self.span_pruner = SpanPruner(self.span_scorer)
+
+        if self.top_injection_dim > 0:
+            self.top_injection_lin = Linear(self.top_injection_dim, self.span_hidden_dim)
+            self.span_secondary_lin = TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim))
+            self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
 
     def get_top_injection_dim(self):
         return self.top_injection_dim
@@ -103,19 +105,21 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         span_hidden, span_mask = self.span_hidden(inputs, inputs, input_mask, input_mask)
 
-        if self.top_injection_dim > 0:
-            top_injection_hidden = self.top_injection_lin(top_injection_embedding)
-            full_span_hidden = top_injection_hidden.view(batch_size, 1, -1) + span_hidden
-        else:
-            full_span_hidden = span_hidden
-
         (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_scores) = self.span_pruner(full_span_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
+         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
         top_span_mask = top_span_mask.unsqueeze(-1).float()
 
         # workaround for https://github.com/allenai/allennlp/issues/1696
         if (top_span_scores == float("-inf")).any():
             top_span_scores[top_span_scores == float("-inf")] = -1.
+
+        if self.top_injection_dim > 0:
+            top_injection_hidden = self.top_injection_lin(top_injection_embedding).view(batch_size, 1, -1) # broadcast to spans
+            top_span_secondary_hidden = self.span_secondary_lin(top_span_hidden)
+            top_span_consolidated_hidden = top_injection_hidden + top_span_secondary_hidden
+            top_span_logits = self.span_pred(F.relu(top_span_consolidated_hidden)) + top_span_scores
+        else:
+            top_span_logits = top_span_scores
 
         if answer_spans is not None:
             gold_span_labels = self.get_prediction_map(answer_spans,
@@ -125,16 +129,16 @@ class SpanSelector(torch.nn.Module, Registrable):
                                                    top_span_indices)
 
         if self.objective == "binary":
-            top_span_probs = torch.sigmoid(top_span_scores) * top_span_mask
+            top_span_probs = torch.sigmoid(top_span_logits) * top_span_mask
             output_dict = {
                 "span_mask": span_mask,
                 "top_span_indices": top_span_indices,
                 "top_span_mask": top_span_mask,
-                "top_span_scores": top_span_scores,
+                "top_span_logits": top_span_logits,
                 "top_span_probs": top_span_probs
             }
             if answer_spans is not None:
-                loss = F.binary_cross_entropy_with_logits(top_span_scores, prediction_mask,
+                loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
                                                           weight = top_span_mask, reduction = "sum")
                 scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
                 output_dict["spans"] = scored_spans
