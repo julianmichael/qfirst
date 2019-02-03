@@ -38,6 +38,7 @@ class BinaryF1(Metric, Registrable):
             conf["tp"] += num_tp
             conf["fn"] += num_true - num_tp
             conf["fp"] += preds.sum().item() - num_tp
+            conf["tn"] += (1 - torch.max(preds, labels)).sum().item()
 
     def get_metric(self, reset = False):
         def stats(conf):

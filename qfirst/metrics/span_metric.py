@@ -77,17 +77,11 @@ class SpanMetric(Metric, Registrable):
             f1 = 0.
             if precision + recall > 0.0:
                 f1 = 2 * (precision * recall) / (precision + recall)
-            mccNum = (tp * tn) - (fp * fn)
-            mccDenom = math.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-            mcc = 0.
-            if abs(mccDenom) > 0.0:
-                mcc = mccNum / mccDenom
             return {
                 "threshold": conf["threshold"],
                 "precision": precision,
                 "recall": recall,
-                "f1": f1,
-                "mcc": mcc
+                "f1": f1
             }
         def get_cov(cov):
             return cov["covered"] / cov["true"] if cov["true"] > 0 else 0.0
@@ -95,7 +89,7 @@ class SpanMetric(Metric, Registrable):
         stats_dict = max([stats(conf) for conf in self._confs], key = lambda d: d["f1"])
         output_dict = {
             **{ k: v for k, v in stats_dict.items() if isinstance(v, float) },
-            "gold-spans-not-pruned": get_cov(self._gold_spans_max_coverage)
+            "gold-not-pruned": get_cov(self._gold_spans_max_coverage)
         }
 
         if reset:
