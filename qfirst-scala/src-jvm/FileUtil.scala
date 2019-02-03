@@ -33,7 +33,7 @@ object FileUtil {
     .through(text.utf8Decode)
     .through(text.lines)
     .filter(_.nonEmpty)
-    .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(new RuntimeException(_))))
+    .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(e => new RuntimeException(s"${e.show}\n$line"))))
 
   def readJsonLines[A](
     path: NIOPath)(

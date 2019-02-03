@@ -23,10 +23,10 @@ trait BeamProtocol {
 object BeamProtocol {
   type Aux[B, F, FS] = BeamProtocol { type Beam = B; type Filter = F; type FilterSpace = FS }
   trait Codecs[Beam, Filter, FilterSpace] {
-    implicit val filterShow: Show[Filter]
-    implicit val beamDecoder: Decoder[Beam]
-    implicit val beamEncoder: Encoder[Beam]
-    implicit val filterSpaceDecoder: Decoder[FilterSpace]
-    implicit val filterSpaceEncoder: Encoder[FilterSpace]
+    implicit def filterShow: Show[Filter]
+    implicit def beamDecoder: Decoder[Beam]
+    implicit def beamEncoder: Encoder[Beam]
+    implicit def filterSpaceDecoder: Decoder[FilterSpace]
+    implicit def filterSpaceEncoder: Encoder[FilterSpace]
   }
 }

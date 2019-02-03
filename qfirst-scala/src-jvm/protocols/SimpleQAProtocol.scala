@@ -24,10 +24,10 @@ object SimpleQAProtocol extends BeamProtocol {
   case class FilterSpace(
     questionThresholds: List[Double],
     spanThresholds: List[Double],
-    bestOpt: Option[Filter])
+    best: Option[Filter])
 
   def getAllFilters(fs: FilterSpace): List[Filter] = {
-    fs.bestOpt.fold(
+    fs.best.fold(
       for {
         q <- fs.questionThresholds
         s <- fs.spanThresholds
@@ -35,7 +35,7 @@ object SimpleQAProtocol extends BeamProtocol {
     )(List(_))
   }
   def withBestFilter(fs: FilterSpace, f: Option[Filter]): FilterSpace = {
-    fs.copy(bestOpt = f)
+    fs.copy(best = f)
   }
   def filterBeam(filter: Filter, beam: Beam): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
     val validItems = beam.filter(item =>
@@ -58,8 +58,8 @@ object SimpleQAProtocol extends BeamProtocol {
       f"{ q ≥ ${f.questionThreshold}%.2f ∧ s ≥ ${f.spanThreshold}%.2f }"
     )
     import io.circe.{Encoder, Decoder}
-    implicit val beamDecoder: Decoder[Beam] = deriveDecoder[Beam]
-    implicit val beamEncoder: Encoder[Beam] = deriveEncoder[Beam]
+    implicit val beamDecoder: Decoder[Beam] = deriveDecoder[List[BeamItem]]
+    implicit val beamEncoder: Encoder[Beam] = deriveEncoder[List[BeamItem]]
     implicit val filterSpaceDecoder: Decoder[FilterSpace] = deriveDecoder[FilterSpace]
     implicit val filterSpaceEncoder: Encoder[FilterSpace] = deriveEncoder[FilterSpace]
   }
