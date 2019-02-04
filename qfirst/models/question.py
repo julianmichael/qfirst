@@ -21,8 +21,8 @@ from allennlp.training.metrics import SpanBasedF1Measure
 from qfirst.modules.slot_sequence_generator import SlotSequenceGenerator
 from qfirst.metrics.question_metric import QuestionMetric
 
-@Model.register("qfirst_question_generator")
-class QfirstQuestionGenerator(Model):
+@Model.register("qasrl_question")
+class QuestionModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  question_generator: SlotSequenceGenerator,
@@ -31,7 +31,7 @@ class QfirstQuestionGenerator(Model):
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(QfirstQuestionGenerator, self).__init__(vocab, regularizer)
+        super(QuestionModel, self).__init__(vocab, regularizer)
         self._text_field_embedder = text_field_embedder
         self._question_generator = question_generator
         self._sentence_encoder = sentence_encoder

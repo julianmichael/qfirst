@@ -1,8 +1,7 @@
-# Answer-first
-from qfirst.models.afirst.afirst_span_detector import AfirstSpanDetector
-from qfirst.models.afirst.afirst_question_generator import AfirstQuestionGenerator
-# Question-first
-from qfirst.models.qfirst.qfirst_question_generator import QfirstQuestionGenerator
-from qfirst.models.qfirst.qfirst_question_answerer import QfirstQuestionAnswerer
-# End-to-end
-from qfirst.models.e2e.e2e_parser import E2EParser
+from qfirst.models.span import SpanModel
+from qfirst.models.question import QuestionModel
+from qfirst.models.question_to_span import QuestionToSpanModel
+from qfirst.models.span_to_question import SpanToQuestionModel
+# extras not used yet
+from qfirst.models.clause import ClauseModel
+

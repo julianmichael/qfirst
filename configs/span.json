@@ -20,7 +20,7 @@
     // "train_data_path": "qasrl-v2_1/expanded/train.jsonl.gz",
     // "validation_data_path": "qasrl-v2_1/expanded/dev.jsonl.gz",
     "model": {
-        "type": "afirst_span_detector",
+        "type": "qasrl_span",
         "text_field_embedder": {
             "elmo": {
                 "type": "elmo_token_embedder",
@@ -47,7 +47,7 @@
   "iterator": {
     "type": "bucket",
     "sorting_keys": [["text", "num_tokens"]],
-    "batch_size" : 80
+    "batch_size" : 256
   },
   "trainer": {
     "num_epochs": 200,

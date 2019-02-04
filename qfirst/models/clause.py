@@ -20,8 +20,8 @@ from allennlp.training.metrics import SpanBasedF1Measure
 
 from qfirst.metrics.binary_f1 import BinaryF1
 
-@Model.register("clause_predictor")
-class ClausePredictor(Model):
+@Model.register("qasrl_clause")
+class ClauseModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  sentence_encoder: Seq2SeqEncoder,
@@ -30,7 +30,7 @@ class ClausePredictor(Model):
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(ClausePredictor, self).__init__(vocab, regularizer)
+        super(ClauseModel, self).__init__(vocab, regularizer)
         self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder
         self._predicate_feature_dim = predicate_feature_dim

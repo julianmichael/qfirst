@@ -16,8 +16,8 @@ from allennlp.nn.util import get_text_field_mask
 from qfirst.modules.span_selector import SpanSelector
 
 # Slightly modified re-implementation of Nicholas's span detector
-@Model.register("afirst_span_detector")
-class AfirstSpanDetector(Model):
+@Model.register("qasrl_span")
+class SpanModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  sentence_encoder: Seq2SeqEncoder,
@@ -26,7 +26,7 @@ class AfirstSpanDetector(Model):
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(AfirstSpanDetector, self).__init__(vocab, regularizer)
+        super(SpanModel, self).__init__(vocab, regularizer)
 
         self._vocab = vocab
         self._text_field_embedder = text_field_embedder

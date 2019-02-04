@@ -21,8 +21,8 @@ from qfirst.modules.slot_sequence_encoder import SlotSequenceEncoder
 from qfirst.modules.span_selector import SpanSelector
 
 question_injection_values = ["top", "bottom"]
-@Model.register("qfirst_question_answerer")
-class QfirstQuestionAnswerer(Model):
+@Model.register("qasrl_question_to_span")
+class QuestionToSpanModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  sentence_encoder: Seq2SeqEncoder,
@@ -35,7 +35,7 @@ class QfirstQuestionAnswerer(Model):
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(QfirstQuestionAnswerer, self).__init__(vocab, regularizer)
+        super(QuestionToSpanModel, self).__init__(vocab, regularizer)
 
         self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder

@@ -30,26 +30,26 @@ from allennlp.common.file_utils import cached_path
 from qfirst.data.util import read_lines, get_verb_fields
 
 from qfirst.data.dataset_readers import QasrlReader
-from qfirst.models.afirst.afirst_span_detector import AfirstSpanDetector
-from qfirst.models.afirst.afirst_question_generator import AfirstQuestionGenerator
+from qfirst.models.span import SpanModel
+from qfirst.models.span_to_question import SpanToQuestionModel
 
 span_minimum_threshold_default = 0.05
 question_minimum_threshold_default = 0.05
 question_beam_size_default = 10
 
-class AfirstPipeline():
+class AFirstPipeline():
     def __init__(self,
-                 span_detector: AfirstSpanDetector,
-                 span_detector_dataset_reader: QasrlReader,
-                 question_generator: AfirstQuestionGenerator,
-                 question_generator_dataset_reader: QasrlReader,
+                 span_model: SpanModel,
+                 span_model_dataset_reader: QasrlReader,
+                 span_to_question_model: SpanToQuestionModel,
+                 span_to_question_model_dataset_reader: QasrlReader,
                  span_minimum_threshold: float = span_minimum_threshold_default,
                  question_minimum_threshold: float = question_minimum_threshold_default,
                  question_beam_size: int = question_beam_size_default) -> None:
-        self._span_detector = span_detector
-        self._span_detector_dataset_reader = span_detector_dataset_reader
-        self._question_generator = question_generator
-        self._question_generator_dataset_reader = question_generator_dataset_reader
+        self._span_model = span_model
+        self._span_model_dataset_reader = span_model_dataset_reader
+        self._span_to_question_model = span_to_question_model
+        self._span_to_question_model_dataset_reader = span_to_question_model_dataset_reader
         self._span_minimum_threshold = span_minimum_threshold
         self._question_minimum_threshold = question_minimum_threshold
         self._question_beam_size = question_beam_size
@@ -57,21 +57,21 @@ class AfirstPipeline():
     def predict(self, inputs: JsonDict) -> JsonDict:
         # produce different sets of instances to account for
         # the possibility of different token indexers as well as different vocabularies
-        span_detector_verb_instances = list(self._span_detector_dataset_reader.sentence_json_to_instances(inputs, verbs_only = True))
-        question_generator_verb_instances = list(self._question_generator_dataset_reader.sentence_json_to_instances(inputs, verbs_only = True))
-        span_outputs = self._span_detector.forward_on_instances(span_detector_verb_instances)
+        span_verb_instances = list(self._span_model_dataset_reader.sentence_json_to_instances(inputs, verbs_only = True))
+        span_to_question_verb_instances = list(self._span_to_question_model_dataset_reader.sentence_json_to_instances(inputs, verbs_only = True))
+        span_outputs = self._span_model.forward_on_instances(span_verb_instances)
         verb_dicts = []
-        for (verb_instance, span_output) in zip(question_generator_verb_instances, span_outputs):
+        for (verb_instance, span_output) in zip(span_to_question_verb_instances, span_outputs):
             beam = []
             scored_spans = [(s, p) for s, p in span_output["spans"] if p >= self._span_minimum_threshold]
             span_fields = [SpanField(span.start(), span.end(), verb_instance["text"]) for span, _ in scored_spans]
             if len(span_fields) > 0:
-                verb_instance.index_fields(self._question_generator.vocab)
-                verb_instance.add_field("answer_spans", ListField(span_fields), self._question_generator.vocab)
+                verb_instance.index_fields(self._span_to_question_model.vocab)
+                verb_instance.add_field("answer_spans", ListField(span_fields), self._span_to_question_model.vocab)
                 qgen_input_tensors = move_to_device(
                     Batch([verb_instance]).as_tensor_dict(),
-                    self._question_generator._get_prediction_device())
-                question_beams = self._question_generator.beam_decode(
+                    self._span_to_question_model._get_prediction_device())
+                question_beams = self._span_to_question_model.beam_decode(
                     text = qgen_input_tensors["text"],
                     predicate_indicator = qgen_input_tensors["predicate_indicator"],
                     answer_spans = qgen_input_tensors["answer_spans"],
@@ -81,7 +81,7 @@ class AfirstPipeline():
                     for i in range(len(question_probs)):
                         question_slots = {
                             slot_name: slot_values[slot_name][i]
-                            for slot_name in self._question_generator.get_slot_names()
+                            for slot_name in self._span_to_question_model.get_slot_names()
                         }
                         beam.append({
                             "questionSlots": question_slots,
@@ -100,8 +100,8 @@ class AfirstPipeline():
             "verbs": verb_dicts
         }
 
-def main(span_detector_path: str,
-         question_generator_path: str,
+def main(span_model_path: str,
+         span_to_question_model_path: str,
          cuda_device: int,
          input_file: str,
          output_file: str,
@@ -109,13 +109,13 @@ def main(span_detector_path: str,
          question_min_prob: float,
          question_beam_size: int) -> None:
     check_for_gpu(cuda_device)
-    span_detector_archive = load_archive(span_detector_path, cuda_device = cuda_device)
-    question_generator_archive = load_archive(question_generator_path, cuda_device = cuda_device)
-    pipeline = AfirstPipeline(
-        span_detector = span_detector_archive.model,
-        span_detector_dataset_reader = DatasetReader.from_params(span_detector_archive.config["dataset_reader"].duplicate()),
-        question_generator = question_generator_archive.model,
-        question_generator_dataset_reader = DatasetReader.from_params(question_generator_archive.config["dataset_reader"].duplicate()),
+    span_model_archive = load_archive(span_model_path, cuda_device = cuda_device)
+    span_to_question_model_archive = load_archive(span_to_question_model_path, cuda_device = cuda_device)
+    pipeline = AFirstPipeline(
+        span_model = span_model_archive.model,
+        span_model_dataset_reader = DatasetReader.from_params(span_model_archive.config["dataset_reader"].duplicate()),
+        span_to_question_model = span_to_question_model_archive.model,
+        span_to_question_model_dataset_reader = DatasetReader.from_params(span_to_question_model_archive.config["dataset_reader"].duplicate()),
         span_minimum_threshold = span_min_prob,
         question_minimum_threshold = question_min_prob,
         question_beam_size = question_beam_size)
@@ -133,8 +133,8 @@ def main(span_detector_path: str,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "Run the answer-first pipeline")
-    parser.add_argument('--span_detector', type=str, help = "Path to span detector model archive (.tar.gz).")
-    parser.add_argument('--question_generator', type=str, help = "Path to question generator model archive (.tar.gz).")
+    parser.add_argument('--span', type=str, help = "Path to span detector model archive (.tar.gz).")
+    parser.add_argument('--span_to_question', type=str, help = "Path to span-to-question generator model archive (.tar.gz).")
     parser.add_argument('--cuda_device', type=int, default=-1)
     parser.add_argument('--input_file', type=str)
     parser.add_argument('--output_file', type=str, default = None)
@@ -143,8 +143,8 @@ if __name__ == "__main__":
     parser.add_argument('--question_beam_size', type=int, default = question_beam_size_default)
 
     args = parser.parse_args()
-    main(span_detector_path = args.span_detector,
-         question_generator_path = args.question_generator,
+    main(span_model_path = args.span,
+         span_to_question_model_path = args.span_to_question,
          cuda_device = args.cuda_device,
          input_file = args.input_file,
          output_file = args.output_file,

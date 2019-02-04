@@ -22,8 +22,8 @@ from qfirst.metrics.question_metric import QuestionMetric
 from qfirst.modules.slot_sequence_generator import SlotSequenceGenerator
 from qfirst.modules.time_distributed_dict import TimeDistributedDict
 
-@Model.register("afirst_question_generator")
-class AfirstQuestionGenerator(Model):
+@Model.register("qasrl_span_to_question")
+class SpanToQuestionModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  sentence_encoder: Seq2SeqEncoder,
@@ -32,7 +32,7 @@ class AfirstQuestionGenerator(Model):
                  embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(AfirstQuestionGenerator, self).__init__(vocab, regularizer)
+        super(SpanToQuestionModel, self).__init__(vocab, regularizer)
         self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder
         self._question_generator = question_generator

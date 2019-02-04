@@ -26,8 +26,8 @@ from qfirst.common.span import Span
 from qfirst.modules.span_rep_assembly import SpanRepAssembly
 
 # should receive verb instances from the qasrl dataset reader
-@Model.register("e2e_qasrl")
-class E2EParser(Model):
+@Model.register("qasrl_end_to_end")
+class EndToEndModel(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
                  stacked_encoder: Seq2SeqEncoder,
@@ -48,7 +48,7 @@ class E2EParser(Model):
                  num_tans_to_output: int = 10,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
-        super(E2EParser, self).__init__(vocab, regularizer)
+        super(EndToEndModel, self).__init__(vocab, regularizer)
         self.text_field_embedder = text_field_embedder
 
         self.span_hidden_dim = span_hidden_dim

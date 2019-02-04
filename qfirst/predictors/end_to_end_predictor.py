@@ -10,10 +10,10 @@ from allennlp.predictors.predictor import Predictor
 
 from qfirst.data.dataset_readers import QasrlReader
 
-@Predictor.register("qasrl-e2e")
-class E2EPredictor(Predictor):
+@Predictor.register("qasrl_end_to_end")
+class EndToEndPredictor(Predictor):
     def __init__(self, model: Model, dataset_reader: QasrlReader) -> None:
-        super().__init__(model, dataset_reader)
+        super(EndToEndPredictor, self).__init__(model, dataset_reader)
 
     @overrides
     def predict_json(self, inputs: JsonDict) -> List[JsonDict]:

@@ -1,1 +1,1 @@
-from qfirst.predictors.e2e_predictor import E2EPredictor
+from qfirst.predictors.end_to_end_predictor import EndToEndPredictor
