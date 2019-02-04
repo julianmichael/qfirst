@@ -301,7 +301,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
             chosen_beam_vector = torch.tensor(chosen_beam_indices, device = device).long()
             for slot_name in self._slot_names:
                 final_slots[slot_name] = final_slots[slot_name].gather(0, chosen_beam_vector)
-            final_probs = final_log_probs.gather(0, chosen_beam_vector).exp()
+            final_log_probs = final_log_probs.gather(0, chosen_beam_vector)
 
         final_slot_indices = {
             slot_name: slot_indices.long().tolist()
@@ -311,4 +311,5 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                         for index in slot_indices]
             for slot_name, slot_indices in final_slot_indices.items()
         }
+        final_probs = final_log_probs.exp()
         return final_slot_indices, final_slot_labels, final_probs.tolist()
