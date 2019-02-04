@@ -21,8 +21,8 @@
   // "validation_data_path": "qasrl-v2_1/expanded/dev.jsonl.gz",
   "model": {
       "type": "qasrl_multiclass",
-      "label_name": "clause_set",
-      "label_namespace": "abst-clause-labels",
+      "label_name": "tan_set",
+      "label_namespace": "tan-string-labels",
       "text_field_embedder": {
           "elmo":{
               "type": "elmo_token_embedder",
