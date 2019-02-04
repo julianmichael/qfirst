@@ -133,12 +133,11 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 'question_text': question_text_field,
             }
 
-            answer_spans = [s for ql in question_labels for s in get_answer_spans(ql)]
             answer_fields = get_answer_fields(question_label, verb_fields["text"])
 
             metadata = {
                 "question_label": question_label,
-                "gold_spans": set(answer_spans)
+                "gold_spans": set(get_answer_spans(question_label))
             }
 
             yield {

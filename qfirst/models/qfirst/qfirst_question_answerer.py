@@ -60,7 +60,7 @@ class QfirstQuestionAnswerer(Model):
             injected_embedding_dim = self._sentence_encoder.get_output_dim() + self._question_encoder.get_output_dim()
             top_injection_dim = self._span_selector.get_top_injection_dim()
             if injected_embedding_dim != top_injection_dim:
-                raise ConfigurationError("Sum of pred rep and question embedding dim %s did not match span selector top injection dim of %s" % (question_embedding_dim, top_injection_dim))
+                raise ConfigurationError("Sum of pred rep and question embedding dim %s did not match span selector top injection dim of %s" % (injected_embedding_dim, top_injection_dim))
             invalid_input_dim = injected_embedding_dim
         else:
             assert self._question_injection == "bottom"
