@@ -64,7 +64,6 @@ class EndToEndModel(Model):
         self.final_beam_size = final_beam_size
 
         self.clause_embedding = Embedding(vocab.get_vocab_size("abst-clause-labels"), final_embedding_dim)
-        self.qarg_embedding = Embedding(vocab.get_vocab_size("qarg-labels"), final_embedding_dim)
 
         self.stacked_encoder = stacked_encoder
         if encoder_output_projected_dim > 0:

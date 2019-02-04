@@ -262,7 +262,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
                 }),
-                "qarg_pretrain_clauses": ListField(qarg_pretrain_clause_fields),
-                "qarg_pretrain_spans": ListField(qarg_pretrain_span_fields),
-                "qarg_pretrain_labels": ListField(qarg_pretrain_multilabel_fields),
+                "qarg_labeled_clauses": ListField(qarg_pretrain_clause_fields),
+                "qarg_labeled_spans": ListField(qarg_pretrain_span_fields),
+                "qarg_labels": ListField(qarg_pretrain_multilabel_fields),
             }
