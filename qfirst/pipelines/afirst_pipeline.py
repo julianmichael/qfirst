@@ -134,7 +134,7 @@ def main(span_detector_path: str,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "Run the answer-first pipeline")
     parser.add_argument('--span_detector', type=str, help = "Path to span detector model archive (.tar.gz).")
-    parser.add_argument('--question_generator', type=str, help = "Path to span detector model archive (.tar.gz).")
+    parser.add_argument('--question_generator', type=str, help = "Path to question generator model archive (.tar.gz).")
     parser.add_argument('--cuda_device', type=int, default=-1)
     parser.add_argument('--input_file', type=str)
     parser.add_argument('--output_file', type=str, default = None)

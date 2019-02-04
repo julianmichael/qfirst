@@ -1,7 +1,4 @@
 {
-  "vocabulary": {
-    "directory_path": "save/qfirst/question_answerer/vocabulary"
-  },
   "dataset_reader": {
       "type": "qfirst_qasrl",
       "token_indexers": {
@@ -34,7 +31,7 @@
       },
       "question_generator": {
           "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
-          "input_dim": 200,
+          "input_dim": 300,
           "slot_hidden_dim":100,
           "rnn_hidden_dim": 200,
           "slot_embedding_dim":100,
