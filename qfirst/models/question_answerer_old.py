@@ -27,6 +27,7 @@ from qfirst.common.span import Span
 
 from qfirst.modules.question_encoder import QuestionEncoder
 from qfirst.metrics.answer_metric_old import AnswerMetric
+from qfirst.metrics.span_metric import SpanMetric
 
 from qfirst.data.util import get_slot_label_namespace
 
@@ -44,7 +45,7 @@ class QuestionAnswerer(Model):
                  objective: str = "binary",
                  span_selection_policy: str = "weighted",
                  embedding_dropout: float = 0.0,
-                 metric: AnswerMetric = AnswerMetric(),
+                 metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionAnswerer, self).__init__(vocab, regularizer)
@@ -173,9 +174,7 @@ class QuestionAnswerer(Model):
                 invalidity_loss = F.binary_cross_entropy_with_logits(invalidity_logit, gold_invalid_labels, size_average = False)
                 loss = span_loss + invalidity_loss
 
-                self.metric(
-                    scored_spans, [m["question_label"] for m in metadata],
-                    invalid_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+                self.metric(scored_spans, [m["gold_spans"] for m in metadata])
 
                 output_dict["loss"] = loss
             return output_dict
@@ -206,9 +205,7 @@ class QuestionAnswerer(Model):
                 negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
 
                 scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-                self.metric(
-                    scored_spans, [m["question_label"] for m in metadata],
-                    invalid_prob.cpu(), num_invalids.cpu(), num_answers.cpu())
+                self.metric(scored_spans, [m["gold_spans"] for m in metadata])
                 output_dict["loss"] = negative_marginal_log_likelihood
 
             return output_dict
