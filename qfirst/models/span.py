@@ -56,7 +56,7 @@ class SpanModel(Model):
             encoded_text, text_mask,
             extra_input_embedding = extra_input,
             answer_spans = answer_spans,
-            num_answers = None,
+            num_answers = None, # doing this now because we only use Union span selection policy
             metadata = metadata)
 
     @overrides
