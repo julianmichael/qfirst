@@ -13,51 +13,48 @@ from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask
 
+from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.modules.span_selector import SpanSelector
 
 # Slightly modified re-implementation of Nicholas's span detector
 @Model.register("qasrl_span")
 class SpanModel(Model):
     def __init__(self, vocab: Vocabulary,
-                 text_field_embedder: TextFieldEmbedder,
-                 sentence_encoder: Seq2SeqEncoder,
+                 sentence_encoder: SentenceEncoder,
                  span_selector: SpanSelector,
-                 predicate_feature_dim: int = 100,
-                 embedding_dropout: float = 0.0,
+                 inject_predicate: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanModel, self).__init__(vocab, regularizer)
-
-        self._vocab = vocab
-        self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder
         self._span_selector = span_selector
-        self._predicate_feature_dim = predicate_feature_dim
-        self._embedding_dropout = Dropout(p = embedding_dropout)
+        self._inject_predicate = inject_predicate
 
-        self._predicate_feature_embedding = Embedding(2, predicate_feature_dim)
-
-        token_embedding_dim = self._text_field_embedder.get_output_dim() + self._predicate_feature_dim
-        if token_embedding_dim != self._sentence_encoder.get_input_dim():
-            raise ConfigurationError("Combined token embedding dim %s did not match encoder input dim %s" % (token_embedding_dim, encoder_input_dim))
-        if self._span_selector.get_top_injection_dim() > 0:
-            raise ConfigurationError("No top-injected content is allowed in the answer-first span detection model")
+        if self._inject_predicate and self._span_selector.get_extra_input_dim() != self._sentence_encoder.get_output_dim():
+            raise ConfigurationError(
+                "When using inject_predicate, span selector's injection dim %s must match sentence encoder output dim %s" % (
+                    self._span_selector.get_extra_input_dim(), self._sentence_encoder.get_output_dim()
+                )
+            )
+        if (not self._inject_predicate) and self._span_selector.get_extra_input_dim() > 0:
+            raise ConfigurationError(
+                "When not using inject_predicate, span selector's injection dim %s must be 0" % (
+                    self._span_selector.get_extra_input_dim()
+                )
+            )
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
                 predicate_indicator: torch.LongTensor = None,
+                predicate_index: torch.LongTensor = None,
                 answer_spans: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
-        embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
-        batch_size, num_tokens, _ = embedded_text_input.size()
-        text_mask = get_text_field_mask(text)
-        embedded_predicate_indicator = self._predicate_feature_embedding(predicate_indicator.long())
-        embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)
+        encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
+        extra_input = batched_index_select(encoded_text, predicate_index) if self._inject_predicate else None
         return self._span_selector(
             encoded_text, text_mask,
-            top_injection_embedding = None,
+            extra_input_embedding = extra_input,
             answer_spans = answer_spans,
             num_answers = None,
             metadata = metadata)

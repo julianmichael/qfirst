@@ -18,43 +18,22 @@ from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_deco
 from allennlp.nn.util import batched_index_select
 from allennlp.training.metrics import SpanBasedF1Measure
 
+from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.metrics.binary_f1 import BinaryF1
 
 @Model.register("qasrl_multiclass")
 class MulticlassModel(Model):
     def __init__(self, vocab: Vocabulary,
-                 text_field_embedder: TextFieldEmbedder,
-                 sentence_encoder: Seq2SeqEncoder,
+                 sentence_encoder: SentenceEncoder,
                  label_name: str,
                  label_namespace: str,
-                 predicate_feature_dim: int = 100,
-                 prediction_hidden_dim: int = 100,
-                 embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(MulticlassModel, self).__init__(vocab, regularizer)
-        self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder
-        self._predicate_feature_dim = predicate_feature_dim
-        self._prediction_hidden_dim = prediction_hidden_dim
-        self._embedding_dropout = Dropout(p = embedding_dropout)
-
         self._label_name = label_name
         self._label_namespace = label_namespace
-
-        self._predicate_feature_embedding = Embedding(2, predicate_feature_dim)
-        self._final_pred = Sequential(
-            Linear(self._sentence_encoder.get_output_dim(), self._prediction_hidden_dim),
-            ReLU(),
-            Linear(self._prediction_hidden_dim, self.vocab.get_vocab_size(self._label_namespace))
-        )
-
-        embedding_dim_with_predicate_feature = self._text_field_embedder.get_output_dim() + self._predicate_feature_dim
-        if embedding_dim_with_predicate_feature != self._sentence_encoder.get_input_dim():
-            raise ConfigurationError(
-                ("Input dimension of sentence encoder (%s) must be " % self._sentence_encoder.get_input_dim()) + \
-                ("the sum of predicate feature dim and text embedding dim (%s)." % (embedding_dim_with_predicate_feature)))
-
+        self._final_pred = Linear(self._sentence_encoder.get_output_dim(), self.vocab.get_vocab_size(self._label_namespace))
         self._metric = BinaryF1()
 
     @overrides
@@ -63,16 +42,8 @@ class MulticlassModel(Model):
                 predicate_indicator: torch.LongTensor,
                 predicate_index: torch.LongTensor,
                 **kwargs):
-        # Shape: batch_size, num_tokens, embedding_dim
-        embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
-        # Shape: batch_size, num_tokens ?
-        text_mask = get_text_field_mask(text)
-        # Shape: batch_size, num_tokens, predicate_feature_dim ?
-        embedded_predicate_indicator = self._predicate_feature_embedding(predicate_indicator.long())
-        # Shape: batch_size, num_tokens, embedding_dim + predicate_feature_dim
-        embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        # Shape: batch_size, num_tokens, encoder_output_dim
-        encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)
+        # Shape: batch_size, num_tokens, self._sentence_encoder.get_output_dim()
+        encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
         # Shape: batch_size, encoder_output_dim
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         # Shape: batch_size, get_vocab_size(self._label_namespace)

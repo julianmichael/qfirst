@@ -89,7 +89,7 @@ class QFirstPipeline():
                 qa_output = self._question_to_span_model.forward_on_instance(qa_verb_instance)
                 scored_spans = [(s, p) for s, p in qa_output["spans"] if p >= self._span_minimum_threshold]
                 invalid_dict = {}
-                if self._question_to_span_model.classifies_invalids:
+                if self._question_to_span_model.classifies_invalids():
                     invalid_dict["invalidProb"] = qa_output["invalid_prob"].item()
                 for span, span_prob in scored_spans:
                     beam.append({

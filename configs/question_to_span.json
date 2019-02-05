@@ -20,14 +20,25 @@
   // "validation_data_path": "qasrl-v2_1/expanded/dev.jsonl.gz",
   "model": {
       "type": "qasrl_question_to_span",
-      "text_field_embedder": {
-          "elmo":{
-              "type": "elmo_token_embedder",
-              "options_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
-              "weight_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
-              "do_layer_norm": false,
-              "dropout": 0.5
-          }
+      "sentence_encoder": {
+          "text_field_embedder": {
+              "elmo":{
+                  "type": "elmo_token_embedder",
+                  "options_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json",
+                  "weight_file": "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5",
+                  "do_layer_norm": false,
+                  "dropout": 0.5
+              }
+          },
+          "stacked_encoder": {
+              "type": "alternating_lstm",
+              "use_highway": true,
+              "input_size": 1124,
+              "hidden_size": 300,
+              "num_layers": 8,
+              "recurrent_dropout_probability": 0.1
+          },
+          "predicate_feature_dim": 100
       },
       "question_encoder": {
           "slot_names": ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
@@ -36,21 +47,11 @@
           "output_dim": 200,
           "num_layers": 2
       },
-      "sentence_encoder": {
-          "type": "alternating_lstm",
-          "use_highway": true,
-          "input_size": 1124,
-          "hidden_size": 300,
-          "num_layers": 8,
-          "recurrent_dropout_probability": 0.1
-      },
       "span_selector": {
           "input_dim": 300,
-          "top_injection_dim": 500,
+          "extra_input_dim": 500,
           "span_hidden_dim": 100
       },
-      "predicate_feature_dim": 100,
-      "question_injection": "top",
       "classify_invalids": true
   },
   "iterator": {
@@ -59,7 +60,7 @@
     "batch_size" : 256
   },
   "trainer": {
-    "num_epochs": 200,
+    "num_epochs": 1,
     "grad_norm": 1.0,
     "patience": 3,
     "validation_metric": "+span-f1",

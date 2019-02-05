@@ -18,38 +18,24 @@ from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_deco
 from allennlp.nn.util import batched_index_select
 from allennlp.training.metrics import SpanBasedF1Measure
 
+from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.modules.slot_sequence_generator import SlotSequenceGenerator
 from qfirst.metrics.question_metric import QuestionMetric
 
 @Model.register("qasrl_question")
 class QuestionModel(Model):
     def __init__(self, vocab: Vocabulary,
-                 text_field_embedder: TextFieldEmbedder,
+                 sentence_encoder: SentenceEncoder,
                  question_generator: SlotSequenceGenerator,
-                 sentence_encoder: Seq2SeqEncoder,
-                 predicate_feature_dim: int = 100,
-                 embedding_dropout: float = 0.0,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionModel, self).__init__(vocab, regularizer)
-        self._text_field_embedder = text_field_embedder
-        self._question_generator = question_generator
         self._sentence_encoder = sentence_encoder
-        self._predicate_feature_dim = predicate_feature_dim
-        self._embedding_dropout = Dropout(p = embedding_dropout)
-
-        self._predicate_feature_embedding = Embedding(2, predicate_feature_dim)
-
-        embedding_dim_with_predicate_feature = self._text_field_embedder.get_output_dim() + self._predicate_feature_dim
-        if embedding_dim_with_predicate_feature != self._sentence_encoder.get_input_dim():
-            raise ConfigurationError(
-                ("Input dimension of sentence encoder (%s) must be " % self._sentence_encoder.get_input_dim()) + \
-                ("the sum of predicate feature dim and text embedding dim (%s)." % (embedding_dim_with_predicate_feature)))
+        self._question_generator = question_generator
         if self._sentence_encoder.get_output_dim() != self._question_generator.get_input_dim():
             raise ConfigurationError(
                 ("Input dimension of question generator (%s) must be " % self._question_generator.get_input_dim()) + \
                 ("equal to the output dimension of the sentence encoder (%s)." % self._sentence_encoder.get_output_dim()))
-
         self.metric = QuestionMetric(vocab, self._question_generator.get_slot_names())
 
     def get_slot_names(self):
@@ -61,17 +47,20 @@ class QuestionModel(Model):
                 predicate_indicator: torch.LongTensor,
                 predicate_index: torch.LongTensor,
                 **kwargs):
-        # slot_name -> Shape: batch_size
+        # slot_name -> Shape: batch_size, 1
         gold_slot_labels = self._get_gold_slot_labels(kwargs)
         if gold_slot_labels is None:
             raise ConfigurationError("QfirstQuestionGenerator requires gold labels for teacher forcing when running forward. "
                                      "You may wish to run beam_decode instead.")
-
-        batch_size, _ = predicate_indicator.size() # other dim: num_tokens
-        # Shape: batch_size, encoder_output_dim
-        pred_rep = self._get_pred_rep(text, predicate_indicator, predicate_index)
+        # Shape: batch_size, num_tokens, self._sentence_encoder.get_output_dim()
+        encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
+        # Shape: batch_size, self._sentence_encoder.get_output_dim()
+        pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         # slot_name -> Shape: batch_size, slot_name_vocab_size
         slot_logits = self._question_generator(pred_rep, **gold_slot_labels)
+
+        batch_size, _ = pred_rep.size()
+
         # Shape: <scalar>
         neg_log_likelihood = self._get_cross_entropy(slot_logits, gold_slot_labels)
         self.metric(slot_logits, gold_slot_labels, torch.ones([batch_size]), neg_log_likelihood)
@@ -83,8 +72,10 @@ class QuestionModel(Model):
                     predicate_index: torch.LongTensor,
                     max_beam_size: int,
                     min_beam_probability: float):
-        # Shape: batch_size, encoder_output_dim
-        pred_rep = self._get_pred_rep(text, predicate_indicator, predicate_index)
+        # Shape: batch_size, num_tokens, self._sentence_encoder.get_output_dim()
+        encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
+        # Shape: batch_size, self._sentence_encoder.get_output_dim()
+        pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         return self._question_generator.beam_decode(pred_rep, max_beam_size, min_beam_probability)
 
     def get_metrics(self, reset: bool = False):
@@ -111,22 +102,3 @@ class QuestionModel(Model):
             if slot_name not in instance_slot_labels_dict or instance_slot_labels_dict[slot_name] is None:
                 gold_slot_labels = None
         return gold_slot_labels
-
-    def _get_pred_rep(self,
-                      text: Dict[str, torch.LongTensor],
-                      predicate_indicator: torch.LongTensor,
-                      predicate_index: torch.LongTensor):
-        # Shape: batch_size, num_tokens, embedding_dim
-        embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
-        # Shape: batch_size, num_tokens ?
-        text_mask = get_text_field_mask(text)
-        # Shape: batch_size, num_tokens, predicate_feature_dim ?
-        embedded_predicate_indicator = self._predicate_feature_embedding(predicate_indicator.long())
-        # Shape: batch_size, num_tokens, embedding_dim + predicate_feature_dim
-        embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        batch_size, num_tokens, embedding_dim_with_predicate_feature = embedded_text_with_predicate_indicator.size()
-        # Shape: batch_size, num_tokens, encoder_output_dim
-        encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)
-        # Shape: batch_size, encoder_output_dim
-        pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
-        return pred_rep

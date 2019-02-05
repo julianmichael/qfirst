@@ -28,7 +28,7 @@ from qfirst.common.span import Span
 
 from qfirst.metrics.span_metric import SpanMetric
 
-# TODO!!!: fix weighted span selection policy.
+# TODO: fix weighted span selection policy.
 # right now it determines the targets. instead it should determine the loss weights.
 objective_values = ["binary", "multinomial"]
 gold_span_selection_policy_values = ["union", "majority", "weighted"]
@@ -37,98 +37,83 @@ class SpanSelector(torch.nn.Module, Registrable):
     def __init__(self,
                  input_dim: int,
                  span_hidden_dim: int,
-                 top_injection_dim: int = 0,
+                 extra_input_dim: int = 0,
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
-                 # add_invalid_span: bool = True,
                  metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanSelector, self).__init__()
 
-        self.input_dim = input_dim
-        self.span_hidden_dim = span_hidden_dim
-        self.top_injection_dim = top_injection_dim
+        self._input_dim = input_dim
+        self._span_hidden_dim = span_hidden_dim
+        self._extra_input_dim = extra_input_dim
         self._pruning_ratio = pruning_ratio
-        # self.add_invalid_span = add_invalid_span
+        self._objective = objective
+        self._gold_span_selection_policy = gold_span_selection_policy
 
         if objective not in objective_values:
             raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
-        self.objective = objective
 
         if gold_span_selection_policy not in gold_span_selection_policy_values:
             raise ConfigurationError("QA span selection policy must be one of the following: " + str(qa_objective_values))
-        self.gold_span_selection_policy = gold_span_selection_policy
 
         if objective == "multinomial" and gold_span_selection_policy == "weighted":
             raise ConfigurationError("Cannot use weighted span selection policy with multinomial objective.")
 
-        # if objective == "multinomial" and add_invalid_span:
-        #     raise ConfigurationError("Cannot use an explicit invalid span with multinomial objective.")
+        self._metric = metric
 
-        # if self.add_invalid_span:
-        #     self.invalid_embedding = Parameter(torch.randn(span_hidden_dim))
-        #     self.invalid_pred = Linear(self.span_hidden_dim, 1)
-
-        self.metric = metric
-
-        self.span_hidden = SpanRepAssembly(input_dim, input_dim, self.span_hidden_dim)
-        self.span_scorer = torch.nn.Sequential(
+        self._span_hidden = SpanRepAssembly(input_dim, input_dim, self._span_hidden_dim)
+        self._span_scorer = torch.nn.Sequential(
+            TimeDistributed(Linear(self._span_hidden_dim, self._span_hidden_dim)),
             TimeDistributed(torch.nn.ReLU()),
-            TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim)),
-            TimeDistributed(torch.nn.ReLU()),
-            TimeDistributed(Linear(self.span_hidden_dim, 1)))
-        self.span_pruner = SpanPruner(self.span_scorer)
+            TimeDistributed(Linear(self._span_hidden_dim, 1)))
+        self._span_pruner = SpanPruner(self._span_scorer)
 
-        if self.top_injection_dim > 0:
-            self.top_injection_lin = Linear(self.top_injection_dim, self.span_hidden_dim)
-            self.span_secondary_lin = TimeDistributed(Linear(self.span_hidden_dim, self.span_hidden_dim))
-            self.span_pred = TimeDistributed(Linear(self.span_hidden_dim, 1))
+        if self._extra_input_dim > 0:
+            self._extra_input_lin = Linear(self._extra_input_dim, self._span_hidden_dim)
 
-    def get_top_injection_dim(self):
-        return self.top_injection_dim
+    def get_extra_input_dim(self):
+        return self._extra_input_dim
 
     def forward(self,  # type: ignore
                 inputs: torch.LongTensor,
                 input_mask: torch.LongTensor,
-                top_injection_embedding: torch.LongTensor = None,
+                extra_input_embedding: torch.LongTensor = None,
                 answer_spans: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None, # only needs to be non-None when training with weighted or majority gold span selection policy
                 metadata = None,
                 **kwargs):
 
-        if self.top_injection_dim > 0 and top_injection_embedding is None:
-            raise ConfigurationError("SpanSelector with top-injection must receive top-injected embeddings.")
+        if self._extra_input_dim > 0 and extra_input_embedding is None:
+            raise ConfigurationError("SpanSelector with extra input configured must receive extra input embeddings.")
 
         batch_size, num_tokens, _ = inputs.size()
+        span_hidden, span_mask = self._span_hidden(inputs, inputs, input_mask, input_mask)
 
-        span_hidden, span_mask = self.span_hidden(inputs, inputs, input_mask, input_mask)
+        if self._extra_input_dim > 0:
+            full_hidden = self._extra_input_lin(extra_input_embedding).unsqueeze(1) + F.relu(span_hidden)
+        else:
+            full_hidden = F.relu(span_hidden)
 
         (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_scores) = self.span_pruner(span_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
+         top_span_indices, top_span_logits) = self._span_pruner(full_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
         top_span_mask = top_span_mask.unsqueeze(-1).float()
 
         # workaround for https://github.com/allenai/allennlp/issues/1696
-        if (top_span_scores == float("-inf")).any():
-            top_span_scores[top_span_scores == float("-inf")] = -1.
-
-        if self.top_injection_dim > 0:
-            top_injection_hidden = self.top_injection_lin(top_injection_embedding).view(batch_size, 1, -1) # broadcast to spans
-            top_span_secondary_hidden = self.span_secondary_lin(F.relu(top_span_hidden))
-            top_span_consolidated_hidden = top_injection_hidden + top_span_secondary_hidden
-            top_span_logits = self.span_pred(F.relu(top_span_consolidated_hidden)) + top_span_scores
-        else:
-            top_span_logits = top_span_scores
+        # TODO I think the issue has been fixed and we can remove this?
+        if (top_span_logits == float("-inf")).any():
+            top_span_logits[top_span_logits == float("-inf")] = -1.
 
         if answer_spans is not None:
-            gold_span_labels = self.get_prediction_map(answer_spans,
+            gold_span_labels = self._get_prediction_map(answer_spans,
                                                        num_tokens, num_answers,
-                                                       self.gold_span_selection_policy)
+                                                       self._gold_span_selection_policy)
             prediction_mask = batched_index_select(gold_span_labels.unsqueeze(-1),
                                                    top_span_indices)
 
-        if self.objective == "binary":
+        if self._objective == "binary":
             top_span_probs = torch.sigmoid(top_span_logits) * top_span_mask
             output_dict = {
                 "span_mask": span_mask,
@@ -140,13 +125,14 @@ class SpanSelector(torch.nn.Module, Registrable):
             if answer_spans is not None:
                 loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
                                                           weight = top_span_mask, reduction = "sum")
-                scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
+                scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
                 output_dict["spans"] = scored_spans
-                self.metric(scored_spans, [m["gold_spans"] for m in metadata])
+                self._metric(scored_spans, [m["gold_spans"] for m in metadata])
                 output_dict["loss"] = loss
             return output_dict
         else:
             # shouldn't be too hard to fix this up, but it's not a priority
+            assert self._objective == "multinomial"
             raise NotImplementedError
             # batch_size = top_span_logits.size(0)
             # null_scores = predicate_indicator.new_zeros([batch_size]).float()
@@ -174,8 +160,8 @@ class SpanSelector(torch.nn.Module, Registrable):
             #     logsumexp_intermediate = -util.logsumexp(correct_log_probs)
             #     negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
 
-            #     scored_spans = self.to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-            #     self.metric.with_explicit_invalids(
+            #     scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
+            #     self._metric.with_explicit_invalids(
             #         self.decode(output_dict)
             #         [m["question_label"] for m in metadata],
             #         num_invalids.cpu(), num_answers.cpu())
@@ -186,13 +172,13 @@ class SpanSelector(torch.nn.Module, Registrable):
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "spans" not in output_dict:
             o = output_dict
-            spans = self.to_scored_spans(
+            spans = self._to_scored_spans(
                 o["span_mask"], o["top_span_indices"], o["top_span_mask"], o["top_span_probs"]
             )
             output_dict['spans'] = spans
         return output_dict
 
-    def to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
+    def _to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
         span_mask = span_mask.data.cpu()
         top_span_indices = top_span_indices.data.cpu()
         top_span_mask = top_span_mask.data.cpu()
@@ -201,7 +187,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         top_spans = []
         for b in range(batch_size):
             batch_spans = []
-            for start, end, i in self.start_end_range(num_spans):
+            for start, end, i in self._start_end_range(num_spans):
                 batch_spans.append(Span(start, end))
             batch_top_spans = []
             for i in range(top_span_indices.size(1)):
@@ -210,7 +196,7 @@ class SpanSelector(torch.nn.Module, Registrable):
             top_spans.append(batch_top_spans)
         return top_spans
 
-    def start_end_range(self, num_spans):
+    def _start_end_range(self, num_spans):
         n = int(.5 * (math.sqrt(8 * num_spans + 1) -1))
 
         result = []
@@ -222,7 +208,7 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         return result
 
-    def get_prediction_map(self, spans, seq_length, num_answerers, span_selection_policy):
+    def _get_prediction_map(self, spans, seq_length, num_answerers, span_selection_policy):
         batchsize, num_spans, _ = spans.size()
         span_mask = (spans[:, :, 0] >= 0).view(batchsize, num_spans).long()
         num_labels = int((seq_length * (seq_length+1))/2)
@@ -253,4 +239,4 @@ class SpanSelector(torch.nn.Module, Registrable):
                 return torch.autograd.Variable((labels.float() / num_answerers_expanded_to_spans) >= 0.5).float()
 
     def get_metrics(self, reset: bool = False):
-        return self.metric.get_metric(reset = reset)
+        return self._metric.get_metric(reset = reset)

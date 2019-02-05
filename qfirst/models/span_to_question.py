@@ -20,50 +20,47 @@ from allennlp.training.metrics import SpanBasedF1Measure
 
 from qfirst.metrics.question_metric import QuestionMetric
 from qfirst.modules.slot_sequence_generator import SlotSequenceGenerator
+from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.modules.time_distributed_dict import TimeDistributedDict
 
 @Model.register("qasrl_span_to_question")
 class SpanToQuestionModel(Model):
     def __init__(self, vocab: Vocabulary,
-                 text_field_embedder: TextFieldEmbedder,
-                 sentence_encoder: Seq2SeqEncoder,
+                 sentence_encoder: SentenceEncoder,
                  question_generator: SlotSequenceGenerator,
-                 predicate_feature_dim: int = 100,
-                 embedding_dropout: float = 0.0,
+                 span_hidden_dim: int = 100,
+                 inject_predicate: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanToQuestionModel, self).__init__(vocab, regularizer)
-        self._text_field_embedder = text_field_embedder
         self._sentence_encoder = sentence_encoder
         self._question_generator = question_generator
+        self._span_hidden_dim = span_hidden_dim
+        self._inject_predicate = inject_predicate
+
         self._time_distributed_question_generator = TimeDistributedDict(self._question_generator, output_is_dict = True)
-        self._predicate_feature_dim = predicate_feature_dim
-        self._predicate_feature_embedding = Embedding(2, predicate_feature_dim)
-        self._embedding_dropout = Dropout(p=embedding_dropout)
-
         self._span_extractor = EndpointSpanExtractor(self._sentence_encoder.get_output_dim(), combination="x,y")
+        self._span_hidden_left  = Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim)
+        self._span_hidden_right = Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim)
 
-        embedding_dim_with_predicate_feature = self._text_field_embedder.get_output_dim() + self._predicate_feature_dim
-        if embedding_dim_with_predicate_feature != self._sentence_encoder.get_input_dim():
+        question_input_dim = (self._span_hidden_dim + self._sentence_encoder.get_output_dim()) if self._inject_predicate else self._span_hidden_dim
+        if question_input_dim != self._question_generator.get_input_dim():
             raise ConfigurationError(
-                ("Input dimension of sentence encoder (%s) must be " % self._sentence_encoder.get_input_dim()) + \
-                ("the sum of predicate feature dim and text embedding dim (%s)." % (embedding_dim_with_predicate_feature)))
-        if (2 * self._sentence_encoder.get_output_dim()) != self._question_generator.get_input_dim():
-            raise ConfigurationError(
-                ("Input dimension of question generator (%s) must be " % self._question_generator.get_input_dim()) + \
-                ("double the output dimension of the sentence encoder (%s)." % (2 * self._sentence_encoder.get_output_dim())))
-        self.metric = QuestionMetric(vocab, self._question_generator.get_slot_names())
+                ("Input dimension of question generator (%s) must " % self._question_generator.get_input_dim()) + \
+                ("equal the span hidden dimension (plus predicate representation if necessary) (%s)." % question_input_dim))
+        self._metric = QuestionMetric(vocab, self._question_generator.get_slot_names())
 
     @overrides
     def forward(self,
                 text: Dict[str, torch.LongTensor],
                 predicate_indicator: torch.LongTensor,
+                predicate_index: torch.LongTensor,
                 answer_spans: torch.LongTensor,
                 **kwargs):
-        span_reps, span_mask = self._get_span_reps(text, predicate_indicator, answer_spans)
+        question_inputs, span_mask = self._get_question_inputs(text, predicate_indicator, predicate_index, answer_spans)
         gold_slot_labels = self._get_gold_slot_labels(span_mask, **kwargs)
         if gold_slot_labels is not None:
-            slot_logits = self._time_distributed_question_generator(**{"inputs": span_reps, **gold_slot_labels})
+            slot_logits = self._time_distributed_question_generator(**{"inputs": question_inputs, **gold_slot_labels})
             neg_log_likelihood = self._get_total_cross_entropy(slot_logits, gold_slot_labels, span_mask)
             self.metric(slot_logits, gold_slot_labels, span_mask, neg_log_likelihood)
             return {**slot_logits, "span_mask": span_mask, "loss": neg_log_likelihood}
@@ -78,13 +75,13 @@ class SpanToQuestionModel(Model):
                     max_beam_size: int,
                     min_beam_probability: float):
         # Shape: 1, num_spans, question generator input dim
-        span_reps, _ = self._get_span_reps(text, predicate_indicator, answer_spans)
-        batch_size, num_spans, _ = span_reps.size()
+        question_inputs, _ = self._get_question_inputs(text, predicate_indicator, predicate_index, answer_spans)
+        batch_size, num_spans, _ = question_inputs.size()
         if batch_size > 1:
             raise ConfigurationError("Must have a batch size of 1 for beam decoding (had batch size %s)" % (num_spans, batch_size))
-        span_reps = span_reps.squeeze(0)
+        question_inputs = question_inputs.squeeze(0)
         return [self._question_generator.beam_decode(
-            span_reps[i].unsqueeze(0), max_beam_size, min_beam_probability
+            question_inputs[i].unsqueeze(0), max_beam_size, min_beam_probability
         ) for i in range(num_spans)]
 
     def get_slot_names(self):
@@ -112,12 +109,21 @@ class SpanToQuestionModel(Model):
             slot_labels = None
         return slot_labels
 
-    def _get_span_reps(self, text, predicate_indicator, answer_spans):
-        embedded_text_input = self._embedding_dropout(self._text_field_embedder(text))
-        text_mask = get_text_field_mask(text)
-        embedded_predicate_indicator = self._predicate_feature_embedding(predicate_indicator.long())
-        embedded_text_with_predicate_indicator = torch.cat([embedded_text_input, embedded_predicate_indicator], -1)
-        encoded_text = self._sentence_encoder(embedded_text_with_predicate_indicator, text_mask)
+    def _get_question_inputs(self, text, predicate_indicator, predicate_index, answer_spans):
+        encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
+        span_reps, span_mask = self._get_span_reps(encoded_text, text_mask, answer_spans)
+        if self._inject_predicate:
+            pred_rep = batched_index_select(encoded_text, predicate_index)
+            question_inputs = pred_rep + span_reps # broadcast to all spans
+        else:
+            question_inputs = span_reps
+        return question_inputs, span_mask
+
+    def _get_span_reps(self, encoded_text, text_mask, answer_spans):
         span_mask = (answer_spans[:, :, 0] >= 0).long()
-        span_reps = self._span_extractor(encoded_text, answer_spans, sequence_mask = text_mask, span_indices_mask = span_mask)
-        return span_reps, span_mask
+        # Shape: batch_size, num_spans, 2 * self._sentence_encoder.get_output_dim()
+        span_embeddings = self._span_extractor(encoded_text, answer_spans, sequence_mask = text_mask, span_indices_mask = span_mask)
+        span_left, span_right = torch.chunk(span_embeddings, 2, dim = -1)
+        # Shape: batch_size, num_spans, self._span_hidden_dim
+        span_hidden = self._span_hidden_left(span_left) + self._span_hidden_right(span_right)
+        return span_hidden, span_mask
