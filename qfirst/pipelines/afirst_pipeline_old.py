@@ -48,33 +48,34 @@ class AFirstPipelineOld():
         verb_entries = []
         for verb_index, verb_entry in inputs["verbEntries"].items():
             verb_entries.append(verb_entry)
-            verb_instances.append(self._dataset_reader._make_instance_from_text(inputs["sentenceTokens"], verb_index))
+            verb_instances.append(self._dataset_reader._make_instance_from_text(inputs["sentenceTokens"], int(verb_index)))
         span_outputs = self._model.span_detector.forward_on_instances(verb_instances)
 
         verb_dicts = []
         for instance, span_output, verb_entry in zip(verb_instances, span_outputs, verb_entries):
             text_field = instance["text"]
-            scored_spans = [(s, p) for s, p in span_output['spans'] if p >= self._span_minimum_threshold]
+            scored_spans = [(s, p.item()) for s, p in span_output['spans'] if p >= self._span_minimum_threshold]
             beam = []
             if len(scored_spans) > 0:
                 labeled_span_field = ListField([SpanField(span.start(), span.end(), text_field) for span, _ in scored_spans])
                 instance.add_field("labeled_spans", labeled_span_field, self._model.vocab)
                 qg_output = self._model.question_predictor.forward_on_instance(instance)
                 for question, (span, span_prob) in zip(qg_output["questions"], scored_spans):
+                    s = list(question)
                     question_slots = {
-                        "wh": question[0],
-                        "aux": question[1],
-                        "subj": question[2],
-                        "verb": question[3],
-                        "obj": question[4],
-                        "prep": question[5],
-                        "obj2": question[6]
+                        "wh": s[0],
+                        "aux": s[1],
+                        "subj": s[2],
+                        "verb": s[3],
+                        "obj": s[4],
+                        "prep": s[5],
+                        "obj2": s[6]
                     }
                     beam.append({
                         "questionSlots": question_slots,
                         "questionProb": 1.0, # TODO add probabilities to output later, maybe.
                         "span": [span.start(), span.end() + 1],
-                        "spanProb": span_prob.item()
+                        "spanProb": span_prob
                     })
             verb_dicts.append({
                 "verbIndex": verb_entry["verbIndex"],
