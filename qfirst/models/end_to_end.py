@@ -43,11 +43,9 @@ class EndToEndModel(Model):
                  regularizer: Optional[RegularizerApplicator] = None):
         super(EndToEndModel, self).__init__(vocab, regularizer)
         self._clause_model = clause_model
-        self._tan_model = tan_model
         self._span_model = span_model
         self._cs_to_slot_model = cs_to_slot_model
         self._clause_beam_size = clause_beam_size
-        self._tan_output_size = tan_output_size
         self._final_beam_size = final_beam_size
         self._metric = metric
         self._is_logging = is_logging
@@ -68,11 +66,6 @@ class EndToEndModel(Model):
                 text: Dict[str, torch.LongTensor],
                 predicate_indicator: torch.LongTensor,
                 predicate_index: torch.LongTensor,
-                clause_strings: torch.LongTensor = None,
-                qargs: torch.LongTensor = None,
-                answer_spans: torch.LongTensor = None,
-                num_answers: torch.LongTensor = None,
-                num_invalids: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
         device = predicate_index.device
@@ -81,33 +74,33 @@ class EndToEndModel(Model):
 
         batch_size, num_spans = span_outputs["top_span_indices"].size()
 
-        _, _, top_clause_labels, top_clause_scores = self._pruner(
+        _, _, top_clause_indices, top_clause_scores = self._pruner(
             clause_outputs["logits"].unsqueeze(-1),
             torch.ones([batch_size, self.vocab.get_vocab_size("abst-clause-labels")], dtype = torch.float64, device = device),
             self._clause_beam_size)
 
-        top_span_scores = span_outputs["top_span_scores"]
-        top_span_indices = torch.stack(
-            [torch.stack([
-                torch.LongTensor([s.span_start, s.span_end], device = device)
-                for s, _ in span_list
-            ]) for span_list in span_outputs["spans"]]
-        )
+        top_span_scores = span_outputs["top_span_logits"]
+        top_span_mask = span_outputs["top_span_mask"]
+        def tensorize_span_list(span_list):
+            spans = [torch.LongTensor([s.start(), s.end()], device = device) for s, _ in span_list]
+            padding = [torch.LongTensor([-1, -1], device = device)] * (num_spans - len(span_list))
+            return torch.stack(spans + padding)
+        top_span_indices = torch.stack([tensorize_span_list(span_list) for span_list in span_outputs["spans"]])
 
         import random
         logging_batch_index = int(random.random() * batch_size)
-        if self.is_logging:
+        if self._is_logging:
             tokens = metadata[logging_batch_index]["sentence_tokens"]
             print("----------")
             print(" ".join(tokens))
             print(tokens[metadata[logging_batch_index]["verb_index"]])
             clause_beam = top_clause_indices[logging_batch_index]
             clause_beam_scores = top_clause_scores[logging_batch_index]
-            for i in sorted(range(min(self.num_pruned_clauses, 10)), key = lambda i: -clause_beam_scores[i]):
+            for i in sorted(range(min(self._clause_beam_size, 10)), key = lambda i: -clause_beam_scores[i]):
                 print("%10.5f  %s" % (clause_beam_scores[i], self.vocab.get_token_from_index(clause_beam[i].item(), namespace = "abst-clause-labels")))
             print()
             for i in sorted(range(int(top_span_mask[logging_batch_index].sum().item())), key = lambda i: -top_span_scores[logging_batch_index, i])[0:10]:
-                s = span_outputs["spans"][logging_batch_index][i]
+                s, _ = span_outputs["spans"][logging_batch_index][i]
                 print("%10.5f  %s" % (top_span_scores[logging_batch_index, i], " ".join(tokens[s.start() : s.end() + 1]) + " " + str(s)))
 
         # if not self.use_sum_of_scores:
@@ -118,7 +111,7 @@ class EndToEndModel(Model):
         top_clauses_reshaped = top_clause_scores.view(batch_size,  -1,  1) # -1 = self._clause_beam_size
         top_spans_reshaped   =   top_span_scores.view(batch_size,   1, -1) # -1 = 2 * num_tokens
         # We construct a square of scores, then flatten it for the next step.
-        # Shape: batch_size, num_pruned_clauses, 2 * num_tokens
+        # Shape: batch_size, self._clause_beam_size, 2 * num_tokens
         summed_scores = (top_clauses_reshaped + top_spans_reshaped) \
             .view(  batch_size,                     -1,         1)
         summed_mask = top_span_mask \
@@ -140,18 +133,26 @@ class EndToEndModel(Model):
 
         # the indices of the summed scores are into the cube whose axes are the component beams with indices into the original vocabs,
         # so we recover those here
-        final_clauses = batched_index_select(top_clause_indices.unsqueeze(-1), final_clause_index_indices).squeeze(-1)
-        final_span_indices    = batched_index_select(top_span_indices.unsqueeze(-1), final_span_index_indices).squeeze(-1)
-        # final_span_mask = batched_index_select(top_span_mask.unsqueeze(-1), final_span_index_indices).squeeze(-1)
+        final_clause_indices = batched_index_select(top_clause_indices.unsqueeze(-1), final_clause_index_indices).squeeze(-1)
+        final_clause_scores = batched_index_select(top_clause_scores, final_clause_index_indices).squeeze(-1)
+
+        final_span_indices = batched_index_select(top_span_indices, final_span_index_indices)
+        final_span_mask = batched_index_select(top_span_mask.unsqueeze(-1), final_span_index_indices).squeeze(-1)
+        final_span_scores = batched_index_select(top_span_scores, final_span_index_indices).squeeze(-1)
+        # final_scored_spans = self._span_model._span_selector._to_scored_spans(span_outputs["span_mask"], final_span_indices, final_span_mask, final_span_scores)
+
+        # print("top_span_mask: " + str(top_span_mask.size()))
+        # print("top_span_scores: " + str(top_span_scores.size()))
+
         intermediate_beam_mask = top_summed_mask
         beam_sizes = intermediate_beam_mask.long().sum(1)
 
         # Shape: batch_size, final_beam_size, vocab_size("qarg-labels")
-        qarg_scores = self._cs_to_slot_model(
+        qarg_output = self._cs_to_slot_model(
             text, predicate_indicator, predicate_index,
-            final_clauses, final_span_indices)
+            final_clause_indices, final_span_indices)
         # cond
-        qarg_scores = F.logsigmoid(qarg_scores)
+        qarg_scores = F.logsigmoid(qarg_output["logits"])
 
         final_scores = top_summed_scores \
             .expand(batch_size, self._final_beam_size, self.vocab.get_vocab_size("qarg-labels")) + \
@@ -162,15 +163,11 @@ class EndToEndModel(Model):
             .expand(batch_size, self._final_beam_size, self.vocab.get_vocab_size("qarg-labels"))
 
         # Now we produce the output data structures.
-        final_clause_scores = batched_index_select(top_clause_scores, final_clause_index_indices).squeeze(-1)
-        final_span_scores = batched_index_select(top_span_scores, final_span_index_indices).squeeze(-1)
         scored_spans = [
-            (Span(s[b, i, 0].item(), s[b, i, 1].item()), final_span_scores[b, i].item())
-            for b in batch_size
-            for i in beam_sizes[b]
+            (Span(final_span_indices[b, i, 0].item(), final_span_indices[b, i, 1].item()), final_span_scores[b, i].item())
+            for b in range(batch_size)
+            for i in range(beam_sizes[b])
         ]
-
-        # TODO all below
 
         def get_beam_item_in_batch(batch_index, beam_index):
             clause_score = final_clause_scores[batch_index, beam_index]
@@ -182,12 +179,10 @@ class EndToEndModel(Model):
             ]
             qarg, qarg_score = max(qarg_items, key = lambda t: t[1])
             total_score = clause_score + span_score + qarg_score
-            if self.use_product_of_probs:
-                total_prob = total_score.exp()
-            else:
-                total_prob = torch.sigmoid(total_score)
+            # TODO ensure consistency with final score
+            total_prob = total_score.exp()
             return {
-                "clause": self.vocab.get_token_from_index(final_clauses[batch_index, beam_index].item(), "abst-clause-labels"),
+                "clause": self.vocab.get_token_from_index(final_clause_indices[batch_index, beam_index].item(), "abst-clause-labels"),
                 "clause_score": clause_score.item(),
                 "span":  scored_spans[batch_index][beam_index],
                 "span_score": span_score.item(),
@@ -202,7 +197,7 @@ class EndToEndModel(Model):
         ]
 
 
-        if self.is_logging:
+        if self._is_logging:
             beam = sorted(
                 batch_of_beams[logging_batch_index],
                 key = lambda x: -(max([s for _, _, s in x["qargs"]]))
@@ -216,8 +211,8 @@ class EndToEndModel(Model):
 
         # Finally, if gold data is present, we compute the loss of our beam against the gold, and pass the results to the metric.
         loss_dict = {}
-        if clause_strings is not None:
-            if self.is_logging:
+        if metadata is not None and metadata[0]["gold_set"] is not None:
+            if self._is_logging:
                 logging_gold_set = metadata[logging_batch_index]["gold_set"]
                 print("Gold:")
                 for clause, qarg, (start, end) in logging_gold_set:
