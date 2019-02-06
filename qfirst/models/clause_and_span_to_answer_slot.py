@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
-from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder
+from allennlp.modules import Seq2SeqEncoder, TimeDistributed, TextFieldEmbedder, FeedForward
 from allennlp.modules.span_extractors import EndpointSpanExtractor
 from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
@@ -26,27 +26,19 @@ from qfirst.metrics.binary_f1 import BinaryF1
 class ClauseAndSpanToAnswerSlotModel(Model):
     def __init__(self, vocab: Vocabulary,
                  sentence_encoder: SentenceEncoder,
-                 span_hidden_dim: int = 100,
-                 final_input_dim: int = 100,
-                 final_hidden_dim: int = 100,
+                 qarg_ffnn: FeedForward,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(ClauseAndSpanToAnswerSlotModel, self).__init__(vocab, regularizer)
         self._sentence_encoder = sentence_encoder
-        self._span_hidden_dim = span_hidden_dim
-        self._final_input_dim = final_input_dim
-        self._final_hidden_dim = final_hidden_dim
+        self._qarg_ffnn = qarg_ffnn
 
-        self._clause_embedding = Embedding(vocab.get_vocab_size("abst-clause-labels"), self._final_input_dim)
+        self._clause_embedding = Embedding(vocab.get_vocab_size("abst-clause-labels"), self._qarg_ffnn.get_input_dim())
         self._span_extractor = EndpointSpanExtractor(input_dim = self._span_hidden_dim, combination = "x,y")
-        self._span_hidden_left = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim))
-        self._span_hidden_right = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim))
-        self._predicate_hidden = Linear(self._sentence_encoder.get_output_dim(), self._final_input_dim)
-        self._qarg_predictor = Sequential(
-            Linear(self._final_input_dim, self._final_hidden_dim),
-            ReLU(),
-            Linear(self._final_hidden_dim, self.vocab.get_vocab_size("qarg-labels")))
-
+        self._span_hidden_left = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
+        self._span_hidden_right = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
+        self._predicate_hidden = Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim())
+        self._qarg_predictor = Linear(self._qarg_ffnn.get_input_dim(), self.vocab.get_vocab_size("qarg-labels"))
         self._metric = BinaryF1()
 
     @overrides
@@ -80,9 +72,9 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         # Shape: batch_size, 1, self._final_input_dim
         expanded_pred_embedding = self._predicate_hidden(pred_rep).unsqueeze(1)
         # Shape: batch_size, num_labeled_instances, self._final_input_dim
-        qarg_inputs = F.relu(expanded_pred_embedding + input_clauses + F.relu(input_span_hidden))
+        qarg_inputs = F.relu(expanded_pred_embedding + input_clauses + input_span_hidden)
         # Shape: batch_size, num_labeled_instances, get_vocab_size("qarg-labels")
-        qarg_logits = self._qarg_predictor(qarg_inputs)
+        qarg_logits = self._qarg_predictor(self._qarg_ffnn(qarg_inputs))
         final_mask = qarg_labeled_mask \
             .unsqueeze(-1) \
             .expand(batch_size, num_labeled_instances, self.vocab.get_vocab_size("qarg-labels")) \

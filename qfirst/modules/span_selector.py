@@ -3,7 +3,7 @@ from typing import Dict, List, TextIO, Optional, Union
 
 from overrides import overrides
 import torch
-from torch.nn.modules import Linear, Dropout
+from torch.nn.modules import Linear, Dropout, ReLU
 import torch.nn.functional as F
 from torch.nn import Parameter
 import math
@@ -11,7 +11,7 @@ import math
 from allennlp.common import Params, Registrable
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
-from allennlp.modules import Seq2SeqEncoder, Seq2VecEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner
+from allennlp.modules import Seq2SeqEncoder, Seq2VecEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner, FeedForward
 from allennlp.modules.token_embedders import Embedding
 from allennlp.modules.span_extractors.endpoint_span_extractor import EndpointSpanExtractor
 from allennlp.models.model import Model
@@ -36,8 +36,9 @@ gold_span_selection_policy_values = ["union", "majority", "weighted"]
 class SpanSelector(torch.nn.Module, Registrable):
     def __init__(self,
                  input_dim: int,
-                 span_hidden_dim: int,
                  extra_input_dim: int = 0,
+                 span_hidden_dim: int = 100,
+                 span_ffnn: FeedForward = None,
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
@@ -47,8 +48,9 @@ class SpanSelector(torch.nn.Module, Registrable):
         super(SpanSelector, self).__init__()
 
         self._input_dim = input_dim
-        self._span_hidden_dim = span_hidden_dim
         self._extra_input_dim = extra_input_dim
+        self._span_hidden_dim = span_hidden_dim
+        self._span_ffnn = span_ffnn
         self._pruning_ratio = pruning_ratio
         self._objective = objective
         self._gold_span_selection_policy = gold_span_selection_policy
@@ -64,11 +66,24 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         self._metric = metric
 
-        self._span_hidden = SpanRepAssembly(input_dim, input_dim, self._span_hidden_dim)
-        self._span_scorer = torch.nn.Sequential(
-            TimeDistributed(Linear(self._span_hidden_dim, self._span_hidden_dim)),
-            TimeDistributed(torch.nn.ReLU()),
-            TimeDistributed(Linear(self._span_hidden_dim, 1)))
+        self._span_hidden = SpanRepAssembly(self._input_dim, self._input_dim, self._span_hidden_dim)
+        if self._span_ffnn is not None:
+            if self._span_ffnn.get_input_dim() != self._span_hidden_dim:
+                raise ConfigurationError(
+                    "Span hidden dim %s must match span classifier FFNN input dim %s" % (
+                        self._span_hidden_dim, self._span_ffnn.get_input_dim()
+                    )
+                )
+            self._span_scorer = TimeDistributed(
+                torch.nn.Sequential(
+                    ReLU(),
+                    self._span_ffnn,
+                    Linear(self._span_ffnn.get_output_dim(), 1)))
+        else:
+            self._span_scorer = TimeDistributed(
+                torch.nn.Sequential(
+                    ReLU(),
+                    Linear(self._span_hidden_dim, 1)))
         self._span_pruner = SpanPruner(self._span_scorer)
 
         if self._extra_input_dim > 0:
@@ -93,9 +108,9 @@ class SpanSelector(torch.nn.Module, Registrable):
         span_hidden, span_mask = self._span_hidden(inputs, inputs, input_mask, input_mask)
 
         if self._extra_input_dim > 0:
-            full_hidden = self._extra_input_lin(extra_input_embedding).unsqueeze(1) + F.relu(span_hidden)
+            full_hidden = self._extra_input_lin(extra_input_embedding).unsqueeze(1) + span_hidden
         else:
-            full_hidden = F.relu(span_hidden)
+            full_hidden = span_hidden
 
         (top_span_hidden, top_span_mask,
          top_span_indices, top_span_logits) = self._span_pruner(full_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))

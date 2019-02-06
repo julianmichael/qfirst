@@ -43,7 +43,7 @@
         },
         "span_selector": {
             "input_dim": 300,
-            "span_hidden_dim": 100,
+            "span_hidden_dim": 100
         }
   },
   "iterator": {
