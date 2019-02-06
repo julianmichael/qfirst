@@ -214,7 +214,7 @@ object MetricsApp extends IOApp {
     M.hchoose(
       "question" ->> I.getQuestionBoundedAcc,
       "question with answer" ->> I.getQuestionWithAnswerBoundedAcc,
-      "answer span" ->> M.split(I.questionToQAs) {
+      "question-answer pair" ->> M.split(I.questionToQAs) {
         I.getQABoundedAcc
       }
     )
@@ -288,7 +288,7 @@ object MetricsApp extends IOApp {
         val allResults = rawCollapsed.updateWith("predictions")(
           _.map { stats => // stats for given filter
             val questionsPerVerb = "questions per verb" ->> stats.get("question").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
-            val spansPerVerb = "spans per verb" ->> stats.get("answer span").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
+            val spansPerVerb = "spans per verb" ->> stats.get("question-answer pair").stats.predicted.toDouble / rawCollapsed("verbs").stats.numInstances
             stats + questionsPerVerb + spansPerVerb
           }
         )
@@ -296,7 +296,7 @@ object MetricsApp extends IOApp {
         allResults.updateWith("predictions")(
           _.filter(_.get("questions per verb") >= 2.0)
             .filter(_.get("spans per verb") >= 2.3)
-            .keepMaxBy(_.get("question with answer").stats.accuracyLowerBound)
+            .keepMaxBy(_.get("question-answer pair").stats.accuracyLowerBound)
         )
       }
       bestFilter <- IO {

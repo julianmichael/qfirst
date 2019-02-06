@@ -28,26 +28,22 @@ class SpanToQuestionModel(Model):
     def __init__(self, vocab: Vocabulary,
                  sentence_encoder: SentenceEncoder,
                  question_generator: SlotSequenceGenerator,
-                 span_hidden_dim: int = 100,
                  inject_predicate: bool = False,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanToQuestionModel, self).__init__(vocab, regularizer)
         self._sentence_encoder = sentence_encoder
         self._question_generator = question_generator
-        self._span_hidden_dim = span_hidden_dim
         self._inject_predicate = inject_predicate
 
         self._time_distributed_question_generator = TimeDistributedDict(self._question_generator, output_is_dict = True)
         self._span_extractor = EndpointSpanExtractor(self._sentence_encoder.get_output_dim(), combination="x,y")
-        self._span_hidden_left  = Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim)
-        self._span_hidden_right = Linear(self._sentence_encoder.get_output_dim(), self._span_hidden_dim)
 
-        question_input_dim = (self._span_hidden_dim + self._sentence_encoder.get_output_dim()) if self._inject_predicate else self._span_hidden_dim
+        question_input_dim = (3 * self._sentence_encoder.get_output_dim()) if self._inject_predicate else (2 * self._sentence_encoder.get_output_dim())
         if question_input_dim != self._question_generator.get_input_dim():
             raise ConfigurationError(
                 ("Input dimension of question generator (%s) must " % self._question_generator.get_input_dim()) + \
-                ("equal the span hidden dimension (plus predicate representation if necessary) (%s)." % question_input_dim))
+                ("equal the span embedding dimension (plus predicate representation if necessary) (%s)." % question_input_dim))
         self._metric = QuestionMetric(vocab, self._question_generator.get_slot_names())
 
     @overrides
@@ -62,7 +58,7 @@ class SpanToQuestionModel(Model):
         if gold_slot_labels is not None:
             slot_logits = self._time_distributed_question_generator(**{"inputs": question_inputs, **gold_slot_labels})
             neg_log_likelihood = self._get_total_cross_entropy(slot_logits, gold_slot_labels, span_mask)
-            self.metric(slot_logits, gold_slot_labels, span_mask, neg_log_likelihood)
+            self._metric(slot_logits, gold_slot_labels, span_mask, neg_log_likelihood)
             return {**slot_logits, "span_mask": span_mask, "loss": neg_log_likelihood}
         else:
             raise ConfigurationError("AfirstQuestionGenerator requires gold labels for teacher forcing when running forward. "
@@ -88,7 +84,7 @@ class SpanToQuestionModel(Model):
         return self._question_generator.get_slot_names()
 
     def get_metrics(self, reset: bool = False):
-        return self.metric.get_metric(reset=reset)
+        return self._metric.get_metric(reset=reset)
 
     def _get_total_cross_entropy(self, slot_logits, gold_slot_labels, span_mask):
         loss = 0.
@@ -111,19 +107,15 @@ class SpanToQuestionModel(Model):
 
     def _get_question_inputs(self, text, predicate_indicator, predicate_index, answer_spans):
         encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
-        span_reps, span_mask = self._get_span_reps(encoded_text, text_mask, answer_spans)
+        span_mask = (answer_spans[:, :, 0] >= 0).long()
+        # Shape: batch_size, num_spans, 2 * self._sentence_encoder.get_output_dim()
+        span_reps = self._span_extractor(encoded_text, answer_spans, sequence_mask = text_mask, span_indices_mask = span_mask)
+        batch_size, _, encoding_dim = encoded_text.size()
+        num_spans = span_reps.size(1)
         if self._inject_predicate:
-            pred_rep = batched_index_select(encoded_text, predicate_index)
-            question_inputs = pred_rep + span_reps # broadcast to all spans
+            pred_rep_expanded = batched_index_select(encoded_text, predicate_index) \
+                                .expand(batch_size, num_spans, encoding_dim)
+            question_inputs = torch.cat([pred_rep, span_reps], -1)
         else:
             question_inputs = span_reps
         return question_inputs, span_mask
-
-    def _get_span_reps(self, encoded_text, text_mask, answer_spans):
-        span_mask = (answer_spans[:, :, 0] >= 0).long()
-        # Shape: batch_size, num_spans, 2 * self._sentence_encoder.get_output_dim()
-        span_embeddings = self._span_extractor(encoded_text, answer_spans, sequence_mask = text_mask, span_indices_mask = span_mask)
-        span_left, span_right = torch.chunk(span_embeddings, 2, dim = -1)
-        # Shape: batch_size, num_spans, self._span_hidden_dim
-        span_hidden = self._span_hidden_left(span_left) + self._span_hidden_right(span_right)
-        return span_hidden, span_mask
