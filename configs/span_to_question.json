@@ -35,7 +35,7 @@
                 "type": "alternating_lstm",
                 "input_size": 1124,
                 "hidden_size": 300,
-                "num_layers": 4,
+                "num_layers": 8,
                 "recurrent_dropout_probability": 0.1,
                 "use_highway": true
             },
@@ -49,8 +49,7 @@
             "slot_embedding_dim":100,
             "num_layers": 4,
             "share_rnn_cell": false
-        },
-        "span_hidden_dim": 100
+        }
   },
   "iterator": {
     "type": "bucket",
