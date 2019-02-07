@@ -15,6 +15,13 @@ import HasMetrics.ops._
 
 object Transformers {
 
+  def map[InstanceA, InstanceB, MetricData](
+    f: InstanceA => InstanceB)(
+    metric: InstanceB => MetricData
+  ): (InstanceA => MetricData) = (a: InstanceA) => {
+    metric(f(a))
+  }
+
   def bucket[Instance, MetricData](
     bucketers: Map[String, Instance => String])(
     metric: Instance => MetricData
