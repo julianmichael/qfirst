@@ -34,9 +34,8 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         self._qarg_ffnn = qarg_ffnn
 
         self._clause_embedding = Embedding(vocab.get_vocab_size("abst-clause-labels"), self._qarg_ffnn.get_input_dim())
-        self._span_extractor = EndpointSpanExtractor(input_dim = self._span_hidden_dim, combination = "x,y")
-        self._span_hidden_left = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
-        self._span_hidden_right = TimeDistributed(Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
+        self._span_extractor = EndpointSpanExtractor(input_dim = self._sentence_encoder.get_output_dim(), combination = "x,y")
+        self._span_hidden = TimeDistributed(Linear(2 * self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
         self._predicate_hidden = Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim())
         self._qarg_predictor = Linear(self._qarg_ffnn.get_input_dim(), self.vocab.get_vocab_size("qarg-labels"))
         self._metric = BinaryF1()
@@ -65,14 +64,13 @@ class ClauseAndSpanToAnswerSlotModel(Model):
 
         # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
         span_embeddings = self._span_extractor(encoded_text, qarg_labeled_spans, text_mask, qarg_labeled_mask)
-        span_left, span_right = torch.chunk(span_embeddings, 2, dim = -1)
         # Shape: batch_size, num_spans, self._span_hidden_dim
-        input_span_hidden = self._span_hidden_left(span_left) + self._span_hidden_right(span_right)
+        input_span_hidden = self._span_hidden(span_embeddings)
 
         # Shape: batch_size, 1, self._final_input_dim
-        expanded_pred_embedding = self._predicate_hidden(pred_rep).unsqueeze(1)
+        pred_embedding = self._predicate_hidden(pred_rep)
         # Shape: batch_size, num_labeled_instances, self._final_input_dim
-        qarg_inputs = F.relu(expanded_pred_embedding + input_clauses + input_span_hidden)
+        qarg_inputs = F.relu(pred_embedding.unsqueeze(1) + input_clauses + input_span_hidden)
         # Shape: batch_size, num_labeled_instances, get_vocab_size("qarg-labels")
         qarg_logits = self._qarg_predictor(self._qarg_ffnn(qarg_inputs))
         final_mask = qarg_labeled_mask \
