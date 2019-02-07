@@ -67,6 +67,7 @@ class SpanToQuestionModel(Model):
     def beam_decode(self,
                     text: Dict[str, torch.LongTensor],
                     predicate_indicator: torch.LongTensor,
+                    predicate_index: torch.LongTensor,
                     answer_spans: torch.LongTensor,
                     max_beam_size: int,
                     min_beam_probability: float):

@@ -74,6 +74,7 @@ class AFirstPipeline():
                 question_beams = self._span_to_question_model.beam_decode(
                     text = qgen_input_tensors["text"],
                     predicate_indicator = qgen_input_tensors["predicate_indicator"],
+                    predicate_index = qgen_input_tensors["predicate_index"],
                     answer_spans = qgen_input_tensors["answer_spans"],
                     max_beam_size = self._question_beam_size,
                     min_beam_probability = self._question_minimum_threshold)
