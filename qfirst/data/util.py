@@ -135,3 +135,11 @@ def get_answer_fields(question_label, text_field):
         "num_answers": num_answers_field,
         "num_invalids": num_invalids_field
     }
+
+def get_tan_string(question_label):
+    tense_string = question_label["tense"]
+    perfect_string = "+pf" if question_label["isPerfect"] else "-pf"
+    progressive_string = "+prog" if question_label["isProgressive"] else "-prog"
+    negation_string = "+neg" if question_label["isNegated"] else "-neg"
+    tan_string = " ".join([tense_string, perfect_string, progressive_string, negation_string])
+    return tan_string

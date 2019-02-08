@@ -145,8 +145,80 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "metadata": metadata
             }
 
+@QasrlInstanceReader.register("span_animacy")
+class QasrlAnimacyReader(QasrlInstanceReader):
+    def __init__(self):
+        self._tokenizer = WordTokenizer()
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # Iterable[Dict[str, ?Field]]
+        verb_fields = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        animacy_label_map = {}
+        for question_label in question_labels:
+            if question_label["questionSlots"]["wh"] in { "who", "what" }:
+                is_animate = question_label["questionSlots"]["wh"] == "who"
+                animacy_label = 1 if is_animate else 0
+                for span in get_answer_spans(question_label):
+                    if span not in animacy_label_map:
+                        animacy_label_map[span] = []
+                    animacy_label_map[span].append(animacy_label)
+
+        animacy_span_fields = []
+        animacy_label_fields = []
+        for s, labels in animacy_label_map.items():
+            if len(labels) > 0 and not (0 in labels and 1 in labels):
+                animacy_span_fields.append(SpanField(s.start(), s.end(), verb_fields["text"]))
+                animacy_label_fields.append(LabelField(label = labels[0], skip_indexing = True))
+
+        if len(animacy_span_fields) > 0:
+            yield {
+                **verb_fields,
+                "animacy_spans": ListField(animacy_span_fields),
+                "animacy_labels": ListField(animacy_label_fields)
+            }
+
+@QasrlInstanceReader.register("span_tan")
+class QasrlSpanTanReader(QasrlInstanceReader):
+    def __init__(self):
+        self._tokenizer = WordTokenizer()
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # Iterable[Dict[str, ?Field]]
+        verb_fields = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        tan_label_map = {}
+        for question_label in question_labels:
+            tan_string = get_tan_string(question_label)
+            for span in get_answer_spans(question_label):
+                if span not in tan_label_map:
+                    tan_label_map[span] = []
+                tan_label_map[span].append(tan_string)
+
+        tan_span_fields = []
+        tan_label_fields = []
+        for s, labels in tan_label_map.items():
+            if len(labels) > 0:
+                tan_span_fields.append(SpanField(s.start(), s.end(), verb_fields["text"]))
+                tan_label_fields.append(MultiLabelField_New(list(set(labels)), label_namespace = "tan-string-labels"))
+
+        if len(tan_span_fields) > 0:
+            yield {
+                **verb_fields,
+                "tan_spans": ListField(tan_span_fields),
+                "tan_labels": ListField(tan_label_fields)
+            }
+
 @QasrlInstanceReader.register("question_factored")
-class QasrlQuestionReader(QasrlInstanceReader):
+class QasrlQuestionFactoredReader(QasrlInstanceReader):
     def __init__(self,
                  clause_info_files: List[str] = []):
         self._clause_info = None
@@ -171,7 +243,6 @@ class QasrlQuestionReader(QasrlInstanceReader):
         qarg_fields = []
         all_answer_fields = []
         gold_tuples = []
-        animacy_label_map = {}
         for question_label in question_labels:
             clause_slots = {}
             try:
@@ -194,11 +265,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             clause_strings.append(clause_string)
             clause_string_fields.append(clause_string_field)
 
-            tense_string = question_label["tense"]
-            perfect_string = "+pf" if question_label["isPerfect"] else "-pf"
-            progressive_string = "+prog" if question_label["isProgressive"] else "-prog"
-            negation_string = "+neg" if question_label["isNegated"] else "-neg"
-            tan_string = " ".join([tense_string, perfect_string, progressive_string, negation_string])
+            tan_string = get_tan_string(question_label)
             tan_string_field = LabelField(label = tan_string, label_namespace = "tan-string-labels")
             tan_strings.append(tan_string)
             tan_string_fields.append(tan_string_field)
@@ -233,18 +300,8 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 qarg_pretrain_span_fields.append(SpanField(span[0], span[1], verb_fields["text"]))
                 qarg_pretrain_multilabel_fields.append(MultiLabelField_New(valid_qargs, label_namespace = "qarg-labels"))
 
-        animacy_span_fields = []
-        animacy_label_fields = []
-        for s, labels in animacy_label_map.items():
-            if len(labels) > 0 and not (0 in labels and 1 in labels):
-                animacy_span_fields.append(SpanField(s[0], s[1], verb_fields["text"]))
-                animacy_label_fields.append(LabelField(label = labels[0], skip_indexing = True))
-
         tan_multilabel_field = MultiLabelField_New(list(set(tan_strings)), label_namespace = "tan-string-labels")
 
-        if len(animacy_span_fields) == 0:
-            animacy_span_fields = [SpanField(-1, -1, verb_fields["text"])]
-            animacy_label_fields = [LabelField(label = -1, skip_indexing = True)]
 
         if len(clause_string_fields) > 0:
             yield {
@@ -257,8 +314,6 @@ class QasrlQuestionReader(QasrlInstanceReader):
                 "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
                 "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
                 "tan_set": tan_multilabel_field,
-                "animacy_spans": ListField(animacy_span_fields),
-                "animacy_labels": ListField(animacy_label_fields),
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
                 }),

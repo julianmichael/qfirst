@@ -66,38 +66,115 @@ object Instances {
     pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
   ) {
     def allQuestionStrings = (goldValid.keySet ++ goldInvalid.keySet ++ pred.keySet)
+    def generalize = GeneralizedQASetInstance[SlotBasedLabel[VerbForm]](
+      this,
+      goldValid.map(p =>
+        p._2.questionSlots -> p._2.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+      ), pred.map(_._2)
+    )
   }
 
-  // def verbToQASet[A](
-  //   filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-  //   filterPred: BeamFilter,
-  //   oracleAnswers: Option[Double] = None,
-  //   oracleQuestions: Option[Double] = None
-  // ) = (verb: VerbInstance[A]) => {
-  //   val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
-  //   val possiblyOracleAnswersVerb = oracleAnswers.fold(verb.pred)(answerThresh =>
-  //     verb.pred.withOracleAnswers(goldValidQAs, answerThresh)
-  //   )
-  //   val possiblyOracleQuestionsVerb = oracleQuestions.fold(possiblyOracleAnswersVerb)(
-  //     questionThresh => possiblyOracleAnswersVerb.withOracleQuestions(
-  //       goldValidQAs.map(_._2.questionSlots).toSet, goldInvalidQAs.map(_._2.questionSlots).toSet,
-  //       questionThresh
-  //     )
-  //   )
-  //   val predQAs = filterPred(possiblyOracleQuestionsVerb)
-  //   QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
-  // }
+  private def mapKeysAndAggregate[K0, K1, V: Monoid](m: Map[K0, V], f: K0 => K1) = {
+    m.toList.foldMap { case (a, b) => Map(f(a) -> b) }
+  }
+  case class GeneralizedQASetInstance[A](
+    original: QASetInstance,
+    gold: Map[A, Set[AnswerSpan]],
+    pred: Map[A, Set[AnswerSpan]]
+  ) {
+    def map[B](f: A => B): GeneralizedQASetInstance[B] = {
+      GeneralizedQASetInstance(
+        original,
+        mapKeysAndAggregate(gold, f),
+        mapKeysAndAggregate(pred, f),
+      )
+    }
+    def getAcc = {
+      pred.toList.foldMap { case (q, as) =>
+        as.toList.foldMap { a =>
+          val instance = (this, q, a)
+          val isCorrect = gold.get(q).exists(_.contains(a))
+          if(isCorrect) Accuracy.correct(instance) else Accuracy.incorrect(instance)
+        }
+      }
+    }
+    def stripAnswers = GeneralizedQASetInstance(
+      original,
+      gold.map { case (q, aSet) => q -> Set(AnswerSpan(0, 1)) },
+      pred.map { case (q, aSet) => q -> Set(AnswerSpan(0, 1)) }
+    )
+  }
 
-  // def verbToQASetWithRanking(
-  //   filterGold: VerbEntry => (Map[String, QuestionLabel], Map[String, QuestionLabel]),
-  //   filterPred: RankingBeamFilter,
-  //   getClause: VerbInstance => ClauseInstance
-  // ) = (verb: VerbInstance) => {
-  //   val clause = getClause(verb)
-  //   val (goldInvalidQAs, goldValidQAs) = filterGold(verb.gold)
-  //   val predQAs = filterPred(verb.pred, clause)
-  //   QASetInstance(verb.goldSentence, verb.gold, goldValidQAs, goldInvalidQAs, predQAs)
-  // }
+  val stripNegation = (slots: SlotBasedLabel[VerbForm]) => {
+    def removeAuxNeg(aux: LowerCaseString) = (
+      aux.toString match {
+        case "can't" => "can"
+        case "won't" => "will"
+        case x if x.endsWith("n't") => x.dropRight(3)
+        case x => x
+      })
+    def removeVerbNeg(verbPrefix: List[LowerCaseString]) = (
+      verbPrefix.map(_.toString) match {
+        case "not" :: rest => rest
+        case x => x
+      }
+    ).map(_.lowerCase)
+
+    import nlpdata.datasets.wiktionary._
+    val res: SlotBasedLabel[VerbForm] = slots.aux.map(removeAuxNeg) match {
+      case Some("did") if slots.subj.isEmpty =>
+        slots.copy(aux = None, verbPrefix = removeVerbNeg(slots.verbPrefix), verb = Past)
+      case Some("does") if slots.subj.isEmpty =>
+        slots.copy(aux = None, verbPrefix = removeVerbNeg(slots.verbPrefix), verb = PresentSingular3rd)
+      case Some(newAux) =>
+        slots.copy(aux = Some(newAux.lowerCase), verbPrefix = removeVerbNeg(slots.verbPrefix))
+      case None =>
+        slots.copy(aux = None, verbPrefix = removeVerbNeg(slots.verbPrefix))
+    }
+    // if(slots != res) {
+    //   println("vvvv")
+    //   println(slots.renderQuestionString(InflectedForms.fromStrings("give", "gives", "giving", "gave", "given")))
+    //   println(res.renderQuestionString(InflectedForms.fromStrings("give", "gives", "giving", "gave", "given")))
+    //   println("^^^^")
+    // }
+    res
+  }
+
+  val stripTense = (slots: SlotBasedLabel[VerbForm]) => {
+    val isNegated = slots.aux.exists(_.endsWith("n't".lowerCase)) || slots.verbPrefix.headOption.exists(_ == "not".lowerCase)
+    val isPassive = slots.verb == PastParticiple &&
+      (slots.aux.toList ++ slots.verbPrefix).map(_.toString).toSet.intersect(
+        Set("be", "been", "is", "isn't", "was", "wasn't")
+      ).nonEmpty
+    slots.copy(aux = None, verbPrefix = Nil, verb = isNegated -> isPassive)
+  }
+
+  val stripAnimacy = (slots: SlotBasedLabel[VerbForm]) => {
+    val stripArgAnim = (s: LowerCaseString) => s.toString
+      .replaceAll("who", "what")
+      .replaceAll("someone", "something")
+      .lowerCase
+
+    slots.copy(
+      wh = stripArgAnim(slots.wh),
+      subj = slots.subj.map(stripArgAnim),
+      obj = slots.obj.map(stripArgAnim),
+      obj2 = slots.obj2.map(stripArgAnim))
+  }
+
+  val stripTemplateWh = (template: TemplateSlots) => {
+    template.copy(wh = "_".lowerCase)
+  }
+
+  val stripTemplatePrep = (template: TemplateSlots) => {
+    template.prep.fold(template) { _ =>
+      template.copy(prep = None, obj2 = None)
+    }
+  }
+
+  val stripTemplateAll = (template: TemplateSlots) => {
+    stripTemplateWh(stripTemplatePrep(template))
+  }
 
   case class QuestionInstance(
     qas: QASetInstance,
@@ -252,22 +329,22 @@ object Instances {
   }
 
   val getQuestionTemplateAcc = (template: QuestionTemplateInstance) => {
-    if(!template.qaTemplates.pred.contains(template.string)) Accuracy()
-    else if(template.qaTemplates.gold.contains(template.string)) Accuracy(correct = 1)
-    else Accuracy(incorrect = 1)
+    if(!template.qaTemplates.pred.contains(template.string)) Accuracy[QuestionTemplateInstance]()
+    else if(template.qaTemplates.gold.contains(template.string)) Accuracy.correct(template)
+    else Accuracy.incorrect(template)
   }
 
   val getQuestionTemplateWithAnswerAcc = (template: QuestionTemplateInstance) => {
     (template.qaTemplates.pred.get(template.string), template.qaTemplates.gold.get(template.string)) match {
-      case (None, None) => Accuracy()
-      case (Some(_), None) => Accuracy(incorrect = 1)
-      case (None, Some(_)) => Accuracy()
+      case (None, None) => Accuracy[QuestionTemplateInstance]()
+      case (Some(_), None) => Accuracy.incorrect(template)
+      case (None, Some(_)) => Accuracy[QuestionTemplateInstance]()
       case (Some(predQA), Some(goldQA)) =>
         val predAnswerSpans = predQA._2
         val goldAnswerSpans = goldQA._2
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
-          Accuracy(correct = 1)
-        } else Accuracy(incorrect = 1)
+          Accuracy.correct(template)
+        } else Accuracy.incorrect(template)
     }
   }
 
@@ -283,11 +360,11 @@ object Instances {
   }
 
   val getQATemplateAcc = (qa: QATemplateInstance) => {
-    qa.template.qaTemplates.pred.get(qa.template.string).fold(Accuracy()) { predQA =>
-      if(!predQA._2.contains(qa.span)) Accuracy() else {
-        qa.template.qaTemplates.gold.get(qa.template.string).fold(Accuracy(incorrect = 1)) { goldQA =>
-          if(goldQA._2.contains(qa.span)) Accuracy(correct = 1)
-          else Accuracy(incorrect = 1)
+    qa.template.qaTemplates.pred.get(qa.template.string).fold(Accuracy[QATemplateInstance]()) { predQA =>
+      if(!predQA._2.contains(qa.span)) Accuracy[QATemplateInstance]() else {
+        qa.template.qaTemplates.gold.get(qa.template.string).fold(Accuracy.incorrect(qa)) { goldQA =>
+          if(goldQA._2.contains(qa.span)) Accuracy.correct(qa)
+          else Accuracy.incorrect(qa)
         }
       }
     }

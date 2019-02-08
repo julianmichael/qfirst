@@ -29,16 +29,28 @@ class BinaryF1(Metric, Registrable):
 
     def __call__(self,
                  probs_tensor,
-                 labels_tensor):
+                 labels_tensor,
+                 mask_tensor = None):
         probs, labels = Metric.unwrap_to_tensors(probs_tensor, labels_tensor.long())
-        num_true = labels.sum().item()
-        for conf in self._confs:
-            preds = (probs >= conf["threshold"]).long()
-            num_tp = torch.min(preds, labels).sum().item()
-            conf["tp"] += num_tp
-            conf["fn"] += num_true - num_tp
-            conf["fp"] += preds.sum().item() - num_tp
-            conf["tn"] += (1 - torch.max(preds, labels)).sum().item()
+        if mask_tensor is None:
+            num_true = labels.sum().item()
+            for conf in self._confs:
+                preds = (probs >= conf["threshold"]).long()
+                num_tp = torch.min(preds, labels).sum().item()
+                conf["tp"] += num_tp
+                conf["fn"] += num_true - num_tp
+                conf["fp"] += preds.sum().item() - num_tp
+                conf["tn"] += (1 - torch.max(preds, labels)).sum().item()
+        else:
+            mask, = Metric.unwrap_to_tensors(mask_tensor)
+            num_true = (labels * mask).sum().item()
+            for conf in self._confs:
+                preds = (probs >= conf["threshold"]).long()
+                num_tp = (torch.min(preds, labels) * mask).sum().item()
+                conf["tp"] += num_tp
+                conf["fn"] += num_true - num_tp
+                conf["fp"] += (preds * mask).sum().item() - num_tp
+                conf["tn"] += ((1 - torch.max(preds, labels)) * mask).sum().item()
 
     def get_metric(self, reset = False):
         def stats(conf):

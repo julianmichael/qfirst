@@ -94,43 +94,6 @@ object MetricsApp extends IOApp {
   }
 
   object Rendering {
-    // def renderVerbPrediction[A](sentenceTokens: Vector[String], verb: VerbPrediction[A]) = {
-    //   val sentenceStr = Text.render(sentenceTokens)
-    //   val verbStr = s"${sentenceTokens(verb.verbIndex)} (${verb.verbIndex})"
-    //   val qasString = verb.questions.sortBy(-_.questionProb).map {
-    //     case QuestionPrediction(questionSlots, questionProb, invalidProb, answerSpans) =>
-    //       val qString = questionSlots.renderQuestionString(verb.verbInflectedForms)
-    //       val aStrings = answerSpans.sortBy(-_._2).map { case (span, spanProb) =>
-    //         f"${Text.renderSpan(sentenceTokens, (span.begin until span.end).toSet)}%s ($spanProb%.2f)"
-    //       }.mkString(" / ")
-    //       f"$questionProb%4.2f / $invalidProb%4.2f\t$qString%s\t$aStrings%s"
-    //   }.mkString("\n")
-    //   s"$sentenceStr\n$verbStr\n$qasString"
-    // }
-
-    def renderFilteredPrediction(
-      sentenceTokens: Vector[String],
-      verbIndex: Int,
-      preds: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
-    ) = {
-      val sentenceStr = Text.render(sentenceTokens)
-      val verbStr = s"${sentenceTokens(verbIndex)} (${verbIndex})"
-      val qasString = preds.toList.map {
-        case (qString, (_, answerSpans)) =>
-          val aStrings = answerSpans.map { span =>
-            Text.renderSpan(sentenceTokens, (span.begin until span.end).toSet)
-          }.mkString(" / ")
-          s"$qString\t$aStrings"
-      }.mkString("\n")
-      s"$sentenceStr\n$verbStr\n$qasString"
-    }
-
-    // def renderPredStuff(qas: Instances.QASetInstance) = {
-    //   val tokens = qas.goldSentence.sentenceTokens
-    //   val unfilteredStr = renderVerbPrediction(tokens, qas.verb.pred)
-    //   val filteredStr = renderFilteredPrediction(tokens, qas.verb.pred.verbIndex, qas.pred)
-    //   unfilteredStr + "\n" + filteredStr
-    // }
 
     def renderQuestionExample(question: Instances.QuestionInstance, renderInvalidGold: Boolean = false): String = {
       val qas = question.qas
@@ -173,13 +136,22 @@ object MetricsApp extends IOApp {
     val renderQASetExample = (si: Instances.QASetInstance) => {
       Text.render(si.goldSentence.sentenceTokens) + "\n" + {
         val verbStr = s"${si.goldVerb.verbInflectedForms.stem} (${si.goldVerb.verbIndex})"
-        verbStr + "\n" + si.pred.toList.map {
+        val goldStr = si.goldValid.toList.map {
+          case (qString, qLabel) =>
+            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val spanStr = answerSpans.toList.sortBy(_.begin).map(s =>
+              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+            ).mkString(" / ")
+            f"$qString%-60s $spanStr%s"
+        }.mkString("\n")
+        val predStr = si.pred.toList.map {
           case (qString, (qSlots, answerSpans)) =>
             val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
               Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
             ).mkString(" / ")
             f"$qString%-60s $answerSpanStr%s"
         }.mkString("\n")
+        verbStr + "\nGOLD:\n" + goldStr + "\nPREDICTED:\n" + predStr
       }
     }
   }
@@ -191,7 +163,6 @@ object MetricsApp extends IOApp {
   import shapeless.syntax.singleton._
   import shapeless.record._
   import monocle.function.{all => Optics}
-
 
   def constructQASetInstances[Beam, Filter, FilterSpace](
     protocol: BeamProtocol[Beam, Filter, FilterSpace])(
@@ -218,6 +189,21 @@ object MetricsApp extends IOApp {
         I.getQABoundedAcc
       }
     )
+  }
+
+  val computeQASetAnalysisMetrics = (qas: I.QASetInstance) => {
+    val gen = qas.generalize
+    val genTemplated = gen.map(TemplateSlots.fromQuestionSlots)
+    "original" ->> gen.getAcc ::
+    "no tense/aspect/modality" ->> gen.map(I.stripTense).getAcc ::
+      "no negation" ->> gen.map(I.stripNegation).getAcc ::
+      "no animacy" ->> gen.map(I.stripAnimacy).getAcc ::
+      "templated" ->> genTemplated.getAcc ::
+      "templated: no answers" ->> genTemplated.stripAnswers.getAcc ::
+      "templated: no wh" ->> genTemplated.map(I.stripTemplateWh).getAcc ::
+      "templated: no prep" ->> genTemplated.map(I.stripTemplatePrep).getAcc ::
+      "templated: nothing" ->> genTemplated.stripAnswers.map(I.stripTemplateAll).getAcc ::
+      HNil
   }
 
   def sentenceDomainBucketers[A] = Map(
@@ -319,6 +305,35 @@ object MetricsApp extends IOApp {
       }
 
       _ <- IO(println("Tuned results: " + getMetricsString(tunedResults)))
+
+      analysisResults <- {
+        predStream
+          .flatMap(p => Stream.emits(constructQASetInstances(protocol)(gold, filterGoldDense, bestFilter)(p)))
+          .map(computeQASetAnalysisMetrics)
+          .compile.foldMonoid
+      }
+
+      _ <- IO(println("Analysis results: " + getMetricsString(analysisResults)))
+
+      // TODO: here is potentially useful code for pulling out examples specific to an error case for printing later.
+      // _ <- IO {
+      //   val correctos = analysisResults("no negation").correct.groupBy(x => x._1.original -> x._3)
+      //   val incorrectos = analysisResults("original").incorrect.groupBy(x => x._1.original -> x._3)
+      //   val negationFixos = incorrectos.keySet.intersect(correctos.keySet)
+      //   negationFixos.foreach(fixo =>
+      //     println(renderQASetExample(fixo._1) + "\n\n")
+      //   )
+      // }
+
+      // _ <- IO {
+      //   println("\n\n== WRONGO, WRONGO, BIG CHEESE ==\n\n")
+      //   val correctos = analysisResults("no negation").incorrect.groupBy(x => x._1.original -> x._3)
+      //   val incorrectos = analysisResults("original").correct.groupBy(x => x._1.original -> x._3)
+      //   val negationWrongos = incorrectos.keySet.intersect(correctos.keySet)
+      //   negationWrongos.foreach(wrongo =>
+      //     println(renderQASetExample(wrongo._1) + "\n\n")
+      //   )
+      // }
 
       // performance on verbs by frequency
 

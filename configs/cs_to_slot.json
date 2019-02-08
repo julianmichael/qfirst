@@ -41,9 +41,12 @@
           },
           "predicate_feature_dim": 100,
       },
-      "span_hidden_dim": 100,
-      "final_input_dim": 100,
-      "final_hidden_dim": 100
+      "qarg_ffnn": {
+          "input_dim": 300,
+          "num_layers": 3,
+          "hidden_dims": 300,
+          "activations": "relu"
+      }
   },
   "iterator": {
     "type": "bucket",
