@@ -1,0 +1,84 @@
+{
+    "dataset_reader": {
+        "instance_reader": {
+            "clause_info_files": [
+                "clause-data-train-dev.jsonl"
+            ],
+            "type": "question_factored"
+        },
+        "qasrl_filter": {
+            "min_answers": 3,
+            "min_valid_answers": 3
+        },
+        "token_indexers": {
+            "bert": {
+                "do_lowercase": true,
+                "pretrained_model": "bert-base-uncased",
+                "type": "bert-pretrained",
+                "use_starting_offsets": true
+            },
+            "token_characters": {
+                "min_padding_length": 3,
+                "type": "characters"
+            }
+        },
+        "type": "qfirst_qasrl"
+    },
+    "iterator": {
+        "batch_size": 256,
+        "sorting_keys": [
+            [
+                "text",
+                "num_tokens"
+            ]
+        ],
+        "type": "bucket"
+    },
+    "model": {
+        "label_name": "clause_set",
+        "label_namespace": "abst-clause-labels",
+        "sentence_encoder": {
+            "predicate_feature_dim": 100,
+            "stacked_encoder": {
+                "hidden_size": 300,
+                "input_size": 868,
+                "num_layers": 4,
+                "recurrent_dropout_probability": 0.1,
+                "type": "alternating_lstm",
+                "use_highway": true
+            },
+            "text_field_embedder": {
+                "allow_unmatched_keys": true,
+                "embedder_to_indexer_map": {
+                    "bert": [
+                        "bert",
+                        "bert-offsets"
+                    ],
+                    "token_characters": [
+                        "token_characters"
+                    ]
+                },
+                "token_embedders": {
+                    "bert": {
+                        "pretrained_model": "bert-base-uncased",
+                        "type": "bert-pretrained"
+                    }
+                }
+            }
+        },
+        "type": "qasrl_multiclass"
+    },
+    "train_data_path": "dev-mini.jsonl",
+    "trainer": {
+        "cuda_device": -1,
+        "grad_norm": 1,
+        "num_epochs": 1,
+        "optimizer": {
+            "rho": 0.95,
+            "type": "adadelta"
+        },
+        "patience": 3,
+        "validation_metric": "+f1"
+    },
+    "validation_data_path": "dev-mini.jsonl"
+}
