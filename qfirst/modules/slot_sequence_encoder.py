@@ -37,7 +37,7 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         self._share_rnn_cell = share_rnn_cell
 
         slot_embedders = []
-        for i, n in enumerate(self.get_slot_names()[:-1]):
+        for i, n in enumerate(self.get_slot_names()):
             num_labels = self._vocab.get_vocab_size(get_slot_label_namespace(n))
             assert num_labels > 0, "Slot named %s has 0 vocab size"%(n)
             embedder = Embedding(num_labels, self._slot_embedding_dim)
@@ -128,10 +128,6 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
             curr_mem = next_mem
             last_h = new_h
 
-            if i < len(self._slot_names) - 1:
-                curr_embedding = self._slot_embedders[i](slot_labels[n])
-
-        # TODO: make sure this sees the last slot?
         return last_h
 
     def get_slot_names(self):
