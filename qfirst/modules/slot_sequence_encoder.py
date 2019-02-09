@@ -93,16 +93,11 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
             self._highway_nonlin = highway_nonlin
             self._highway_lin = highway_lin
 
-        self._start_symbol = Parameter(torch.Tensor(self._slot_embedding_dim).normal_(0, 1))
-
     def forward(self,
                 pred_reps,
                 slot_labels: Dict[str, torch.LongTensor]):
         # Shape: batch_size, numpred_rep_dim
         batch_size, pred_rep_dim = pred_reps.size()
-
-        # hidden state: start with batch size start symbols
-        curr_embedding = self._start_symbol.view(1, -1).expand(batch_size, -1)
 
         # initialize the memory cells
         curr_mem = []
@@ -113,6 +108,7 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
         last_h = None
         for i, n in enumerate(self._slot_names):
             next_mem  = []
+            curr_embedding = self._slot_embedders[i](slot_labels[n])
             curr_input = torch.cat([pred_reps, curr_embedding], -1)
             for l in range(self._num_layers):
                 new_h, new_c = self._rnn_cells[l][i](curr_input, curr_mem[l])
@@ -127,7 +123,6 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
                     curr_input = new_h
             curr_mem = next_mem
             last_h = new_h
-            curr_embedding = self._slot_embedders[i](slot_labels[n])
 
         return last_h
 
