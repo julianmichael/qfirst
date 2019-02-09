@@ -127,6 +127,7 @@ class SlotSequenceEncoder(torch.nn.Module, Registrable):
                     curr_input = new_h
             curr_mem = next_mem
             last_h = new_h
+            curr_embedding = self._slot_embedders[i](slot_labels[n])
 
         return last_h
 
