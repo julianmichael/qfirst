@@ -1,15 +1,19 @@
 package qfirst
 
+import cats.~>
 import cats.Applicative
 import cats.Id
 import cats.Monad
 import cats.Monoid
+import cats.data.State
 import cats.data.StateT
 import cats.implicits._
 
 import io.circe.Encoder
 import io.circe.ACursor
 import io.circe.Json
+
+import scala.util.Random
 
 object ModelVariantsGen {
 
@@ -28,9 +32,10 @@ object ModelVariantsGen {
     questionGeneratorSlotEmbeddingDim: F[Int],
     questionGeneratorNumLayers: F[Int],
     spanSelectorHiddenDim: F[Int],
+    includeSpanFFNN: F[Boolean],
     predicateFeatureDim: F[Int],
     sentenceEncoderHiddenDimOpt: F[Option[Int]],
-    embeddingDropout: F[Double],
+    textEmbeddingDropout: F[Double],
     // test/prod varying params
     trainPath: F[String],
     devPath: F[String],
@@ -40,6 +45,30 @@ object ModelVariantsGen {
     def pure[A](a: A): F[A] = Monad[F].pure(a)
     def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B] = Monad[F].flatMap(fa)(f)
     def tailRecM[A, B](a: A)(f: A => F[Either[A, B]]): F[B] = Monad[F].tailRecM(a)(f)
+    def mapK[G[_]: Monad](f: F ~> G) = Hyperparams[G](
+      tokenHandler = tokenHandler.mapK(f),
+      feedForwardNumLayers = f(feedForwardNumLayers),
+      feedForwardHiddenDims = f(feedForwardHiddenDims),
+      feedForwardActivations = f(feedForwardActivations),
+      feedForwardDropout = f(feedForwardDropout),
+      questionEncoderSlotEmbeddingDim = f(questionEncoderSlotEmbeddingDim),
+      questionEncoderNumLayers = f(questionEncoderNumLayers),
+      questionEncoderOutputDim = f(questionEncoderOutputDim),
+      sentenceEncoderNumLayers = f(sentenceEncoderNumLayers),
+      questionGeneratorSlotHiddenDim = f(questionGeneratorSlotHiddenDim),
+      questionGeneratorRNNHiddenDim = f(questionGeneratorRNNHiddenDim),
+      questionGeneratorSlotEmbeddingDim = f(questionGeneratorSlotEmbeddingDim),
+      questionGeneratorNumLayers = f(questionGeneratorNumLayers),
+      spanSelectorHiddenDim = f(spanSelectorHiddenDim),
+      includeSpanFFNN = f(includeSpanFFNN),
+      predicateFeatureDim = f(predicateFeatureDim),
+      sentenceEncoderHiddenDimOpt = f(sentenceEncoderHiddenDimOpt),
+      textEmbeddingDropout = f(textEmbeddingDropout),
+      trainPath = f(trainPath),
+      devPath = f(devPath),
+      numEpochs = f(numEpochs),
+      cudaDevice = f(cudaDevice),
+    )
   }
   object Hyperparams {
     val test = Hyperparams[Id](
@@ -53,13 +82,14 @@ object ModelVariantsGen {
       questionEncoderOutputDim = 100,
       sentenceEncoderNumLayers = 2,
       questionGeneratorSlotHiddenDim = 100,
+      questionGeneratorSlotEmbeddingDim = 100,
       questionGeneratorRNNHiddenDim = 200,
-      questionGeneratorSlotEmbeddingDim = 200,
       questionGeneratorNumLayers = 2,
       spanSelectorHiddenDim = 100,
-      predicateFeatureDim = 100,
+      includeSpanFFNN = false,
+      predicateFeatureDim = 0,
       sentenceEncoderHiddenDimOpt = None,
-      embeddingDropout = 0.0,
+      textEmbeddingDropout = 0.0,
       trainPath = "dev-mini.jsonl",
       devPath = "dev-mini.jsonl",
       numEpochs = 1,
@@ -79,16 +109,32 @@ object ModelVariantsGen {
       questionGeneratorRNNHiddenDim = List(200),
       questionGeneratorSlotEmbeddingDim = List(200),
       questionGeneratorNumLayers = List(2, 4, 8),
+      includeSpanFFNN = List(true),
       spanSelectorHiddenDim = List(100),
       predicateFeatureDim = List(100),
       sentenceEncoderHiddenDimOpt = List(Some(300)),
-      embeddingDropout = List(0.0, 0.1),
+      textEmbeddingDropout = List(0.0, 0.1),
 
       trainPath = List("qasrl-v2_1/expanded/train.jsonl"),
       devPath = List("qasrl-v2_1/expanded.dev.jsonl"),
       numEpochs = List(200),
       cudaDevice = List(0)
     )
+
+    val bertList = elmoList.copy[List](
+      tokenHandler = TokenHandler.bert[List],
+      sentenceEncoderHiddenDimOpt = List(None)
+    )
+
+    private val nextRand = (l: Long) => {
+      l * 6364136223846793005L + 1442695040888963407L
+    }
+    val randomSample = new (List ~> State[Long, ?]) {
+      def apply[A](xs: List[A]) = for {
+        _ <- State.modify(nextRand)
+        l <- State.get[Long]
+      } yield xs(((l % xs.length).toInt + xs.length) % xs.length)
+    }
   }
 
   import io.circe.generic.auto._
@@ -96,24 +142,13 @@ object ModelVariantsGen {
 
   type Param[F[_], A] = StateT[F, ACursor, A]
 
-  trait Component[F[_], A] {
-    def genConfigs(implicit H: Hyperparams[F]): StateT[F, ACursor, A]
-    def generate(implicit H: Hyperparams[F]): F[(Json, A)] =
+  trait Component[A] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]): StateT[F, ACursor, A]
+    def generate[F[_]](implicit H: Hyperparams[F]): F[(Json, A)] =
       genConfigs(H).run(Json.obj().hcursor).map {
         case (c, a) => (c.focus.get, a)
       }
-    def generateJson(implicit H: Hyperparams[F]) = generate.map(_._1)
-  }
-  object Component {
-    def fromParam[F[_], A](param: StateT[F, ACursor, A]) = new Component[F, A] {
-      def genConfigs(implicit H: Hyperparams[F]) = param
-    }
-    def fromParams[F[_], A: Monoid](params: StateT[F, ACursor, A]*) = new Component[F, A] {
-      def genConfigs(implicit H: Hyperparams[F]) = params.toList.sequence.map(_.combineAll)
-    }
-    def fromParams_[F[_], A](params: StateT[F, ACursor, A]*) = new Component[F, Unit] {
-      def genConfigs(implicit H: Hyperparams[F]) = params.toList.sequence.as(())
-    }
+    def generateJson[F[_]](implicit H: Hyperparams[F]) = generate.map(_._1)
   }
 
   // implicit param not put into json
@@ -132,7 +167,7 @@ object ModelVariantsGen {
   }
   def param_[F[_]: Monad, A: Encoder](name: String, value: F[A]) = param(name, value).as(())
   // explicit param from component
-  def param[F[_]: Hyperparams, A](name: String, component: Component[F, A]): StateT[F, ACursor, A] = {
+  def param[F[_]: Hyperparams, A](name: String, component: Component[A]): StateT[F, ACursor, A] = {
     StateT.liftF[F, ACursor, (Json, A)](component.generate).flatMap {
       case (newField, retValue) =>
         StateT.modify[F, ACursor](c =>
@@ -142,16 +177,29 @@ object ModelVariantsGen {
         ).as(retValue)
     }
   }
+  // def nest[F[_]: Monad, A](name: String, param: Param[F, A]): F[A] = param.runA(Json.obj().hcursor)
+  def nest[F[_]: Monad, A](name: String, param: Param[F, A]): StateT[F, ACursor, A] = {
+    StateT.liftF[F, ACursor, (ACursor, A)](param.run(Json.obj().hcursor)).flatMap { case (newJsonC, result) =>
+      StateT.modify[F, ACursor](c =>
+        c.withFocus(json =>
+          Json.fromJsonObject(json.asObject.get.add(name, newJsonC.focus.get))
+        )
+      ).as(result)
+    }
+  }
 
-  // // AllenNLP stuff
-
-  case class TokenHandler[F[_]](indexers: List[Param[F, Unit]], embedders: List[Param[F, Int]]) {
-    def getIndexers: Component[F, Unit] = Component.fromParams_(indexers: _*)
-    def getEmbedders: Component[F, Int] = Component.fromParams(embedders: _*)
+  // AllenNLP stuff
+  case class TokenHandler[F[_]: Monad](indexers: List[Param[F, Unit]], embedders: List[Param[F, Int]]) {
+    def mapK[G[_]: Monad](f: F ~> G) = TokenHandler[G](
+      indexers.map(_.mapK(f)),
+      embedders.map(_.mapK(f)),
+    )
+    def getIndexers = indexers.sequence.as(())
+    def getEmbedders = embedders.sequence.map(_.combineAll)
   }
   object TokenHandler {
-    implicit def tokenHandlerMonoid[F[_]]: Monoid[TokenHandler[F]] = new Monoid[TokenHandler[F]] {
-      def empty = TokenHandler(Nil, Nil)
+    implicit def tokenHandlerMonoid[F[_]: Monad]: Monoid[TokenHandler[F]] = new Monoid[TokenHandler[F]] {
+      def empty = TokenHandler[F](Nil, Nil)
       def combine(x: TokenHandler[F], y: TokenHandler[F]) = TokenHandler[F](
         x.indexers ++ y.indexers,
         x.embedders ++ y.embedders)
@@ -165,8 +213,6 @@ object ModelVariantsGen {
       "tokens" -> Json.obj(
         "type" -> "embedding".asJson,
         "pretrained_file" -> "https://s3-us-west-2.amazonaws.com/allennlp/datasets/glove/glove.6B.100d.txt.gz".asJson
-          // "trainable": false,
-          // "embedding_dim": 100,
       )
     )
     def glove[F[_]: Monad] = TokenHandler(
@@ -222,16 +268,16 @@ object ModelVariantsGen {
     )
   }
 
-  case class AllenNLPIterator[F[_]](batchSize: Int) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class AllenNLPIterator(batchSize: Int) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("bucket"))
       _ <- param("sorting_keys", H.pure(List(List("text", "num_tokens"))))
       _ <- param("batch_size", H.pure(batchSize))
     } yield ()
   }
 
-  case class Trainer[F[_]](validationMetric: String) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class Trainer(validationMetric: String) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("num_epochs", H.numEpochs)
       _ <- param("grad_norm", H.pure(1.0))
       _ <- param("patience", H.pure(5))
@@ -241,8 +287,8 @@ object ModelVariantsGen {
     } yield ()
   }
 
-  case class StackedEncoder[F[_]](inputDim: Int, hiddenSize: Int) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class StackedEncoder(inputDim: Int, hiddenSize: Int) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("alternating_lstm"))
       _ <- param("use_highway", H.pure(true))
       _ <- param("recurrent_dropout_probability", H.pure(0.1))
@@ -252,8 +298,8 @@ object ModelVariantsGen {
     } yield ()
   }
 
-  case class FeedForward[F[_]](inputDim: Int) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class FeedForward(inputDim: Int) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("num_layers", H.feedForwardNumLayers)
       _ <- param("hidden_dims", H.feedForwardHiddenDims)
@@ -264,10 +310,10 @@ object ModelVariantsGen {
 
   // My modules
 
-  case class QuestionEncoder[F[_]](
+  case class QuestionEncoder(
     slotNames: List[String], inputDim: Int, outputDim: Int
-  ) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  ) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("slot_names", H.pure(slotNames))
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("slot_embedding_dim", H.questionEncoderSlotEmbeddingDim)
@@ -276,20 +322,20 @@ object ModelVariantsGen {
     } yield ()
   }
 
-  case class SentenceEncoder[F[_]]() extends Component[F, Int] {
-    def genConfigs(implicit H: Hyperparams[F]) = param(H.sentenceEncoderHiddenDimOpt).flatMap {
+  case class SentenceEncoder() extends Component[Int] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = param(H.sentenceEncoderHiddenDimOpt).flatMap {
       case Some(outputDim) => for {
-        tokenDim <- param("text_field_embedder", H.tokenHandler.getEmbedders)
-        _ <- param("embedding_dropout", H.embeddingDropout)
+        tokenDim <- nest("text_field_embedder", H.tokenHandler.getEmbedders)
+        _ <- param("embedding_dropout", H.textEmbeddingDropout)
         predicateFeatureDim <- param("predicate_feature_dim", H.predicateFeatureDim)
-        _ <- param("stacked_encoder", StackedEncoder[F](tokenDim + predicateFeatureDim, outputDim))
+        _ <- param("stacked_encoder", StackedEncoder(tokenDim + predicateFeatureDim, outputDim))
       } yield outputDim
-      case None => param("text_field_embedder", H.tokenHandler.getEmbedders)
+      case None => nest("text_field_embedder", H.tokenHandler.getEmbedders)
     }
   }
 
-  case class QuestionGenerator[F[_]](slotNames: List[String], inputDim: Int) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class QuestionGenerator(slotNames: List[String], inputDim: Int) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("slot_names", H.pure(slotNames))
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("slot_hidden_dim", H.questionGeneratorSlotHiddenDim)
@@ -299,153 +345,182 @@ object ModelVariantsGen {
     } yield ()
   }
 
-  case class SpanSelector[F[_]](
+  case class SpanSelector(
     inputDim: Int, extraInputDim: Option[Int],
-  ) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  ) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("extra_input_dim", H.pure(extraInputDim.getOrElse(0)))
       spanHiddenDim <- param("span_hidden_dim", H.spanSelectorHiddenDim)
-      _ <- param("span_ffnn", FeedForward[F](spanHiddenDim))
+      includeSpanFFNN <- param(H.includeSpanFFNN)
+      _ <- (if(includeSpanFFNN) param("span_ffnn", FeedForward(spanHiddenDim)) else param(H.unit))
       _ <- param("pruning_ratio", H.pure(2.0))
       _ <- param("objective", H.pure("binary"))
       _ <- param("gold_span_selection_policy", H.pure("union"))
     } yield ()
   }
 
-  case class QasrlFilter[F[_]](
+  case class QasrlFilter(
     minAnswers: Int, minValidAnswers: Int
-  ) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  ) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("min_answers", H.pure(minAnswers))
       _ <- param("min_valid_answers", H.pure(minValidAnswers))
     } yield ()
   }
   object QasrlFilter {
-    def validQuestions[F[_]] = QasrlFilter[F](3, 3)
-    def questionsWithAnswers[F[_]] = QasrlFilter[F](1, 1)
-    def allQuestions[F[_]] = QasrlFilter[F](1, 0)
+    def validQuestions = QasrlFilter(3, 3)
+    def questionsWithAnswers = QasrlFilter(1, 1)
+    def allQuestions = QasrlFilter(1, 0)
   }
 
-  case class QasrlInstanceReader[F[_]](instanceType: String) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class QasrlInstanceReader(instanceType: String) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure(instanceType))
     } yield ()
   }
 
-  case class DatasetReader[F[_]](
-    filter: QasrlFilter[F],
-    instanceReader: QasrlInstanceReader[F]
-  ) extends Component[F, Unit] {
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class DatasetReader(
+    filter: QasrlFilter,
+    instanceReader: QasrlInstanceReader
+  ) extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("qfirst_qasrl"))
-      _ <- param("token_indexers", H.tokenHandler.getIndexers)
+      _ <- nest("token_indexers", H.tokenHandler.getIndexers)
       _ <- param("qasrl_filter", filter)
       _ <- param("instance_reader", instanceReader)
     } yield ()
   }
 
-  trait ModelVariant[F[_]] extends Component[F, Unit] {
-    def datasetReader: DatasetReader[F]
-    def model: Component[F, Unit]
-    def validationMetric: String
-    def batchSize: Int = 256
-
-    def genConfigs(implicit H: Hyperparams[F]) = for {
+  case class Model(
+    datasetReader: DatasetReader,
+    model: Component[Unit],
+    validationMetric: String
+  ) extends Component[Unit] {
+    val batchSize: Int = 256
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("dataset_reader", datasetReader)
       _ <- param("train_data_path", H.trainPath)
       _ <- param("validation_data_path", H.devPath)
       _ <- param("model", model)
-      _ <- param("iterator", AllenNLPIterator[F](batchSize))
-      _ <- param("trainer", Trainer[F](validationMetric))
+      _ <- param("iterator", AllenNLPIterator(batchSize))
+      _ <- param("trainer", Trainer(validationMetric))
     } yield ()
   }
+  object Model {
+    def question(slotNames: List[String]) = Model(
+      datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question")),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qfirst_question_generator"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("question_generator", QuestionGenerator(slotNames, encoderOutputDim))
+        } yield ()
+      },
+      validationMetric = "-perplexity-per-question"
+    )
 
-  case class PredicateQuestionGenerator[F[_]](slotNames: List[String]) extends ModelVariant[F] {
-    val datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question"))
-    val model = new Component[F, Unit] {
-      def genConfigs(implicit H: Hyperparams[F]) = for {
-        _ <- param("type", H.pure("qfirst_question_generator"))
-        encoderOutputDim <- param("sentence_encoder", SentenceEncoder[F]())
-        _ <- param("question_generator", QuestionGenerator[F](slotNames, encoderOutputDim))
-      } yield ()
-    }
-    val validationMetric = "-perplexity-per-question"
+    def questionToSpan(
+      slotNames: List[String],
+      classifyInvalids: Boolean,
+      ) = Model(
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question")),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qfirst_question_answerer"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          questionEncodingDim <- param(H.questionEncoderOutputDim)
+          _ <- param("question_injection", H.pure("top"))
+          _ <- param("question_encoder", QuestionEncoder(slotNames, encoderOutputDim, questionEncodingDim))
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(questionEncodingDim)))
+          _ <- param("classify_invalids", H.pure(classifyInvalids))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    val span = Model(
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("afirst_span_detector"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, None))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    def spanToQuestion(slotNames: List[String]) = Model(
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("afirst_question_generator"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("question_generator", QuestionGenerator(slotNames, 2 * encoderOutputDim))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
   }
 
-  case class QuestionAnswerer[F[_]](
-    slotNames: List[String],
-    classifyInvalids: Boolean,
-  ) extends ModelVariant[F] {
-    val datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question"))
-    val model = new Component[F, Unit] {
-      def genConfigs(implicit H: Hyperparams[F]) = for {
-        _ <- param("type", H.pure("qfirst_question_answerer"))
-        encoderOutputDim <- param("sentence_encoder", SentenceEncoder[F]())
-        questionEncodingDim <- param(H.questionEncoderOutputDim)
-        _ <- param("question_injection", H.pure("top"))
-        _ <- param("question_encoder", QuestionEncoder[F](slotNames, encoderOutputDim, questionEncodingDim))
-        _ <- param("span_selector", SpanSelector[F](encoderOutputDim, Some(questionEncodingDim)))
-        _ <- param("classify_invalids", H.pure(classifyInvalids))
-      } yield ()
-    }
-    val validationMetric = "+f1"
+  val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
+  val clauseSlots = List("clause-subj", "clause-aux", "clause-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
+
+  val models = MapTree.fork(
+    "span" -> MapTree.leaf[String](Model.span),
+    "question" -> MapTree.fromPairs(
+      "full" -> Model.question(fullSlots),
+      "clausal" -> Model.question(clauseSlots),
+      // TODO: no-tan, no-animacy, no-tan & no-animacy ?
+    ),
+    "question_to_span" -> MapTree.fromPairs(
+      "full_-invalid" -> Model.questionToSpan(fullSlots, false),
+      "full" -> Model.questionToSpan(fullSlots, true),
+      "clausal" -> Model.questionToSpan(clauseSlots, true),
+      // TODO: no-tan, no-animacy, no-tan & no-animacy ?
+    ),
+    "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
+  )
+
+  import cats.effect.IO
+  import java.nio.file.Paths
+  import java.nio.file.Path
+  val printer = io.circe.Printer.spaces2
+
+  def modelsWithPaths(root: Path) = models.branches.map {
+    case (segments, model) =>
+      val path = segments.foldLeft(root)(_ resolve _)
+      path -> model
   }
 
-  case class SpanDetector[F[_]]() extends ModelVariant[F] {
-    val datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers"))
-    val model = new Component[F, Unit] {
-      def genConfigs(implicit H: Hyperparams[F]) = for {
-        _ <- param("type", H.pure("afirst_span_detector"))
-        encoderOutputDim <- param("sentence_encoder", SentenceEncoder[F]())
-        _ <- param("span_selector", SpanSelector[F](encoderOutputDim, None))
-      } yield ()
-    }
-    val validationMetric = "+f1"
+  def writeTest(path: Path, model: Model) = {
+    FileUtil.writeJson(path.resolve("test/config.json"), printer)(model.generateJson(Hyperparams.test))
   }
-
-  case class SpanQuestionGenerator[F[_]](slotNames: List[String]) extends ModelVariant[F] {
-    val datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers"))
-    val model = new Component[F, Unit] {
-      def genConfigs(implicit H: Hyperparams[F]) = for {
-        _ <- param("type", H.pure("afirst_question_generator"))
-        encoderOutputDim <- param("sentence_encoder", SentenceEncoder[F])
-        _ <- param("question_generator", QuestionGenerator[F](slotNames, 2 * encoderOutputDim))
-      } yield ()
+  def writeGrid(path: Path, model: Model, hyperparams: Hyperparams[List]) = {
+    model.generateJson(hyperparams).zipWithIndex.traverse { case (json, index) =>
+      FileUtil.writeJson(path.resolve(s"grid/$index.json"), printer)(json)
     }
-    val validationMetric = "+f1"
   }
+  def writeRandom(path: Path, model: Model, hyperparams: Hyperparams[List], seed: Long, n: Int) = {
+    val sampler = model.generateJson(hyperparams.mapK(Hyperparams.randomSample))
+    val (nextSeed, jsons) = List.fill(n)(sampler).sequence.run(seed).value
+    jsons.zipWithIndex.traverse { case (json, index) =>
+      FileUtil.writeJson(path.resolve(s"rand/$index.json"), printer)(json)
+    }.as(nextSeed)
+  }
+  def writeAll(path: Path, model: Model, seed: Long, numRand: Int) = for {
+    _ <- writeTest(path, model)
+    _ <- writeGrid(path.resolve("elmo"), model, Hyperparams.elmoList)
+    _ <- writeGrid(path.resolve("bert"), model, Hyperparams.bertList)
+    nextSeed <- writeRandom(path.resolve("elmo"), model, Hyperparams.elmoList, seed, numRand)
+    _ <- writeRandom(path.resolve("bert"), model, Hyperparams.bertList, nextSeed, numRand)
+  } yield ()
 
-  // val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
-
-  // val variants = MapTree.fork(
-  //   "span" -> MapTree.leaf(Span)
-  //     MapTree.fromFork(
-  //     "test" ->
-  //   ),
-  //   "afirst" -> MapTree.fromPairs(
-  //     "qg" -> SpanQuestionGenerator(),
-  //     "span-detection" -> SpanDetector()
-  //   ),
-  //   "qfirst" -> MapTree.fromPairs(
-  //     "qg-full" -> PredicateQuestionGenerator(fullSlots),
-  //     "qa-baseline" -> QuestionAnswerer(fullSlots, hasInvalidToken = false, useAllQuestions = false),
-  //     "qa-allqs" -> QuestionAnswerer(fullSlots, hasInvalidToken = false, useAllQuestions = true),
-  //     "qa-allqs-invalid" -> QuestionAnswerer(fullSlots, hasInvalidToken = true, useAllQuestions = true)
-  //   )
-  // )
-
-  // import cats.effect.IO
-  // import java.nio.file.Paths
-  // import java.nio.file.Path
-  // val printer = io.circe.Printer.spaces2
-
-  // def generateAllConfigs(root: Path): IO[Unit] = {
-  //   variants.branches.traverse { case (revDirectories, variant) =>
-  //     val path = revDirectories.foldLeft(root)(_ resolve _)
-  //     variant.generateJson.zipWithIndex.traverse { case (json, index) =>
-  //       FileUtil.writeJson(path.resolve(s"$index.json"), printer)(json)
-  //     }
-  //   }
-  // }.as(())
+  def generateAll(rootStr: String): IO[Unit] = {
+    val root = Paths.get(rootStr)
+    modelsWithPaths(root).traverse {
+      case (path, model) => writeAll(path, model, (new util.Random).nextLong, 10)
+    }.as(())
+  }
 }
