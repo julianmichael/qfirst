@@ -8,10 +8,27 @@ import io.circe.Encoder
 import io.circe.ACursor
 import io.circe.Json
 
+// TODO: change to MapTree so can make jsonnet.
+// and figure out how to handle variables.
+
 object ModelVariants {
 
   import io.circe.generic.auto._
   import io.circe.syntax._
+
+  sealed trait JsonnetValue
+  object JsonnetValue {
+    case class Parameter(name: String) extends JsonnetValue
+    case class StringLiteral(value: String) extends JsonnetValue
+    case class IntLiteral(value: Int) extends JsonnetValue
+    case class FloatLiteral(value: Double) extends JsonnetValue
+  }
+
+  case class JsonnetSpec(
+    parameters: List[(String, String)], // name and default value
+    locals: List[(String, String)], // name and definition
+    json: MapTree[String, JsonnetValue]
+  )
 
   trait Component[A] {
     def genConfigs: StateT[List, ACursor, A]
