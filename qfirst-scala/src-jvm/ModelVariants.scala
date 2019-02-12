@@ -116,9 +116,9 @@ object ModelVariants extends IOApp {
       questionGeneratorSlotEmbeddingDim = List(200),
       questionGeneratorNumLayers = List(2, 4),
       includeSpanFFNN = List(true),
-      spanSelectorHiddenDim = List(100),
+      spanSelectorHiddenDim = List(300, 600),
       predicateFeatureDim = List(100),
-      sentenceEncoderNumLayers = List(4),
+      sentenceEncoderNumLayers = List(4, 8),
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
       textEmbeddingDropout = List(0.0),
 
