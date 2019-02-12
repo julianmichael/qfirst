@@ -122,8 +122,8 @@ object ModelVariants extends IOApp {
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
       textEmbeddingDropout = List(0.0),
 
-      trainPath = List("qasrl-v2_1/expanded/train.jsonl"),
-      devPath = List("qasrl-v2_1/expanded.dev.jsonl"),
+      trainPath = List("qasrl-v2_1/expanded/train.jsonl.gz"),
+      devPath = List("qasrl-v2_1/expanded/dev.jsonl.gz"),
       numEpochs = List(200),
       cudaDevice = List(0)
     )
