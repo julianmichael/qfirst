@@ -9,13 +9,20 @@ import cats.data.State
 import cats.data.StateT
 import cats.implicits._
 
+import cats.effect.IOApp
+import cats.effect.IO
+import cats.effect.ExitCode
+
+import com.monovore.decline.Command
+import com.monovore.decline.Opts
+
 import io.circe.Encoder
 import io.circe.ACursor
 import io.circe.Json
 
 import scala.util.Random
 
-object ModelVariants {
+object ModelVariants extends IOApp {
 
   case class Hyperparams[F[_]: Monad](
     tokenHandler: TokenHandler[F],
@@ -107,13 +114,13 @@ object ModelVariants {
       questionGeneratorSlotHiddenDim = List(100),
       questionGeneratorRNNHiddenDim = List(200),
       questionGeneratorSlotEmbeddingDim = List(200),
-      questionGeneratorNumLayers = List(4, 8),
+      questionGeneratorNumLayers = List(2, 4),
       includeSpanFFNN = List(true),
       spanSelectorHiddenDim = List(100),
       predicateFeatureDim = List(100),
-      sentenceEncoderNumLayers = List(4, 8),
+      sentenceEncoderNumLayers = List(4),
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
-      textEmbeddingDropout = List(0.0, 0.1),
+      textEmbeddingDropout = List(0.0),
 
       trainPath = List("qasrl-v2_1/expanded/train.jsonl"),
       devPath = List("qasrl-v2_1/expanded.dev.jsonl"),
@@ -210,10 +217,9 @@ object ModelVariants {
       "lowercase_tokens" -> true.asJson
     )
     val gloveEmbedderJson = Json.obj(
-      "tokens" -> Json.obj(
-        "type" -> "embedding".asJson,
-        "pretrained_file" -> "https://s3-us-west-2.amazonaws.com/allennlp/datasets/glove/glove.6B.100d.txt.gz".asJson
-      )
+      "type" -> "embedding".asJson,
+      "pretrained_file" -> "https://s3-us-west-2.amazonaws.com/allennlp/datasets/glove/glove.6B.100d.txt.gz".asJson,
+      "embedding_dim" -> 100.asJson
     )
     def glove[F[_]: Monad] = TokenHandler(
       indexers = List(param_("tokens", Monad[F].pure(gloveIndexerJson))),
@@ -412,7 +418,7 @@ object ModelVariants {
       datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
-          _ <- param("type", H.pure("qfirst_question_generator"))
+          _ <- param("type", H.pure("qasrl_question"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           _ <- param("question_generator", QuestionGenerator(slotNames, encoderOutputDim))
         } yield ()
@@ -427,23 +433,22 @@ object ModelVariants {
       datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
-          _ <- param("type", H.pure("qfirst_question_answerer"))
+          _ <- param("type", H.pure("qasrl_question_to_span"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           questionEncodingDim <- param(H.questionEncoderOutputDim)
-          _ <- param("question_injection", H.pure("top"))
           _ <- param("question_encoder", QuestionEncoder(slotNames, encoderOutputDim, questionEncodingDim))
-          _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(questionEncodingDim)))
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(questionEncodingDim + encoderOutputDim)))
           _ <- param("classify_invalids", H.pure(classifyInvalids))
         } yield ()
       },
-      validationMetric = "+f1"
+      validationMetric = if(classifyInvalids) "+span-f1" else "+f1"
     )
 
     val span = Model(
       datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
-          _ <- param("type", H.pure("afirst_span_detector"))
+          _ <- param("type", H.pure("qasrl_span"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           _ <- param("span_selector", SpanSelector(encoderOutputDim, None))
         } yield ()
@@ -452,15 +457,15 @@ object ModelVariants {
     )
 
     def spanToQuestion(slotNames: List[String]) = Model(
-      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_qas")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
-          _ <- param("type", H.pure("afirst_question_generator"))
+          _ <- param("type", H.pure("qasrl_span_to_question"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           _ <- param("question_generator", QuestionGenerator(slotNames, 2 * encoderOutputDim))
         } yield ()
       },
-      validationMetric = "+f1"
+      validationMetric = "-perplexity-per-question"
     )
   }
 
@@ -484,19 +489,18 @@ object ModelVariants {
     "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     "question" -> MapTree.fromPairs(
       "full" -> Model.question(fullSlots),
-      "clausal" -> Model.question(clauseSlots),
+      // "clausal" -> Model.question(clauseSlots),
       // TODO: no-tan, no-animacy, no-tan & no-animacy, all clausal
     ),
     "question_to_span" -> MapTree.fromPairs(
       "full" -> Model.questionToSpan(fullSlots, true),
-      "clausal" -> Model.questionToSpan(clauseSlots, true),
+      // "clausal" -> Model.questionToSpan(clauseSlots, true),
       // TODO: no-tan, no-animacy, no-tan & no-animacy, all clausal
     )
   )
 
   val testModels = elmoModels.merge(bertModels, (x, y) => y)
 
-  import cats.effect.IO
   import java.nio.file.Paths
   import java.nio.file.Path
   val printer = io.circe.Printer.spaces2
@@ -508,32 +512,48 @@ object ModelVariants {
   }
 
   def writeTest(path: Path, model: Model) = {
-    FileUtil.writeJson(path.resolve("test/config.json"), printer)(model.generateJson(Hyperparams.test))
+    FileUtil.writeJson(path.resolve("config.json"), printer)(model.generateJson(Hyperparams.test))
   }
   def writeAll(path: Path, model: Model, hyperparams: Hyperparams[List]) = {
     val jsons = model.generateJson(hyperparams)
-    jsons.zipWithIndex.traverse { case (json, index) =>
-      FileUtil.writeJson(path.resolve(s"grid/$index.json"), printer)(json)
-    }
-
-    (new util.Random()).shuffle(jsons).zipWithIndex.traverse {
-      case (json, index) =>
-        FileUtil.writeJson(path.resolve(s"shuffle/$index.json"), printer)(json)
-    }
-  }
-
-  def generateAll(rootStr: String): IO[Unit] = {
-    val root = Paths.get(rootStr)
     for {
-      _ <- modelsWithPaths(testModels, root.resolve("test")).traverse {
-        case (path, model) => writeTest(path, model)
+      _ <- jsons.zipWithIndex.traverse { case (json, index) =>
+        FileUtil.writeJson(path.resolve(s"grid/$index.json"), printer)(json)
       }
-      _ <- modelsWithPaths(elmoModels, root.resolve("elmo")).traverse {
-        case (path, model) => writeAll(path, model, Hyperparams.elmoList)
-      }
-      _ <- modelsWithPaths(bertModels, root.resolve("bert")).traverse {
-        case (path, model) => writeAll(path, model, Hyperparams.bertList)
+      _ <- (new util.Random()).shuffle(jsons).zipWithIndex.traverse {
+        case (json, index) =>
+          FileUtil.writeJson(path.resolve(s"shuffle/$index.json"), printer)(json)
       }
     } yield ()
   }
+
+  def generateAll(root: Path): IO[ExitCode] = for {
+    _ <- modelsWithPaths(testModels, root.resolve("test")).traverse {
+      case (path, model) => writeTest(path, model)
+    }
+    _ <- modelsWithPaths(elmoModels, root.resolve("elmo")).traverse {
+      case (path, model) => writeAll(path, model, Hyperparams.elmoList)
+    }
+    _ <- modelsWithPaths(bertModels, root.resolve("bert")).traverse {
+      case (path, model) => writeAll(path, model, Hyperparams.bertList)
+    }
+  } yield ExitCode.Success
+
+  val command = Command(
+    name = "mill qfirst.jvm.runHyperparams",
+    header = "Generate hyperparam configurations."
+  ) {
+    val path = Opts.option[Path](
+      "path", metavar = "path", help = "Path to create the directory to place all of the generated config files."
+    )
+    (path).map(generateAll)
+  }
+
+  def run(args: List[String]): IO[ExitCode] = {
+    command.parse(args) match {
+      case Left(help) => IO { System.err.println(help); ExitCode.Error }
+      case Right(main) => main
+    }
+  }
+
 }

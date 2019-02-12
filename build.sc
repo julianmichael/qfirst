@@ -206,6 +206,11 @@ object qfirst extends Module {
       runMain("qfirst.ClauseRankApp", args)
     }
 
+    def runHyperparams(args: String*) = T.command {
+      val runMain = runMainFn()
+      runMain("qfirst.ModelVariants", args)
+    }
+
     object test extends Tests with CommonModule {
       override def scalaVersion = jvm.this.scalaVersion
       def platformSegment = jvm.this.platformSegment
