@@ -43,11 +43,18 @@ object ModelVariants extends IOApp {
     sentenceEncoderNumLayers: F[Int],
     sentenceEncoderHiddenDimOpt: F[Option[Int]],
     textEmbeddingDropout: F[Double],
+    // optimization params
+    useBertAdam: F[Boolean],
+    baseAdamLR: F[Double],
+    bertWeightsAdamLR: F[Double],
+    bertWeightsWarmupNumSteps: F[Int],
     // test/prod varying params
     trainPath: F[String],
     devPath: F[String],
     numEpochs: F[Int],
-    cudaDevice: F[Int]
+    cudaDevice: F[Int],
+    // batch size varies with expected num parameters, but we'll be scaling down until it fits in memory
+    maxBatchSize: F[Int],
   ) extends Monad[F] {
     def pure[A](a: A): F[A] = Monad[F].pure(a)
     def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B] = Monad[F].flatMap(fa)(f)
@@ -71,10 +78,15 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = f(sentenceEncoderNumLayers),
       sentenceEncoderHiddenDimOpt = f(sentenceEncoderHiddenDimOpt),
       textEmbeddingDropout = f(textEmbeddingDropout),
+      useBertAdam = f(useBertAdam),
+      baseAdamLR = f(baseAdamLR),
+      bertWeightsAdamLR = f(bertWeightsAdamLR),
+      bertWeightsWarmupNumSteps = f(bertWeightsWarmupNumSteps),
       trainPath = f(trainPath),
       devPath = f(devPath),
       numEpochs = f(numEpochs),
       cudaDevice = f(cudaDevice),
+      maxBatchSize = f(maxBatchSize),
     )
   }
   object Hyperparams {
@@ -97,10 +109,17 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = 2,
       sentenceEncoderHiddenDimOpt = None,
       textEmbeddingDropout = 0.0,
+      // optimization
+      useBertAdam = false,
+      baseAdamLR = 0.00005,
+      bertWeightsAdamLR = 0.00002,
+      bertWeightsWarmupNumSteps = 10000,
+      // test/prod
       trainPath = "dev-mini.jsonl",
       devPath = "dev-mini.jsonl",
       numEpochs = 1,
-      cudaDevice = -1
+      cudaDevice = -1,
+      maxBatchSize = 256,
     )
     val elmoList = Hyperparams[List](
       tokenHandler = TokenHandler.elmo[List],
@@ -121,16 +140,34 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = List(4, 8),
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
       textEmbeddingDropout = List(0.0),
-
+      // optimization
+      useBertAdam = List(false),
+      baseAdamLR = List(0.00005),
+      bertWeightsAdamLR = List(0.00002),
+      bertWeightsWarmupNumSteps = List(10000),
+      // test/prod
       trainPath = List("qasrl-v2_1/expanded/train.jsonl.gz"),
       devPath = List("qasrl-v2_1/expanded/dev.jsonl.gz"),
-      numEpochs = List(200),
-      cudaDevice = List(0)
+      numEpochs = List(30),
+      cudaDevice = List(0),
+      maxBatchSize = List(256),
     )
 
-    val bertList = elmoList.copy[List](
-      tokenHandler = TokenHandler.bert[List],
-      sentenceEncoderHiddenDimOpt = List(None)
+    val bertListFeature = elmoList.copy[List](
+      tokenHandler = TokenHandler.bert[List](finetune = false),
+      maxBatchSize = List(256),
+    )
+    val bertListFinetune = bertListFeature.copy[List](
+      tokenHandler = TokenHandler.bert[List](finetune = true),
+      sentenceEncoderHiddenDimOpt = List(None),
+      feedForwardNumLayers = List(1, 2),
+      includeSpanFFNN = List(true, false),
+      useBertAdam = List(false),
+      baseAdamLR = List(3e-5, 5e-5),
+      bertWeightsAdamLR = List(2e-5, 3e-5),
+      bertWeightsWarmupNumSteps = List(1000, 10000, 100000),
+      numEpochs = List(10),
+      maxBatchSize = List(32),
     )
 
     private val nextRand = (l: Long) => {
@@ -253,32 +290,58 @@ object ModelVariants extends IOApp {
       "bert" -> Json.arr("bert".asJson, "bert-offsets".asJson),
       "token_characters" -> Json.arr("token_characters".asJson)
     )
-    val bertEmbedderJson = Json.obj(
-      "bert" -> Json.obj {
-        "type" -> "bert-pretrained".asJson
-        "pretrained_model" -> "bert-base-uncased".asJson
-      }
+    def bertEmbedderJson(finetune: Boolean) = Json.obj(
+      "bert" -> Json.obj(
+        "type" -> "bert-pretrained".asJson,
+        "pretrained_model" -> "bert-base-uncased".asJson,
+        "requires_grad" -> finetune.asJson,
+        "top_layer_only" -> finetune.asJson
+      )
     )
-    def bert[F[_]: Monad] = TokenHandler(
-      indexers = List(
-        param_("bert", Monad[F].pure(bertIndexerJson)),
-        param_("token_characters", Monad[F].pure(bertTokenCharactersJson))
-      ),
+    def bertIndexers[F[_]: Monad] = List(
+      param_("bert", Monad[F].pure(bertIndexerJson)),
+      param_("token_characters", Monad[F].pure(bertTokenCharactersJson))
+    )
+    def bert[F[_]: Monad](finetune: Boolean) = TokenHandler(
+      indexers = bertIndexers[F],
       embedders = List(
         for {
           _ <- param("allow_unmatched_keys", Monad[F].pure(true))
           _ <- param("embedder_to_indexer_map", Monad[F].pure(bertEmbedderToIndexerMapJson))
-          _ <- param("token_embedders", Monad[F].pure(bertEmbedderJson))
+          _ <- param("token_embedders", Monad[F].pure(bertEmbedderJson(finetune)))
         } yield 768
       )
     )
   }
 
-  case class AllenNLPIterator(batchSize: Int) extends Component[Unit] {
+  case class AllenNLPIterator() extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("bucket"))
       _ <- param("sorting_keys", H.pure(List(List("text", "num_tokens"))))
-      _ <- param("batch_size", H.pure(batchSize))
+      _ <- param("batch_size", H.maxBatchSize)
+    } yield ()
+  }
+
+  case class AdadeltaOptimizer() extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+      _ <- param("type", H.pure("adadelta"))
+      _ <- param("rho", H.pure(0.95))
+    } yield ()
+  }
+
+  case class BertAdamOptimizer() extends Component[Unit] {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+      _ <- param("type", H.pure("bert_adam"))
+      _ <- param("lr", H.baseAdamLR)
+      bertLR <- param(H.bertWeightsAdamLR)
+      warmupTotal <- param(H.bertWeightsWarmupNumSteps)
+      _ <- param(
+        "parameter_groups", H.pure(
+          List(List("bert_model") -> Json.obj(
+                 "lr" -> bertLR.asJson,
+                 "t_total" -> warmupTotal.asJson,
+                 "schedule" -> "warmup_constant".asJson
+               ))))
     } yield ()
   }
 
@@ -289,7 +352,8 @@ object ModelVariants extends IOApp {
       _ <- param("patience", H.pure(5))
       _ <- param("validation_metric", H.pure(validationMetric))
       _ <- param("cuda_device", H.cudaDevice)
-      _ <- param("optimizer", H.pure(Json.obj("type" -> "adadelta".asJson, "rho" -> (0.95).asJson)))
+      useBertAdam <- param(H.useBertAdam)
+      _ <- param("optimizer", if(useBertAdam) BertAdamOptimizer() else AdadeltaOptimizer())
     } yield ()
   }
 
@@ -403,13 +467,12 @@ object ModelVariants extends IOApp {
     model: Component[Unit],
     validationMetric: String
   ) extends Component[Unit] {
-    val batchSize: Int = 256
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("dataset_reader", datasetReader)
       _ <- param("train_data_path", H.trainPath)
       _ <- param("validation_data_path", H.devPath)
       _ <- param("model", model)
-      _ <- param("iterator", AllenNLPIterator(batchSize))
+      _ <- param("iterator", AllenNLPIterator())
       _ <- param("trainer", Trainer(validationMetric))
     } yield ()
   }
@@ -534,8 +597,11 @@ object ModelVariants extends IOApp {
     _ <- modelsWithPaths(elmoModels, root.resolve("elmo")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.elmoList)
     }
-    _ <- modelsWithPaths(bertModels, root.resolve("bert")).traverse {
-      case (path, model) => writeAll(path, model, Hyperparams.bertList)
+    _ <- modelsWithPaths(bertModels, root.resolve("bert-feature")).traverse {
+      case (path, model) => writeAll(path, model, Hyperparams.bertListFeature)
+    }
+    _ <- modelsWithPaths(bertModels, root.resolve("bert-finetune")).traverse {
+      case (path, model) => writeAll(path, model, Hyperparams.bertListFinetune)
     }
   } yield ExitCode.Success
 

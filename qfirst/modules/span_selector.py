@@ -11,7 +11,7 @@ import math
 from allennlp.common import Params, Registrable
 from allennlp.common.checks import ConfigurationError
 from allennlp.data import Vocabulary
-from allennlp.modules import Seq2SeqEncoder, Seq2VecEncoder, TimeDistributed, TextFieldEmbedder, SpanPruner, FeedForward
+from allennlp.modules import Seq2SeqEncoder, Seq2VecEncoder, TimeDistributed, TextFieldEmbedder, Pruner, FeedForward
 from allennlp.modules.token_embedders import Embedding
 from allennlp.modules.span_extractors.endpoint_span_extractor import EndpointSpanExtractor
 from allennlp.models.model import Model
@@ -84,7 +84,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                 torch.nn.Sequential(
                     ReLU(),
                     Linear(self._span_hidden_dim, 1)))
-        self._span_pruner = SpanPruner(self._span_scorer)
+        self._span_pruner = Pruner(self._span_scorer)
 
         if self._extra_input_dim > 0:
             self._extra_input_lin = Linear(self._extra_input_dim, self._span_hidden_dim)

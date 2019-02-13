@@ -1,8 +1,10 @@
 #!/bin/bash
 DIR=`dirname $1`
-rm -rf $DIR/save
-if allennlp train $1 --include-package qfirst -s $DIR/save &> /dev/null ; then
-  echo "Success: $DIR"
+rm -rf $DIR/test
+mkdir $DIR/test
+if allennlp train $1 --include-package qfirst -s $DIR/test/save --overrides '{"train_data_path": "dev-mini.jsonl", "validation_data_path": "dev-mini.jsonl", "trainer": {"num_epochs": 1, "cuda_device": -1}}' 1> $DIR/test/stdout.log 2> $DIR/test/stderr.log ; then
+  echo "Success: $1"
+  rm -rf $DIR/test
 else
-  echo "FAILURE: $DIR/save/stderr.log"
+  echo "FAILURE: $DIR/test/stderr.log"
 fi

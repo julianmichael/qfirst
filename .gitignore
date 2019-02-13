@@ -111,3 +111,7 @@ venv.bak/
 
 .*
 \#*
+
+!/lib/
+/qasrl-v2_1/
+/model-configs/
