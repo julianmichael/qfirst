@@ -1,6 +1,8 @@
 from typing import List
 from allennlp.common import Registrable
 
+from qfirst.data.util import cleanse_sentence_text
+
 class QasrlFilter(Registrable):
     def __init__(self,
                  min_answers: int = 1,
@@ -15,7 +17,7 @@ class QasrlFilter(Registrable):
         is_sentence_in_domain = self._domains is None or any([d in sentence_json["sentenceId"].lower() for d in self._domains])
         base_dict = {
             "sentence_id": sentence_json["sentenceId"],
-            "sentence_tokens": sentence_json["sentenceTokens"],
+            "sentence_tokens": cleanse_sentence_text(sentence_json["sentenceTokens"]),
         }
         if is_sentence_in_domain:
             for _, verb_entry in sentence_json["verbEntries"].items():

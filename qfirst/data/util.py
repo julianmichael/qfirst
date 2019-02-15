@@ -65,7 +65,7 @@ abstract_slot_names = [
 def get_verb_fields(token_indexers: Dict[str, TokenIndexer],
                     sentence_tokens: List[str],
                     verb_index: int):
-    text_field = TextField([Token(t) for t in cleanse_sentence_text(sentence_tokens)], token_indexers)
+    text_field = TextField([Token(t) for t in sentence_tokens], token_indexers)
     return {
         "text": text_field,
         "predicate_index": IndexField(verb_index, text_field),
@@ -122,9 +122,11 @@ def get_answer_spans_field(answer_spans, text_field):
 def get_num_answers_field(question_label):
     return LabelField(label = len(question_label["answerJudgments"]), skip_indexing = True)
 
+def get_num_invalids(question_label):
+    return len(question_label["answerJudgments"]) - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
+
 def get_num_invalids_field(question_label):
-    num_invalids = len(question_label["answerJudgments"]) - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
-    return LabelField(label = num_invalids, skip_indexing = True)
+    return LabelField(label = get_num_invalids(question_label), skip_indexing = True)
 
 def get_answer_fields(question_label, text_field):
     answer_spans_field = get_answer_spans_field(get_answer_spans(question_label), text_field)

@@ -46,6 +46,7 @@ object ModelVariants extends IOApp {
     // optimization params
     useBertAdam: F[Boolean],
     baseAdamLR: F[Double],
+    useBertWarmupSchedule: F[Boolean],
     bertWeightsAdamLR: F[Double],
     bertWeightsWarmupNumSteps: F[Int],
     // test/prod varying params
@@ -80,6 +81,7 @@ object ModelVariants extends IOApp {
       textEmbeddingDropout = f(textEmbeddingDropout),
       useBertAdam = f(useBertAdam),
       baseAdamLR = f(baseAdamLR),
+      useBertWarmupSchedule = f(useBertWarmupSchedule),
       bertWeightsAdamLR = f(bertWeightsAdamLR),
       bertWeightsWarmupNumSteps = f(bertWeightsWarmupNumSteps),
       trainPath = f(trainPath),
@@ -112,6 +114,7 @@ object ModelVariants extends IOApp {
       // optimization
       useBertAdam = false,
       baseAdamLR = 0.00005,
+      useBertWarmupSchedule = false,
       bertWeightsAdamLR = 0.00002,
       bertWeightsWarmupNumSteps = 10000,
       // test/prod
@@ -143,6 +146,7 @@ object ModelVariants extends IOApp {
       // optimization
       useBertAdam = List(false),
       baseAdamLR = List(0.00005),
+      useBertWarmupSchedule = List(false),
       bertWeightsAdamLR = List(0.00002),
       bertWeightsWarmupNumSteps = List(10000),
       // test/prod
@@ -162,13 +166,21 @@ object ModelVariants extends IOApp {
       sentenceEncoderHiddenDimOpt = List(None),
       feedForwardNumLayers = List(1, 2),
       includeSpanFFNN = List(true, false),
-      useBertAdam = List(false),
+      useBertAdam = List(true),
       baseAdamLR = List(3e-5, 5e-5),
       bertWeightsAdamLR = List(2e-5, 3e-5),
+      useBertWarmupSchedule = List(true),
       bertWeightsWarmupNumSteps = List(1000, 10000, 100000),
       numEpochs = List(10),
       maxBatchSize = List(32),
     )
+    val bertListShallowFinetune = bertListFinetune.copy[List](
+      tokenHandler = TokenHandler.bert[List](finetune = true),
+      useBertAdam = List(true),
+      bertWeightsAdamLR = List(2e-5, 3e-5, 5e-5),
+      useBertWarmupSchedule = List(false),
+      numEpochs = List(10),
+      maxBatchSize = List(32))
 
     private val nextRand = (l: Long) => {
       l * 6364136223846793005L + 1442695040888963407L
@@ -332,16 +344,23 @@ object ModelVariants extends IOApp {
   case class BertAdamOptimizer() extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("bert_adam"))
-      _ <- param("lr", H.baseAdamLR)
-      bertLR <- param(H.bertWeightsAdamLR)
-      warmupTotal <- param(H.bertWeightsWarmupNumSteps)
-      _ <- param(
-        "parameter_groups", H.pure(
-          List(List("bert_model") -> Json.obj(
-                 "lr" -> bertLR.asJson,
-                 "t_total" -> warmupTotal.asJson,
-                 "schedule" -> "warmup_constant".asJson
-               ))))
+      useWarmup <- param(H.useBertWarmupSchedule)
+      _ <- {
+        if(useWarmup) {
+          for {
+            _ <- param("lr", H.baseAdamLR)
+            warmupTotal <- param(H.bertWeightsWarmupNumSteps)
+            bertLR <- param(H.bertWeightsAdamLR)
+            _ <- param(
+              "parameter_groups", H.pure(
+                List(List("bert_model") -> Json.obj(
+                       "lr" -> bertLR.asJson,
+                       "t_total" -> warmupTotal.asJson,
+                       "schedule" -> "warmup_constant".asJson
+                     ))))
+          } yield ()
+        } else param("lr", H.bertWeightsAdamLR)
+      }
     } yield ()
   }
 
@@ -530,6 +549,19 @@ object ModelVariants extends IOApp {
       },
       validationMetric = "-perplexity-per-question"
     )
+
+    def questionToSpanBert(validQuestionsOnly: Boolean) = Model(
+      datasetReader = DatasetReader(
+        if(validQuestionsOnly) QasrlFilter.validQuestions else QasrlFilter.allQuestions,
+        QasrlInstanceReader("question_with_sentence_single_span")),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_question_to_span_bert"))
+          _ <- nest("text_field_embedder", H.tokenHandler.getEmbedders)
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
@@ -562,7 +594,16 @@ object ModelVariants extends IOApp {
     )
   )
 
-  val testModels = elmoModels.merge(bertModels, (x, y) => y)
+  val bertSpecializedModels = MapTree.fork(
+    "question_to_span" -> MapTree.fromPairs(
+      "full-bert-specialized-valid" -> Model.questionToSpanBert(validQuestionsOnly = true),
+      "full-bert-specialized" -> Model.questionToSpanBert(validQuestionsOnly = false),
+    )
+  )
+
+  val testModels = elmoModels
+    .merge(bertModels, (x, y) => y)
+    .merge(bertSpecializedModels, (x, y) => y)
 
   import java.nio.file.Paths
   import java.nio.file.Path
@@ -580,12 +621,9 @@ object ModelVariants extends IOApp {
   def writeAll(path: Path, model: Model, hyperparams: Hyperparams[List]) = {
     val jsons = model.generateJson(hyperparams)
     for {
-      _ <- jsons.zipWithIndex.traverse { case (json, index) =>
-        FileUtil.writeJson(path.resolve(s"grid/$index.json"), printer)(json)
-      }
       _ <- (new util.Random()).shuffle(jsons).zipWithIndex.traverse {
         case (json, index) =>
-          FileUtil.writeJson(path.resolve(s"shuffle/$index.json"), printer)(json)
+          FileUtil.writeJson(path.resolve(s"$index.json"), printer)(json)
       }
     } yield ()
   }
@@ -602,6 +640,9 @@ object ModelVariants extends IOApp {
     }
     _ <- modelsWithPaths(bertModels, root.resolve("bert-finetune")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.bertListFinetune)
+    }
+    _ <- modelsWithPaths(bertSpecializedModels, root.resolve("bert-specialized")).traverse {
+      case (path, model) => writeAll(path, model, Hyperparams.bertListShallowFinetune)
     }
   } yield ExitCode.Success
 

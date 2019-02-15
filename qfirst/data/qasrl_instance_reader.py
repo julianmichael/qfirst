@@ -13,6 +13,7 @@ from qfirst.data.fields.multilabel_field_new import MultiLabelField_New
 from qfirst.data.util import *
 
 from overrides import overrides
+import random
 
 import logging
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -115,7 +116,8 @@ class QasrlQuestionReader(QasrlInstanceReader):
                        question_labels): # Iterable[Dict[str, ?Field]]
         verb_fields = get_verb_fields(token_indexers, sentence_tokens, verb_index)
         for question_label in question_labels:
-            question_text_field = TextField(self._tokenizer.tokenize(question_label["questionString"]), token_indexers)
+            question_tokens = self._tokenizer.tokenize(question_label["questionString"])
+            question_text_field = TextField(question_tokens, token_indexers)
             question_slots_dict = get_question_slot_fields(question_label["questionSlots"]) if self._include_slots else {}
             abstract_slots_dict = get_abstract_question_slot_fields(question_label) if self._include_abstract_slots else {}
             if self._clause_info is not None:
@@ -142,6 +144,52 @@ class QasrlQuestionReader(QasrlInstanceReader):
 
             yield {
                 **verb_fields, **question_fields, **answer_fields,
+                "metadata": metadata
+            }
+
+@QasrlInstanceReader.register("question_with_sentence_single_span")
+class QasrlQuestionReader(QasrlInstanceReader):
+    def __init__(self):
+        self._tokenizer = WordTokenizer()
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # Iterable[Dict[str, ?Field]]
+        for question_label in question_labels:
+            question_tokens = self._tokenizer.tokenize(question_label["questionString"])
+            question_with_sentence_tokens = question_tokens + [Token("[SEP]")] + [Token(t) for t in sentence_tokens] + [Token("CANNOTANSWER")]
+            question_with_sentence_field = TextField(question_with_sentence_tokens, token_indexers)
+            span_index_offset = len(question_tokens) + 1
+            invalid_index = len(question_with_sentence_tokens) - 1
+
+            num_invalids = get_num_invalids(question_label)
+            answer_spans = get_answer_spans(question_label)
+            offset_answer_spans = [
+                Span(s.start() + span_index_offset, s.end() + span_index_offset)
+                for s in answer_spans
+            ]
+            if num_invalids > 0 or len(answer_spans) == 0:
+                start_index_field = IndexField(invalid_index, question_with_sentence_field)
+                end_index_field = IndexField(invalid_index, question_with_sentence_field)
+            else:
+                random_span = offset_answer_spans[random.randint(0, len(answer_spans) - 1)]
+                start_index_field = IndexField(random_span.start(), question_with_sentence_field)
+                end_index_field = IndexField(random_span.end(), question_with_sentence_field)
+
+            metadata = {
+                "question_label": question_label,
+                "gold_spans": set(offset_answer_spans),
+                "span_index_offset": span_index_offset
+            }
+
+            yield {
+                "text": question_with_sentence_field,
+                "start_index": start_index_field,
+                "end_index": end_index_field,
                 "metadata": metadata
             }
 
