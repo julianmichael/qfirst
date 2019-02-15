@@ -34,8 +34,11 @@ from allennlp.commands.train import train_model
 def sig_handler(signum, frame):
     print("Caught signal", signum)
     print(socket.gethostname(), "USR1 signal caught.")
-    print("requeueing job " + os.environ["SLURM_JOB_ID"])
-    os.system("scontrol requeue " + os.environ["SLURM_JOB_ID"])
+    if "SLURM_JOB_ID" in os.environ:
+        print("requeueing job " + os.environ["SLURM_JOB_ID"])
+        os.system("scontrol requeue " + os.environ["SLURM_JOB_ID"])
+    else:
+        print("Not running on slurm; killing process without requeueing.")
     raise KeyboardInterrupt # trigger AllenNLP's built-in interrupt handler
     # sys.exit(-1)
 

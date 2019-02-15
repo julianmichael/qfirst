@@ -27,12 +27,14 @@ from qfirst.modules.sentence_encoder import SentenceEncoder
 class QuestionToSpanModelBert(Model):
     def __init__(self, vocab: Vocabulary,
                  text_field_embedder: TextFieldEmbedder,
+                 skip_metrics_during_training: bool = True,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(QuestionToSpanModelBert, self).__init__(vocab, regularizer)
         self._text_field_embedder = text_field_embedder
         self._qa_outputs = TimeDistributed(Linear(self._text_field_embedder.get_output_dim(), 2))
         self._pruner = Pruner(lambda x: x)
+        self._skip_metrics_during_training = skip_metrics_during_training
         self._metric = SpanMetric()
 
     def forward(self,  # type: ignore
@@ -67,8 +69,9 @@ class QuestionToSpanModelBert(Model):
             output_dict["loss"] = loss
 
             # metrics; TODO only if not training?
-            output_dict = self.decode(output_dict)
-            self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
+            if not (self._raining and self._skip_metrics_during_training):
+                output_dict = self.decode(output_dict)
+                self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
 
         return output_dict
 
