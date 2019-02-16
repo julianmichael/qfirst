@@ -42,6 +42,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
+                 span_probability_threshold: float = 0.05,
                  skip_metrics_during_training: bool = True,
                  metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -55,6 +56,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         self._objective = objective
         self._gold_span_selection_policy = gold_span_selection_policy
         self._pruning_ratio = pruning_ratio
+        self._span_probability_threshold = span_probability_threshold
         self._skip_metrics_during_training = skip_metrics_during_training
 
         if objective not in objective_values:
@@ -114,104 +116,62 @@ class SpanSelector(torch.nn.Module, Registrable):
         else:
             full_hidden = span_hidden
 
-        (top_span_hidden, top_span_mask,
-         top_span_indices, top_span_logits) = self._span_pruner(full_hidden, span_mask.float(), int(self._pruning_ratio * num_tokens))
-        top_span_mask = top_span_mask.unsqueeze(-1).float()
+        span_logits = self._span_scorer(span_hidden).squeeze(-1)
+        span_probs = torch.sigmoid(span_logits) * span_mask.float()
 
-        # workaround for https://github.com/allenai/allennlp/issues/1696
-        # TODO I think the issue has been fixed and we can remove this?
-        if (top_span_logits == float("-inf")).any():
-            top_span_logits[top_span_logits == float("-inf")] = -1.
+        output_dict = {
+            "span_mask": span_mask,
+            "span_logits": span_logits,
+            "span_probs": span_probs,
+        }
 
         if answer_spans is not None:
-            gold_span_labels = self._get_prediction_map(answer_spans,
-                                                       num_tokens, num_answers,
-                                                       self._gold_span_selection_policy)
-            prediction_mask = batched_index_select(gold_span_labels.unsqueeze(-1),
-                                                   top_span_indices)
+            gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
+            prediction_mask = self._get_prediction_map(answer_spans, gold_span_mask, num_tokens)
+            output_dict["loss"] = F.binary_cross_entropy_with_logits(span_logits, prediction_mask, weight = span_mask.float(), size_average = False)
+            if not (self.training and self._skip_metrics_during_training):
+                output_dict = self.decode(output_dict)
+                self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
 
-        if self._objective == "binary":
-            top_span_probs = torch.sigmoid(top_span_logits) * top_span_mask
-            output_dict = {
-                "span_mask": span_mask,
-                "top_span_indices": top_span_indices,
-                "top_span_mask": top_span_mask,
-                "top_span_logits": top_span_logits,
-                "top_span_probs": top_span_probs
-            }
-            if answer_spans is not None:
-                output_dict["loss"] = F.binary_cross_entropy_with_logits(
-                    top_span_logits, prediction_mask,
-                    weight = top_span_mask, reduction = "sum")
-                if not (self.training and self._skip_metrics_during_training):
-                    output_dict = self.decode(output_dict)
-                    self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
-            return output_dict
-        else:
-            # shouldn't be too hard to fix this up, but it's not a priority
-            assert self._objective == "multinomial"
-            raise NotImplementedError
-            # batch_size = top_span_logits.size(0)
-            # null_scores = predicate_indicator.new_zeros([batch_size]).float()
-            # masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
-            # scores_with_null = torch.cat([null_scores.unsqueeze(-1), top_span_logits], -1)
-            # pred_log_probs = masked_log_softmax(scores_with_null) # don't need a mask; already did it above
-            # pred_probs = pred_log_probs.exp()
-            # top_span_probs = pred_probs[..., 1:]
-            # null_prob = pred_probs[..., 0]
-            # output_dict = {
-            #     "span_mask": span_mask,
-            #     "top_span_indices": top_span_indices,
-            #     "top_span_mask": top_span_mask,
-            #     "top_span_scores": top_span_scores,
-            #     "top_span_probs": top_span_probs,
-            #     "null_prob": null_prob
-            # }
-
-            # if answer_spans is not None:
-            #     gold_dummy_labels = None
-            #     gold_dummy_standin = prediction_mask.view(batch_size, -1).sum(1) == 0
-            #     gold_dummy_labels = torch.max(gold_invalid_labels, gold_dummy_standin.float())
-            #     gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
-            #     correct_log_probs = pred_log_probs + gold_labels_with_dummy.log()
-            #     logsumexp_intermediate = -util.logsumexp(correct_log_probs)
-            #     negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
-
-            #     scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-            #     self._metric.with_explicit_invalids(
-            #         self.decode(output_dict)
-            #         [m["question_label"] for m in metadata],
-            #         num_invalids.cpu(), num_answers.cpu())
-            #     output_dict["loss"] = negative_marginal_log_likelihood
-
-            # return output_dict
+        return output_dict
 
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "spans" not in output_dict:
             o = output_dict
-            spans = self._to_scored_spans(
-                o["span_mask"], o["top_span_indices"], o["top_span_mask"], o["top_span_probs"]
-            )
-            output_dict['spans'] = spans
+            spans = self._to_scored_spans(o["span_probs"], o["span_mask"])
+            output_dict["spans"] = spans
         return output_dict
 
-    def _to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
-        span_mask = span_mask.data.cpu()
-        top_span_indices = top_span_indices.data.cpu()
-        top_span_mask = top_span_mask.data.cpu()
-        top_span_probs = top_span_probs.data.cpu()
-        batch_size, num_spans = span_mask.size()
-        top_spans = []
+    def _to_scored_spans(self, probs, score_mask):
+        probs = probs.data.cpu()
+        score_mask = score_mask.data.cpu()
+        batch_size, num_spans = probs.size()
+        spans = []
         for b in range(batch_size):
             batch_spans = []
             for start, end, i in self._start_end_range(num_spans):
-                batch_spans.append(Span(start, end))
-            batch_top_spans = []
-            for i in range(top_span_indices.size(1)):
-                if top_span_mask[b, i].item() == 1:
-                    batch_top_spans.append((batch_spans[top_span_indices[b, i]], top_span_probs[b, i].item()))
-            top_spans.append(batch_top_spans)
-        return top_spans
+                if score_mask[b, i] == 1 and probs[b, i] > self._span_probability_threshold:
+                    batch_spans.append((Span(start, end), probs[b, i]))
+            spans.append(batch_spans)
+        return spans
+
+    # def _to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
+    #     span_mask = span_mask.data.cpu()
+    #     top_span_indices = top_span_indices.data.cpu()
+    #     top_span_mask = top_span_mask.data.cpu()
+    #     top_span_probs = top_span_probs.data.cpu()
+    #     batch_size, num_spans = span_mask.size()
+    #     top_spans = []
+    #     for b in range(batch_size):
+    #         batch_spans = []
+    #         for start, end, i in self._start_end_range(num_spans):
+    #             batch_spans.append(Span(start, end))
+    #         batch_top_spans = []
+    #         for i in range(top_span_indices.size(1)):
+    #             if top_span_mask[b, i].item() == 1:
+    #                 batch_top_spans.append((batch_spans[top_span_indices[b, i]], top_span_probs[b, i].item()))
+    #         top_spans.append(batch_top_spans)
+    #     return top_spans
 
     def _start_end_range(self, num_spans):
         n = int(.5 * (math.sqrt(8 * num_spans + 1) -1))
@@ -225,9 +185,8 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         return result
 
-    def _get_prediction_map(self, spans, seq_length, num_answerers, span_selection_policy):
+    def _get_prediction_map(self, spans, span_mask, seq_length):
         batchsize, num_spans, _ = spans.size()
-        span_mask = (spans[:, :, 0] >= 0).view(batchsize, num_spans).long()
         num_labels = int((seq_length * (seq_length+1))/2)
         labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
         spans = spans.data
@@ -237,23 +196,39 @@ class SpanSelector(torch.nn.Module, Registrable):
         for b in range(batchsize):
             for s in range(num_spans):
                 if span_mask.data[b, s] > 0:
-                    if span_selection_policy == "union":
-                        labels[b, arg_indexes[b, s]] = 1
-                    else:
-                        assert span_selection_policy == "weighted" or span_selection_policy == "majority"
-                        labels[b, arg_indexes[b, s]] += 1
+                    labels[b, arg_indexes[b, s]] = 1
 
-        if span_selection_policy == "union":
-            return torch.autograd.Variable(labels.float())
-        else: # weighted or majority
-            if num_answerers is None:
-                raise ConfigurationError("Number of answerers must be provided for training the weighted or majority span selection metrics.")
-            num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
-            if span_selection_policy == "weighted":
-                return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
-            else: # majority
-                assert span_selection_policy == "majority"
-                return torch.autograd.Variable((labels.float() / num_answerers_expanded_to_spans) >= 0.5).float()
+        return torch.autograd.Variable(labels)
+
+    # def _get_prediction_map(self, spans, seq_length, num_answerers, span_selection_policy):
+    #     batchsize, num_spans, _ = spans.size()
+    #     span_mask = (spans[:, :, 0] >= 0).view(batchsize, num_spans).long()
+    #     num_labels = int((seq_length * (seq_length+1))/2)
+    #     labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
+    #     spans = spans.data
+    #     arg_indexes = (2 * spans[:,:,0] * seq_length - spans[:,:,0].float().pow(2).long() + spans[:,:,0]) / 2 + (spans[:,:,1] - spans[:,:,0])
+    #     arg_indexes = arg_indexes * span_mask.data
+
+    #     for b in range(batchsize):
+    #         for s in range(num_spans):
+    #             if span_mask.data[b, s] > 0:
+    #                 if span_selection_policy == "union":
+    #                     labels[b, arg_indexes[b, s]] = 1
+    #                 else:
+    #                     assert span_selection_policy == "weighted" or span_selection_policy == "majority"
+    #                     labels[b, arg_indexes[b, s]] += 1
+
+    #     if span_selection_policy == "union":
+    #         return torch.autograd.Variable(labels.float())
+    #     else: # weighted or majority
+    #         if num_answerers is None:
+    #             raise ConfigurationError("Number of answerers must be provided for training the weighted or majority span selection metrics.")
+    #         num_answerers_expanded_to_spans = num_answerers.view(-1, 1).expand(-1, num_labels).float()
+    #         if span_selection_policy == "weighted":
+    #             return torch.autograd.Variable(labels.float() / num_answerers_expanded_to_spans)
+    #         else: # majority
+    #             assert span_selection_policy == "majority"
+    #             return torch.autograd.Variable((labels.float() / num_answerers_expanded_to_spans) >= 0.5).float()
 
     def get_metrics(self, reset: bool = False):
         return self._metric.get_metric(reset = reset)
