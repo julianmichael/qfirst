@@ -68,8 +68,7 @@ class QuestionToSpanModelBert(Model):
             loss = start_loss + end_loss
             output_dict["loss"] = loss
 
-            # metrics; TODO only if not training?
-            if not (self._raining and self._skip_metrics_during_training):
+            if not (self.training and self._skip_metrics_during_training):
                 output_dict = self.decode(output_dict)
                 self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
 

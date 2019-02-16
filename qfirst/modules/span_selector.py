@@ -42,6 +42,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
+                 skip_metrics_during_training: bool = True,
                  metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
@@ -51,9 +52,10 @@ class SpanSelector(torch.nn.Module, Registrable):
         self._extra_input_dim = extra_input_dim
         self._span_hidden_dim = span_hidden_dim
         self._span_ffnn = span_ffnn
-        self._pruning_ratio = pruning_ratio
         self._objective = objective
         self._gold_span_selection_policy = gold_span_selection_policy
+        self._pruning_ratio = pruning_ratio
+        self._skip_metrics_during_training = skip_metrics_during_training
 
         if objective not in objective_values:
             raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
@@ -138,12 +140,12 @@ class SpanSelector(torch.nn.Module, Registrable):
                 "top_span_probs": top_span_probs
             }
             if answer_spans is not None:
-                loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
-                                                          weight = top_span_mask, reduction = "sum")
-                scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-                output_dict["spans"] = scored_spans
-                self._metric(scored_spans, [m["gold_spans"] for m in metadata])
-                output_dict["loss"] = loss
+                output_dict["loss"] = F.binary_cross_entropy_with_logits(
+                    top_span_logits, prediction_mask,
+                    weight = top_span_mask, reduction = "sum")
+                if not (self.training and self._skip_metrics_during_training):
+                    output_dict = self.decode(output_dict)
+                    self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
             return output_dict
         else:
             # shouldn't be too hard to fix this up, but it's not a priority
