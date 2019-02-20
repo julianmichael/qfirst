@@ -13,6 +13,16 @@
   @body
     @div(id := SharedConstants.mainDivElementId)
       @p("Hello world!")
+    @input(
+      `type` := "hidden",
+      value := config.docApiUrl,
+      id := SharedConstants.docApiUrlElementId
+    )
+    @input(
+      `type` := "hidden",
+      value := config.annApiUrl,
+      id := SharedConstants.annApiUrlElementId
+    )
     @config.bootstrapScripts
     @script(src := config.jsDepsPath)
     @script(src := config.jsPath)

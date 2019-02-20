@@ -32,7 +32,12 @@ object Serve extends IOApp {
     qasrlBankPath: Path, savePath: Path, port: Int
   ): IO[ExitCode] = {
     IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get).flatMap { data =>
-      val pageService = StaticPageService.makeService(jsDepsPath, jsPath, port)
+      val docApiSuffix = "doc"
+      val annApiSuffix = "ann"
+      val pageService = StaticPageService.makeService(
+        docApiSuffix, annApiSuffix,
+        jsDepsPath, jsPath, port
+      )
 
       val index = data.index
       val docs = data.documentsById
@@ -48,13 +53,13 @@ object Serve extends IOApp {
           if(Files.exists(savePath)) FileUtil.readJson[ClauseResolutionData](savePath)
           else IO(ClauseResolutionData(Map(), Map()))
         }
-        annotationService = ClauseAnnotationService.makeService(
-          data.devDense, initData, saveData
+        annotationService = ClauseAnnotationHttpService.make(
+          ClauseAnnotationServiceIO(data.devDense, initData, saveData)
         )
         app = Router(
           "/" -> pageService,
-          "/doc" -> docService,
-          "/ann" -> annotationService
+          s"/$docApiSuffix" -> docService,
+          s"/$annApiSuffix" -> annotationService
         ).orNotFound
         _ <- BlazeServerBuilder[IO]
         .bindHttp(port, "0.0.0.0")

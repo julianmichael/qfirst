@@ -25,7 +25,7 @@ val simulacrumVersion = "0.13.0"
 val monocleVersion = "1.5.1-cats"
 val fs2Version = "1.0.0"
 // js cats libs
-val radhocVersion = "0.1.1-SNAPSHOT"
+val radhocVersion = "0.2.0-SNAPSHOT"
 // jvm webby cats libs
 val http4sVersion = "0.20.0-M6"
 
