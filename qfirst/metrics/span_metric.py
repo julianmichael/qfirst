@@ -81,10 +81,14 @@ class SpanMetric(Metric, Registrable):
                     update_conf(conf, true, positive)
 
             if len(gold_spans) > 0:
-                top_span, _ = max(spans_with_probs, key = lambda p: p[1])
-                update_acc(self._top_em, top_span in gold_spans)
-                max_token_f1 = max([top_span.overlap_f1(s) for s in gold_spans])
-                update_macro_f1(self._top_macro_f1, max_token_f1)
+                if len(spans_with_probs) > 0:
+                    top_span, _ = max(spans_with_probs, key = lambda p: p[1])
+                    update_acc(self._top_em, top_span in gold_spans)
+                    max_token_f1 = max([top_span.overlap_f1(s) for s in gold_spans])
+                    update_macro_f1(self._top_macro_f1, max_token_f1)
+                else:
+                    update_acc(self._top_em, False)
+                    update_macro_f1(self._top_macro_f1, 0.0)
 
     def get_metric(self, reset=False):
 

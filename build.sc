@@ -18,8 +18,8 @@ val catsEffectVersion = "1.0.0"
 val kittensVersion = "1.1.1"
 val nlpdataVersion = "0.2.1-SNAPSHOT"
 val qasrlVersion = "0.1.1-SNAPSHOT"
-val qasrlBankVersion = "0.1.0"
-val circeVersion = "0.9.3"
+val qasrlBankVersion = "0.1.1-SNAPSHOT"
+val circeVersion = "0.11.1"
 val declineVersion = "0.4.2"
 val simulacrumVersion = "0.13.0"
 val monocleVersion = "1.5.1-cats"
@@ -27,7 +27,7 @@ val fs2Version = "1.0.0"
 // js cats libs
 val radhocVersion = "0.1.1-SNAPSHOT"
 // jvm webby cats libs
-val http4sVersion = "0.18.14"
+val http4sVersion = "0.20.0-M6"
 
 // non-cats
 val upickleVersion = "0.5.1"
@@ -142,7 +142,7 @@ trait QfirstModule extends CommonModule {
 }
 
 object qfirst extends Module {
-  object js extends QfirstModule with JsPlatform {
+  object js extends QfirstModule with JsPlatform with SimpleJSDeps {
     override def ivyDeps = super.ivyDeps() ++ Agg(
       ivy"org.julianmichael::radhoc::$radhocVersion",
       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
@@ -211,6 +211,18 @@ object qfirst extends Module {
       runMain("qfirst.ModelVariants", args)
     }
 
+    def runClauseAnn(args: String*) = T.command {
+      val jsPath = qfirst.js.fastOpt().path.toString
+      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
+      val runMain = runMainFn()
+      runMain(
+        "qfirst.frames.annotation.Serve",
+        List(
+          "--jsDeps", jsDepsPath,
+          "--js", jsPath
+        ) ++ args)
+    }
+
     object test extends Tests with CommonModule {
       override def scalaVersion = jvm.this.scalaVersion
       def platformSegment = jvm.this.platformSegment
@@ -224,67 +236,67 @@ object qfirst extends Module {
   }
 }
 
-trait QfirstClauseModule extends CommonModule {
-  override def millSourcePath = build.millSourcePath / "qfirst-clause-scala"
-}
+// trait QfirstClauseModule extends CommonModule {
+//   override def millSourcePath = build.millSourcePath / "qfirst-clause-scala"
+// }
 
-object `qfirst-clause` extends Module {
-  object js extends QfirstClauseModule with JsPlatform with SimpleJSDeps {
-    override def moduleDeps = List(qfirst.js)
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"org.julianmichael::radhoc::$radhocVersion",
-      ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
-      ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-      ivy"com.github.japgolly.scalajs-react::core::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalajs-react::ext-monocle::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalajs-react::ext-cats::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalacss::core::$scalajsScalaCSSVersion",
-      ivy"com.github.japgolly.scalacss::ext-react::$scalajsScalaCSSVersion",
-      // crowd stuff
-    )
-    override def jsDeps = Agg(
-      "https://code.jquery.com/jquery-2.1.4.min.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
-    )
-    // def mainClass = T(Some("qfirst.frames.crowd.Dispatcher"))
-  }
-  object jvm extends QfirstModule with JvmPlatform {
-    override def moduleDeps = List(qfirst.jvm)
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"com.chuusai::shapeless::$shapelessVersion",
-      ivy"org.typelevel::kittens::$kittensVersion",
-      ivy"com.monovore::decline::$declineVersion",
-      ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-      // webby stuff
-      ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
-      ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      ivy"com.monovore::decline::$declineVersion",
-      ivy"org.http4s::http4s-dsl::$http4sVersion",
-      ivy"org.http4s::http4s-blaze-server::$http4sVersion",
-      ivy"ch.qos.logback:logback-classic:$logbackVersion",
-      // crowd stuff
-      ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
-      ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-      ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
-    )
+// object `qfirst-clause` extends Module {
+//   object js extends QfirstClauseModule with JsPlatform with SimpleJSDeps {
+//     override def moduleDeps = List(qfirst.js)
+//     override def ivyDeps = super.ivyDeps() ++ Agg(
+//       ivy"org.julianmichael::radhoc::$radhocVersion",
+//       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+//       ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
+//       ivy"com.github.japgolly.scalajs-react::core::$scalajsReactVersion",
+//       ivy"com.github.japgolly.scalajs-react::ext-monocle::$scalajsReactVersion",
+//       ivy"com.github.japgolly.scalajs-react::ext-cats::$scalajsReactVersion",
+//       ivy"com.github.japgolly.scalacss::core::$scalajsScalaCSSVersion",
+//       ivy"com.github.japgolly.scalacss::ext-react::$scalajsScalaCSSVersion",
+//       // crowd stuff
+//     )
+//     override def jsDeps = Agg(
+//       "https://code.jquery.com/jquery-2.1.4.min.js",
+//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+//     )
+//     // def mainClass = T(Some("qfirst.frames.crowd.Dispatcher"))
+//   }
+//   object jvm extends QfirstModule with JvmPlatform {
+//     override def moduleDeps = List(qfirst.jvm)
+//     override def ivyDeps = super.ivyDeps() ++ Agg(
+//       ivy"com.chuusai::shapeless::$shapelessVersion",
+//       ivy"org.typelevel::kittens::$kittensVersion",
+//       ivy"com.monovore::decline::$declineVersion",
+//       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
+//       // webby stuff
+//       ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
+//       ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+//       ivy"com.monovore::decline::$declineVersion",
+//       ivy"org.http4s::http4s-dsl::$http4sVersion",
+//       ivy"org.http4s::http4s-blaze-server::$http4sVersion",
+//       ivy"ch.qos.logback:logback-classic:$logbackVersion",
+//       // crowd stuff
+//       ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
+//       ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+//       ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
+//     )
 
-    override def resources = T.sources(
-      millSourcePath / "resources",
-      `qfirst-clause`.js.fastOpt().path / RelPath.up,
-      `qfirst-clause`.js.aggregatedJSDeps().path / RelPath.up
-    )
+//     override def resources = T.sources(
+//       millSourcePath / "resources",
+//       `qfirst-clause`.js.fastOpt().path / RelPath.up,
+//       `qfirst-clause`.js.aggregatedJSDeps().path / RelPath.up
+//     )
 
-    val qasrlBankLocation = "qasrl-v2_1"
+//     val qasrlBankLocation = "qasrl-v2_1"
 
-    def runAnnotation(port: Int, domainRestriction: String = "") = T.command {
-      val runMain = runMainFn()
-      runMain(
-        "qfirst.frames.ServeAnnotation", Seq(
-          "--qasrl-bank", qasrlBankLocation,
-          "--port",       s"$port"
-        ) ++ Option(domainRestriction).filter(_.nonEmpty).toSeq.flatMap(d => Seq("--domain", d))
-      )
-    }
-  }
-}
+//     def runAnnotation(port: Int, domainRestriction: String = "") = T.command {
+//       val runMain = runMainFn()
+//       runMain(
+//         "qfirst.frames.annotation.Serve", Seq(
+//           "--qasrl-bank", qasrlBankLocation,
+//           "--port",       s"$port"
+//         ) ++ Option(domainRestriction).filter(_.nonEmpty).toSeq.flatMap(d => Seq("--domain", d))
+//       )
+//     }
+//   }
+// }

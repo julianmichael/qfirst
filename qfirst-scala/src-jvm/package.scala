@@ -1,7 +1,13 @@
 import qasrl.data.AnswerSpan
 import qasrl.data.VerbEntry
 
+import cats.data.NonEmptyList
 import cats.implicits._
+
+import qfirst.metrics._
+import qfirst.metrics.HasMetrics.ops._
+
+import nlpdata.datasets.wiktionary.InflectedForms
 
 package object qfirst extends Implicits {
 
@@ -30,4 +36,47 @@ package object qfirst extends Implicits {
   import cats.implicits._
 
   def counts[F[_]: Foldable, A](fa: F[A]): Map[A, Int] = fa.foldMap(a => Map(a -> 1))
+
+  val sortSpec = {
+    import Metric._
+    import MapTree.SortQuery._
+    val double = (mv: Metric) => mv match {
+      case MetricMetadata(s) => 0.0
+      case MetricBool(x) => if(x) 1.0 else 0.0
+      case MetricInt(x) => x.toDouble
+      case MetricDouble(x) => x
+      case MetricIntOfTotal(x, _) => x.toDouble
+    }
+    val inc = value[String](double)
+    val dec = value[String](double andThen (_ * -1))
+    List(
+      "predictions" :: "f1" :: inc,
+      "full question" :: "f1" :: inc,
+      "full question" :: "acc-lb" :: inc,
+      "num predicted" :: inc
+    )
+  }
+  def getMetricsString[M: HasMetrics](m: M) =
+    m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
+
+  def evalBucketBounds(unsortedBounds: NonEmptyList[Int])(value: Int) = {
+    val bounds = unsortedBounds.sorted
+    if(value <= bounds.head) s"<=${bounds.head}"
+    else bounds.toList.sliding(2).find(g => value > g(0) && value <= g(1)) match {
+      case Some(g) => s"${g(0) + 1}-${g(1)}"
+      case None => s">${bounds.last}"
+    }
+  }
+
+  def verbFreq(getFreq: InflectedForms => Int, bounds: NonEmptyList[Int]) = (verb: VerbEntry) => {
+    val freq = getFreq(verb.verbInflectedForms)
+    evalBucketBounds(bounds)(freq)
+  }
+
+  def verbBucketers(getFreq: (InflectedForms => Int)) = Map(
+    "verb-freq" -> verbFreq(
+      getFreq,
+      NonEmptyList.of(0, 10, 50, 150, 250, 500, 750, 1000))
+  )
+
 }

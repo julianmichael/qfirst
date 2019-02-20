@@ -39,6 +39,9 @@ object ArgumentSlot {
   import io.circe.{Encoder, Decoder}
   import io.circe.Json
 
+  implicit val argumentSlotEncoder: Encoder[ArgumentSlot] = Encoder[String].contramap(ArgumentSlot.toString)
+  implicit val argumentSlotDecoder: Decoder[ArgumentSlot] = Decoder[String].emapTry(s => scala.util.Try(ArgumentSlot.fromString(s).get))
+
   implicit val argumentSlotKeyEncoder = KeyEncoder.instance(ArgumentSlot.toString)
   implicit val argumentSlotKeyDecoder = KeyDecoder.instance(ArgumentSlot.fromString)
 
