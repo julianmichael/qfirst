@@ -72,6 +72,7 @@ def main():
                 os.makedirs(serialization_directory)
                 config_path = args.models_root + "/" + args.models_branch
                 params = Params.from_file(config_path, "")
+                params["trainer"]["num_serialized_models_to_keep"] = 2
                 params["iterator"]["biggest_batch_first"] = True
                 params["iterator"]["batch_size"] = current_batch_size
                 train_model(params,
