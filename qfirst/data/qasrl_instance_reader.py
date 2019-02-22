@@ -369,13 +369,19 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
                 "qarg_labeled_spans": ListField(qarg_pretrain_span_fields),
                 "qarg_labels": ListField(qarg_pretrain_multilabel_fields),
             }
-        else:
+        elif len(tan_string_fields) > 0:
             yield {
                 **verb_fields,
                 "tan_strings": ListField(tan_string_fields),
                 "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
                 "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
                 "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
+                "tan_set": tan_multilabel_field,
+                "metadata": MetadataField({}),
+            }
+        else:
+            yield {
+                **verb_fields,
                 "tan_set": tan_multilabel_field,
                 "metadata": MetadataField({}),
             }
