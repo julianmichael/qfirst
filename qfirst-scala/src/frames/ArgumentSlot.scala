@@ -31,7 +31,7 @@ object ArgumentSlot {
     case "prep1" | "prep1-obj" => Some(Prep1)
     case "prep2" | "prep2-obj" => Some(Prep2)
     case "misc"  => Some(Misc)
-    case wh if allAdvSlots.contains(wh.lowerCase) => Some(Adv(wh.lowerCase))
+    case wh if allAdvSlots.contains(Adv(wh.lowerCase)) => Some(Adv(wh.lowerCase))
     case _ => None
   }
 

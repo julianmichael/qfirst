@@ -48,7 +48,8 @@ val slf4jApiVersion = "1.7.21"
 // js libs
 val scalajsDomVersion = "0.9.6"
 val scalajsJqueryVersion = "0.9.3"
-val scalajsReactVersion = "1.2.3"
+// val scalajsReactVersion = "1.2.3"
+val scalajsReactVersion = "1.3.1"
 val scalajsScalaCSSVersion = "0.5.3"
 
 val scalatestVersion = "3.0.5"
@@ -148,12 +149,17 @@ object qfirst extends Module {
       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
       ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
       ivy"com.github.japgolly.scalajs-react::core::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalajs-react::ext-monocle::$scalajsReactVersion",
+      ivy"com.github.japgolly.scalajs-react::ext-monocle-cats::$scalajsReactVersion",
       ivy"com.github.japgolly.scalajs-react::ext-cats::$scalajsReactVersion",
       ivy"com.github.japgolly.scalacss::core::$scalajsScalaCSSVersion",
       ivy"com.github.japgolly.scalacss::ext-react::$scalajsScalaCSSVersion",
       // crowd stuff
       )
+    override def jsDeps = Agg(
+      "https://code.jquery.com/jquery-2.1.4.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+    )
   }
   object jvm extends QfirstModule with JvmPlatform with ScalatexModule {
     override def ivyDeps = super.ivyDeps() ++ Agg(

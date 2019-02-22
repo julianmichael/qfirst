@@ -43,6 +43,7 @@ object ModelVariants extends IOApp {
     sentenceEncoderNumLayers: F[Int],
     sentenceEncoderHiddenDimOpt: F[Option[Int]],
     textEmbeddingDropout: F[Double],
+    injectPredicate: F[Boolean],
     // optimization params
     useBertAdam: F[Boolean],
     baseAdamLR: F[Double],
@@ -79,6 +80,7 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = f(sentenceEncoderNumLayers),
       sentenceEncoderHiddenDimOpt = f(sentenceEncoderHiddenDimOpt),
       textEmbeddingDropout = f(textEmbeddingDropout),
+      injectPredicate = f(injectPredicate),
       useBertAdam = f(useBertAdam),
       baseAdamLR = f(baseAdamLR),
       useBertWarmupSchedule = f(useBertWarmupSchedule),
@@ -111,6 +113,7 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = 2,
       sentenceEncoderHiddenDimOpt = None,
       textEmbeddingDropout = 0.0,
+      injectPredicate = false,
       // optimization
       useBertAdam = false,
       baseAdamLR = 0.00005,
@@ -143,6 +146,7 @@ object ModelVariants extends IOApp {
       sentenceEncoderNumLayers = List(4, 8),
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
       textEmbeddingDropout = List(0.0),
+      injectPredicate = List(false),
       // optimization
       useBertAdam = List(false),
       baseAdamLR = List(0.00005),
@@ -160,17 +164,19 @@ object ModelVariants extends IOApp {
     val bertListFeature = elmoList.copy[List](
       tokenHandler = TokenHandler.bert[List](finetune = false),
       maxBatchSize = List(256),
+      injectPredicate = List(true, false),
     )
     val bertListFinetune = bertListFeature.copy[List](
       tokenHandler = TokenHandler.bert[List](finetune = true),
       sentenceEncoderHiddenDimOpt = List(None),
       feedForwardNumLayers = List(1, 2),
       includeSpanFFNN = List(true, false),
+      injectPredicate = List(true),
       useBertAdam = List(true),
-      baseAdamLR = List(3e-5, 5e-5),
-      bertWeightsAdamLR = List(2e-5, 3e-5),
+      baseAdamLR = List(5e-5, 2e-4),
+      bertWeightsAdamLR = List(1e-5, 2e-5, 3e-5),
       useBertWarmupSchedule = List(true),
-      bertWeightsWarmupNumSteps = List(1000, 10000, 100000),
+      bertWeightsWarmupNumSteps = List(100, 1000, 10000),
       numEpochs = List(10),
       maxBatchSize = List(32),
     )
@@ -463,9 +469,15 @@ object ModelVariants extends IOApp {
     def allQuestions = QasrlFilter(1, 0)
   }
 
-  case class QasrlInstanceReader(instanceType: String) extends Component[Unit] {
+  case class QasrlInstanceReader(
+    instanceType: String,
+    slotNames: Option[List[String]] = None,
+    clauseInfoFile: Option[String] = None
+  ) extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure(instanceType))
+      _ <- slotNames.fold(param(H.unit))(s => param("slot_names", H.pure(s)).as(()))
+      _ <- clauseInfoFile.fold(param(H.unit))(s => param("clause_info_files", H.pure(List(s)).as(())))
     } yield ()
   }
 
@@ -497,7 +509,7 @@ object ModelVariants extends IOApp {
   }
   object Model {
     def question(slotNames: List[String]) = Model(
-      datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question")),
+      datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question", slotNames = Some(slotNames))),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_question"))
@@ -512,7 +524,7 @@ object ModelVariants extends IOApp {
       slotNames: List[String],
       classifyInvalids: Boolean,
       ) = Model(
-      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question")),
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question", slotNames = Some(slotNames))),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_question_to_span"))
@@ -532,7 +544,9 @@ object ModelVariants extends IOApp {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_span"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
-          _ <- param("span_selector", SpanSelector(encoderOutputDim, None))
+          injectPredicate <- param("inject_predicate", H.injectPredicate)
+          extraInputDimOpt = if(injectPredicate) Some(encoderOutputDim) else None
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, extraInputDimOpt))
         } yield ()
       },
       validationMetric = "+f1"
@@ -544,7 +558,9 @@ object ModelVariants extends IOApp {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_span_to_question"))
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
-          _ <- param("question_generator", QuestionGenerator(slotNames, 2 * encoderOutputDim))
+          injectPredicate <- param("inject_predicate", H.injectPredicate)
+          questionGeneratorInputDim = (if(injectPredicate) 3 else 2) * encoderOutputDim
+          _ <- param("question_generator", QuestionGenerator(slotNames, questionGeneratorInputDim))
         } yield ()
       },
       validationMetric = "-perplexity-per-question"
@@ -562,36 +578,80 @@ object ModelVariants extends IOApp {
       },
       validationMetric = "+f1"
     )
+
+    val animacy = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.questionsWithAnswers,
+        QasrlInstanceReader("span_animacy")
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_animacy"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("animacy_ffnn", FeedForward(encoderOutputDim))
+          _ <- param("inject_predicate", H.injectPredicate)
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    val tan = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.validQuestions,
+        QasrlInstanceReader("question_factored")
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_multiclass"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("label_name", H.pure("tan_set"))
+          _ <- param("label_namespace", H.pure("tan-string-labels"))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    val spanToTan = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.questionsWithAnswers,
+        QasrlInstanceReader("span_tan")
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_span_to_tan"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("tan_ffnn", FeedForward(encoderOutputDim))
+          _ <- param("inject_predicate", H.injectPredicate)
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    // question no tan, question to tan to span
+    // annotate clauses
+    // clause no tan, clause no anim, clause no tan or anim,
+    // clause strings, clause and span to answer slot
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
+  val noTanSlots = List("wh", "subj", "abst-verb", "obj", "prep", "obj2")
   val clauseSlots = List("clause-subj", "clause-aux", "clause-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
+  val clauseNoTanSlots = List("clause-subj", "clause-abst-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
 
-  val elmoModels = MapTree.fork(
-    "span" -> MapTree.leaf[String](Model.span),
-    "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
-    "question" -> MapTree.fromPairs(
-      "full" -> Model.question(fullSlots)
-    ),
-    "question_to_span" -> MapTree.fromPairs(
-      "full_-invalid" -> Model.questionToSpan(fullSlots, false),
-      "full" -> Model.questionToSpan(fullSlots, true)
-    )
-  )
-
-  val bertModels = MapTree.fork(
+  val models = MapTree.fork(
     "span" -> MapTree.leaf[String](Model.span),
     "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     "question" -> MapTree.fromPairs(
       "full" -> Model.question(fullSlots),
-      // "clausal" -> Model.question(clauseSlots),
-      // TODO: no-tan, no-animacy, no-tan & no-animacy, all clausal
+      "no_tan" -> Model.question(noTanSlots)
     ),
     "question_to_span" -> MapTree.fromPairs(
       "full" -> Model.questionToSpan(fullSlots, true),
-      // "clausal" -> Model.questionToSpan(clauseSlots, true),
-      // TODO: no-tan, no-animacy, no-tan & no-animacy, all clausal
-    )
+      "no_tan" -> Model.questionToSpan(noTanSlots, true)
+    ),
+    "animacy" -> MapTree.leaf[String](Model.animacy),
+    "tan" -> MapTree.leaf[String](Model.tan),
+    "span_to_tan" -> MapTree.leaf[String](Model.spanToTan),
   )
 
   val bertSpecializedModels = MapTree.fork(
@@ -601,8 +661,7 @@ object ModelVariants extends IOApp {
     )
   )
 
-  val testModels = elmoModels
-    .merge(bertModels, (x, y) => y)
+  val testModels = models
     .merge(bertSpecializedModels, (x, y) => y)
 
   import java.nio.file.Paths
@@ -632,13 +691,13 @@ object ModelVariants extends IOApp {
     _ <- modelsWithPaths(testModels, root.resolve("test")).traverse {
       case (path, model) => writeTest(path, model)
     }
-    _ <- modelsWithPaths(elmoModels, root.resolve("elmo")).traverse {
+    _ <- modelsWithPaths(models, root.resolve("elmo")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.elmoList)
     }
-    _ <- modelsWithPaths(bertModels, root.resolve("bert-feature")).traverse {
+    _ <- modelsWithPaths(models, root.resolve("bert-feature")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.bertListFeature)
     }
-    _ <- modelsWithPaths(bertModels, root.resolve("bert-finetune")).traverse {
+    _ <- modelsWithPaths(models, root.resolve("bert-finetune")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.bertListFinetune)
     }
     _ <- modelsWithPaths(bertSpecializedModels, root.resolve("bert-specialized")).traverse {

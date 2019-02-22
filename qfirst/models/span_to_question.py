@@ -16,6 +16,7 @@ from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask, sequence_cross_entropy_with_logits
 from allennlp.nn.util import get_lengths_from_binary_sequence_mask, viterbi_decode
+from allennlp.nn.util import batched_index_select
 from allennlp.training.metrics import SpanBasedF1Measure
 
 from qfirst.metrics.question_metric import QuestionMetric
@@ -116,7 +117,7 @@ class SpanToQuestionModel(Model):
         if self._inject_predicate:
             pred_rep_expanded = batched_index_select(encoded_text, predicate_index) \
                                 .expand(batch_size, num_spans, encoding_dim)
-            question_inputs = torch.cat([pred_rep, span_reps], -1)
+            question_inputs = torch.cat([pred_rep_expanded, span_reps], -1)
         else:
             question_inputs = span_reps
         return question_inputs, span_mask

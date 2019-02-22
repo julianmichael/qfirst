@@ -6,6 +6,7 @@ import qasrl.bank.Data
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.effect.{IOApp, ExitCode}
+import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import fs2.Stream
@@ -53,8 +54,9 @@ object Serve extends IOApp {
           if(Files.exists(savePath)) FileUtil.readJson[ClauseResolutionData](savePath)
           else IO(ClauseResolutionData(Map(), Map()))
         }
+        initDataRef <- Ref[IO].of(initData)
         annotationService = ClauseAnnotationHttpService.make(
-          ClauseAnnotationServiceIO(data.devDense, initData, saveData)
+          ClauseAnnotationServiceIO(data.devExpanded, initDataRef, saveData)
         )
         app = Router(
           "/" -> pageService,

@@ -50,9 +50,10 @@ object ClauseResolutionData {
     )
 }
 
+
 case class ClauseAnnotationServiceIO(
   dataset: Dataset,
-  initData: ClauseResolutionData,
+  storeRef: Ref[IO, ClauseResolutionData],
   saveData: ClauseResolutionData => IO[Unit]
 ) extends ClauseAnnotationService[IO] {
   val instances = SimpleFrameInduction.getInstances(dataset)
@@ -83,11 +84,8 @@ case class ClauseAnnotationServiceIO(
   val sortedLocalAmbiguities = rand.shuffle(localAmbiguities)
   val sortedFullAmbiguities  = rand.shuffle(fullAmbiguities)
 
-  val storeRef = Ref[IO].of(initData)
-
   override def getResolution(isFull: Boolean, index: Int): IO[ClauseResolution] = for {
-    ref <- storeRef
-    store <- ref.get
+    store <- storeRef.get
   } yield {
     val ambig =
       if(isFull) sortedFullAmbiguities(index)
@@ -98,16 +96,17 @@ case class ClauseAnnotationServiceIO(
     ClauseResolution(ambig, choiceOpt)
   }
 
-  override def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): IO[Option[ClauseChoice]] = {
-    val lens =
-      if(isFull) ClauseResolutionData.fullResolutions.composeLens(Optics.at(sortedFullAmbiguities(index)))
-      else ClauseResolutionData.localResolutions.composeLens(Optics.at(sortedLocalAmbiguities(index)))
+  override def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): IO[ClauseResolution] = {
+    val ambig = if(isFull) sortedFullAmbiguities(index) else sortedLocalAmbiguities(index)
+    val lens = (
+      if(isFull) ClauseResolutionData.fullResolutions
+      else ClauseResolutionData.localResolutions
+    ).composeLens(Optics.at(ambig))
     for {
-      ref <- storeRef
-      _ <- ref.update(lens.set(Some(choice)))
-      store <- ref.get
+      _ <- storeRef.update(lens.set(Some(choice)))
+      store <- storeRef.get
       _ <- saveData(store)
-    } yield lens.get(store)
+    } yield ClauseResolution(ambig, lens.get(store))
   }
 }
 

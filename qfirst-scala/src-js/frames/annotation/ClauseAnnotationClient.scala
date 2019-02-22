@@ -14,17 +14,17 @@ case class ClauseAnnotationClient(apiUrl: String) extends ClauseAnnotationServic
     val route = apiUrl + "/" + (if(isFull) "full" else "local") + "/" + index
     org.scalajs.dom.ext.Ajax.get(url = route).map(_.responseText).flatMap { jsonStr =>
       decode[ClauseResolution](jsonStr) match {
-        case Left(err)    => Future.failed[ClauseResolution](new RuntimeException(err))
+        case Left(err)  => Future.failed[ClauseResolution](new RuntimeException(err))
         case Right(res) => Future.successful(res)
       }
     }
   }
 
-  def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): Future[Option[ClauseChoice]] = {
+  def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): Future[ClauseResolution] = {
     val route = apiUrl + "/" + (if(isFull) "full" else "local") + "/save/" + index
     org.scalajs.dom.ext.Ajax.post(url = route, data = printer.pretty(choice.asJson)).map(_.responseText).flatMap { jsonStr =>
-      decode[Option[ClauseChoice]](jsonStr) match {
-        case Left(err)  => Future.failed[Option[ClauseChoice]](new RuntimeException(err))
+      decode[ClauseResolution](jsonStr) match {
+        case Left(err)  => Future.failed[ClauseResolution](new RuntimeException(err))
         case Right(res) => Future.successful(res)
       }
     }

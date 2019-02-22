@@ -8,13 +8,13 @@ object FrameAnnStyles extends StyleSheet.Inline {
 
   // color scheme
 
-  // val headerBackgroundColor = grey(240)
+  val headerBackgroundColor = grey(240)
   // val headerContentColor = black
 
   // val selectedHighlightColor = grey(200)
   // val hoverHighlightColor = grey(240)
-  // val alternatingRowBackgroundColor1 = white
-  // val alternatingRowBackgroundColor2 = grey(240)
+  val alternatingRowBackgroundColor1 = white
+  val alternatingRowBackgroundColor2 = grey(240)
 
   // val originalRoundIndicatorColor = grey(200)
   // val expansionRoundIndicatorColor = rgba(  64, 192,   0, 1.0)
@@ -37,15 +37,15 @@ object FrameAnnStyles extends StyleSheet.Inline {
   //   borderRightWidth(paneDivisionBorderWidth)
   // )
 
-  // // styles
+  // styles
 
-  // val checkbox = style(
-  //   addClassNames("form-check-input")
-  // )
+  val checkbox = style(
+    addClassNames("form-check-input")
+  )
 
-  // val checkboxLabel = style(
-  //   addClassNames("form-check-label")
-  // )
+  val checkboxLabel = style(
+    addClassNames("form-check-label")
+  )
 
   // val webkitScrollbar = {
   //   import scalacss.internal._
@@ -71,26 +71,26 @@ object FrameAnnStyles extends StyleSheet.Inline {
 
   // val mainTitle = style()
 
-  // val fixedRowContainer = style(
-  //   addClassNames("px-3", "py-1"),
-  //   display.block,
-  //   width(100 %%)
-  // )
+  val fixedRowContainer = style(
+    addClassNames("px-3", "py-1"),
+    display.block,
+    width(100 %%)
+  )
 
-  // val queryInputContainer = style(
-  //   fixedRowContainer,
-  //   display.flex,
-  //   flexDirection.row
-  // )
+  val queryInputContainer = style(
+    fixedRowContainer,
+    display.flex,
+    flexDirection.row
+  )
 
-  // val queryInput = style(
-  //   flex := "1"
-  // )
+  val queryInput = style(
+    flex := "1"
+  )
   // val querySubmitButton = style()
 
-  // val flexyBottomContainer = style(
-  //   flex := "1"
-  // )
+  val flexyBottomContainer = style(
+    flex := "1"
+  )
 
   // val scrollPane = style(
   //   overflow.auto,
@@ -102,9 +102,9 @@ object FrameAnnStyles extends StyleSheet.Inline {
   //     // attr("-ms-overflow-style") := "none"
   // )
 
-  // val headyContainer = style(
-  //   backgroundColor(headerBackgroundColor)
-  // )
+  val headyContainer = style(
+    backgroundColor(headerBackgroundColor)
+  )
 
 
 
@@ -263,61 +263,72 @@ object FrameAnnStyles extends StyleSheet.Inline {
   //   metadataLabelText
   // )
 
-  // val sentenceTextContainer = style()
+  val sentenceTextContainer = style()
 
-  // val verbAnchorLink = style(
-  //   &.hover(
-  //     textDecoration := "none"
-  //   )
-  // )
+  val verbAnchorLink = style(
+    &.hover(
+      textDecoration := "none"
+    )
+  )
 
   // val verbEntriesContainer = style(
   //   scrollPane,
   //   flex := "1"
   // )
 
-  // val loadingNotice = style(
-  //   addClassNames("p-3")
-  // )
+  val loadingNotice = style(
+    addClassNames("p-3")
+  )
 
-  // val sentenceText = style(
-  //   fontSize(16 pt)
-  // )
+  val sentenceText = style(
+    fontSize(16 pt)
+  )
 
-  // val verbEntryDisplay = style(
-  //   addClassNames("px-4", "pb-4"),
-  //   width(100 %%)
-  // )
+  val verbEntryDisplay = style(
+    addClassNames("px-4", "pb-4"),
+    width(100 %%)
+  )
 
-  // val verbHeading = style()
+  val verbHeading = style()
 
-  // val verbHeadingText = style(
-  //   fontSize(16 pt),
-  //   fontWeight.bold
-  // )
+  val verbHeadingText = style(
+    fontSize(16 pt),
+    fontWeight.bold
+  )
 
-  // val verbQAsTable = style(
-  //   width(100 %%)
-  // )
+  val questionHeading = verbHeading
+  val questionHeadingText = verbHeadingText
 
-  // val verbQAsTableBody = style(
-  //   width(100 %%)
-  // )
+  val verbQAsTable = style(
+    width(100 %%)
+  )
+
+  val verbQAsTableBody = style(
+    width(100 %%)
+  )
 
   // val hoverHighlightedVerbTable = style(
   //   backgroundColor(hoverHighlightColor)
   // )
 
-  // val qaPairRow = style(
-  //   addClassNames("p-1"),
-  //   width(100 %%),
-  //   &.nthChild("odd")(
-  //     backgroundColor(alternatingRowBackgroundColor1)
-  //   ),
-  //   &.nthChild("even")(
-  //     backgroundColor(alternatingRowBackgroundColor2)
-  //   )
-  // )
+  val clauseChoiceRow = style(
+    addClassNames("p-1"),
+    width(100 %%),
+    // &.nthChild("odd")(
+    //   backgroundColor(alternatingRowBackgroundColor1)
+    // ),
+    // &.nthChild("even")(
+    //   backgroundColor(alternatingRowBackgroundColor2)
+    // )
+  )
+
+  val clauseChoiceText = style(
+    fontSize(16 pt),
+    )
+
+  val darkerClauseChoiceRow = style(
+    backgroundColor(alternatingRowBackgroundColor2)
+  )
 
   // val roundIndicator = style(
   //   width(0.2 rem),

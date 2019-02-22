@@ -26,7 +26,13 @@ object ClauseChoice {
   choiceOpt: Option[ClauseChoice]
 )
 
-trait ClauseAnnotationService[F[_]] {
+trait ClauseAnnotationService[F[_]] { self =>
   def getResolution(isFull: Boolean, index: Int): F[ClauseResolution]
-  def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): F[Option[ClauseChoice]]
+  def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): F[ClauseResolution]
+  // final def mapK[G[_]](f: F ~> G): ClauseAnnotationService[G] = new ClauseAnnotationService[G] {
+  //   def getResolution(isFull: Boolean, index: Int): G[ClauseResolution] =
+  //     f(self.getResolution(isFull, index))
+  //   def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): G[Option[ClauseChoice]] =
+  //     f(self.saveResolution(isFull, index))
+  // }
 }

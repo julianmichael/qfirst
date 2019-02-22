@@ -12,6 +12,7 @@ from allennlp.modules.token_embedders import Embedding
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator
 from allennlp.nn.util import get_text_field_mask
+from allennlp.nn.util import batched_index_select
 
 from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.modules.span_selector import SpanSelector

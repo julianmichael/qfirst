@@ -14,6 +14,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 import japgolly.scalajs.react.vdom.html_<^._
 import japgolly.scalajs.react._
+import japgolly.scalajs.react.extra.StateSnapshot
 
 import scalacss.DevDefaults._
 import scalacss.ScalaCssReact._
@@ -22,8 +23,6 @@ import monocle._
 import monocle.function.{all => Optics}
 import monocle.macros._
 import japgolly.scalajs.react.MonocleReact._
-
-// import qasrl.apps.util.Rgba
 
 import qasrl.bank.AnswerSource
 import qasrl.bank.AnnotationRound
@@ -58,10 +57,22 @@ import io.circe._
 
 import scala.concurrent.Future
 
-object FrameAnnClient {
+case class Rgba(r: Double, g: Double, b: Double, a: Double) {
+  def add(that: Rgba) = {
+    if(this.a == 0.0) that else if(that.a == 0.0) this else {
+      val alpha = 1.0 - ((1.0 - a) * (1.0 - that.a))
+      Rgba(
+        (a * r / alpha) + ((1.0 - a) * (that.r * that.a) / alpha),
+        (a * g / alpha) + ((1.0 - a) * (that.g * that.a) / alpha),
+        (a * b / alpha) + ((1.0 - a) * (that.b * that.a) / alpha),
+        alpha
+      )
+    }
+  }
+  def toColorStyleString = f"rgba(${math.round(r)}%d, ${math.round(g)}%d, ${math.round(b)}%d, $a%.4f)"
+}
 
-  val ParseJsonFetch = new CacheCallContent[String, Json]
-  val OptIntLocal = new LocalState[Option[Int]]
+object FrameAnnClient {
 
   val S = FrameAnnStyles
 
@@ -75,69 +86,50 @@ object FrameAnnClient {
     val initial = State()
   }
 
-  // @Lenses case class Span(
-  //   start: Int,
-  //   end: Int,
-  //   text: String
-  // )
+  @Lenses case class ResId(
+    isFull: Boolean,
+    index: Int) {
+    def toProxy = ResIdProxy(isFull, index.toString)
+  }
 
-  // @Lenses case class QAPair(
-  //   question: String,
-  //   spans: List[Span]
-  // )
+  @Lenses case class ResIdProxy(
+    isFull: Boolean,
+    index: String) {
+    def toResId = scala.util.Try(index.toInt).toOption.map(ResId(isFull, _))
+  }
 
-  // @Lenses case class Verb(
-  //   verb: String,
-  //   qa_pairs: List[QAPair],
-  //   index: Int
-  // )
+  val ResIdLocal = new LocalState[ResId]
+  val ResIdProxyLocal = new LocalState[ResIdProxy]
+  val ResLocal = new LocalState[ClauseResolution]
+  val ResFetch = new CacheCallContent[ResId, ClauseResolution]
+  val DocFetch = new CacheCallContent[DocumentId, Document]
 
-  // @Lenses case class Parse(
-  //   words: Vector[String],
-  //   verbs: List[Verb]
-  // )
+  def checkboxToggle[A](
+    label: String,
+    isValueActive: StateSnapshot[Boolean]
+  ) = <.div(
+    <.input(S.checkbox)(
+      ^.`type` := "checkbox",
+      ^.value := label,
+      ^.checked := isValueActive.value,
+      ^.onChange --> isValueActive.modState(!_)
+    ),
+    <.span(S.checkboxLabel)(
+      label
+    )
+  )
 
-  // @Lenses case class State(
-  //   curText: String,
-  //   curQuery: Option[String],
-  //   curResult: Option[Parse]
-  // )
-  // object State {
-  //   def initial = State("", None, None)
-  // }
+  val transparent = Rgba(255, 255, 255, 0.0)
+  val queryKeywordHighlightLayer = Rgba(255, 255, 0, 0.4)
 
-
-  // def makeStateValForState[P, S](
-  //   scope: BackendScope[P, S],
-  //   state: S
-  // ) = StateVal[S](state, s => scope.setState(s))
-
-  // val transparent = Rgba(255, 255, 255, 0.0)
-  // val queryKeywordHighlightLayer = Rgba(255, 255, 0, 0.4)
-
-  // val highlightLayerColors = List(
-  //   // Rgba(255, 255,   0, 0.2), // yellow
-  //   Rgba(  0, 128, 255, 0.1), // green-blue
-  //   Rgba(255,   0, 128, 0.1), // magenta?
-  //   Rgba( 64, 192,   0, 0.1), // something. idk
-  //   Rgba(128,   0, 255, 0.1), // mystery
-  //   Rgba(  0, 255, 128, 0.1)  // blue-green
-  // )
-
-  // def checkboxToggle[A](
-  //   label: String,
-  //   isValueActive: StateVal[Boolean]
-  // ) = <.div(
-  //   <.input(S.checkbox)(
-  //     ^.`type` := "checkbox",
-  //     ^.value := label,
-  //     ^.checked := isValueActive.get,
-  //     ^.onChange --> isValueActive.modify(!_)
-  //   ),
-  //   <.span(S.checkboxLabel)(
-  //     label
-  //   )
-  // )
+  val highlightLayerColors = List(
+    // Rgba(255, 255,   0, 0.2), // yellow
+    Rgba(  0, 128, 255, 0.1), // green-blue
+    Rgba(255,   0, 128, 0.1), // magenta?
+    Rgba( 64, 192,   0, 0.1), // something. idk
+    Rgba(128,   0, 255, 0.1), // mystery
+    Rgba(  0, 255, 128, 0.1)  // blue-green
+  )
 
   // val helpModalId = "help-modal"
   // val helpModalLabelId = "help-modal-label"
@@ -148,90 +140,90 @@ object FrameAnnClient {
   // val dataDismiss = VdomAttr("data-dismiss")
   // val ariaLabel = VdomAttr("aria-label")
 
-  // import cats.Order.catsKernelOrderingForOrder
+  import cats.Order.catsKernelOrderingForOrder
 
-  // implicit val answerSpanOrder: Order[AnswerSpan] = Order.whenEqual(
-  //   Order.by[AnswerSpan, Int](_.begin),
-  //   Order.by[AnswerSpan, Int](_.end)
-  // )
+  implicit val answerSpanOrder: Order[AnswerSpan] = Order.whenEqual(
+    Order.by[AnswerSpan, Int](_.begin),
+    Order.by[AnswerSpan, Int](_.end)
+  )
 
-  // def spanOverlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
-  //   x.begin < y.end && y.begin < x.end
-  // }
-  // def spanContains(s: AnswerSpan, q: Int): Boolean = {
-  //   q >= s.begin && q < s.end
-  // }
+  def spanOverlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
+    x.begin < y.end && y.begin < x.end
+  }
+  def spanContains(s: AnswerSpan, q: Int): Boolean = {
+    q >= s.begin && q < s.end
+  }
 
-  // sealed trait SpanColoringSpec {
-  //   def spansWithColors: List[(AnswerSpan, Rgba)]
-  // }
-  // case class RenderWholeSentence(val spansWithColors: List[(AnswerSpan, Rgba)]) extends SpanColoringSpec
-  // case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(AnswerSpan, Rgba)]) extends SpanColoringSpec {
-  //   def spansWithColors = spansWithColorsNel.toList
-  // }
+  sealed trait SpanColoringSpec {
+    def spansWithColors: List[(AnswerSpan, Rgba)]
+  }
+  case class RenderWholeSentence(val spansWithColors: List[(AnswerSpan, Rgba)]) extends SpanColoringSpec
+  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(AnswerSpan, Rgba)]) extends SpanColoringSpec {
+    def spansWithColors = spansWithColorsNel.toList
+  }
 
-  // def renderSentenceWithHighlights(
-  //   sentenceTokens: Vector[String],
-  //   coloringSpec: SpanColoringSpec,
-  //   wordRenderers : Map[Int, VdomTag => VdomTag] = Map()
-  // ) = {
-  //   val containingSpan = coloringSpec match {
-  //     case RenderWholeSentence(_) =>
-  //       AnswerSpan(0, sentenceTokens.size)
-  //     case RenderRelevantPortion(swcNel) =>
-  //       val spans = swcNel.map(_._1)
-  //       AnswerSpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
-  //   }
-  //   val wordIndexToLayeredColors = (containingSpan.begin until containingSpan.end).map { i =>
-  //     i -> coloringSpec.spansWithColors.collect {
-  //       case (span, color) if spanContains(span, i) => color
-  //     }
-  //   }.toMap
-  //   val indexAfterToSpaceLayeredColors = ((containingSpan.begin + 1) to containingSpan.end).map { i =>
-  //     i -> coloringSpec.spansWithColors.collect {
-  //       case (span, color) if spanContains(span, i - 1) && spanContains(span, i) => color
-  //     }
-  //   }.toMap
-  //   Text.render[Int, List, List[VdomElement]](
-  //     words = sentenceTokens.indices.toList,
-  //     getToken = (index: Int) => sentenceTokens(index),
-  //     spaceFromNextWord = (nextIndex: Int) => {
-  //       if(!spanContains(containingSpan, nextIndex) || nextIndex == containingSpan.begin) List() else {
-  //         val colors = indexAfterToSpaceLayeredColors(nextIndex)
-  //         val colorStr = NonEmptyList[Rgba](transparent, colors)
-  //           .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
-  //         List(
-  //           <.span(
-  //             ^.key := s"space-$nextIndex",
-  //             ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
-  //             " "
-  //           )
-  //         )
-  //       }
-  //     },
-  //     renderWord = (index: Int) => {
-  //       if(!spanContains(containingSpan, index)) List() else {
-  //         val colorStr = NonEmptyList(transparent, wordIndexToLayeredColors(index))
-  //           .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
-  //         val render: (VdomTag => VdomTag) = wordRenderers.get(index).getOrElse((x: VdomTag) => x)
-  //         val element: VdomTag = render(
-  //           <.span(
-  //             ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
-  //             Text.normalizeToken(sentenceTokens(index))
-  //           )
-  //         )
-  //         List(element(^.key := s"word-$index"))
-  //       }
-  //     }
-  //   ).toVdomArray(x => x)
-  // }
+  def renderSentenceWithHighlights(
+    sentenceTokens: Vector[String],
+    coloringSpec: SpanColoringSpec,
+    wordRenderers : Map[Int, VdomTag => VdomTag] = Map()
+  ) = {
+    val containingSpan = coloringSpec match {
+      case RenderWholeSentence(_) =>
+        AnswerSpan(0, sentenceTokens.size)
+      case RenderRelevantPortion(swcNel) =>
+        val spans = swcNel.map(_._1)
+        AnswerSpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
+    }
+    val wordIndexToLayeredColors = (containingSpan.begin until containingSpan.end).map { i =>
+      i -> coloringSpec.spansWithColors.collect {
+        case (span, color) if spanContains(span, i) => color
+      }
+    }.toMap
+    val indexAfterToSpaceLayeredColors = ((containingSpan.begin + 1) to containingSpan.end).map { i =>
+      i -> coloringSpec.spansWithColors.collect {
+        case (span, color) if spanContains(span, i - 1) && spanContains(span, i) => color
+      }
+    }.toMap
+    Text.render[Int, List, List[VdomElement]](
+      words = sentenceTokens.indices.toList,
+      getToken = (index: Int) => sentenceTokens(index),
+      spaceFromNextWord = (nextIndex: Int) => {
+        if(!spanContains(containingSpan, nextIndex) || nextIndex == containingSpan.begin) List() else {
+          val colors = indexAfterToSpaceLayeredColors(nextIndex)
+          val colorStr = NonEmptyList[Rgba](transparent, colors)
+            .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
+          List(
+            <.span(
+              ^.key := s"space-$nextIndex",
+              ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
+              " "
+            )
+          )
+        }
+      },
+      renderWord = (index: Int) => {
+        if(!spanContains(containingSpan, index)) List() else {
+          val colorStr = NonEmptyList(transparent, wordIndexToLayeredColors(index))
+            .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
+          val render: (VdomTag => VdomTag) = wordRenderers.get(index).getOrElse((x: VdomTag) => x)
+          val element: VdomTag = render(
+            <.span(
+              ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
+              Text.normalizeToken(sentenceTokens(index))
+            )
+          )
+          List(element(^.key := s"word-$index"))
+        }
+      }
+    ).toVdomArray(x => x)
+  }
 
   // def makeAllHighlightedAnswer(
   //   sentenceTokens: Vector[String],
-  //   spans: NonEmptyList[Span],
+  //   spans: NonEmptyList[AnswerSpan],
   //   color: Rgba
   // ): VdomArray = {
-  //   val orderedSpans = spans.map(s => AnswerSpan(s.start, s.end + 1)).sorted
+  //   val orderedSpans = spans.sorted
   //   case class GroupingState(
   //     completeGroups: List[NonEmptyList[AnswerSpan]],
   //     currentGroup: NonEmptyList[AnswerSpan]
@@ -259,158 +251,130 @@ object FrameAnnClient {
 
   // val colspan = VdomAttr("colspan")
 
-  // def qaLabelRow(
-  //   sentenceTokens: Vector[String],
-  //   qaPair: QAPair,
-  //   color: Rgba
-  // ) = {
-  //   <.tr(S.qaPairRow)(
-  //     <.td(S.questionCell)(
-  //       <.span(S.questionText)(
-  //         qaPair.question
-  //       )
-  //     ),
-  //     <.td(S.answerCell)(
-  //       <.span(S.answerText) {
-  //         NonEmptyList.fromList(qaPair.spans).whenDefined { spansNel =>
-  //           makeAllHighlightedAnswer(sentenceTokens, spansNel, color)
-  //         }
-  //       }
-  //     )
-  //   )
-  // }
-
-  // def verbEntryDisplay(
-  //   sentenceTokens: Vector[String],
-  //   verb: Verb,
-  //   color: Rgba
-  // ) = {
-  //   <.div(S.verbEntryDisplay)(
-  //     <.div(
-  //       <.a(
-  //         ^.name := s"verb-${verb.index}",
-  //         ^.display := "block",
-  //         ^.position := "relative",
-  //         ^.visibility := "hidden"
-  //       )
-  //     ),
-  //     <.div(S.verbHeading)(
-  //       <.span(S.verbHeadingText)(
-  //         ^.color := color.copy(a = 1.0).toColorStyleString,
-  //         sentenceTokens(verb.index)
-  //       )
-  //     ),
-  //     <.table(S.verbQAsTable)(
-  //       <.tbody(S.verbQAsTableBody) {
-  //         verb.qa_pairs.toVdomArray { qaPair =>
-  //           qaLabelRow(sentenceTokens, qaPair, color)(^.key := s"short-${qaPair.question}")
-  //         }
-  //       }
-  //     )
-  //   )
-  // }
 
   class Backend(scope: BackendScope[Props, State]) {
 
-  //   def getParse(parserUrl: String, sentence: String): CacheCall[Json] = {
-  //     import scala.concurrent.ExecutionContext.Implicits.global
-  //     import io.circe.parser.parse
-  //     Remote(org.scalajs.dom.ext.Ajax.post(url = parserUrl, data = sentence).map(r => parse(r.responseText).right.get))
-  //   }
-
     def render(props: Props, state: State) = {
-      <.div(S.mainContainer)(
-        // <.div(S.fixedRowContainer, S.headyContainer)(
-        //   <.h1(S.mainTitle)("QA-SRL Parser Demo")
-        // ),
-        // <.div(S.queryInputContainer, S.headyContainer)(
-        //   <.input(S.queryInput)(
-        //     ^.`type` := "text",
-        //     ^.placeholder := "Type a sentence",
-        //     ^.value := state.curText,
-        //     ^.onChange ==> ((e: ReactEventFromInput) => scope.modState(State.curText.set(e.target.value))),
-        //     ^.onKeyDown ==> (
-        //       (e: ReactKeyboardEvent) => {
-        //         CallbackOption.keyCodeSwitch(e) {
-        //           case KeyCode.Enter => scope.modState(State.curQuery.set(Some(state.curText)))
-        //         }
-        //       }
-        //     )
-        //   ),
-        //   <.button(S.querySubmitButton)(
-        //     ^.disabled := state.curText.isEmpty,
-        //     ^.onClick --> scope.modState(State.curQuery.set(Some(state.curText))),
-        //     "Submit"
-        //   )
-        // ),
-        // state.curQuery.whenDefined { curQuery =>
-        //   ParseJsonFetch.make(request = curQuery, sendRequest = query => getParse(props.demoUrl, query)) {
-        //     case ParseJsonFetch.Loading => <.div(S.loadingNotice)("Waiting for parse...")
-        //     case ParseJsonFetch.Loaded(parseJson) =>
-        //       import io.circe.generic.auto._
-        //       parseJson.as[Parse] match {
-        //         case Left(err) => <.div(S.loadingNotice)("Error parsing parse JSON: " + err.toString)
-        //         case Right(parse) =>
-        //           val sortedVerbs = parse.verbs.toList.sortBy(_.index)
-        //           OptIntLocal.make(initialValue = None) { highlightedVerbIndex =>
-        //             val answerSpansWithColors = for {
-        //               (verb, index) <- sortedVerbs.zipWithIndex
-        //               if highlightedVerbIndex.get.forall(_ == verb.index)
-        //               qa <- verb.qa_pairs
-        //               span <- qa.spans
-        //             } yield AnswerSpan(span.start, span.end + 1) -> highlightLayerColors(index % highlightLayerColors.size)
-        //             val verbColorMap = sortedVerbs
-        //               .zipWithIndex.map { case (verb, index) =>
-        //                 verb.index -> highlightLayerColors(index % highlightLayerColors.size)
-        //             }.toMap
+      ResIdLocal.make(initialValue = ResId(false, 0)) { resId =>
+        <.div(S.mainContainer)(
+          <.div(S.fixedRowContainer, S.headyContainer)(
+            ResIdProxyLocal.make(initialValue = resId.value.toProxy) { resIdProxy =>
+              <.div(
+                checkboxToggle("Full ambiguity", resIdProxy.zoomStateL(ResIdProxy.isFull)),
+                <.input(S.queryInput)(
+                  ^.`type` := "text",
+                  ^.placeholder := "Index of ambiguity",
+                  ^.value := resIdProxy.value.index,
+                  ^.onChange ==> ((e: ReactEventFromInput) => resIdProxy.zoomStateL(ResIdProxy.index).setState(e.target.value)),
+                  ^.onKeyDown ==> (
+                    (e: ReactKeyboardEvent) => {
+                      CallbackOption.keyCodeSwitch(e) {
+                        case KeyCode.Enter =>
+                          resIdProxy.value.toResId.fold(Callback.empty)(resId.setState)
+                      }
+                    }
+                  )
+                )
+              )
+            }
+          ),
+          ResFetch.make(request = resId.value, sendRequest = id => Remote(props.annService.getResolution(id.isFull, id.index))) {
+            case ResFetch.Loading => <.div(S.loadingNotice)("Waiting for clause ambiguity data...")
+            case ResFetch.Loaded(loadedClauseResolution) =>
+              println("Loaded: " + loadedClauseResolution)
+              ResLocal.make(initialValue = loadedClauseResolution) { clauseResolutionS =>
+                val clauseResolution = clauseResolutionS.value
+                println("Local: " + clauseResolution)
+                val ambig = clauseResolution.ambiguity
+                val sid = ambig.sentenceId
+                DocFetch.make(request = sid.documentId, sendRequest = id => props.docService.getDocument(id)) {
+                  case DocFetch.Loading => <.div(S.loadingNotice)("Waiting for document...")
+                  case DocFetch.Loaded(document) =>
+                    val sentence = document.sentences.find(_.sentenceId == SentenceId.toString(sid)).get
+                    val verbEntry = sentence.verbEntries(ambig.verbIndex)
+                    val questionLabel = verbEntry.questionLabels(ambig.questionString)
 
-        //             <.div(S.flexyBottomContainer, S.flexColumnContainer)(
-        //               <.div(S.fixedRowContainer, S.sentenceTextContainer, S.headyContainer)(
-        //                 <.span(S.sentenceText)(
-        //                   renderSentenceWithHighlights(
-        //                     parse.words,
-        //                     RenderWholeSentence(answerSpansWithColors),
-        //                     verbColorMap.collect { case (verbIndex, color) =>
-        //                       verbIndex -> (
-        //                         (v: VdomTag) => <.a(
-        //                           S.verbAnchorLink,
-        //                           ^.href := s"#verb-$verbIndex",
-        //                           v(
-        //                             ^.color := color.copy(a = 1.0).toColorStyleString,
-        //                             ^.fontWeight := "bold",
-        //                             ^.onMouseMove --> (
-        //                               if(highlightedVerbIndex.get == Some(verbIndex)) {
-        //                                 Callback.empty
-        //                               } else highlightedVerbIndex.set(Some(verbIndex))
-        //                             ),
-        //                             ^.onMouseOut --> highlightedVerbIndex.set(None)
-        //                           )
-        //                         )
-        //                       )
-        //                     }
-        //                   )
-        //                 )
-        //               ),
-        //               <.div(S.scrollPane)(
-        //                 sortedVerbs.toVdomArray { verb =>
-        //                   verbEntryDisplay(parse.words, verb, verbColorMap(verb.index))(
-        //                     S.hoverHighlightedVerbTable.when(highlightedVerbIndex.get.exists(_ == verb.index)),
-        //                     ^.key := verb.index,
-        //                     ^.onMouseMove --> (
-        //                       if(highlightedVerbIndex.get == Some(verb.index)) {
-        //                         Callback.empty
-        //                       } else highlightedVerbIndex.set(Some(verb.index))
-        //                     ),
-        //                     ^.onMouseOut --> highlightedVerbIndex.set(None)
-        //                   )
-        //                 }
-        //               )
-        //             )
-        //           }
-        //       }
-        //   }
-        // }
-      )
+                    val blueGreen = Rgba(0, 128, 255, 0.1)
+                    val verbColorMap = Map(verbEntry.verbIndex -> blueGreen)
+                    val answerSpansWithColors = questionLabel.answerJudgments.toList
+                      .flatMap(_.judgment.getAnswer).flatMap(_.spans.toList)
+                      .map(span => span -> blueGreen)
+
+                    <.div(S.flexyBottomContainer, S.flexColumnContainer)(
+                      <.div(S.fixedRowContainer, S.sentenceTextContainer, S.headyContainer)(
+                        <.span(S.sentenceText)(
+                          renderSentenceWithHighlights(
+                            sentence.sentenceTokens,
+                            RenderWholeSentence(answerSpansWithColors),
+                            verbColorMap.collect { case (verbIndex, color) =>
+                              verbIndex -> (
+                                (v: VdomTag) => <.a(
+                                  S.verbAnchorLink,
+                                  ^.href := s"#verb-$verbIndex",
+                                  v(
+                                    ^.color := color.copy(a = 1.0).toColorStyleString,
+                                    ^.fontWeight := "bold",
+                                    )
+                                )
+                              )
+                            }
+                          )
+                        )
+                      ),
+                      <.div(S.verbEntryDisplay)(
+                        <.div(S.verbHeading)(
+                          <.span(S.verbHeadingText)(
+                            ^.color := blueGreen.copy(a = 1.0).toColorStyleString,
+                            sentence.sentenceTokens(verbEntry.verbIndex)
+                          )
+                        ),
+                        <.div(S.questionHeading)(
+                          <.span(S.questionHeadingText)(
+                            ambig.questionString
+                          )
+                        ),
+                        <.table(S.verbQAsTable)(
+                          <.tbody(S.verbQAsTableBody)(
+                            ambig.structures.toList.toVdomArray { clauseChoice =>
+                              val innerCell = <.td(
+                                <.span(S.clauseChoiceText)(
+                                  clauseChoice.frame.clauses.mkString(" / "),
+                                ),
+                                ^.onClick --> (
+                                  Callback(println(clauseChoice)) >>
+                                    Callback.future(
+                                      props.annService.saveResolution(resId.value.isFull, resId.value.index, clauseChoice)
+                                        .map(clauseResolutionS.setState)
+                                    )
+                                )
+                              )
+                              if(clauseResolution.choiceOpt.exists(_ == clauseChoice)) {
+                                <.tr(S.clauseChoiceRow, S.darkerClauseChoiceRow)(
+                                  innerCell
+                                )
+                              } else {
+                                <.tr(S.clauseChoiceRow)(
+                                  innerCell
+                                )
+                              }
+                            }
+                          )
+                        ),
+                        <.div(^.paddingTop := "20px")(
+                          <.h3("Other Questions"),
+                          <.ul(
+                            verbEntry.questionLabels.keySet.toList.toVdomArray(qStr =>
+                              <.li(qStr)
+                            )
+                          )
+                        )
+                      )
+                    )
+                }
+              }
+          }
+        )
+      }
     }
   }
 
