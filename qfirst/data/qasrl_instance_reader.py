@@ -294,8 +294,8 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
             clause_string_list_field = ListField([LabelField(label = -1, label_namespace = "abst-clause-labels", skip_indexing = True)])
             qarg_list_field = ListField([LabelField(label = -1, label_namespace = "qarg-labels", skip_indexing = True)])
             answer_spans_field = ListField([ListField([SpanField(-1, -1, verb_fields["text"])])])
-            num_answers_field = ListField([ListField([LabelField(-1, skip_indexing = True)])])
-            num_invalids_field = ListField([ListField([LabelField(-1, skip_indexing = True)])])
+            num_answers_field = ListField([LabelField(-1, skip_indexing = True)])
+            num_invalids_field = ListField([LabelField(-1, skip_indexing = True)])
         else:
             for question_label in question_labels:
 
