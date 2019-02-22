@@ -289,51 +289,61 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
             qarg_fields = []
             gold_tuples = []
 
-        for question_label in question_labels:
+        if len(question_labels) == 0:
+            tan_string_list_field = ListField([LabelField(label = -1, label_namespace = "tan-string-labels", skip_indexing = True)])
+            clause_string_list_field = ListField([LabelField(label = -1, label_namespace = "abst-clause-labels", skip_indexing = True)])
+            qarg_list_field = ListField([LabelField(label = -1, label_namespace = "qarg-labels", skip_indexing = True)])
+            answer_spans_field = ListField([ListField([SpanField(-1, -1, verb_fields["text"])])])
+            num_answers_field = ListField([ListField([LabelField(-1, skip_indexing = True)])])
+            num_invalids_field = ListField([ListField([LabelField(-1, skip_indexing = True)])])
+        else:
+            for question_label in question_labels:
 
-            tan_string = get_tan_string(question_label)
-            tan_string_field = LabelField(label = tan_string, label_namespace = "tan-string-labels")
-            tan_strings.append(tan_string)
-            tan_string_fields.append(tan_string_field)
+                tan_string = get_tan_string(question_label)
+                tan_string_field = LabelField(label = tan_string, label_namespace = "tan-string-labels")
+                tan_strings.append(tan_string)
+                tan_string_fields.append(tan_string_field)
 
-            answer_fields = get_answer_fields(question_label, verb_fields["text"])
-            all_answer_fields.append(answer_fields)
+                answer_fields = get_answer_fields(question_label, verb_fields["text"])
+                all_answer_fields.append(answer_fields)
+
+                if self._clause_info is not None:
+                    clause_slots = {}
+                    try:
+                        clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
+                    except KeyError:
+                        logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
+                        continue
+
+                    def abst_noun(x):
+                        return "something" if (x == "someone") else x
+                    clause_slots["abst-subj"] = abst_noun(clause_slots["subj"])
+                    clause_slots["abst-verb"] = "verb[pss]" if question_label["isPassive"] else "verb"
+                    clause_slots["abst-obj"] = abst_noun(clause_slots["obj"])
+                    clause_slots["abst-prep1-obj"] = abst_noun(clause_slots["prep1-obj"])
+                    clause_slots["abst-prep2-obj"] = abst_noun(clause_slots["prep2-obj"])
+                    clause_slots["abst-misc"] = abst_noun(clause_slots["misc"])
+                    abst_slot_names = ["abst-subj", "abst-verb", "abst-obj", "prep1", "abst-prep1-obj", "prep2", "abst-prep2-obj", "abst-misc"]
+                    clause_string = " ".join([clause_slots[slot_name] for slot_name in abst_slot_names])
+                    clause_string_field = LabelField(label = clause_string, label_namespace = "abst-clause-labels")
+                    clause_strings.append(clause_string)
+                    clause_string_fields.append(clause_string_field)
+
+                    qarg_fields.append(LabelField(label = clause_slots["qarg"], label_namespace = "qarg-labels"))
+
+                    for span_field in answer_fields["answer_spans"]:
+                        if span_field.span_start > -1:
+                            s = (span_field.span_start, span_field.span_end)
+                            gold_tuples.append((clause_string, clause_slots["qarg"], s))
+
+            tan_string_list_field = ListField(tan_string_fields)
+            answer_spans_field = ListField([f["answer_spans"] for f in all_answer_fields])
+            num_answers_field = ListField([f["num_answers"] for f in all_answer_fields])
+            num_invalids_field = ListField([f["num_invalids"] for f in all_answer_fields])
 
             if self._clause_info is not None:
-                clause_slots = {}
-                try:
-                    clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
-                except KeyError:
-                    logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
-                    continue
-
-                def abst_noun(x):
-                    return "something" if (x == "someone") else x
-                clause_slots["abst-subj"] = abst_noun(clause_slots["subj"])
-                clause_slots["abst-verb"] = "verb[pss]" if question_label["isPassive"] else "verb"
-                clause_slots["abst-obj"] = abst_noun(clause_slots["obj"])
-                clause_slots["abst-prep1-obj"] = abst_noun(clause_slots["prep1-obj"])
-                clause_slots["abst-prep2-obj"] = abst_noun(clause_slots["prep2-obj"])
-                clause_slots["abst-misc"] = abst_noun(clause_slots["misc"])
-                abst_slot_names = ["abst-subj", "abst-verb", "abst-obj", "prep1", "abst-prep1-obj", "prep2", "abst-prep2-obj", "abst-misc"]
-                clause_string = " ".join([clause_slots[slot_name] for slot_name in abst_slot_names])
-                clause_string_field = LabelField(label = clause_string, label_namespace = "abst-clause-labels")
-                clause_strings.append(clause_string)
-                clause_string_fields.append(clause_string_field)
-
-                qarg_fields.append(LabelField(label = clause_slots["qarg"], label_namespace = "qarg-labels"))
-
-                for span_field in answer_fields["answer_spans"]:
-                    if span_field.span_start > -1:
-                        s = (span_field.span_start, span_field.span_end)
-                        gold_tuples.append((clause_string, clause_slots["qarg"], s))
-
-                        if s not in animacy_label_map:
-                            animacy_label_map[s] = []
-                        if clause_slots["qarg"] in clause_slots and clause_slots[clause_slots["qarg"]] == "someone":
-                            animacy_label_map[s].append(1)
-                        elif clause_slots["qarg"] in clause_slots and clause_slots[clause_slots["qarg"]] == "something":
-                            animacy_label_map[s].append(0)
+                clause_string_list_field = ListField(clause_string_fields)
+                qarg_list_field = ListField(qarg_fields)
 
         if self._clause_info is not None:
             all_clause_strings = set(clause_strings)
@@ -351,17 +361,17 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
 
         tan_multilabel_field = MultiLabelField_New(list(set(tan_strings)), label_namespace = "tan-string-labels")
 
-        if self._clause_info is not None and len(clause_string_fields) > 0:
+        if self._clause_info is not None:
             yield {
                 **verb_fields,
-                "clause_strings": ListField(clause_string_fields),
+                "clause_strings": clause_string_list_field,
                 "clause_set": MultiLabelField_New(clause_strings, label_namespace = "abst-clause-labels"),
-                "tan_strings": ListField(tan_string_fields),
-                "qargs": ListField(qarg_fields),
-                "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
-                "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
-                "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
+                "tan_strings": tan_string_list_field,
                 "tan_set": tan_multilabel_field,
+                "qargs": qarg_list_field,
+                "answer_spans": answer_spans_field,
+                "num_answers": num_answers_field,
+                "num_invalids": num_invalids_field,
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
                 }),
@@ -369,19 +379,13 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
                 "qarg_labeled_spans": ListField(qarg_pretrain_span_fields),
                 "qarg_labels": ListField(qarg_pretrain_multilabel_fields),
             }
-        elif len(tan_string_fields) > 0:
-            yield {
-                **verb_fields,
-                "tan_strings": ListField(tan_string_fields),
-                "answer_spans": ListField([f["answer_spans"] for f in all_answer_fields]),
-                "num_answers": ListField([f["num_answers"] for f in all_answer_fields]),
-                "num_invalids": ListField([f["num_invalids"] for f in all_answer_fields]),
-                "tan_set": tan_multilabel_field,
-                "metadata": MetadataField({}),
-            }
         else:
             yield {
                 **verb_fields,
+                "tan_strings": tan_string_list_field,
                 "tan_set": tan_multilabel_field,
+                "answer_spans": answer_spans_field,
+                "num_answers": num_answers_field,
+                "num_invalids": num_invalids_field,
                 "metadata": MetadataField({}),
             }
