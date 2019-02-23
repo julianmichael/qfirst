@@ -20,7 +20,7 @@ case class ClauseAnnotationClient(apiUrl: String) extends ClauseAnnotationServic
     }
   }
 
-  def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): Future[ClauseResolution] = {
+  def saveResolution(isFull: Boolean, index: Int, choice: Set[ClauseChoice]): Future[ClauseResolution] = {
     val route = apiUrl + "/" + (if(isFull) "full" else "local") + "/save/" + index
     org.scalajs.dom.ext.Ajax.post(url = route, data = printer.pretty(choice.asJson)).map(_.responseText).flatMap { jsonStr =>
       decode[ClauseResolution](jsonStr) match {

@@ -34,13 +34,13 @@ import qasrl.bank.service.JsonCodecs._
 import io.circe.syntax._
 
 @Lenses case class ClauseResolutionData(
-  localResolutions: Map[ClauseAmbiguity, ClauseChoice],
-  fullResolutions: Map[ClauseAmbiguity, ClauseChoice])
+  localResolutions: Map[ClauseAmbiguity, Set[ClauseChoice]],
+  fullResolutions: Map[ClauseAmbiguity, Set[ClauseChoice]])
 object ClauseResolutionData {
   import io.circe.{Encoder, Decoder}
   def fromLists(
-    local: List[(ClauseAmbiguity, ClauseChoice)],
-    full: List[(ClauseAmbiguity, ClauseChoice)]
+    local: List[(ClauseAmbiguity, Set[ClauseChoice])],
+    full: List[(ClauseAmbiguity, Set[ClauseChoice])]
   ) = ClauseResolutionData(local.toMap, full.toMap)
   implicit val clauseResolutionDataDecoder: Decoder[ClauseResolutionData] =
     Decoder.forProduct2("localResolutions", "fullResolutions")(fromLists)
@@ -96,7 +96,7 @@ case class ClauseAnnotationServiceIO(
     ClauseResolution(ambig, choiceOpt)
   }
 
-  override def saveResolution(isFull: Boolean, index: Int, choice: ClauseChoice): IO[ClauseResolution] = {
+  override def saveResolution(isFull: Boolean, index: Int, choice: Set[ClauseChoice]): IO[ClauseResolution] = {
     val ambig = if(isFull) sortedFullAmbiguities(index) else sortedLocalAmbiguities(index)
     val lens = (
       if(isFull) ClauseResolutionData.fullResolutions
@@ -114,7 +114,7 @@ object ClauseAnnotationHttpService {
 
   def make(service: ClauseAnnotationServiceIO) = {
 
-    implicit val clauseChoiceDecoder = jsonOf[IO, ClauseChoice]
+    implicit val clauseChoiceDecoder = jsonOf[IO, Set[ClauseChoice]]
     implicit val clauseResolutionEncoder = jsonEncoderOf[IO, ClauseResolution]
     implicit val clauseChoiceOptEncoder = jsonEncoderOf[IO, Option[ClauseChoice]]
 
@@ -126,9 +126,9 @@ object ClauseAnnotationHttpService {
       case GET -> Root / "full" / IntVar(index) =>
         service.getResolution(true, index).flatMap(Ok(_))
       case req @ POST -> Root / "local" / "save" / IntVar(index) =>
-        req.as[ClauseChoice].map(service.saveResolution(false, index, _)).flatMap(Ok(_))
+        req.as[Set[ClauseChoice]].map(service.saveResolution(false, index, _)).flatMap(Ok(_))
       case req @ POST -> Root / "full" / "save" / IntVar(index) =>
-        req.as[ClauseChoice].map(service.saveResolution(true, index, _)).flatMap(Ok(_))
+        req.as[Set[ClauseChoice]].map(service.saveResolution(true, index, _)).flatMap(Ok(_))
     }
   }
 }

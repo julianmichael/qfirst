@@ -281,10 +281,8 @@ object FrameAnnClient {
           ResFetch.make(request = resId.value, sendRequest = id => Remote(props.annService.getResolution(id.isFull, id.index))) {
             case ResFetch.Loading => <.div(S.loadingNotice)("Waiting for clause ambiguity data...")
             case ResFetch.Loaded(loadedClauseResolution) =>
-              println("Loaded: " + loadedClauseResolution)
               ResLocal.make(initialValue = loadedClauseResolution) { clauseResolutionS =>
                 val clauseResolution = clauseResolutionS.value
-                println("Local: " + clauseResolution)
                 val ambig = clauseResolution.ambiguity
                 val sid = ambig.sentenceId
                 DocFetch.make(request = sid.documentId, sendRequest = id => props.docService.getDocument(id)) {
@@ -342,13 +340,15 @@ object FrameAnnClient {
                                 ),
                                 ^.onClick --> (
                                   Callback(println(clauseChoice)) >>
-                                    Callback.future(
-                                      props.annService.saveResolution(resId.value.isFull, resId.value.index, clauseChoice)
+                                    Callback.future {
+                                      val curChoice = clauseResolution.choiceOpt.getOrElse(Set.empty[ClauseChoice])
+                                      val newChoice = if(curChoice.contains(clauseChoice)) curChoice - clauseChoice else curChoice + clauseChoice
+                                      props.annService.saveResolution(resId.value.isFull, resId.value.index, newChoice)
                                         .map(clauseResolutionS.setState)
-                                    )
+                                    }
                                 )
                               )
-                              if(clauseResolution.choiceOpt.exists(_ == clauseChoice)) {
+                              if(clauseResolution.choiceOpt.exists(_.contains(clauseChoice))) {
                                 <.tr(S.clauseChoiceRow, S.darkerClauseChoiceRow)(
                                   innerCell
                                 )
@@ -356,6 +356,24 @@ object FrameAnnClient {
                                 <.tr(S.clauseChoiceRow)(
                                   innerCell
                                 )
+                              }
+                            },
+                            {
+                              val innerCell = <.td(
+                                <.span(S.clauseChoiceText)(
+                                  "<None>"
+                                ),
+                                ^.onClick --> (
+                                  Callback.future {
+                                    props.annService.saveResolution(resId.value.isFull, resId.value.index, Set.empty[ClauseChoice])
+                                      .map(clauseResolutionS.setState)
+                                  }
+                                )
+                              )
+                              if(clauseResolution.choiceOpt.exists(_.isEmpty)) {
+                                <.tr(S.clauseChoiceRow, S.darkerClauseChoiceRow)(innerCell)
+                              } else {
+                                <.tr(S.clauseChoiceRow)(innerCell)
                               }
                             }
                           )
