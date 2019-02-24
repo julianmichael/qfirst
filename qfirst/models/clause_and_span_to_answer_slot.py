@@ -57,6 +57,8 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         batch_size, num_labeled_instances, _ = qarg_labeled_spans.size()
         # Shape: batch_size, num_labeled_instances
         qarg_labeled_mask = (qarg_labeled_spans[:, :, 0] >= 0).squeeze(-1).long()
+        if len(qarg_labeled_mask.size()) == 1:
+            qarg_labeled_mask = qarg_labeled_mask.unsqueeze(-1)
 
         # max to prevent the padded labels from messing up the embedding module
         # Shape: batch_size, num_labeled_instances, self._clause_embedding_dim
@@ -74,13 +76,18 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         # Shape: batch_size, num_labeled_instances, get_vocab_size("qarg-labels")
         qarg_logits = self._qarg_predictor(self._qarg_ffnn(qarg_inputs))
 
-        final_mask = qarg_labeled_mask.unsqueeze(-1)
-        if len(final_mask.size()) == 2:
-            final_mask = final_mask.unsqueeze(-1)
-        final_mask = final_mask \
+        final_mask = qarg_labeled_mask.unsqueeze(-1) \
                         .expand(batch_size, num_labeled_instances, self.vocab.get_vocab_size("qarg-labels")) \
                         .float()
         qarg_probs = torch.sigmoid(qarg_logits).squeeze(-1) * final_mask
+
+        print("num_labeled_instances: " + str(num_labeled_instances))
+        print("qarg_labeled_spans: " + str(qarg_labeled_spans.size()))
+        print("qarg_labeled_mask: " + str(qarg_labeled_mask.size()))
+        print("qarg_inputs: " + str(qarg_inputs.size()))
+        print("qarg_logits: " + str(qarg_logits.size()))
+        print("final_mask: " + str(final_mask.size()))
+        print("qarg_labels: " + str(qarg_labels.size()))
 
         output_dict = {"logits": qarg_logits, "probs": qarg_probs}
         if qarg_labels is not None:
