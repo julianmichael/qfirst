@@ -139,13 +139,6 @@ class QasrlQuestionReader(QasrlInstanceReader):
             all_slots_dict = {**question_slots_dict, **abstract_slots_dict, **clause_slots_dict}
             included_slot_fields = { k: v for k, v in all_slots_dict.items() if k in self._slot_names }
 
-            print()
-            print("### ALL SLOTS ###")
-            print(all_slots_dict)
-            print("### INCLUDED SLOTS ###")
-            print(included_slot_fields)
-            print()
-
             answer_fields = get_answer_fields(question_label, verb_fields["text"])
 
             metadata = {
