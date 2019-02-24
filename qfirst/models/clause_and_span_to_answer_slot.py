@@ -81,14 +81,6 @@ class ClauseAndSpanToAnswerSlotModel(Model):
                         .float()
         qarg_probs = torch.sigmoid(qarg_logits).squeeze(-1) * final_mask
 
-        print("num_labeled_instances: " + str(num_labeled_instances))
-        print("qarg_labeled_spans: " + str(qarg_labeled_spans.size()))
-        print("qarg_labeled_mask: " + str(qarg_labeled_mask.size()))
-        print("qarg_inputs: " + str(qarg_inputs.size()))
-        print("qarg_logits: " + str(qarg_logits.size()))
-        print("final_mask: " + str(final_mask.size()))
-        print("qarg_labels: " + str(qarg_labels.size()))
-
         output_dict = {"logits": qarg_logits, "probs": qarg_probs}
         if qarg_labels is not None:
             output_dict["loss"] = F.binary_cross_entropy_with_logits(
