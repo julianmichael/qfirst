@@ -18,7 +18,7 @@ from allennlp.nn.util import batched_index_select
 from qfirst.metrics.binary_f1 import BinaryF1
 
 from qfirst.modules.slot_sequence_encoder import SlotSequenceEncoder
-from qfirst.modules.span_selector import SpanSelector
+from qfirst.modules.pruning_span_selector import PruningSpanSelector
 from qfirst.modules.sentence_encoder import SentenceEncoder
 
 @Model.register("qasrl_question_to_span")
@@ -26,7 +26,7 @@ class QuestionToSpanModel(Model):
     def __init__(self, vocab: Vocabulary,
                  sentence_encoder: SentenceEncoder,
                  question_encoder: SlotSequenceEncoder,
-                 span_selector: SpanSelector,
+                 span_selector: PruningSpanSelector,
                  classify_invalids: bool = True,
                  invalid_hidden_dim: int = 100,
                  initializer: InitializerApplicator = InitializerApplicator(),
