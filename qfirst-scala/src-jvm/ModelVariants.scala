@@ -477,7 +477,7 @@ object ModelVariants extends IOApp {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure(instanceType))
       _ <- slotNames.fold(param(H.unit))(s => param("slot_names", H.pure(s)).as(()))
-      _ <- clauseInfoFile.fold(param(H.unit))(s => param("clause_info_files", H.pure(List(s)).as(())))
+      _ <- clauseInfoFile.fold(param(H.unit))(s => param("clause_info_files", H.pure(List(s))).as(()))
     } yield ()
   }
 
@@ -508,8 +508,11 @@ object ModelVariants extends IOApp {
     } yield ()
   }
   object Model {
-    def question(slotNames: List[String]) = Model(
-      datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("question", slotNames = Some(slotNames))),
+    def question(slotNames: List[String], includeClauseData: Boolean = false) = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.validQuestions,
+        QasrlInstanceReader("question", slotNames = Some(slotNames), clauseInfoFile = Some("clause-data-train-dev.jsonl").filter(_ => includeClauseData))
+      ),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_question"))
@@ -523,8 +526,12 @@ object ModelVariants extends IOApp {
     def questionToSpan(
       slotNames: List[String],
       classifyInvalids: Boolean,
-      ) = Model(
-      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("question", slotNames = Some(slotNames))),
+      includeClauseData: Boolean = false
+    ) = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.allQuestions,
+        QasrlInstanceReader("question", slotNames = Some(slotNames), clauseInfoFile = Some("clause-data-train-dev.jsonl").filter(_ => includeClauseData))
+      ),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_question_to_span"))
@@ -627,31 +634,69 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    // question no tan, question to tan to span
-    // annotate clauses
-    // clause no tan, clause no anim, clause no tan or anim,
-    // clause strings, clause and span to answer slot
+    val clauseString = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.validQuestions,
+        QasrlInstanceReader("question_factored", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_multiclass"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("label_name", H.pure("clause_set"))
+          _ <- param("label_namespace", H.pure("abst-clause-labels"))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
+
+    val answerSlot = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.questionsWithAnswers,
+        QasrlInstanceReader("question_factored", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_clause_and_span_to_answer_slot"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("qarg_ffnn", FeedForward(encoderOutputDim))
+        } yield ()
+      },
+      validationMetric = "+f1"
+    )
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
   val noTanSlots = List("wh", "subj", "abst-verb", "obj", "prep", "obj2")
   val clauseSlots = List("clause-subj", "clause-aux", "clause-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
+  val clauseNoAnimSlots = List("clause-abst-subj", "clause-aux", "clause-verb", "clause-abst-obj", "clause-prep1", "clause-abst-prep1-obj", "clause-prep2", "clause-abst-prep2-obj", "clause-abst-misc", "clause-qarg")
   val clauseNoTanSlots = List("clause-subj", "clause-abst-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
+  val clauseNoTanOrAnimSlots = List("clause-abst-subj", "clause-abst-verb", "clause-abst-obj", "clause-prep1", "clause-abst-prep1-obj", "clause-prep2", "clause-abst-prep2-obj", "clause-abst-misc", "clause-qarg")
 
   val models = MapTree.fork(
     "span" -> MapTree.leaf[String](Model.span),
     "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     "question" -> MapTree.fromPairs(
       "full" -> Model.question(fullSlots),
-      "no_tan" -> Model.question(noTanSlots)
+      "no_tan" -> Model.question(noTanSlots),
+      "clausal" -> Model.question(clauseSlots, includeClauseData = true),
+      "clausal_no_tan" -> Model.question(clauseNoTanSlots, includeClauseData = true),
+      "clausal_no_anim" -> Model.question(clauseNoAnimSlots, includeClauseData = true),
+      "clausal_no_tan_or_anim" -> Model.question(clauseNoTanOrAnimSlots, includeClauseData = true),
     ),
     "question_to_span" -> MapTree.fromPairs(
       "full" -> Model.questionToSpan(fullSlots, true),
-      "no_tan" -> Model.questionToSpan(noTanSlots, true)
+      "no_tan" -> Model.questionToSpan(noTanSlots, true),
+      "clausal" -> Model.questionToSpan(clauseSlots, true, includeClauseData = true),
+      "clausal_no_tan" -> Model.questionToSpan(clauseNoTanSlots, true, includeClauseData = true),
+      "clausal_no_anim" -> Model.questionToSpan(clauseNoAnimSlots, true, includeClauseData = true),
+      "clausal_no_tan_or_anim" -> Model.questionToSpan(clauseNoTanOrAnimSlots, true, includeClauseData = true),
     ),
     "animacy" -> MapTree.leaf[String](Model.animacy),
     "tan" -> MapTree.leaf[String](Model.tan),
     "span_to_tan" -> MapTree.leaf[String](Model.spanToTan),
+    "clause_string" -> MapTree.leaf[String](Model.clauseString),
+    "answer_slot" -> MapTree.leaf[String](Model.answerSlot)
   )
 
   val bertSpecializedModels = MapTree.fork(

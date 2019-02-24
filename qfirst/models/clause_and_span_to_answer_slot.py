@@ -37,7 +37,7 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         self._span_extractor = EndpointSpanExtractor(input_dim = self._sentence_encoder.get_output_dim(), combination = "x,y")
         self._span_hidden = TimeDistributed(Linear(2 * self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim()))
         self._predicate_hidden = Linear(self._sentence_encoder.get_output_dim(), self._qarg_ffnn.get_input_dim())
-        self._qarg_predictor = Linear(self._qarg_ffnn.get_input_dim(), self.vocab.get_vocab_size("qarg-labels"))
+        self._qarg_predictor = Linear(self._qarg_ffnn.get_output_dim(), self.vocab.get_vocab_size("qarg-labels"))
         self._metric = BinaryF1()
 
     @overrides

@@ -120,8 +120,16 @@ class QasrlQuestionReader(QasrlInstanceReader):
             abstract_slots_dict = get_abstract_question_slot_fields(question_label)
             if self._clause_info is not None and any([s.startswith("clause") for s in self._slot_names]):
                 try:
-                    clause_dict = self._clause_info[sentence_id][verb_index][question_label["questionString"]]
-                    clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_dict["slots"].items() }
+                    clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
+                    def abst_noun(x):
+                        return "something" if (x == "someone") else x
+                    clause_slots["abst-subj"] = abst_noun(clause_slots["subj"])
+                    clause_slots["abst-verb"] = "verb[pss]" if question_label["isPassive"] else "verb"
+                    clause_slots["abst-obj"] = abst_noun(clause_slots["obj"])
+                    clause_slots["abst-prep1-obj"] = abst_noun(clause_slots["prep1-obj"])
+                    clause_slots["abst-prep2-obj"] = abst_noun(clause_slots["prep2-obj"])
+                    clause_slots["abst-misc"] = abst_noun(clause_slots["misc"])
+                    clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_slots.items() }
                 except KeyError:
                     logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
                     continue
@@ -130,6 +138,13 @@ class QasrlQuestionReader(QasrlInstanceReader):
 
             all_slots_dict = {**question_slots_dict, **abstract_slots_dict, **clause_slots_dict}
             included_slot_fields = { k: v for k, v in all_slots_dict.items() if k in self._slot_names }
+
+            print()
+            print("### ALL SLOTS ###")
+            print(all_slots_dict)
+            print("### INCLUDED SLOTS ###")
+            print(included_slot_fields)
+            print()
 
             answer_fields = get_answer_fields(question_label, verb_fields["text"])
 
