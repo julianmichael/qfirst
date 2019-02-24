@@ -304,9 +304,6 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
             answer_spans_field = ListField([ListField([SpanField(-1, -1, verb_fields["text"])])])
             num_answers_field = ListField([LabelField(-1, skip_indexing = True)])
             num_invalids_field = ListField([LabelField(-1, skip_indexing = True)])
-            qarg_labeled_clauses_field = ListField(qarg_pretrain_clause_fields),
-            qarg_labeled_spans_field = ListField(qarg_pretrain_span_fields),
-            qarg_labels_field = ListField(qarg_pretrain_multilabel_fields),
         else:
             for question_label in question_labels:
 
@@ -375,7 +372,7 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
                 qarg_labeled_spans_field = ListField(qarg_pretrain_span_fields)
                 qarg_labels_field = ListField(qarg_pretrain_multilabel_fields)
             else:
-                qarg_labeled_clauses_field = ListField([LabelField(-1, label_namespace = "abst-clause-labels")])
+                qarg_labeled_clauses_field = ListField([LabelField(-1, label_namespace = "abst-clause-labels", skip_indexing = True)])
                 qarg_labeled_spans_field = ListField([SpanField(-1, -1, verb_fields["text"])])
                 qarg_labels_field = ListField([MultiLabelField_New(set(), label_namespace = "qarg-labels")])
 
