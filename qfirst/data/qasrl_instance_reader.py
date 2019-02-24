@@ -304,6 +304,9 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
             answer_spans_field = ListField([ListField([SpanField(-1, -1, verb_fields["text"])])])
             num_answers_field = ListField([LabelField(-1, skip_indexing = True)])
             num_invalids_field = ListField([LabelField(-1, skip_indexing = True)])
+            qarg_labeled_clauses_field = ListField(qarg_pretrain_clause_fields),
+            qarg_labeled_spans_field = ListField(qarg_pretrain_span_fields),
+            qarg_labels_field = ListField(qarg_pretrain_multilabel_fields),
         else:
             for question_label in question_labels:
 
@@ -367,6 +370,15 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
                     qarg_pretrain_span_fields.append(SpanField(span[0], span[1], verb_fields["text"]))
                     qarg_pretrain_multilabel_fields.append(MultiLabelField_New(valid_qargs, label_namespace = "qarg-labels"))
 
+            if len(qarg_pretrain_clause_fields) > 0:
+                qarg_labeled_clauses_field = ListField(qarg_pretrain_clause_fields)
+                qarg_labeled_spans_field = ListField(qarg_pretrain_span_fields)
+                qarg_labels_field = ListField(qarg_pretrain_multilabel_fields)
+            else:
+                qarg_labeled_clauses_field = ListField([LabelField(-1, label_namespace = "abst-clause-labels")])
+                qarg_labeled_spans_field = ListField([SpanField(-1, -1, verb_fields["text"])])
+                qarg_labels_field = ListField([MultiLabelField_New(set(), label_namespace = "qarg-labels")])
+
         tan_multilabel_field = MultiLabelField_New(list(set(tan_strings)), label_namespace = "tan-string-labels")
 
         if self._clause_info is not None:
@@ -383,9 +395,9 @@ class QasrlQuestionFactoredReader(QasrlInstanceReader):
                 "metadata": MetadataField({
                     "gold_set": set(gold_tuples) # TODO make it a multiset so we can change span selection policy?
                 }),
-                "qarg_labeled_clauses": ListField(qarg_pretrain_clause_fields),
-                "qarg_labeled_spans": ListField(qarg_pretrain_span_fields),
-                "qarg_labels": ListField(qarg_pretrain_multilabel_fields),
+                "qarg_labeled_clauses": qarg_labeled_clauses_field,
+                "qarg_labeled_spans": qarg_labeled_spans_field,
+                "qarg_labels": qarg_labels_field,
             }
         else:
             yield {
