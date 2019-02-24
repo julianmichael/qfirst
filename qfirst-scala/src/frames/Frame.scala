@@ -194,16 +194,24 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
   def questionsForSlot(slot: ArgumentSlot) = questionsForSlotWithArgs(slot, Map())
 
-  def clauses = clausesWithArgs(Map())
+  def clauses(addParens: Boolean = false) = clausesWithArgs(Map(), addParens)
 
-  def clausesWithArgs(argValues: ArgMap) = {
+  def clausesWithArgs(argValues: ArgMap, addParens: Boolean = false) = {
     val qStateT = {
       renderNecessaryNoun(Subj, argValues) >>
         renderAuxThroughVerb(includeSubject = false, argValues) >>
         renderArgIfPresent(Obj  , argValues) >>
-        renderArgIfPresent(Prep1, argValues) >>
-        renderArgIfPresent(Prep2, argValues) >>
-        renderArgIfPresent(Misc , argValues)
+        (
+          if(addParens) {
+            append("(") >> renderArgIfPresent(Prep1, argValues) >> append(")") >>
+            append("(") >> renderArgIfPresent(Prep2, argValues) >> append(")") >>
+              append("(") >> renderArgIfPresent(Misc , argValues) >> append(")")
+          } else {
+            renderArgIfPresent(Prep1, argValues) >>
+              renderArgIfPresent(Prep2, argValues) >>
+              renderArgIfPresent(Misc , argValues)
+          }
+        )
     }
     qStateT.runS(List.empty[String]).map(_.reverse.mkString(" "))
   }

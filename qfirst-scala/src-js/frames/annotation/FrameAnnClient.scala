@@ -257,27 +257,35 @@ object FrameAnnClient {
     def render(props: Props, state: State) = {
       ResIdLocal.make(initialValue = ResId(false, 0)) { resId =>
         <.div(S.mainContainer)(
-          <.div(S.fixedRowContainer, S.headyContainer)(
-            ResIdProxyLocal.make(initialValue = resId.value.toProxy) { resIdProxy =>
-              <.div(
-                checkboxToggle("Full ambiguity", resIdProxy.zoomStateL(ResIdProxy.isFull)),
-                <.input(S.queryInput)(
-                  ^.`type` := "text",
-                  ^.placeholder := "Index of ambiguity",
-                  ^.value := resIdProxy.value.index,
-                  ^.onChange ==> ((e: ReactEventFromInput) => resIdProxy.zoomStateL(ResIdProxy.index).setState(e.target.value)),
-                  ^.onKeyDown ==> (
-                    (e: ReactKeyboardEvent) => {
-                      CallbackOption.keyCodeSwitch(e) {
-                        case KeyCode.Enter =>
-                          resIdProxy.value.toResId.fold(Callback.empty)(resId.setState)
-                      }
+          ResIdProxyLocal.make(initialValue = resId.value.toProxy) { resIdProxy =>
+            <.div(S.fixedRowContainer, S.headyContainer)(
+              checkboxToggle("Full ambiguity", resIdProxy.zoomStateL(ResIdProxy.isFull)),
+              <.input(
+                ^.`type` := "text",
+                ^.placeholder := "Index of ambiguity",
+                ^.value := resIdProxy.value.index,
+                ^.onChange ==> ((e: ReactEventFromInput) => resIdProxy.zoomStateL(ResIdProxy.index).setState(e.target.value)),
+                ^.onKeyDown ==> (
+                  (e: ReactKeyboardEvent) => {
+                    CallbackOption.keyCodeSwitch(e) {
+                      case KeyCode.Enter =>
+                        resIdProxy.value.toResId.fold(Callback.empty)(resId.setState)
                     }
-                  )
+                  }
                 )
+              ),
+              <.button(
+                ^.`type` := "button",
+                ^.onClick --> resId.zoomStateL(ResId.index).modState(_ - 1),
+                "<--"
+              ),
+              <.button(
+                ^.`type` := "button",
+                ^.onClick --> resId.zoomStateL(ResId.index).modState(_ + 1),
+                "-->"
               )
-            }
-          ),
+            )
+          },
           ResFetch.make(request = resId.value, sendRequest = id => Remote(props.annService.getResolution(id.isFull, id.index))) {
             case ResFetch.Loading => <.div(S.loadingNotice)("Waiting for clause ambiguity data...")
             case ResFetch.Loaded(loadedClauseResolution) =>
@@ -336,8 +344,8 @@ object FrameAnnClient {
                             ambig.structures.toList.toVdomArray { clauseChoice =>
                               val innerCell = <.td(
                                 <.span(S.clauseChoiceText)(
-                                  clauseChoice.frame.clauses.mkString(" / "),
-                                ),
+                                  clauseChoice.frame.clauses(true).mkString(" / "),
+                                  ),
                                 ^.onClick --> (
                                   Callback(println(clauseChoice)) >>
                                     Callback.future {

@@ -9,7 +9,6 @@ import cats.effect.{ContextShift, ExitCode, IO, IOApp, Resource}
 import io.circe.jawn
 import io.circe.{Encoder, Decoder}
 
-import fs2.text
 import fs2.Stream
 
 import java.nio.file.{Path => NIOPath}
@@ -29,8 +28,8 @@ object FileUtil {
     path: NIOPath, ec: ExecutionContext)(
     implicit cs: ContextShift[IO], decoder: Decoder[A]
   ): Stream[IO, A] = fs2.io.file.readAll[IO](path, ec, 4096)
-    .through(text.utf8Decode)
-    .through(text.lines)
+    .through(fs2.text.utf8Decode)
+    .through(fs2.text.lines)
     .filter(_.nonEmpty)
     .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(e => new RuntimeException(s"${e.show}\n$line"))))
 
@@ -56,6 +55,20 @@ object FileUtil {
     import io.circe.syntax._
     IO(Option(path.getParent).foreach(java.nio.file.Files.createDirectories(_))) >>
       IO(java.nio.file.Files.write(path, printer.pretty(a.asJson).getBytes("UTF-8")))
+  }
+
+  def writeJsonLines[A](path: NIOPath, printer: Printer)(as: Seq[A])(
+    implicit cs: ContextShift[IO], encoder: Encoder[A]
+  ): IO[Unit] = {
+    import io.circe.syntax._
+    IO(Option(path.getParent).foreach(java.nio.file.Files.createDirectories(_))) >>
+      Stream.resource(blockingExecutionContext).flatMap { _ec =>
+        Stream.emits[IO, A](as)
+          .map(a => printer.pretty(a.asJson))
+          .intersperse("\n")
+          .through(fs2.text.utf8Encode)
+          .through(fs2.io.file.writeAll(path, _ec))
+      }.compile.drain
   }
 
   def readClauseInfo(

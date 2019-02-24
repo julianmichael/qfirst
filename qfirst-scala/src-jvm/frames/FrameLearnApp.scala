@@ -2,12 +2,14 @@ package qfirst.frames
 import qfirst._
 import qfirst.metrics._
 import qfirst.probability._
+import qfirst.frames.annotation._
 
 import cats.Applicative
 import cats.Id
 import cats.Functor
 import cats.Monoid
 import cats.Monad
+import cats.Show
 
 import cats.data.NonEmptyList
 import cats.data.Writer
@@ -278,56 +280,130 @@ object FrameLearnApp extends IOApp {
     } yield ()
   }
 
-  def writeFrameData[M: FramePredictionModel](
+  import FrameDataWriter._
+  import FramePredictionModel.ops._
+
+  def getFramePredictions[M: FramePredictionModel](
     data: Dataset,
-    model: M,
-    outPath: NIOPath
-  ): IO[Unit] = {
-    import FrameDataWriter._
-    import FramePredictionModel.ops._
-    import io.circe.syntax._
-
-    val printer = io.circe.Printer.noSpaces
-
-    def jsonItemsIter = for {
+    model: M
+  ): List[FrameInfo] = {
+    def frameInfoIter = for {
       (sentenceId, sentence) <- data.sentences.iterator
       (verbIndex, verb) <- sentence.verbEntries.iterator
       (questionString, (frame, answerSlot)) <- model.predictFramesWithAnswers(verb)
-    } yield {
-      val info = FrameInfo(sentenceId, verbIndex, questionString, frame, answerSlot)
-      printer.pretty(info.asJson)
-    }
-
-    val fileString = jsonItemsIter.mkString("\n")
-
-    IO(Files.write(outPath, fileString.getBytes("UTF-8")))
+    } yield FrameInfo(sentenceId, verbIndex, questionString, frame, answerSlot)
+    frameInfoIter.toList
   }
 
-  def program(qasrlBankPath: NIOPath, outPath: NIOPath): IO[ExitCode] = {
+  def learnModel(qasrlBankPath: NIOPath)(implicit log: Log[IO], datasetMonoid: Monoid[Dataset]) = for {
+    train <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("train.jsonl.gz")))
+    dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
+    devDense <- IO(Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
+    model <- SimpleFrameInduction.run[IO](train, dev)
+    _ <- printFrameStats(train |+| dev |+| devDense, model)
+  } yield (train |+| dev |+| devDense, model)
+
+  def printDisambiguationMetrics(
+    reference: ClauseResolutionData,
+    predictions: List[FrameInfo]
+  ): IO[Unit] = {
+    val groupedPredictions = predictions.groupBy(fi =>
+      (fi.sentenceId, fi.verbIndex, fi.question)
+    )
+
+    sealed trait PredClass extends Product with Serializable
+    case object NoClause extends PredClass
+    case object AnyClause extends PredClass
+    case object Correct extends PredClass
+    case object Incorrect extends PredClass
+    object PredClass {
+      implicit val predClassShow: Show[PredClass] = Show.show[PredClass] {
+        case NoClause => "no clause"
+        case AnyClause => "any clause"
+        case Correct => "correct"
+        case Incorrect => "incorrect"
+      }
+    }
+
+    import shapeless._
+    import shapeless.syntax.singleton._
+    import shapeless.record._
+
+    def computeMetrics(
+      ambig: ClauseAmbiguity,
+      choice: Set[ClauseChoice],
+      prediction: FrameInfo
+    ) = {
+      val predictedChoice = ClauseChoice(prediction.frame, prediction.answerSlot)
+      val (predClass, acc) =
+        if(choice.isEmpty) NoClause -> Accuracy[FrameInfo]()
+        else if(choice == ambig.structures) AnyClause -> Accuracy[FrameInfo]()
+        else if(choice.contains(predictedChoice)) Correct -> Accuracy.correct(prediction)
+        else Incorrect -> Accuracy.incorrect(prediction)
+
+      "counts" ->> FewClassCount(predClass) ::
+        "accuracy" ->> acc :: HNil
+    }
+    def computeMetricsForType(refs: Map[ClauseAmbiguity, Set[ClauseChoice]]) = {
+      refs.toList.foldMap { case (ambig, choice) =>
+        val pred = groupedPredictions(
+          (SentenceId.toString(ambig.sentenceId), ambig.verbIndex, ambig.questionString)
+        ).head
+        computeMetrics(ambig, choice, pred)
+      }
+    }
+    val allMetrics = {
+      "local" ->> computeMetricsForType(reference.localResolutions) ::
+        "full" ->> computeMetricsForType(reference.fullResolutions) :: HNil
+    }
+
+    IO(println(getMetricsString(allMetrics)))
+  }
+
+  def program(
+    qasrlBankPathOpt: Option[NIOPath],
+    predictionsPathOpt: Option[NIOPath],
+    clauseAnnPathOpt: Option[NIOPath],
+    outPathOpt: Option[NIOPath]
+  ): IO[ExitCode] = {
     implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     implicit val _log = Log.console
+    val printer = io.circe.Printer.noSpaces
     for {
-      train <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("train.jsonl.gz")))
-      dev <- IO(Data.readDataset(qasrlBankPath.resolve("expanded").resolve("dev.jsonl.gz")))
-      devDense <- IO(Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
-      model <- SimpleFrameInduction.run[IO](train, dev)
-      // _ <- writeFrameData(train |+| dev |+| devDense, model, outPath)
-      _ <- printFrameStats(train |+| dev |+| devDense, model)
+      predictionsOpt <- predictionsPathOpt.map(p => FileUtil.readJsonLines[FrameInfo](p).compile.toList).sequence
+      clauseResolutionStoreOpt <- clauseAnnPathOpt.map(FileUtil.readJson[ClauseResolutionData]).sequence
+      _ <- (clauseResolutionStoreOpt, predictionsOpt).mapN(printDisambiguationMetrics(_, _)).sequence
+      _ <- qasrlBankPathOpt.map { qasrlBankPath =>
+        learnModel(qasrlBankPath).flatMap { case (dataset, model) =>
+          val framePredictions = getFramePredictions(dataset, model)
+          for {
+            _ <- printFrameStats(dataset, model)
+            _ <- outPathOpt.map(p => FileUtil.writeJsonLines(p, printer)(framePredictions)).sequence
+            _ <- clauseResolutionStoreOpt.map(printDisambiguationMetrics(_, framePredictions)).sequence
+          } yield ()
+        }
+      }.sequence
     } yield ExitCode.Success
   }
 
   val runFrameLearn = Command(
-    name = "mill qfirst.runClauseLearn",
-    header = "Learn the mapping from QA-SRL questions to clauses."
+    name = "mill qfirst.jvm.runFrameLearn",
+    header = "Learn and evaluate the mapping from QA-SRL questions to clauses."
   ) {
-    val goldPath = Opts.option[NIOPath](
-      "gold", metavar = "path", help = "Path to the QA-SRL Bank."
-    )
+    val qasrlBankPath = Opts.option[NIOPath](
+      "qasrl-bank", metavar = "path", help = "Path to the QA-SRL Bank."
+    ).orNone
+    val predictionPath = Opts.option[NIOPath](
+      "predictions", metavar = "path", help = "Path to preexisting disambiguation model predictions."
+    ).orNone
+    val clauseAnnPath = Opts.option[NIOPath](
+      "gold-clauses", metavar = "path", help = "Path to the manual clause annotation disambiguation file."
+    ).orNone
     val outPath = Opts.option[NIOPath](
       "out", metavar = "path", help = "Path where to write the output file."
-    )
+    ).orNone
 
-    (goldPath, outPath).mapN(program)
+    (qasrlBankPath, predictionPath, clauseAnnPath, outPath).mapN(program)
   }
 
    def run(args: List[String]): IO[ExitCode] = {

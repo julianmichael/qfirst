@@ -78,7 +78,7 @@ object FrameAnnStyles extends StyleSheet.Inline {
   )
 
   val queryInputContainer = style(
-    fixedRowContainer,
+    // fixedRowContainer,
     display.flex,
     flexDirection.row
   )
