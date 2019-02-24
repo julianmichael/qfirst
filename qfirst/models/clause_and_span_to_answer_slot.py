@@ -73,10 +73,13 @@ class ClauseAndSpanToAnswerSlotModel(Model):
         qarg_inputs = F.relu(pred_embedding.unsqueeze(1) + input_clauses + input_span_hidden)
         # Shape: batch_size, num_labeled_instances, get_vocab_size("qarg-labels")
         qarg_logits = self._qarg_predictor(self._qarg_ffnn(qarg_inputs))
-        final_mask = qarg_labeled_mask \
-            .unsqueeze(-1) \
-            .expand(batch_size, num_labeled_instances, self.vocab.get_vocab_size("qarg-labels")) \
-            .float()
+
+        final_mask = qarg_labeled_mask.unsqueeze(-1)
+        if len(final_mask.size()) == 2:
+            final_mask = final_mask.unsqueeze(-1)
+        final_mask = final_mask \
+                        .expand(batch_size, num_labeled_instances, self.vocab.get_vocab_size("qarg-labels")) \
+                        .float()
         qarg_probs = torch.sigmoid(qarg_logits).squeeze(-1) * final_mask
 
         output_dict = {"logits": qarg_logits, "probs": qarg_probs}
