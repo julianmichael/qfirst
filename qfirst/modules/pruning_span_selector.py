@@ -41,6 +41,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
+                 skip_metrics_during_training: bool = True,
                  metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
@@ -53,6 +54,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
         self._pruning_ratio = pruning_ratio
         self._objective = objective
         self._gold_span_selection_policy = gold_span_selection_policy
+        self._skip_metrics_during_training = skip_metrics_during_training
 
         if objective not in objective_values:
             raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
@@ -129,61 +131,22 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
             prediction_mask = batched_index_select(gold_span_labels.unsqueeze(-1),
                                                    top_span_indices)
 
-        if self._objective == "binary":
-            top_span_probs = torch.sigmoid(top_span_logits) * top_span_mask
-            output_dict = {
-                "span_mask": span_mask,
-                "top_span_indices": top_span_indices,
-                "top_span_mask": top_span_mask,
-                "top_span_logits": top_span_logits,
-                "top_span_probs": top_span_probs
-            }
-            if answer_spans is not None:
-                loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
-                                                          weight = top_span_mask, reduction = "sum")
-                scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-                output_dict["spans"] = scored_spans
-                self._metric(scored_spans, [m["gold_spans"] for m in metadata])
-                output_dict["loss"] = loss
-            return output_dict
-        else:
-            # shouldn't be too hard to fix this up, but it's not a priority
-            assert self._objective == "multinomial"
-            raise NotImplementedError
-            # batch_size = top_span_logits.size(0)
-            # null_scores = predicate_indicator.new_zeros([batch_size]).float()
-            # masked_span_logits = top_span_logits + top_span_mask.float().log() # "masks out" bad spans by setting them to -Inf
-            # scores_with_null = torch.cat([null_scores.unsqueeze(-1), top_span_logits], -1)
-            # pred_log_probs = masked_log_softmax(scores_with_null) # don't need a mask; already did it above
-            # pred_probs = pred_log_probs.exp()
-            # top_span_probs = pred_probs[..., 1:]
-            # null_prob = pred_probs[..., 0]
-            # output_dict = {
-            #     "span_mask": span_mask,
-            #     "top_span_indices": top_span_indices,
-            #     "top_span_mask": top_span_mask,
-            #     "top_span_scores": top_span_scores,
-            #     "top_span_probs": top_span_probs,
-            #     "null_prob": null_prob
-            # }
-
-            # if answer_spans is not None:
-            #     gold_dummy_labels = None
-            #     gold_dummy_standin = prediction_mask.view(batch_size, -1).sum(1) == 0
-            #     gold_dummy_labels = torch.max(gold_invalid_labels, gold_dummy_standin.float())
-            #     gold_labels_with_dummy = torch.cat([gold_dummy_labels.unsqueeze(-1).float(), prediction_mask], -1)
-            #     correct_log_probs = pred_log_probs + gold_labels_with_dummy.log()
-            #     logsumexp_intermediate = -util.logsumexp(correct_log_probs)
-            #     negative_marginal_log_likelihood = -util.logsumexp(correct_log_probs).sum()
-
-            #     scored_spans = self._to_scored_spans(span_mask, top_span_indices, top_span_mask, top_span_probs)
-            #     self._metric.with_explicit_invalids(
-            #         self.decode(output_dict)
-            #         [m["question_label"] for m in metadata],
-            #         num_invalids.cpu(), num_answers.cpu())
-            #     output_dict["loss"] = negative_marginal_log_likelihood
-
-            # return output_dict
+        top_span_probs = torch.sigmoid(top_span_logits) * top_span_mask
+        output_dict = {
+            "span_mask": span_mask,
+            "top_span_indices": top_span_indices,
+            "top_span_mask": top_span_mask,
+            "top_span_logits": top_span_logits,
+            "top_span_probs": top_span_probs
+        }
+        if answer_spans is not None:
+            loss = F.binary_cross_entropy_with_logits(top_span_logits, prediction_mask,
+                                                        weight = top_span_mask, reduction = "sum")
+            output_dict["loss"] = loss
+        if not (self.training and self._skip_metrics_during_training):
+            output_dict = self.decode(output_dict)
+            self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
+        return output_dict
 
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "spans" not in output_dict:
