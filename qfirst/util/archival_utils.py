@@ -51,9 +51,9 @@ def load_archive_from_folder(path: str,
 
         # Add these replacements to overrides
         replacements_dict: Dict[str, Any] = {}
-        for key, _ in files_to_archive.items():
-            if key.startswith("/"):
-                replacement_filename = key
+        for key, value in files_to_archive.items():
+            if value.startswith("/"):
+                replacement_filename = value
             else:
                 replacement_filename = os.path.join(serialization_dir, f"fta/{key}")
             replacements_dict[key] = replacement_filename
