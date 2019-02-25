@@ -112,7 +112,6 @@ class QFirstPipeline():
         else:
             animacy_instances = [None for _ in qg_instances]
 
-
         verb_dicts = []
         for (qg_instance, qa_instance_template, tan_output, span_to_tan_instance, animacy_instance) in zip(qg_instances, qa_instances, tan_outputs, span_to_tan_instances, animacy_instances):
             qg_instance.index_fields(self._question_model.vocab)
@@ -168,7 +167,7 @@ class QFirstPipeline():
                 for span, span_prob in scored_spans:
                     qa_beam.append({
                         "questionSlots": question_slots,
-                        "questionProb": question_probs[i],
+                        "questionProb": question_prob,
                         **invalid_dict,
                         "span": [span.start(), span.end() + 1],
                         "spanProb": span_prob

@@ -28,24 +28,9 @@ def load_archive_from_folder(archive_file: str,
     # redirect to the cache, if necessary
     resolved_archive_file = cached_path(archive_file)
 
-    if resolved_archive_file == archive_file:
-        logger.info(f"loading archive file {archive_file}")
-    else:
-        logger.info(f"loading archive file {archive_file} from cache at {resolved_archive_file}")
+    logger.info(f"loading model from direactory {archive_file}")
 
-    if os.path.isdir(resolved_archive_file):
-        serialization_dir = resolved_archive_file
-    else:
-        # Extract archive to temp dir
-        tempdir = tempfile.mkdtemp()
-        logger.info(f"extracting archive file {resolved_archive_file} to temp dir {tempdir}")
-        with tarfile.open(resolved_archive_file, 'r:gz') as archive:
-            archive.extractall(tempdir)
-        # Postpone cleanup until exit in case the unarchived contents are needed outside
-        # this function.
-        atexit.register(_cleanup_archive_dir, tempdir)
-
-        serialization_dir = tempdir
+    serialization_dir = resolved_archive_file
 
     # Check for supplemental files in archive
     fta_filename = os.path.join(serialization_dir, _FTA_NAME)
@@ -55,12 +40,10 @@ def load_archive_from_folder(archive_file: str,
 
         # Add these replacements to overrides
         replacements_dict: Dict[str, Any] = {}
-        for key, value in files_to_archive.items():
-            if value.startswith("/"):
-                replacement_filename = value
-            else:
-                replacement_filename = os.path.join(serialization_dir, f"fta/{key}")
-            replacements_dict[key] = replacement_filename
+        for key, filename  in files_to_archive.items():
+            if not filename.startswith("/"):
+                filename = os.path.join(serialization_dir, f"fta/{key}")
+            replacements_dict[key] = filename
 
         overrides_dict = parse_overrides(overrides)
         combined_dict = with_fallback(preferred=unflatten(replacements_dict), fallback=overrides_dict)
