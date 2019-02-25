@@ -141,7 +141,7 @@ object ModelVariants extends IOApp {
       questionGeneratorSlotEmbeddingDim = List(200),
       questionGeneratorNumLayers = List(2, 4),
       includeSpanFFNN = List(true),
-      spanSelectorHiddenDim = List(300, 600),
+      spanSelectorHiddenDim = List(50, 100, 200),
       predicateFeatureDim = List(100),
       sentenceEncoderNumLayers = List(4, 8),
       sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
@@ -374,7 +374,7 @@ object ModelVariants extends IOApp {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("num_epochs", H.numEpochs)
       _ <- param("grad_norm", H.pure(1.0))
-      _ <- param("patience", H.pure(5))
+      _ <- param("patience", H.pure(2))
       _ <- param("validation_metric", H.pure(validationMetric))
       _ <- param("cuda_device", H.cudaDevice)
       useBertAdam <- param(H.useBertAdam)
