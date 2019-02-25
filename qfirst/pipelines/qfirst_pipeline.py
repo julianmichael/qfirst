@@ -35,10 +35,11 @@ from qfirst.models.question_to_span import QuestionToSpanModel
 from qfirst.models.multiclass import MulticlassModel
 from qfirst.models.span_to_tan import SpanToTanModel
 from qfirst.models.animacy import AnimacyModel
+from qfirst.util.archival_utils import load_archive_from_folder
 
 span_minimum_threshold_default = 0.10
-question_minimum_threshold_default = 0.05
-tan_minimum_threshold_default = 0.25
+question_minimum_threshold_default = 0.03
+tan_minimum_threshold_default = 0.20
 question_beam_size_default = 10
 
 class QFirstPipeline():
@@ -57,23 +58,29 @@ class QFirstPipeline():
                  clause_mode: bool = False) -> None:
         self._question_model = question_model_archive.model
         self._question_model_dataset_reader = DatasetReader.from_params(question_model_archive.config["dataset_reader"].duplicate())
+        print("Question model loaded.", flush = True)
         self._question_to_span_model = question_to_span_model_archive.model
         self._question_to_span_model_dataset_reader = DatasetReader.from_params(question_to_span_model_archive.config["dataset_reader"].duplicate())
+        print("Question-to-span model loaded.", flush = True)
         if tan_model_archive is not None:
             self._tan_model = tan_model_archive.model
             self._tan_model_dataset_reader = DatasetReader.from_params(tan_model_archive.config["dataset_reader"].duplicate())
+            print("TAN model loaded.", flush = True)
         else:
             self._tan_model = None
         if span_to_tan_model_archive is not None:
             self._span_to_tan_model = span_to_tan_model_archive.model
             self._span_to_tan_model_dataset_reader = DatasetReader.from_params(span_to_tan_model_archive.config["dataset_reader"].duplicate())
+            print("Span-to-TAN model loaded.", flush = True)
         else:
             self._span_to_tan_model = None
         if animacy_model_archive is not None:
             self._animacy_model = animacy_model_archive.model
             self._animacy_model_dataset_reader = DatasetReader.from_params(animacy_model_archive.config["dataset_reader"].duplicate())
+            print("Animacy model loaded.", flush = True)
         else:
             self._animacy_model = None
+        print("All models loaded.", flush = True)
 
         self._span_minimum_threshold = span_minimum_threshold
         self._question_minimum_threshold = question_minimum_threshold
@@ -132,18 +139,24 @@ class QFirstPipeline():
                     qa_instance.add_field(slot_name, slot_label_field, self._question_to_span_model.vocab)
                 question_slots_list.append(question_slots)
                 verb_qa_instances.append(qa_instance)
-            qa_outputs = self._question_to_span_model.forward_on_instances(verb_qa_instances)
-            if self._animacy_model is not None or self._span_to_tan_model is not None:
-                all_spans = list(set([s for qa_output in qa_outputs for s, p in qa_output["spans"] if p >= self._span_minimum_threshold]))
-            if self._animacy_model is not None:
-                animacy_instance.add_field("animacy_spans", ListField([SpanField(s.start(), s.end(), animacy_instance["text"]) for s in all_spans]), self._animacy_model.vocab)
-                animacy_output = self._animacy_model.forward_on_instance(animacy_instance)
+            # TODO fix animacy and span to tan parts for size 0 instances
+            if len(verb_qa_instances) > 0:
+                qa_outputs = self._question_to_span_model.forward_on_instances(verb_qa_instances)
+                if self._animacy_model is not None or self._span_to_tan_model is not None:
+                    all_spans = list(set([s for qa_output in qa_outputs for s, p in qa_output["spans"] if p >= self._span_minimum_threshold]))
+                if self._animacy_model is not None:
+                    animacy_instance.add_field("animacy_spans", ListField([SpanField(s.start(), s.end(), animacy_instance["text"]) for s in all_spans]), self._animacy_model.vocab)
+                    animacy_output = self._animacy_model.forward_on_instance(animacy_instance)
+                else:
+                    animacy_output = None
+                if self._span_to_tan_model is not None:
+                    span_to_tan_instance.add_field("tan_spans", ListField([SpanField(s.start(), s.end(), span_to_tan_instance["text"]) for s in all_spans]))
+                    span_to_tan_output = self._span_to_tan_model.forward_on_instance(span_to_tan_instance)
+                else:
+                    span_to_tan_output = None
             else:
+                qa_outputs = []
                 animacy_output = None
-            if self._span_to_tan_model is not None:
-                span_to_tan_instance.add_field("tan_spans", ListField([SpanField(s.start(), s.end(), span_to_tan_instance["text"]) for s in all_spans]))
-                span_to_tan_output = self._span_to_tan_model.forward_on_instance(span_to_tan_instance)
-            else:
                 span_to_tan_output = None
 
             qa_beam = []
@@ -169,8 +182,8 @@ class QFirstPipeline():
                 ]
             if animacy_output is not None:
                 beam["animacy"] = [
-                    ([s.start(), s.end() + 1], p.item())
-                    for s, p in zip(all_spans, animacy_output["probs"])
+                    ([s.start(), s.end() + 1], p)
+                    for s, p in zip(all_spans, animacy_output["probs"].tolist())
                 ]
             if span_to_tan_output is not None:
                 beam["span_tans"] = [
@@ -181,8 +194,8 @@ class QFirstPipeline():
                     for s, probs in zip(all_spans, span_to_tan_output["probs"].tolist())
                 ]
             verb_dicts.append({
-                "verbIndex": qa_instance["metadata"]["verb_index"],
-                "verbInflectedForms": qa_instance["metadata"]["verb_inflected_forms"],
+                "verbIndex": qg_instance["metadata"]["verb_index"],
+                "verbInflectedForms": qg_instance["metadata"]["verb_inflected_forms"],
                 "beam": beam
             })
         return {
@@ -204,18 +217,21 @@ def main(question_model_path: str,
          tan_min_prob: float,
          question_beam_size: int,
          clause_mode: bool) -> None:
+    print("Checking device...", flush = True)
     check_for_gpu(cuda_device)
+    print("Loading models...", flush = True)
     pipeline = QFirstPipeline(
-        question_model_archive = load_archive(question_model_path, cuda_device = cuda_device),
-        question_to_span_model_archive = load_archive(question_to_span_model_path, cuda_device = cuda_device),
-        tan_model_archive = load_archive(tan_model_path, cuda_device = cuda_device) if tan_model_path is not None else None,
-        span_to_tan_model_archive = load_archive(span_to_tan_model_path, cuda_device = cuda_device) if span_to_tan_model_path is not None else None,
-        animacy_model_archive = load_archive(animacy_model_path, cuda_device = cuda_device) if animacy_model_path is not None else None,
+        question_model_archive = load_archive_from_folder(question_model_path, cuda_device = cuda_device, weights_file = os.path.join(question_model_path, "best.th")),
+        question_to_span_model_archive = load_archive_from_folder(question_to_span_model_path, cuda_device = cuda_device, weights_file = os.path.join(question_to_span_model_path, "best.th")),
+        tan_model_archive = load_archive_from_folder(tan_model_path, cuda_device = cuda_device, weights_file = os.path.join(tan_model_path, "best.th")) if tan_model_path is not None else None,
+        span_to_tan_model_archive = load_archive_from_folder(span_to_tan_model_path, cuda_device = cuda_device, weights_file = os.path.join(span_to_tan_model_path, "best.th")) if span_to_tan_model_path is not None else None,
+        animacy_model_archive = load_archive_from_folder(animacy_model_path, cuda_device = cuda_device, weights_file = os.path.join(animacy_model_path, "best.th")) if animacy_model_path is not None else None,
         question_minimum_threshold = question_min_prob,
         span_minimum_threshold = span_min_prob,
         tan_minimum_threshold = tan_min_prob,
         question_beam_size = question_beam_size,
         clause_mode = clause_mode)
+    print("Models loaded. Running...", flush = True)
     if output_file is None:
         for line in read_lines(cached_path(input_file)):
             input_json = json.loads(line)
@@ -226,15 +242,16 @@ def main(question_model_path: str,
             for line in read_lines(cached_path(input_file)):
                 input_json = json.loads(line)
                 output_json = pipeline.predict(input_json)
+                print(".", end = "", flush = True)
                 print(json.dumps(output_json), file = out)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "Run the answer-first pipeline")
-    parser.add_argument('--question', type=str, help = "Path to question generator model archive (.tar.gz).")
-    parser.add_argument('--question_to_span', type=str, help = "Path to question-to-span model archive (.tar.gz).")
-    parser.add_argument('--tan', type=str, help = "Path to TAN model archive (.tar.gz).", default = None)
-    parser.add_argument('--span_to_tan', type=str, help = "Path to Span-to-TAN model archive (.tar.gz).", default = None)
-    parser.add_argument('--animacy', type=str, help = "Path to animacy model archive (.tar.gz).", default = None)
+    parser.add_argument('--question', type=str, help = "Path to question generator model serialization dir.")
+    parser.add_argument('--question_to_span', type=str, help = "Path to question-to-span model serialization dir.")
+    parser.add_argument('--tan', type=str, help = "Path to TAN model serialization dir.", default = None)
+    parser.add_argument('--span_to_tan', type=str, help = "Path to Span-to-TAN model serialization dir.", default = None)
+    parser.add_argument('--animacy', type=str, help = "Path to animacy model archive serialization dir.", default = None)
     parser.add_argument('--cuda_device', type=int, default=-1)
     parser.add_argument('--input_file', type=str)
     parser.add_argument('--output_file', type=str, default = None)

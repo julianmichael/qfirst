@@ -17,7 +17,11 @@ from allennlp.models.archival import Archive
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-def load_archive_from_folder(path: str,
+CONFIG_NAME = "config.json"
+_WEIGHTS_NAME = "weights.th"
+_FTA_NAME = "files_to_archive.json"
+
+def load_archive_from_folder(archive_file: str,
                              cuda_device: int = -1,
                              overrides: str = "",
                              weights_file: str = None) -> Archive:
