@@ -37,7 +37,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
                  input_dim: int,
                  extra_input_dim: int = 0,
                  span_hidden_dim: int = 100,
-                 span_ffnn: FeedForward = None, # ignoring in this version
+                 span_ffnn: FeedForward = None,
                  objective: str = "binary",
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,

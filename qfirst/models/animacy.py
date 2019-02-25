@@ -58,6 +58,8 @@ class AnimacyModel(Model):
 
         # Shape: batch_size, num_labeled_instances
         animacy_mask = (animacy_spans[:, :, 0] >= 0).squeeze(-1).float()
+        if len(animacy_mask.size()) == 1:
+            animacy_mask = animacy_mask.unsqueeze(-1)
 
         # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
         span_embeddings = self._span_extractor(encoded_text, animacy_spans, text_mask, animacy_mask.long())

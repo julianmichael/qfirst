@@ -58,6 +58,8 @@ class SpanToTanModel(Model):
 
         # Shape: batch_size, num_labeled_instances
         span_mask = (tan_spans[:, :, 0] >= 0).squeeze(-1).float()
+        if len(span_mask.size()) == 1:
+            span_mask = span_mask.unsqueeze(-1)
 
         # Shape: batch_size, num_spans, 2 * encoder_output_projected_dim
         span_embeddings = self._span_extractor(encoded_text, tan_spans, text_mask, span_mask.long())
