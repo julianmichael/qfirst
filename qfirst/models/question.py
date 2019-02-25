@@ -71,12 +71,13 @@ class QuestionModel(Model):
                     predicate_indicator: torch.LongTensor,
                     predicate_index: torch.LongTensor,
                     max_beam_size: int,
-                    min_beam_probability: float):
+                    min_beam_probability: float,
+                    clause_mode: bool = False):
         # Shape: batch_size, num_tokens, self._sentence_encoder.get_output_dim()
         encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
         # Shape: batch_size, self._sentence_encoder.get_output_dim()
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
-        return self._question_generator.beam_decode(pred_rep, max_beam_size, min_beam_probability)
+        return self._question_generator.beam_decode(pred_rep, max_beam_size, min_beam_probability, clause_mode)
 
     def get_metrics(self, reset: bool = False):
         return self.metric.get_metric(reset=reset)

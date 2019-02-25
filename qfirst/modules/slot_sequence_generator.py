@@ -22,18 +22,18 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 class SlotSequenceGenerator(torch.nn.Module, Registrable):
     def __init__(self,
-            vocab: Vocabulary,
-            slot_names: List[str],
-            input_dim: int,
-            slot_hidden_dim: int = 100,
-            rnn_hidden_dim: int = 200,
-            slot_embedding_dim: int = 100,
-            num_layers: int = 1,
-            recurrent_dropout: float = 0.1,
-            highway: bool = True,
-            share_rnn_cell: bool =  False,
-            share_slot_hidden: bool = False,
-            clause_mode: bool = False):
+                 vocab: Vocabulary,
+                 slot_names: List[str],
+                 input_dim: int,
+                 slot_hidden_dim: int = 100,
+                 rnn_hidden_dim: int = 200,
+                 slot_embedding_dim: int = 100,
+                 num_layers: int = 1,
+                 recurrent_dropout: float = 0.1,
+                 highway: bool = True,
+                 share_rnn_cell: bool =  False,
+                 share_slot_hidden: bool = False,
+                 clause_mode: bool = False): # clause_mode flag no longer used
         super(SlotSequenceGenerator, self).__init__()
         self.vocab = vocab
         self._slot_names = slot_names
@@ -43,7 +43,6 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         self._rnn_hidden_dim = rnn_hidden_dim
         self._num_layers = num_layers
         self._recurrent_dropout = recurrent_dropout
-        self._clause_mode = clause_mode
 
         question_space_size = 1
         for slot_name in self._slot_names:
@@ -51,13 +50,6 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
             question_space_size *= num_values_for_slot
             logger.info("%s values for slot %s" % (num_values_for_slot, slot_name))
         logger.info("Slot sequence generation space: %s possible sequences" % question_space_size)
-
-        if self._clause_mode:
-            adverbial_qarg_indices = []
-            for qarg_value, qarg_index in self.vocab.get_token_to_index_vocabulary(get_slot_label_namespace("clause-qarg")).items():
-                if "clause-%s" % qarg_value not in self.get_slot_names():
-                    adverbial_qarg_indices.append(qarg_index)
-            self._adverbial_qarg_indices = set(adverbial_qarg_indices)
 
         slot_embedders = []
         for i, n in enumerate(self.get_slot_names()[:-1]):
@@ -220,7 +212,8 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
     def beam_decode(self,
                     inputs, # shape: 1, input_dim
                     max_beam_size,
-                    min_beam_probability):
+                    min_beam_probability,
+                    clause_mode: bool = False):
         min_beam_log_probability = math.log(min_beam_probability)
         batch_size, input_dim = inputs.size()
         if batch_size != 1:
@@ -240,7 +233,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         current_beam_states = [(init_embedding, init_mem, 0.)]
 
         for slot_index, slot_name in enumerate(self._slot_names):
-            ending_clause_with_qarg = self._clause_mode and slot_index == (len(self._slot_names) - 1) and slot_name == "clause-qarg"
+            ending_clause_with_qarg = clause_mode and slot_index == (len(self._slot_names) - 1) and slot_name == "clause-qarg"
             # list of pairs (of backpointer, slot_value_index, new_embedding, new_mem, log_prob) ?
             candidate_new_beam_states = []
             for i, (emb, mem, prev_log_prob) in enumerate(current_beam_states):
@@ -250,7 +243,10 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                 log_probabilities = F.log_softmax(logits, -1)
                 num_slot_values = self.vocab.get_vocab_size(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, num_slot_values):
-                    log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
+                    if len(log_probabilities.size()) == 0: # this only happens during testing with tiny datasets (slot vocab size of 1)
+                        log_prob = log_probabilities.item() + prev_log_prob
+                    else:
+                        log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
                     if slot_index < len(self._slot_names) - 1:
                         new_input_embedding = self._slot_embedders[slot_index](inputs.new([pred_slot_index]).long())
                     else:
@@ -278,7 +274,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                 current_backpointer = backpointers[slot_name][current_backpointer]
 
         # now if we're in clause mode, we need to filter the expanded beam
-        if self._clause_mode:
+        if clause_mode:
             chosen_beam_indices = []
             for beam_index in range(final_beam_size):
                 qarg_name = self.vocab.get_token_from_index(final_slots["clause-qarg"][beam_index].item(), get_slot_label_namespace("clause-qarg"))
@@ -288,9 +284,6 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                     arg_value = self.vocab.get_token_from_index(final_slots[qarg][beam_index].item(), get_slot_label_namespace(qarg))
                     should_keep = arg_value != "_"
                 else:
-                    # Old approach: remove adverbials with prob below the threshold
-                    # should_keep = final_log_probs[beam_index].item() >= min_beam_log_probability
-                    # New approach: keep all adverbials
                     should_keep = True
                 if should_keep:
                     chosen_beam_indices.append(beam_index)
