@@ -151,7 +151,7 @@ class SpanSelector(torch.nn.Module, Registrable):
             batch_spans = []
             for start, end, i in self._start_end_range(num_spans):
                 if score_mask[b, i] == 1 and probs[b, i] > self._span_probability_threshold:
-                    batch_spans.append((Span(start, end), probs[b, i]))
+                    batch_spans.append((Span(start, end), probs[b, i].item()))
             spans.append(batch_spans)
         return spans
 

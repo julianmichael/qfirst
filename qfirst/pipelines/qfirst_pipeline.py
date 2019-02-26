@@ -138,7 +138,6 @@ class QFirstPipeline():
                     qa_instance.add_field(slot_name, slot_label_field, self._question_to_span_model.vocab)
                 question_slots_list.append(question_slots)
                 verb_qa_instances.append(qa_instance)
-            # TODO fix animacy and span to tan parts for size 0 instances
             if len(verb_qa_instances) > 0:
                 qa_outputs = self._question_to_span_model.forward_on_instances(verb_qa_instances)
                 if self._animacy_model is not None or self._span_to_tan_model is not None:
