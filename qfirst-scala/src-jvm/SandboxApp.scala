@@ -2,9 +2,11 @@ package qfirst
 
 import qfirst.metrics._
 
-import cats.implicits._
+import cats.Foldable
+import cats.Order
 import cats.data.NonEmptyList
-import cats.effect.IO
+import cats.implicits._
+import cats.effect._
 
 import com.monovore.decline._
 
@@ -12,6 +14,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.Files
 
+import nlpdata.datasets.wiktionary.InflectedForms
+import nlpdata.datasets.wiktionary.VerbForm
 import nlpdata.util.Text
 import nlpdata.util.LowerCaseStrings._
 
@@ -28,8 +32,32 @@ import qasrl.data.VerbEntry
 import HasMetrics.ops._
 
 object SandboxApp extends App {
-  val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
-  val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
+
+  // import qfirst.protocols._
+
+  // def getSentenceBeamString(
+  //   pred: SentencePrediction[FactoringProtocol.Beam[QfirstBeamItem[Map[String, String]]]]
+  // ) = ""
+
+  // def printBeams = {
+  //   import fs2.Stream
+  //   import io.circe.generic.auto._
+  //   FileUtil.readJsonLines[
+  //     SentencePrediction[FactoringProtocol.Beam[QfirstBeamItem[Map[String, String]]]]
+  //   ](Paths.get("predictions/qfirst-clausal_no_anim/predictions.jsonl")).flatMap(s =>
+  //     Stream.eval(IO(println(getSentenceBeamString(s))))
+  //   ).compile.drain
+  // }
+
+  // def run(args: List[String]): IO[ExitCode] = for {
+  //   _ <- IO.unit
+  //   // _ <- printBeams
+  // } yield ExitCode.Success
+
+  lazy val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
+  lazy val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
+  lazy val denseDev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz"))
+  implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   val sortSpec = {
     import Metric._
@@ -62,85 +90,85 @@ object SandboxApp extends App {
   import shapeless.record._
   import monocle.function.{all => Optics}
 
-  import qfirst.frames.TemplateStateMachine.allPrepositions
+  // import qfirst.frames.TemplateStateMachine.allPrepositions
 
-  def getPrepMetrics(sentence: Sentence, verb: VerbEntry) = (qLabel: QuestionLabel) => {
-    val hasPrep = qLabel.answerJudgments
-      .flatMap(_.judgment.getAnswer)
-      .flatMap(_.spans)
-      .map(s =>
-      (
-        if(allPrepositions.contains(sentence.sentenceTokens(s.begin).lowerCase)) 3
-        else if(sentence.sentenceTokens.lift(s.begin - 1).map(_.lowerCase).exists(allPrepositions.contains)) 2
-        else 1
-      )
-    ).max match {
-      case 1 => "N"
-      case 2 => "-"
-      case 3 => "Y"
-    }
-    Bucketed(
-      Map(
-        Map("wh" -> qLabel.questionSlots.wh.toString) ->
-          Bucketed(
-            Map(
-              Map("has prep" -> hasPrep) -> 1
-            )
-          )
-      )
-    )
-  }
+  // def getPrepMetrics(sentence: Sentence, verb: VerbEntry) = (qLabel: QuestionLabel) => {
+  //   val hasPrep = qLabel.answerJudgments
+  //     .flatMap(_.judgment.getAnswer)
+  //     .flatMap(_.spans)
+  //     .map(s =>
+  //     (
+  //       if(allPrepositions.contains(sentence.sentenceTokens(s.begin).lowerCase)) 3
+  //       else if(sentence.sentenceTokens.lift(s.begin - 1).map(_.lowerCase).exists(allPrepositions.contains)) 2
+  //       else 1
+  //     )
+  //   ).max match {
+  //     case 1 => "N"
+  //     case 2 => "-"
+  //     case 3 => "Y"
+  //   }
+  //   Bucketed(
+  //     Map(
+  //       Map("wh" -> qLabel.questionSlots.wh.toString) ->
+  //         Bucketed(
+  //           Map(
+  //             Map("has prep" -> hasPrep) -> 1
+  //           )
+  //         )
+  //     )
+  //   )
+  // }
 
-  lazy val prepMetrics = train.sentences.values.toList.foldMap { sentence =>
-    sentence.verbEntries.values.toList.foldMap { verb =>
-      verb.questionLabels.values.toList.foldMap {
-        getPrepMetrics(sentence, verb)
-      }
-    }
-  }
+  // lazy val prepMetrics = train.sentences.values.toList.foldMap { sentence =>
+  //   sentence.verbEntries.values.toList.foldMap { verb =>
+  //     verb.questionLabels.values.toList.foldMap {
+  //       getPrepMetrics(sentence, verb)
+  //     }
+  //   }
+  // }
 
-  val getSpanLengthMetrics = (aj: AnswerJudgment) => aj match {
-    case InvalidQuestion => Counts(0)
-    case Answer(spans) => spans.toList.foldMap(s => Counts(s.end - s.begin))
-  }
+  // val getSpanLengthMetrics = (aj: AnswerJudgment) => aj match {
+  //   case InvalidQuestion => Counts(0)
+  //   case Answer(spans) => spans.toList.foldMap(s => Counts(s.end - s.begin))
+  // }
 
-  val spanLengthMetrics = train.sentences.values.toList.foldMap { sentence =>
-    sentence.verbEntries.values.toList.foldMap { verb =>
-      verb.questionLabels.values.toList.foldMap { qLabel =>
-        qLabel.answerJudgments.toList.map(_.judgment).foldMap(getSpanLengthMetrics)
-      }
-    }
-  }
+  // val spanLengthMetrics = train.sentences.values.toList.foldMap { sentence =>
+  //   sentence.verbEntries.values.toList.foldMap { verb =>
+  //     verb.questionLabels.values.toList.foldMap { qLabel =>
+  //       qLabel.answerJudgments.toList.map(_.judgment).foldMap(getSpanLengthMetrics)
+  //     }
+  //   }
+  // }
 
-  val getSpanCounts = (sentence: Sentence) => {
-    sentence.verbEntries.values.toList.foldMap { verb =>
-      verb.questionLabels.values.toList.foldMap { qLabel =>
-        qLabel.answerJudgments.toList.map(_.sourceId).foldMap(s => Map(s -> 1))
-      }.values.toList.foldMap(Counts(_))
-    }
-  }
+  // val getSpanCounts = (sentence: Sentence) => {
+  //   sentence.verbEntries.values.toList.foldMap { verb =>
+  //     verb.questionLabels.values.toList.foldMap { qLabel =>
+  //       qLabel.answerJudgments.toList.map(_.sourceId).foldMap(s => Map(s -> 1))
+  //     }.values.toList.foldMap(Counts(_))
+  //   }
+  // }
 
-  val getSentenceLength = (sentence: Sentence) => {
-    Counts(sentence.sentenceTokens.size)
-  }
+  // val getSentenceLength = (sentence: Sentence) => {
+  //   Counts(sentence.sentenceTokens.size)
+  // }
 
-  val getTanCounts = (verb: VerbEntry) => {
-    "TANs" ->> Counts(verb.questionLabels.values.toList.map(l =>
-      (l.tense, l.isPerfect, l.isProgressive, l.isNegated)
-    ).toSet.size) ::
-      "TANs Without Negation" ->> Counts(verb.questionLabels.values.toList.map(l =>
-        (l.tense, l.isPerfect, l.isProgressive)
-      ).toSet.size) :: HNil
-  }
+  // val getTanCounts = (verb: VerbEntry) => {
+  //   "TANs" ->> Counts(verb.questionLabels.values.toList.map(l =>
+  //     (l.tense, l.isPerfect, l.isProgressive, l.isNegated)
+  //   ).toSet.size) ::
+  //     "TANs Without Negation" ->> Counts(verb.questionLabels.values.toList.map(l =>
+  //       (l.tense, l.isPerfect, l.isProgressive)
+  //     ).toSet.size) :: HNil
+  // }
 
-  val trainTanMetrics = train.sentences.values.toList.flatMap(_.verbEntries.values.toList).foldMap(getTanCounts)
-  val devTanMetrics = dev.sentences.values.toList.flatMap(_.verbEntries.values.toList).foldMap(getTanCounts)
-  println("Train TAN counts: " + getMetricsString(trainTanMetrics))
-  println("Train TAN hist:\n" + trainTanMetrics("TANs").histogramString(75))
-  println("Train TAN hist (no negation):\n" + trainTanMetrics("TANs Without Negation").histogramString(75))
-  println("Dev tan counts: " + getMetricsString(devTanMetrics))
-  println("Dev TAN hist:\n" + devTanMetrics("TANs").histogramString(75))
-  println("Dev TAN hist (no negation):\n" + devTanMetrics("TANs Without Negation").histogramString(75))
+  // val trainTanMetrics = train.sentences.values.toList.flatMap(_.verbEntries.values.toList).foldMap(getTanCounts)
+  // val devTanMetrics = dev.sentences.values.toList.flatMap(_.verbEntries.values.toList).foldMap(getTanCounts)
+  // println("Train TAN counts: " + getMetricsString(trainTanMetrics))
+  // println("Train TAN hist:\n" + trainTanMetrics("TANs").histogramString(75))
+  // println("Train TAN hist (no negation):\n" + trainTanMetrics("TANs Without Negation").histogramString(75))
+  // println("Dev tan counts: " + getMetricsString(devTanMetrics))
+  // println("Dev TAN hist:\n" + devTanMetrics("TANs").histogramString(75))
+  // println("Dev TAN hist (no negation):\n" + devTanMetrics("TANs Without Negation").histogramString(75))
 
   // println(getMetricsString(spanLengthMetrics))
   // println(spanLengthMetrics.histogramString(75))
@@ -150,6 +178,177 @@ object SandboxApp extends App {
   // val trainMetrics = train.sentences.values.toList.foldMap(getSentenceLength)
   // println("Train sentence lengths: " + getMetricsString(trainMetrics))
   // println(trainMetrics.histogramString(75))
+
+  // val getDenseMetrics = (sentence: Sentence) => {
+  //   sentence.verbEntries.values.toList.foldMap(verb =>
+  //     "num questions" ->> Counts(verb.questionLabels.size) ::
+  //       "num valid questions" ->> Counts(filterGoldDense(verb)._2.size) ::
+  //       HNil
+  //   )
+  // }
+
+  // val denseMetrics = denseDev.sentences.values.toList.foldMap(getDenseMetrics)
+  // println(getMetricsString(denseMetrics))
+
+  import qasrl._
+  import qasrl.labeling._
+
+  // def getPreferredCompleteState(states: NonEmptyList[QuestionProcessor.ValidState]) = {
+  //   // prioritize a frame with Obj (but no Obj2) over one with Obj2 (but no Obj)
+  //   val completeStates = states.collect { case cs @ QuestionProcessor.CompleteState(_, _, _) => cs }
+  //   completeStates.find(_.frame.args.get(Obj).nonEmpty).orElse(completeStates.headOption)
+  // }
+
+  def getFramesWithAnswerSlots(verbInflectedForms: InflectedForms, question: String) = {
+
+    val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
+    val qPreps = questionTokensIsh.filter(TemplateStateMachine.allPrepositions.contains).toSet
+    val qPrepBigrams = questionTokensIsh
+      .sliding(2)
+      .filter(_.forall(TemplateStateMachine.allPrepositions.contains))
+      .map(_.mkString(" ").lowerCase)
+      .toSet
+    val stateMachine =
+      new TemplateStateMachine(Vector(), verbInflectedForms, Some(qPreps ++ qPrepBigrams))
+    val template = new QuestionProcessor(stateMachine)
+    // val (question, rawSlots) = pair
+    val framesWithAnswerSlots = template.processStringFully(question) match {
+      case Left(QuestionProcessor.AggregatedInvalidState(_, _)) =>
+        println("Failed! " + question)
+        ???
+      case Right(goodStates) => goodStates.toList.collect {
+        case QuestionProcessor.CompleteState(_, frame, answerSlot) =>
+          frame -> answerSlot
+      }.toSet
+    }
+    framesWithAnswerSlots
+  }
+
+  def maxima[F[_]: Foldable, A: Order](fa: F[A]): List[A] =
+    fa.foldLeft(List.empty[A]) { (maxes, a) =>
+      maxes.headOption.fold(a :: Nil) { max =>
+        if(a > max) a :: Nil
+        else if(a.eqv(max)) a :: maxes
+        else maxes
+      }
+    }
+
+  def maximaBy[F[_]: Foldable, A, B: Order](fa: F[A], f: A => B): List[A] =
+    fa.foldLeft(List.empty[(A, B)]) { (maxes, a) =>
+      val b = f(a)
+      maxes.headOption.fold((a, b) :: Nil) { case (_, maxKey) =>
+        if(b > maxKey) (a, b) :: Nil
+        else if(b.eqv(maxKey)) (a, b) :: maxes
+        else maxes
+      }
+    }.map(_._1)
+
+  def locallyResolve(framePairSets: List[Set[(Frame, ArgumentSlot)]]) = {
+    val framePseudoCounts = framePairSets.foldMap { framePairSet =>
+      val frames = framePairSet.map(_._1).toList
+      frames.map(_ -> (1.0 / frames.size)).toMap
+    }
+    framePairSets.map { framePairSet =>
+      maximaBy(framePairSet.toList, (p: (Frame, ArgumentSlot)) => framePseudoCounts(p._1)).toSet
+    }
+  }
+
+  def fallbackResolve(slots: SlotBasedLabel[VerbForm], framePairSet: Set[(Frame, ArgumentSlot)]) = {
+    classifyAmbiguity(slots, framePairSet) match {
+      case "unambiguous" => framePairSet.head
+      case "prepositional" => framePairSet.find(_._2 == Obj2).get
+      case "where" => framePairSet.find(_._2 == Adv("where".lowerCase)).get
+      case "ditransitive" => slots.wh.toString match {
+        case "what" => framePairSet.find(_._2 == Obj2).get
+        case "who" => framePairSet.find(_._2 == Obj).get
+      }
+      case "other" => framePairSet.head
+    }
+  }
+
+  def classifyAmbiguity(slots: SlotBasedLabel[VerbForm], frameSet: Set[(Frame, ArgumentSlot)]) = {
+    val isUnambiguous = frameSet.size == 1
+    val isPrepositionalObj = (
+      slots.obj.isEmpty && slots.prep.nonEmpty && slots.obj2.isEmpty &&
+        frameSet.map(_._2) == Set(Obj, Obj2)
+    )
+    val isWhereAmb = (
+      slots.wh == "where".lowerCase && frameSet.map(_._2) == Set(Adv("where".lowerCase), Obj2)
+    )
+    val isDitransitiveAmb = (
+      Set("who", "what").contains(slots.wh.toString) &&
+        ((slots.obj.nonEmpty && slots.obj2.isEmpty) || (slots.obj.isEmpty && slots.obj2.nonEmpty)) &&
+        frameSet.map(_._2) == Set(Obj, Obj2)
+    )
+    if(isUnambiguous) "unambiguous"
+    else if(isPrepositionalObj) "prepositional"
+    else if(isWhereAmb) "where"
+    else if(isDitransitiveAmb) "ditransitive"
+    else "other"
+  }
+
+  val getMetrics = (sentence: Sentence) => {
+    sentence.verbEntries.values.toList.foldMap { verb =>
+      val qLabels = verb.questionLabels.values.toList
+      "questions" ->> Count(qLabels.map(_.questionSlots)) ::
+        "questions without wh" ->> Count(qLabels.map(_.questionSlots).map(_.copy(wh = "what".lowerCase))) ::
+        "questions per verb" ->> Counts(qLabels.map(_.questionSlots).toSet.size) ::
+        "questions without wh per verb" ->> Counts(qLabels.map(_.questionSlots).map(_.copy(wh = "what".lowerCase)).toSet.size) ::
+        "frames" ->> {
+          val frameSets = qLabels.map(_.questionString).map(getFramesWithAnswerSlots(verb.verbInflectedForms, _))
+          val locallyResolvedFramePairSets = locallyResolve(frameSets)
+          def getAmbiguities(framePairSets: List[Set[(Frame, ArgumentSlot)]]) = {
+            qLabels.map(_.questionSlots).zip(framePairSets).map(Function.tupled(classifyAmbiguity(_, _))).foldMap(FewClassCount(_))
+          }
+          val resolvedFramePairSets = qLabels.map(_.questionSlots).zip(locallyResolvedFramePairSets).map(Function.tupled(fallbackResolve(_, _)))
+          "count (fully resolved) without answer slot" ->> Count(resolvedFramePairSets.map(p => (p._1.args, p._1.isPassive, p._1.isProgressive, p._1.isPerfect, p._1.isNegated, p._1.tense))) ::
+          "count (fully resolved)" ->> Count(resolvedFramePairSets.map(p => (p._1.args, p._1.isPassive, p._1.isProgressive, p._1.isPerfect, p._1.isNegated, p._1.tense, p._2))) ::
+          "per question" ->> frameSets.foldMap(l => Counts(l.size)) ::
+            "ambiguities" ->> getAmbiguities(frameSets) ::
+            "per question (locally resolved)" ->> locallyResolvedFramePairSets.foldMap(l => Counts(l.size)) ::
+            "ambiguities (locally resolved)" ->> getAmbiguities(locallyResolvedFramePairSets) ::
+            "per verb (fully resolved) without answer slot" ->> Counts(resolvedFramePairSets.map(_._1).toSet.size) ::
+            HNil
+        } :: HNil
+    }
+  }
+
+  val data = train |+| dev
+  val metrics = data.sentences.values.toList.foldMap(getMetrics)
+  println(getMetricsString(metrics))
+  println(metrics("frames").apply("per question").histogramString(75))
+  println(metrics("frames").apply("per question (locally resolved)").histogramString(75))
+
+  // def print2PrepExamples(dataset: Dataset) = {
+  //   for(sentence <- dataset.sentences.values) {
+  //     for(verb <- sentence.verbEntries.values) {
+  //       val qLabels = verb.questionLabels.values.toList
+  //       val hasTwoPreps = qLabels.exists(_.questionSlots.prep.exists(_.contains(" ".lowerCase)))
+  //       def endsWithSomething(q: QuestionLabel) = q.questionString.endsWith("something?")
+  //       def hasSubj(q: QuestionLabel) = q.questionSlots.subj.nonEmpty
+  //       def isNounQ(q: QuestionLabel) = Set("who", "what").contains(q.questionSlots.wh.toString)
+  //       val isGoodCandidate = qLabels.exists(q =>
+  //         endsWithSomething(q) && hasSubj(q) && isNounQ(q)
+  //       )
+  //       if(hasTwoPreps && isGoodCandidate) {
+  //         println("=============================================")
+  //         println(Text.render(sentence.sentenceTokens))
+  //         println(sentence.sentenceTokens(verb.verbIndex) + s"(${verb.verbIndex})")
+  //         for(q <- qLabels) {
+  //           val answersString = q.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toList
+  //             .sortBy(_.begin).map(s => Text.renderSpan(sentence.sentenceTokens, (s.begin until s.end).toSet))
+  //             .mkString(" / ")
+  //           println(f"${q.questionString}%60s " + answersString)
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
+
+  // print2PrepExamples(dev)
+  // print2PrepExamples(denseDev)
+  // print2PrepExamples(train)
+
 }
 
 object RankerPrinting {

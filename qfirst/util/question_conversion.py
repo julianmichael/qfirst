@@ -11,6 +11,8 @@ def get_abst_question_slots(slots):
         return new if slots[slot] == old else slots[slot]
     is_passive = "pastParticiple" in slots["verb"] and (
         "be" in slots["verb"] or
+        "been" in slots["verb"] or
+        "being" in slots["verb"] or
         "is" in slots["aux"] or
         "was" in slots["aux"])
     return {

@@ -6,12 +6,16 @@ import cats.implicits._
 
 case class Counts(hist: Map[Int, Int]) {
 
-  def histogramString(totalBarLength: Int = 25) = hist.values.toList.maximumOption.fold("<empty histogram>") { max =>
-    hist.toList.sortBy(_._1).map { case (num, count) =>
-      val numPounds = math.round(count.toDouble * totalBarLength / max).toInt
-      val poundString = "#" * numPounds
-      f"$num%7d | $poundString%s $count%d"
-    }.mkString("\n")
+  def histogramString(totalBarLength: Int = 25) = {
+    val total = hist.values.sum
+    hist.values.toList.maximumOption.fold("<empty histogram>") { max =>
+      hist.toList.sortBy(_._1).map { case (num, count) =>
+        val numPounds = math.round(count.toDouble * totalBarLength / max).toInt
+        val poundString = "#" * numPounds
+        val percent = count * 100.0 / total
+        f"$num%7d | $poundString%s $count%d ($percent%.2f%%)"
+      }.mkString("\n")
+    }
   }
 
   def stats = {

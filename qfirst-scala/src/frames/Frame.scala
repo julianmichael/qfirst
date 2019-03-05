@@ -52,7 +52,29 @@ object ArgStructure
   isPerfect: Boolean,
   isProgressive: Boolean,
   isNegated: Boolean
-)
+) {
+  def getVerbPrefixAndForm(
+    isPassive: Boolean,
+    subjectPresent: Boolean
+  ): (List[LowerCaseString], VerbForm) = {
+    val dummyInflectedForms = InflectedForms(
+      stem = "stem".lowerCase,
+      present = "present".lowerCase,
+      presentParticiple = "presentParticiple".lowerCase,
+      past = "past".lowerCase,
+      pastParticiple = "pastParticiple".lowerCase)
+    val dummyFrame = Frame(
+      ArgStructure(DependentMap.empty[ArgumentSlot.Aux, Id], isPassive),
+      dummyInflectedForms, this)
+    val initVerbStack = dummyFrame.getVerbStack
+    val verbStack = if(subjectPresent) {
+      dummyFrame.splitVerbStackIfNecessary(initVerbStack)
+    } else initVerbStack
+    val verbPrefix = verbStack.init.map(_.lowerCase)
+    val verbForm = dummyFrame.getVerbConjugation(subjectPresent)
+    verbPrefix -> verbForm
+  }
+}
 object TAN
 
 import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
@@ -82,8 +104,7 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
   private[this] def getForms(s: LowerCaseString) = {
     if (verbInflectedForms.allForms.contains(s)) Some(verbInflectedForms)
-    else if (InflectedForms.beSingularForms.allForms.contains(s))
-      Some(InflectedForms.beSingularForms)
+    else if (InflectedForms.beSingularForms.allForms.contains(s)) Some(InflectedForms.beSingularForms)
     else if (InflectedForms.doForms.allForms.contains(s)) Some(InflectedForms.doForms)
     else if (InflectedForms.haveForms.allForms.contains(s)) Some(InflectedForms.haveForms)
     else None

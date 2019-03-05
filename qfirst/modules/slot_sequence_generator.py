@@ -243,7 +243,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
                 log_probabilities = F.log_softmax(logits, -1)
                 num_slot_values = self.vocab.get_vocab_size(get_slot_label_namespace(slot_name))
                 for pred_slot_index in range(0, num_slot_values):
-                    if len(log_probabilities.size()) == 0: # this only happens during testing with tiny datasets (slot vocab size of 1)
+                    if len(log_probabilities.size()) == 0: # this only happens with slot vocab size of 1
                         log_prob = log_probabilities.item() + prev_log_prob
                     else:
                         log_prob = log_probabilities[pred_slot_index].item() + prev_log_prob
@@ -277,6 +277,7 @@ class SlotSequenceGenerator(torch.nn.Module, Registrable):
         if clause_mode:
             chosen_beam_indices = []
             for beam_index in range(final_beam_size):
+                # TODO fix for abstracted slots, which have a different name. ...later. requires a nontrivial refactor
                 qarg_name = self.vocab.get_token_from_index(final_slots["clause-qarg"][beam_index].item(), get_slot_label_namespace("clause-qarg"))
                 qarg = "clause-%s" % qarg_name
                 if qarg in self.get_slot_names():

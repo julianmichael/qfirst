@@ -95,6 +95,44 @@ object MetricsApp extends IOApp {
 
   object Rendering {
 
+    // def renderQASetExample(qas: Instance.QASetInstance): String = {
+    //   val verb = qas.goldVerb
+    //   val sid = qas.goldSentence.sentenceId
+    //   val sentenceTokens = qas.goldSentence.sentenceTokens
+    //   val verbString = verb.verbInflectedForms.stem.toString + " (" + verb.verbIndex + ")"
+    //   val allQAStrings = qas.allQuestionStrings.toList
+    //     .filter(qString => renderInvalidGold || qas.goldValid.contains(qString) || qas.pred.contains(qString))
+    //     .sortBy { qString =>
+    //       if(qas.goldValid.contains(qString) && qas.pred.contains(qString)) -1
+    //       else if(qas.goldValid.contains(qString)) 0
+    //       else if(qas.goldInvalid.contains(qString) && qas.pred.contains(qString)) 1
+    //       else if(qas.pred.contains(qString)) 2
+    //       else 3 }
+    //     .map { qString =>
+    //       val isGoldInvalid = qas.goldInvalid.contains(qString)
+    //       val renderedQ = (if(isGoldInvalid) "#" else "") + qString
+    //       val goldString = qas.goldValid.get(qString).orElse(
+    //         qas.goldInvalid.get(qString).filter(_ => renderInvalidGold)
+    //       ).fold("\t\t") { qLabel =>
+    //         val spans = qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet[AnswerSpan].toList.sortBy(_.begin)
+    //         val renderedSpans = spans.map(s =>
+    //           Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
+    //         ).mkString(" / ")
+    //         renderedQ + "\t" + renderedSpans + "\t"
+    //       }
+    //       val predString = qas.pred.get(qString).fold("\t") { case (_, spans) =>
+    //         val renderedSpans = spans.map(s =>
+    //           Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
+    //         ).mkString(" / ")
+    //         renderedQ + "\t" + renderedSpans
+    //       }
+    //       goldString + predString
+    //     }
+    //   "\t" + Text.render(sentenceTokens) + "\n" +
+    //     "\t" + verbString + "\n" +
+    //     allQAStrings.map("\t" + _).mkString("\n")
+    // }
+
     def renderQuestionExample(question: Instances.QuestionInstance, renderInvalidGold: Boolean = false): String = {
       val qas = question.qas
       val verb = qas.goldVerb
@@ -136,7 +174,15 @@ object MetricsApp extends IOApp {
     val renderQASetExample = (si: Instances.QASetInstance) => {
       Text.render(si.goldSentence.sentenceTokens) + "\n" + {
         val verbStr = s"${si.goldVerb.verbInflectedForms.stem} (${si.goldVerb.verbIndex})"
-        val goldStr = si.goldValid.toList.map {
+        val goldValidStr = si.goldValid.toList.map {
+          case (qString, qLabel) =>
+            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val spanStr = answerSpans.toList.sortBy(_.begin).map(s =>
+              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+            ).mkString(" / ")
+            f"$qString%-60s $spanStr%s"
+        }.mkString("\n")
+        val goldInvalidStr = si.goldInvalid.toList.map {
           case (qString, qLabel) =>
             val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
             val spanStr = answerSpans.toList.sortBy(_.begin).map(s =>
@@ -151,7 +197,7 @@ object MetricsApp extends IOApp {
             ).mkString(" / ")
             f"$qString%-60s $answerSpanStr%s"
         }.mkString("\n")
-        verbStr + "\nGOLD:\n" + goldStr + "\nPREDICTED:\n" + predStr
+        verbStr + "\nGOLD:\n" + goldValidStr + "\nGOLD INVALID:\n" + goldInvalidStr + "\nPREDICTED:\n" + predStr
       }
     }
   }
@@ -197,6 +243,7 @@ object MetricsApp extends IOApp {
     "original" ->> gen.getAcc ::
     "no tense/aspect/modality" ->> gen.map(I.stripTense).getAcc ::
       "no negation" ->> gen.map(I.stripNegation).getAcc ::
+      "no tense/aspect/modality/negation" ->> gen.map(I.stripNegation).map(I.stripTense).getAcc ::
       "no animacy" ->> gen.map(I.stripAnimacy).getAcc ::
       "templated" ->> genTemplated.getAcc ::
       "templated: no answers" ->> genTemplated.stripAnswers.getAcc ::
@@ -257,11 +304,20 @@ object MetricsApp extends IOApp {
     gold: Dataset,
     predStream: Stream[IO, SentencePrediction[Beam]],
     metadataDir: NIOPath,
-    recomputeFilter: Boolean
+    recomputeFilter: Boolean,
+    isTest: Boolean
   ) = {
     val filtersPath = metadataDir.resolve("filters.json")
     val filterSpaceIO = FileUtil.readJson[FilterSpace](filtersPath)
-      .map(fs => if(recomputeFilter) protocol.withBestFilter(fs, None) else fs)
+      .flatMap { fs =>
+        if(isTest) {
+          if(protocol.getAllFilters(fs).size > 1) {
+            IO(throw new RuntimeException("Must run on test with only a single filter."))
+          } else IO.pure(fs)
+        } else if(recomputeFilter) {
+          IO.pure(protocol.withBestFilter(fs, None))
+        } else IO.pure(fs)
+      }
 
     for {
       filterSpace <- filterSpaceIO
@@ -279,9 +335,11 @@ object MetricsApp extends IOApp {
           }
         )
         // Recall restriction: choose the filter with best results that has >= 2 Qs/verb and >= 2.3 spans/verb
+        val qRecallRestriction = if(isTest) 0.0 else 2.0
+        val sRecallRestriction = if(isTest) 0.0 else 2.3
         allResults.updateWith("predictions")(
-          _.filter(_.get("questions per verb") >= 2.0)
-            .filter(_.get("spans per verb") >= 2.3)
+          _.filter(_.get("questions per verb") >= qRecallRestriction)
+            .filter(_.get("spans per verb") >= sRecallRestriction)
             .keepMaxBy(_.get("question-answer pair").stats.accuracyLowerBound)
         )
       }
@@ -300,8 +358,10 @@ object MetricsApp extends IOApp {
       }
 
       _ <- {
-        import io.circe.generic.auto._
-        FileUtil.writeJson(filtersPath, io.circe.Printer.spaces2)(protocol.withBestFilter(filterSpace, Some(bestFilter)))
+        if(!isTest) {
+          import io.circe.generic.auto._
+          FileUtil.writeJson(filtersPath, io.circe.Printer.spaces4)(protocol.withBestFilter(filterSpace, Some(bestFilter)))
+        } else IO.unit
       }
 
       _ <- IO(println("Tuned results: " + getMetricsString(tunedResults)))
@@ -314,6 +374,37 @@ object MetricsApp extends IOApp {
       }
 
       _ <- IO(println("Analysis results: " + getMetricsString(analysisResults)))
+
+      examplesDir <- IO {
+        val examplesDirectory = metadataDir.resolve("examples")
+        if(!Files.exists(examplesDirectory)) {
+          Files.createDirectories(examplesDirectory)
+        }
+        examplesDirectory
+      }
+      _ <- IO {
+        val otherIncorrect = analysisResults("templated: nothing").incorrect
+        def renderGenQuestionExample(
+          instance: Instances.GeneralizedQASetInstance[TemplateSlots],
+          question: TemplateSlots
+        ) = {
+
+        }
+        def writeGenExamples(
+          path: NIOPath,
+          examples: Vector[(Instances.GeneralizedQASetInstance[TemplateSlots], TemplateSlots, AnswerSpan)],
+          rand: util.Random
+        ) = {
+          val exampleStrings = examples.map { case (instance, templateQ, _) =>
+            renderQASetExample(instance.original) + "\n" + templateQ.toTemplateString + "\n" + templateQ + "\n\n"
+          }
+          val examplesString = rand.shuffle(exampleStrings).mkString("\n")
+          IO(Files.write(path, examplesString.getBytes("UTF-8")))
+        }
+
+        val r = new util.Random(235867962L)
+        writeGenExamples(examplesDir.resolve("full-other.txt"), otherIncorrect, r)
+      }.flatten
 
       // TODO: here is potentially useful code for pulling out examples specific to an error case for printing later.
       // _ <- IO {
@@ -344,92 +435,92 @@ object MetricsApp extends IOApp {
       // )
       // println("Overall by verb: " + getMetricsString(verbBucketedResults))
 
-      predClasses <- predStream.map(
-        computePredClassesForSentences(protocol)(gold, bestFilter)
-      ).map(_.map(_.filter(_._1 != PredClass.NotPredicted))).compile.foldMonoid
+      // predClasses <- predStream.map(
+      //   computePredClassesForSentences(protocol)(gold, bestFilter)
+      // ).map(_.map(_.filter(_._1 != PredClass.NotPredicted))).compile.foldMonoid
 
-      mainErrorClasses = {
-        import PredClass._
-        predClasses.map(
-          _.values.map(_._1).filter(_ != PredClass.Correct).map {
-            case WrongWh(_, _) => WrongWh("_".lowerCase, "_".lowerCase)
-            case SwappedPrep(_, _) => SwappedPrep("_".lowerCase, "_".lowerCase)
-            case MissingPrep(_) => MissingPrep("_".lowerCase)
-            case ExtraPrep(_) => ExtraPrep("_".lowerCase)
-            case x => x
-          }
-        )
-      }
+      // mainErrorClasses = {
+      //   import PredClass._
+      //   predClasses.map(
+      //     _.values.map(_._1).filter(_ != PredClass.Correct).map {
+      //       case WrongWh(_, _) => WrongWh("_".lowerCase, "_".lowerCase)
+      //       case SwappedPrep(_, _) => SwappedPrep("_".lowerCase, "_".lowerCase)
+      //       case MissingPrep(_) => MissingPrep("_".lowerCase)
+      //       case ExtraPrep(_) => ExtraPrep("_".lowerCase)
+      //       case x => x
+      //     }
+      //   )
+      // }
 
-      bucketedErrorClasses = mainErrorClasses.map(
-        _.foldMap(
-          M.bucket(Map("class" -> ((x: PredClass) => x.toString))) {
-            ((_: PredClass) => 1)
-          }
-        )
-      )
+      // bucketedErrorClasses = mainErrorClasses.map(
+      //   _.foldMap(
+      //     M.bucket(Map("class" -> ((x: PredClass) => x.toString))) {
+      //       ((_: PredClass) => 1)
+      //     }
+      //   )
+      // )
 
-      whConf = {
-        import PredClass._
-        predClasses.collapsed.values.collect {
-          case (Correct | WrongAnswer | CorrectTemplate, q) => Confusion.instance(q.slots.wh, q.slots.wh, q)
-          case (WrongWh(pred, gold), q) => Confusion.instance(gold, pred, q)
-        }.combineAll
-      }
+      // whConf = {
+      //   import PredClass._
+      //   predClasses.collapsed.values.collect {
+      //     case (Correct | WrongAnswer | CorrectTemplate, q) => Confusion.instance(q.slots.wh, q.slots.wh, q)
+      //     case (WrongWh(pred, gold), q) => Confusion.instance(gold, pred, q)
+      //   }.combineAll
+      // }
 
-      _ <- IO {
-        println(whConf.stats.prettyString(0))
-        println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
-        // println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
-      }
+      // _ <- IO {
+      //   println(whConf.stats.prettyString(0))
+      //   println("Collapsed error classes: " + getMetricsString(bucketedErrorClasses.collapsed))
+      //   // println("All bucketed error classes: " + getMetricsString(bucketedErrorClasses))
+      // }
 
-      collapsedPredClasses = predClasses.collapsed
+      // collapsedPredClasses = predClasses.collapsed
 
-      examplesDir = metadataDir.resolve("examples")
-      _ <- IO {
-          if(!Files.exists(examplesDir)) {
-            Files.createDirectories(examplesDir)
-          }
-          val r = new util.Random(235867962L)
-          writeExamples(
-            examplesDir.resolve("template.txt"),
-            collapsedPredClasses.values.collect { case (PredClass.CorrectTemplate, q) => q },
-            r
-          ) >> writeExamples(
-            examplesDir.resolve("prep-swap.txt"),
-            collapsedPredClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q },
-            r
-          ) >> writeExamples(
-            examplesDir.resolve("other.txt"),
-            collapsedPredClasses.values.collect { case (PredClass.Other, q) => q },
-            r
-          ) >> writeExamples(
-            examplesDir.resolve("wrongans.txt"),
-            collapsedPredClasses.values.collect { case (PredClass.WrongAnswer, q) => q },
-            r
-          )
-      }.flatten
+      // examplesDir = metadataDir.resolve("examples")
+      // _ <- IO {
+      //     if(!Files.exists(examplesDir)) {
+      //       Files.createDirectories(examplesDir)
+      //     }
+      //     val r = new util.Random(235867962L)
+      //     writeExamples(
+      //       examplesDir.resolve("template.txt"),
+      //       collapsedPredClasses.values.collect { case (PredClass.CorrectTemplate, q) => q },
+      //       r
+      //     ) >> writeExamples(
+      //       examplesDir.resolve("prep-swap.txt"),
+      //       collapsedPredClasses.values.collect { case (PredClass.SwappedPrep(_, _), q) => q },
+      //       r
+      //     ) >> writeExamples(
+      //       examplesDir.resolve("other.txt"),
+      //       collapsedPredClasses.values.collect { case (PredClass.Other, q) => q },
+      //       r
+      //     ) >> writeExamples(
+      //       examplesDir.resolve("wrongans.txt"),
+      //       collapsedPredClasses.values.collect { case (PredClass.WrongAnswer, q) => q },
+      //       r
+      //     )
+      // }.flatten
 
-      _ <- IO {
-        val domainsDir = examplesDir.resolve("domain")
-        if(!Files.exists(domainsDir)) {
-          Files.createDirectories(domainsDir)
-        }
-        {
-          val r = new util.Random(22646L)
-          predClasses.data.foreach { case (buckets, results) =>
-            // val instances = results.get("predictions").incorrect ++ results.get("predictions").uncertain
-            val bucketDir = domainsDir.resolve(buckets("domain"))
-            if(!Files.exists(bucketDir)) {
-              Files.createDirectories(bucketDir)
-            }
-            val instances = results.values.collect { case (PredClass.Other, q) => q }
-            writeExamples(bucketDir.resolve("other.txt"), instances, r)
-            val ansInstances = results.values.collect { case (PredClass.WrongAnswer, q) => q }
-            writeExamples(bucketDir.resolve("wrongans.txt"), ansInstances, r)
-          }
-        }
-      }
+      // _ <- IO {
+      //   val domainsDir = examplesDir.resolve("domain")
+      //   if(!Files.exists(domainsDir)) {
+      //     Files.createDirectories(domainsDir)
+      //   }
+      //   {
+      //     val r = new util.Random(22646L)
+      //     predClasses.data.foreach { case (buckets, results) =>
+      //       // val instances = results.get("predictions").incorrect ++ results.get("predictions").uncertain
+      //       val bucketDir = domainsDir.resolve(buckets("domain"))
+      //       if(!Files.exists(bucketDir)) {
+      //         Files.createDirectories(bucketDir)
+      //       }
+      //       val instances = results.values.collect { case (PredClass.Other, q) => q }
+      //       writeExamples(bucketDir.resolve("other.txt"), instances, r)
+      //       val ansInstances = results.values.collect { case (PredClass.WrongAnswer, q) => q }
+      //       writeExamples(bucketDir.resolve("wrongans.txt"), ansInstances, r)
+      //     }
+      //   }
+      // }
     } yield ()
   }
 
@@ -482,8 +573,11 @@ object MetricsApp extends IOApp {
     predDir: NIOPath,
     clauseInfoOpt: Option[IO[Map[String, Map[Int, Map[String, FrameInfo]]]]],
     mode: MetricsMode, recomputeFilter: Boolean,
+    isTest: Boolean
   ) = {
-    val predFile = predDir.resolve("predictions.jsonl")
+    val predFile = if(isTest) {
+      predDir.resolve("predictions-test.jsonl")
+    } else predDir.resolve("predictions.jsonl")
     val metadataDir = predDir.resolve(mode.toString)
     clauseInfoOpt match {
       case Some(clauseInfoIO) => // TODO for e2e model / eval
@@ -495,7 +589,7 @@ object MetricsApp extends IOApp {
       case None =>
         val pred = FileUtil.readJsonLines[SentencePrediction[Beam]](predFile)
         mode match {
-          case Dense => runDenseMetrics(protocol)(devDense, pred, metadataDir, recomputeFilter)
+          case Dense => runDenseMetrics(protocol)(devDense, pred, metadataDir, recomputeFilter, isTest)
           case DenseCurve => IO(()) // TODO
         }
     }
@@ -504,7 +598,8 @@ object MetricsApp extends IOApp {
   def program(
     qasrlBankPath: NIOPath, predDir: NIOPath,
     clauseInfoPathOpt: Option[NIOPath],
-    mode: String, protocolName: String, recomputeFilter: Boolean
+    mode: String, protocolName: String, recomputeFilter: Boolean,
+    isTest: Boolean
   ): IO[ExitCode] = for {
     metricsMode <- IO {
       mode match {
@@ -515,24 +610,47 @@ object MetricsApp extends IOApp {
     }
     trainIO = IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
     verbFrequenciesIO = trainIO.map(getVerbFrequencies)
-    dev <- IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
+    dataset <- (
+      if(isTest) {
+        IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz")))
+      } else {
+        IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
+      }
+    )
     clauseInfoOpt = clauseInfoPathOpt.map(FileUtil.readClauseInfo)
     beamProtocol <- {
       import qfirst.protocols._
       import qasrl.data.JsonCodecs._
       import io.circe.generic.auto._
+      def go[Beam: Decoder, Filter: Show, FilterSpace: Encoder : Decoder](
+        protocol: BeamProtocol[Beam, Filter, FilterSpace]
+      ) = programInternal(protocol)(
+        verbFrequenciesIO, dataset,
+        predDir, clauseInfoOpt,
+        metricsMode, recomputeFilter,
+        isTest)
       protocolName match {
-        case "qa" => programInternal(SimpleQAs.protocol)(
-          verbFrequenciesIO, dev,
-          predDir, clauseInfoOpt,
-          metricsMode, recomputeFilter)
-        case "qa+inv" => programInternal(QAsWithInv.protocol)(
-          verbFrequenciesIO, dev,
-          predDir, clauseInfoOpt,
-          metricsMode, recomputeFilter)
+        case "afirst" => go(SimpleQAs.protocol[SlotBasedLabel[VerbForm]]())
+        case "afirst-maxq" => go(SimpleQAs.protocol[SlotBasedLabel[VerbForm]](true))
+        case "afirst-clausal" => go(SimpleQAs.protocol[Map[String, String]]())
+        case "afirst-clausal-maxq" => go(SimpleQAs.protocol[Map[String, String]](true))
+        case "qfirst-full" => go(QfirstFullProtocol)
+        case "qfirst-no_tan" => go(QfirstNoTanProtocol)
+        case "qfirst-clausal" => go(QfirstClausalProtocol)
+        case "qfirst-clausal_no_tan" => go(QfirstClausalNoTanProtocol)
+        case "qfirst-clausal_no_anim" => go(QfirstClausalNoAnimProtocol)
+        case "qfirst-clausal_no_tan_or_anim" => go(QfirstClausalNoTanOrAnimProtocol)
+        case "factored" => go(JointClauseSpanProtocol)
         case _ => throw new RuntimeException("Must specify a known beam protocol type.")
       }
     }
+    // _ <- IO {
+    //   import qfirst.protocols.QfirstClausalNoTanOrAnimProtocol._
+    //   println(f"Num questions predicted: $numQuestionsPredicted%s")
+    //   println(f"Num questions edited: $numQuestionsEdited (${numQuestionsEdited * 100.0 / numQuestionsPredicted}%.2f%%)")
+    //   println(f"Num edited questions produced: $numEditedQuestionsProduced (${numEditedQuestionsProduced / numQuestionsEdited}%.2f)")
+    //   println(f"Num different questions produced: $numDifferentQuestionsProduced (${numDifferentQuestionsProduced * 100.0 / numEditedQuestionsProduced}%.2f%%)")
+    // }
   } yield ExitCode.Success
 
   val runMetrics = Command(
@@ -552,13 +670,16 @@ object MetricsApp extends IOApp {
       "mode", metavar = "non-dense|dense-curve|dense", help = "Which eval to run."
     ).withDefault("dense")
     val protocol = Opts.option[String](
-      "protocol", metavar = "simple-qa", help = "Which input type to handle."
-    ).withDefault("question")
+      "protocol", metavar = "afirst|qfirst-{full,no_tan,...}|factored", help = "Which input type to handle."
+    ).withDefault("qfirst-full")
     val recomputeFilter = Opts.flag(
       "recomputeFilter", help = "Whether to recompute the best filter as opposed to using the cached one."
     ).orFalse
+    val isTest = Opts.flag(
+      "test", help = "Whether run on test predictions."
+    ).orFalse
 
-    (goldPath, predPath, clauseInfoPathOpt, mode, protocol, recomputeFilter).mapN(program)
+    (goldPath, predPath, clauseInfoPathOpt, mode, protocol, recomputeFilter, isTest).mapN(program)
   }
 
   def run(args: List[String]): IO[ExitCode] = {
