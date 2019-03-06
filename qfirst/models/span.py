@@ -49,6 +49,8 @@ class SpanModel(Model):
                 predicate_indicator: torch.LongTensor = None,
                 predicate_index: torch.LongTensor = None,
                 answer_spans: torch.LongTensor = None,
+                span_counts: torch.LongTensor = None,
+                num_answers: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
         encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
@@ -57,7 +59,8 @@ class SpanModel(Model):
             encoded_text, text_mask,
             extra_input_embedding = extra_input,
             answer_spans = answer_spans,
-            num_answers = None, # doing this now because we only use Union span selection policy
+            span_counts = span_counts,
+            num_answers = num_answers,
             metadata = metadata)
 
     @overrides

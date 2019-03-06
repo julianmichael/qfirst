@@ -5,6 +5,8 @@ from allennlp.data.tokenizers import Token
 import codecs
 import gzip
 
+from collections import Counter
+
 from qfirst.common.span import Span
 
 def cleanse_sentence_text(sent_text):
@@ -109,8 +111,14 @@ def get_clause_slot_field(slot_name: str, slot_value: str):
     namespace = get_slot_label_namespace(clause_slot_name)
     return LabelField(label = slot_value, label_namespace = namespace)
 
-def get_answer_spans(question_label):
-    return [Span(s[0], s[1]-1) for ans in question_label["answerJudgments"] if ans["isValid"] for s in ans["spans"]]
+def get_answer_spans(question_labels):
+    spans = [Span(s[0], s[1]-1) for q in question_labels for ans in q["answerJudgments"] if ans["isValid"] for s in ans["spans"]]
+    span_counts = Counter()
+    for span in spans:
+        span_counts[span] += 1
+    distinct_spans = list(span_counts)
+    distinct_span_counts = [span_counts[c] for c in distinct_spans]
+    return distinct_spans, distinct_span_counts
 
 def get_answer_spans_field(answer_spans, text_field):
     span_list = [SpanField(s.start(), s.end(), text_field) for s in answer_spans]
@@ -122,6 +130,9 @@ def get_answer_spans_field(answer_spans, text_field):
 def get_num_answers_field(question_label):
     return LabelField(label = len(question_label["answerJudgments"]), skip_indexing = True)
 
+def get_num_valids_field(question_label):
+    return LabelField(label = len([aj for aj in question_label["answerJudgments"] if aj["isValid"]]), skip_indexing = True)
+
 def get_num_invalids(question_label):
     return len(question_label["answerJudgments"]) - len([aj for aj in question_label["answerJudgments"] if aj["isValid"]])
 
@@ -129,12 +140,19 @@ def get_num_invalids_field(question_label):
     return LabelField(label = get_num_invalids(question_label), skip_indexing = True)
 
 def get_answer_fields(question_label, text_field):
-    answer_spans_field = get_answer_spans_field(get_answer_spans(question_label), text_field)
+    spans, span_counts = get_answer_spans([question_label])
+    if len(span_counts) == 0:
+        span_counts_field = ListField([LabelField(label = -1, skip_indexing = True)])
+    else:
+        span_counts_field = ListField([LabelField(label = count, skip_indexing = True) for count in span_counts])
+    answer_spans_field = get_answer_spans_field(spans, text_field)
     num_answers_field = get_num_answers_field(question_label)
     num_invalids_field = get_num_invalids_field(question_label)
     return {
         "answer_spans": answer_spans_field,
+        "span_counts": span_counts_field,
         "num_answers": num_answers_field,
+        "num_valids": num_valids_field,
         "num_invalids": num_invalids_field
     }
 

@@ -51,13 +51,22 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
                        verb_inflected_forms: Dict[str, str],
                        question_labels): # -> Iterable[Instance]
         verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
-        answer_spans = [s for ql in question_labels for s in get_answer_spans(ql)]
+        answer_spans, span_counts = get_answer_spans(question_labels)
         answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
-        yield {
-            **verb_dict,
-            "answer_spans": answer_spans_field,
-            "metadata": {"gold_spans": set(answer_spans)}
-        }
+        if len(span_counts) == 0:
+            span_counts_field = ListField([LabelField(label = -1, skip_indexing = True)])
+        else:
+            span_counts_field = ListField([LabelField(label = count, skip_indexing = True) for count in span_counts])
+        num_answers = len([aj for ql in question_labels for aj in ql["answerJudgments"]])
+        num_answers_field = LabelField(label = num_answers, skip_indexing = True)
+        if num_answers > 0:
+            yield {
+                **verb_dict,
+                "answer_spans": answer_spans_field,
+                "span_counts": span_counts_field,
+                "num_answers": num_answers_field,
+                "metadata": {"gold_spans": set(answer_spans)}
+            }
 
 @QasrlInstanceReader.register("verb_qas")
 class QasrlVerbQAsReader(QasrlInstanceReader):

@@ -39,6 +39,7 @@ object ModelVariants extends IOApp {
     questionGeneratorNumLayers: F[Int],
     spanSelectorHiddenDim: F[Int],
     includeSpanFFNN: F[Boolean],
+    spanUncertaintyFactor: F[Double],
     predicateFeatureDim: F[Int],
     sentenceEncoderNumLayers: F[Int],
     sentenceEncoderHiddenDimOpt: F[Option[Int]],
@@ -76,6 +77,7 @@ object ModelVariants extends IOApp {
       questionGeneratorNumLayers = f(questionGeneratorNumLayers),
       spanSelectorHiddenDim = f(spanSelectorHiddenDim),
       includeSpanFFNN = f(includeSpanFFNN),
+      spanUncertaintyFactor = f(spanUncertaintyFactor),
       predicateFeatureDim = f(predicateFeatureDim),
       sentenceEncoderNumLayers = f(sentenceEncoderNumLayers),
       sentenceEncoderHiddenDimOpt = f(sentenceEncoderHiddenDimOpt),
@@ -95,7 +97,7 @@ object ModelVariants extends IOApp {
   }
   object Hyperparams {
     val test = Hyperparams[Id](
-      tokenHandler = TokenHandler.glove[Id],
+      tokenHandler = TokenHandler.glove[Id](usePretrained = false),
       feedForwardNumLayers = 2,
       feedForwardHiddenDims = 100,
       feedForwardActivations = "relu",
@@ -109,6 +111,7 @@ object ModelVariants extends IOApp {
       questionGeneratorNumLayers = 2,
       spanSelectorHiddenDim = 100,
       includeSpanFFNN = false,
+      spanUncertaintyFactor = 2.0,
       predicateFeatureDim = 0,
       sentenceEncoderNumLayers = 2,
       sentenceEncoderHiddenDimOpt = None,
@@ -141,6 +144,7 @@ object ModelVariants extends IOApp {
       questionGeneratorSlotEmbeddingDim = List(200),
       questionGeneratorNumLayers = List(2, 4),
       includeSpanFFNN = List(true),
+      spanUncertaintyFactor = List(1.1, 1.5, 2.0, 4.0),
       spanSelectorHiddenDim = List(50, 100, 200),
       predicateFeatureDim = List(100),
       sentenceEncoderNumLayers = List(4, 8),
@@ -271,14 +275,23 @@ object ModelVariants extends IOApp {
       "type" -> "single_id".asJson,
       "lowercase_tokens" -> true.asJson
     )
-    val gloveEmbedderJson = Json.obj(
-      "type" -> "embedding".asJson,
-      "pretrained_file" -> "https://s3-us-west-2.amazonaws.com/allennlp/datasets/glove/glove.6B.100d.txt.gz".asJson,
-      "embedding_dim" -> 100.asJson
-    )
-    def glove[F[_]: Monad] = TokenHandler(
+    def gloveEmbedderJson(usePretrained: Boolean) = {
+      if(usePretrained) {
+        Json.obj(
+          "type" -> "embedding".asJson,
+          "pretrained_file" -> "https://s3-us-west-2.amazonaws.com/allennlp/datasets/glove/glove.6B.100d.txt.gz".asJson,
+          "embedding_dim" -> 100.asJson
+        )
+      } else {
+        Json.obj(
+          "type" -> "embedding".asJson,
+          "embedding_dim" -> 100.asJson
+        )
+      }
+    }
+    def glove[F[_]: Monad](usePretrained: Boolean) = TokenHandler(
       indexers = List(param_("tokens", Monad[F].pure(gloveIndexerJson))),
-      embedders = List(param("tokens", Monad[F].pure(gloveEmbedderJson)).as(100))
+      embedders = List(param("tokens", Monad[F].pure(gloveEmbedderJson(usePretrained))).as(100))
     )
 
     val elmoIndexerJson = Json.obj("type" -> "elmo_characters".asJson)
@@ -441,17 +454,17 @@ object ModelVariants extends IOApp {
   }
 
   case class SpanSelector(
-    inputDim: Int, extraInputDim: Option[Int],
+    inputDim: Int, extraInputDim: Option[Int], doDensityEstimation: Boolean = false
   ) extends Component[Unit] {
+    val objective = if(doDensityEstimation) "density_mle" else "binary"
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("extra_input_dim", H.pure(extraInputDim.getOrElse(0)))
       spanHiddenDim <- param("span_hidden_dim", H.spanSelectorHiddenDim)
       includeSpanFFNN <- param(H.includeSpanFFNN)
       _ <- (if(includeSpanFFNN) param("span_ffnn", FeedForward(spanHiddenDim)) else param(H.unit))
-      _ <- param("pruning_ratio", H.pure(2.0))
-      _ <- param("objective", H.pure("binary"))
-      _ <- param("gold_span_selection_policy", H.pure("union"))
+      _ <- param("objective", H.pure(objective))
+      _ <- (if(doDensityEstimation) param("uncertainty_factor", H.spanUncertaintyFactor) else param(H.unit))
     } yield ()
   }
 
@@ -545,7 +558,7 @@ object ModelVariants extends IOApp {
       validationMetric = if(classifyInvalids) "+span-f1" else "+f1"
     )
 
-    val span = Model(
+    def span(doDensityEstimation: Boolean) = Model(
       datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
@@ -553,7 +566,7 @@ object ModelVariants extends IOApp {
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           injectPredicate <- param("inject_predicate", H.injectPredicate)
           extraInputDimOpt = if(injectPredicate) Some(encoderOutputDim) else None
-          _ <- param("span_selector", SpanSelector(encoderOutputDim, extraInputDimOpt))
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, extraInputDimOpt, doDensityEstimation))
         } yield ()
       },
       validationMetric = "+f1"
@@ -674,7 +687,10 @@ object ModelVariants extends IOApp {
   val clauseNoTanOrAnimSlots = List("clause-abst-subj", "clause-abst-verb", "clause-abst-obj", "clause-prep1", "clause-abst-prep1-obj", "clause-prep2", "clause-abst-prep2-obj", "clause-abst-misc", "clause-qarg")
 
   val models = MapTree.fork(
-    "span" -> MapTree.leaf[String](Model.span),
+    "span" -> MapTree.fromPairs(
+      "binary" -> Model.span(doDensityEstimation = false),
+      "density" -> Model.span(doDensityEstimation = true)
+    ),
     "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     "question" -> MapTree.fromPairs(
       "full" -> Model.question(fullSlots),

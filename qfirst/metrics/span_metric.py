@@ -35,9 +35,16 @@ class SpanMetric(Metric, Registrable):
             "sum": 0.0,
             "total": 0.0
         }
+        self._above_null_conf = {
+            "tp": 0,
+            "tn": 0,
+            "fp": 0,
+            "fn": 0
+        }
 
     def __call__(self,
                  span_probs, # List[List[(Span, float)]]: batch size, num predicted spans
+                 null_prob, # List[float]: batch_size, may be None
                  gold_span_sets):  # dicts corresponding to JSON object
 
         def update_conf(conf, true, positive):
@@ -74,11 +81,15 @@ class SpanMetric(Metric, Registrable):
             num_gold_spans_in_beam = len([s for s in spans_in_beam if s in gold_spans])
             update_coverage(self._gold_spans_max_coverage, num_gold_spans_in_beam, len(gold_spans))
 
-            for conf in self._confs:
-                for span, prob in spans_with_probs:
+            for span, prob in spans_with_probs:
+                for conf in self._confs:
                     positive = prob >= conf["threshold"]
                     true = (span in gold_spans) == positive
                     update_conf(conf, true, positive)
+                if null_prob is not None:
+                    positive = prob >= null_prob[i].item()
+                    true = (span in gold_spans) == positive
+                    update_conf(self._above_null_conf, true, positive)
 
             if len(gold_spans) > 0:
                 if len(spans_with_probs) > 0:
@@ -119,12 +130,17 @@ class SpanMetric(Metric, Registrable):
         def get_macro_f1(macro_f1):
             return macro_f1["sum"] / macro_f1["total"] if macro_f1["total"] > 0 else 0.0
 
+        above_null_dict = {}
+        if sum([self._above_null_conf[k] for k in ["tp", "tn", "fp", "fn"]]) > 0:
+            above_null_dict = stats(self._above_null_conf)
+
         stats_dict = max([stats(conf) for conf in self._confs], key = lambda d: d["f1"])
         output_dict = {
             **{ k: v for k, v in stats_dict.items() if isinstance(v, float) },
             "gold-not-pruned": get_cov(self._gold_spans_max_coverage),
             "top-em": get_acc(self._top_em),
-            "top-token-f1": get_macro_f1(self._top_macro_f1)
+            "top-token-f1": get_macro_f1(self._top_macro_f1),
+            **above_null_dict
         }
 
         if reset:
