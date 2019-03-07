@@ -34,8 +34,8 @@ from qfirst.models.span import SpanModel
 from qfirst.models.span_to_question import SpanToQuestionModel
 from qfirst.util.archival_utils import load_archive_from_folder
 
-span_minimum_threshold_default = 0.05
-question_minimum_threshold_default = 0.05
+span_minimum_threshold_default = 0.3
+question_minimum_threshold_default = 0.1
 question_beam_size_default = 10
 
 class AFirstPipeline():

@@ -62,8 +62,8 @@ class QuestionModel(Model):
         batch_size, _ = pred_rep.size()
 
         # Shape: <scalar>
-        neg_log_likelihood = self._get_cross_entropy(slot_logits, gold_slot_labels)
-        self.metric(slot_logits, gold_slot_labels, torch.ones([batch_size]), neg_log_likelihood)
+        slot_nlls, neg_log_likelihood = self._get_cross_entropy(slot_logits, gold_slot_labels)
+        self.metric(slot_logits, gold_slot_labels, torch.ones([batch_size]), slot_nlls, neg_log_likelihood)
         return {**slot_logits, "loss": neg_log_likelihood}
 
     def beam_decode(self,
@@ -83,14 +83,16 @@ class QuestionModel(Model):
         return self.metric.get_metric(reset=reset)
 
     def _get_cross_entropy(self, slot_logits, gold_slot_labels):
-            xe = None
-            for slot_name in self.get_slot_names():
-                slot_xe = F.cross_entropy(slot_logits[slot_name], gold_slot_labels[slot_name].squeeze(-1), reduction = "sum")
-                if xe is None:
-                    xe = slot_xe
-                else:
-                    xe += slot_xe
-            return xe
+        slot_xes = {}
+        xe = None
+        for slot_name in self.get_slot_names():
+            slot_xe = F.cross_entropy(slot_logits[slot_name], gold_slot_labels[slot_name].squeeze(-1), reduction = "sum")
+            slot_xes[slot_name] = slot_xe
+            if xe is None:
+                xe = slot_xe
+            else:
+                xe = xe + slot_xe
+        return slot_xes, xe
 
     def _get_gold_slot_labels(self, instance_slot_labels_dict):
         # each of gold_slot_labels[slot_name] is of

@@ -215,6 +215,7 @@ def main(question_model_path: str,
          tan_min_prob: float,
          question_beam_size: int,
          clause_mode: bool) -> None:
+    clause_mode = True
     print("Checking device...", flush = True)
     check_for_gpu(cuda_device)
     print("Loading models...", flush = True)
