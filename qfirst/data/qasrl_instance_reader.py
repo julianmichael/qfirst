@@ -70,6 +70,16 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
 
 @QasrlInstanceReader.register("verb_qas")
 class QasrlVerbQAsReader(QasrlInstanceReader):
+    def __init__(self,
+                 slot_names: List[str] = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"],
+                 clause_info_files: List[str] = []):
+        self._slot_names = slot_names
+        self._clause_info = None
+        if len(clause_info_files) > 0:
+            self._clause_info = {}
+            for file_path in clause_info_files:
+                read_clause_info(self._clause_info, file_path)
+        self._tokenizer = WordTokenizer()
     @overrides
     def read_instances(self,
                        token_indexers: Dict[str, TokenIndexer],
@@ -82,10 +92,33 @@ class QasrlVerbQAsReader(QasrlInstanceReader):
         question_slot_field_lists = {}
         answer_spans = []
         for question_label in question_labels:
+            question_tokens = self._tokenizer.tokenize(question_label["questionString"])
+            question_text_field = TextField(question_tokens, token_indexers)
             question_slots_dict = get_question_slot_fields(question_label["questionSlots"])
+            abstract_slots_dict = get_abstract_question_slot_fields(question_label)
+            if self._clause_info is not None and any([s.startswith("clause") for s in self._slot_names]):
+                try:
+                    clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
+                    def abst_noun(x):
+                        return "something" if (x == "someone") else x
+                    clause_slots["abst-subj"] = abst_noun(clause_slots["subj"])
+                    clause_slots["abst-verb"] = "verb[pss]" if question_label["isPassive"] else "verb"
+                    clause_slots["abst-obj"] = abst_noun(clause_slots["obj"])
+                    clause_slots["abst-prep1-obj"] = abst_noun(clause_slots["prep1-obj"])
+                    clause_slots["abst-prep2-obj"] = abst_noun(clause_slots["prep2-obj"])
+                    clause_slots["abst-misc"] = abst_noun(clause_slots["misc"])
+                    clause_slots_dict = { ("clause-%s" % k) : get_clause_slot_field(k, v) for k, v in clause_slots.items() }
+                except KeyError:
+                    logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
+                    continue
+            else:
+                clause_slots_dict = {}
+
+            all_slots_dict = {**question_slots_dict, **abstract_slots_dict, **clause_slots_dict}
+            included_slot_fields = { k: v for k, v in all_slots_dict.items() if k in self._slot_names }
             for span in set(get_answer_spans(question_label)):
                 answer_spans.append(span)
-                for k, v in question_slots_dict.items():
+                for k, v in included_slot_fields.items():
                     if k not in question_slot_field_lists:
                         question_slot_field_lists[k] = []
                     question_slot_field_lists[k].append(v)

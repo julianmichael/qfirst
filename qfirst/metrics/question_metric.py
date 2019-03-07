@@ -24,11 +24,13 @@ class QuestionMetric(Metric):
         self._questions_correct = 0
         self._slot_correct = { l: 0 for l in self._slot_names }
         self._negative_log_likelihood = 0.
+        self._slot_nlls = { l: 0 for l in self._slot_names }
 
     def __call__(self,
                  slot_logits: Dict[str, torch.Tensor],
                  slot_labels: Dict[str, torch.Tensor],
                  mask: torch.Tensor,
+                 slot_nlls: Dict[str, torch.Tensor],
                  negative_log_likelihood: float):
         mask, negative_log_likelihood = self.unwrap_to_tensors(mask.long(), negative_log_likelihood)
 
@@ -49,6 +51,7 @@ class QuestionMetric(Metric):
         correct_questions = mask.clone()
 
         for slot_name in self._slot_names:
+            self._slot_nlls[slot_name] += slot_nlls[slot_name]
             # logits Shape: batch_size, slot_name_vocab_size
             # gold_labels Shape: batch_size, 1?
             logits, gold_labels = self.unwrap_to_tensors(slot_logits[slot_name], slot_labels[slot_name])
@@ -78,15 +81,18 @@ class QuestionMetric(Metric):
 
         def get_slot_accuracy(slot_name):
             return self._slot_correct[slot_name] /  self._total_questions
-        slot_wise_metrics = { "%s-accuracy" % l : get_slot_accuracy(l) for l in self._slot_names }
+        slot_wise_metrics = {
+            **{"%s-acc" % l : get_slot_accuracy(l) for l in self._slot_names},
+            **{"%s-pps" % l : math.exp(self._slot_nlls[l] / self._total_questions) for l in self._slot_names}
+        }
 
         avg_slot_accuracy = sum([v for k, v in slot_wise_metrics.items()]) / len(self._slot_names)
         full_question_accuracy = self._questions_correct / self._total_questions
         perplexity_per_question = math.exp(self._negative_log_likelihood / self._total_questions)
 
         other_metrics = {
-            "avg-slot-accuracy": avg_slot_accuracy,
-            "full-question-accuracy": full_question_accuracy,
+            "avg-slot-acc": avg_slot_accuracy,
+            "full-question-acc": full_question_accuracy,
             "perplexity-per-question": perplexity_per_question
         }
 

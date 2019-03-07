@@ -58,8 +58,8 @@ class SpanToQuestionModel(Model):
         gold_slot_labels = self._get_gold_slot_labels(span_mask, **kwargs)
         if gold_slot_labels is not None:
             slot_logits = self._time_distributed_question_generator(**{"inputs": question_inputs, **gold_slot_labels})
-            neg_log_likelihood = self._get_total_cross_entropy(slot_logits, gold_slot_labels, span_mask)
-            self._metric(slot_logits, gold_slot_labels, span_mask, neg_log_likelihood)
+            slot_nlls, neg_log_likelihood = self._get_total_cross_entropy(slot_logits, gold_slot_labels, span_mask)
+            self._metric(slot_logits, gold_slot_labels, span_mask, slot_nlls, neg_log_likelihood)
             return {**slot_logits, "span_mask": span_mask, "loss": neg_log_likelihood}
         else:
             raise ConfigurationError("AfirstQuestionGenerator requires gold labels for teacher forcing when running forward. "
@@ -90,13 +90,15 @@ class SpanToQuestionModel(Model):
 
     def _get_total_cross_entropy(self, slot_logits, gold_slot_labels, span_mask):
         loss = 0.
+        slot_xes = {}
         for n in self._question_generator.get_slot_names():
             slot_loss = sequence_cross_entropy_with_logits(
                 slot_logits[n], gold_slot_labels[n], span_mask.unsqueeze(-1).float(),
                 average = None
             ).sum()
+            slot_xes[n] = slot_loss
             loss += slot_loss
-        return loss
+        return slot_xes, loss
 
     def _get_gold_slot_labels(self, mask, **kwargs):
         slot_labels = {}

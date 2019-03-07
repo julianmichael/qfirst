@@ -94,10 +94,14 @@ class FactoredPipeline():
                 for s, p in span_output["spans"]
                 if p >= self._span_minimum_threshold]
             all_spans = [s for s, _ in scored_spans]
-            span_to_tan_instance.add_field("tan_spans", ListField([SpanField(s.start(), s.end(), span_to_tan_instance["text"]) for s in all_spans]))
-            span_to_tan_output = self._span_to_tan_model.forward_on_instance(span_to_tan_instance)
-            animacy_instance.add_field("animacy_spans", ListField([SpanField(s.start(), s.end(), animacy_instance["text"]) for s in all_spans]))
-            animacy_output = self._animacy_model.forward_on_instance(animacy_instance)
+            if len(all_spans) > 0:
+                span_to_tan_instance.add_field("tan_spans", ListField([SpanField(s.start(), s.end(), span_to_tan_instance["text"]) for s in all_spans]))
+                span_to_tan_output = self._span_to_tan_model.forward_on_instance(span_to_tan_instance)
+                animacy_instance.add_field("animacy_spans", ListField([SpanField(s.start(), s.end(), animacy_instance["text"]) for s in all_spans]))
+                animacy_output = self._animacy_model.forward_on_instance(animacy_instance)
+            else:
+                span_to_tan_output = None
+                animacy_output = None
 
             scored_clauses = [
                 (self._clause_model.vocab.get_token_from_index(c, namespace = "abst-clause-labels"), p)
@@ -141,19 +145,21 @@ class FactoredPipeline():
                     (self._tan_model.vocab.get_token_from_index(i, namespace = "tan-string-labels"), p)
                     for i, p in enumerate(tan_output["probs"].tolist())
                     if p >= self._tan_minimum_threshold
-                ],
-                "span_tans": [
+                ]
+            }
+            if span_to_tan_output is not None:
+                beam["span_tans"] = [
                     ([s.start(), s.end() + 1], [
                         (self._span_to_tan_model.vocab.get_token_from_index(i, namespace = "tan-string-labels"), p)
                         for i, p in enumerate(probs)
                         if p >= self._tan_minimum_threshold])
                     for s, probs in zip(all_spans, span_to_tan_output["probs"].tolist())
-                ],
-                "animacy": [
+                ]
+            if animacy_output is not None:
+                beam["animacy"] = [
                     ([s.start(), s.end() + 1], p)
                     for s, p in zip(all_spans, animacy_output["probs"].tolist())
                 ]
-            }
             verb_dicts.append({
                 "verbIndex": answer_slot_instance["metadata"]["verb_index"],
                 "verbInflectedForms": answer_slot_instance["metadata"]["verb_inflected_forms"],
