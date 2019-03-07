@@ -136,6 +136,7 @@ class SpanMetric(Metric, Registrable):
         above_null_dict = {}
         if sum([self._above_null_conf[k] for k in ["tp", "tn", "fp", "fn"]]) > 0:
             above_null_dict = stats(self._above_null_conf)
+        print("above null dict: " + str(above_null_dict))
 
         stats_dict = max([stats(conf) for conf in self._confs], key = lambda d: d["f1"])
         output_dict = {
@@ -143,7 +144,7 @@ class SpanMetric(Metric, Registrable):
             "gold-not-pruned": get_cov(self._gold_spans_max_coverage),
             "top-em": get_acc(self._top_em),
             "top-token-f1": get_macro_f1(self._top_macro_f1),
-            **above_null_dict
+            **{ ("*%s" % k) : v for k, v in above_null_dict.items()}
         }
 
         if reset:
