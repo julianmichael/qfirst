@@ -10,7 +10,8 @@ from qfirst.common.span import Span
 class SpanMetric(Metric, Registrable):
     def __init__(self,
                  thresholds = [.05, .15, .25, .35, .40, .45, .50, .55, .60, .65, .75, .85, .95]):
-        self._thresholds = thresholds
+        # self._thresholds = thresholds
+        self._thresholds = [0.5]
         self.reset()
 
     def reset(self):
@@ -41,12 +42,17 @@ class SpanMetric(Metric, Registrable):
             "fp": 0,
             "fn": 0
         }
+        self._num_gold = 0
         self._num_instances = 0
 
     def __call__(self,
                  span_probs, # List[List[(Span, float)]]: batch size, num predicted spans
                  null_prob, # List[float]: batch_size, may be None
+                 spans_per_answer, # List[float]
                  gold_span_sets):  # dicts corresponding to JSON object
+
+        self._num_instances += len(spans_per_answer)
+        self._num_gold += sum(spans_per_answer)
 
         def update_conf(conf, true, positive):
             if true and positive:
@@ -78,7 +84,6 @@ class SpanMetric(Metric, Registrable):
             return
 
         for i, (spans_with_probs, gold_spans) in enumerate(zip(span_probs, gold_span_sets)):
-            self._num_instances += 1
             spans_in_beam = [span for span, prob in spans_with_probs]
             num_gold_spans_in_beam = len([s for s in spans_in_beam if s in gold_spans])
             update_coverage(self._gold_spans_max_coverage, num_gold_spans_in_beam, len(gold_spans))
@@ -89,7 +94,7 @@ class SpanMetric(Metric, Registrable):
                     true = (span in gold_spans) == positive
                     update_conf(conf, true, positive)
                 if null_prob is not None:
-                    positive = prob >= null_prob[i].item()
+                    positive = prob >= null_prob[i]
                     true = (span in gold_spans) == positive
                     update_conf(self._above_null_conf, true, positive)
 
@@ -141,14 +146,16 @@ class SpanMetric(Metric, Registrable):
         above_null_dict = {}
         if sum([self._above_null_conf[k] for k in ["tp", "tn", "fp", "fn"]]) > 0:
             above_null_dict = stats(self._above_null_conf)
-
         stats_dict = max([stats(conf) for conf in self._confs], key = lambda d: d["f1"])
+        gold_size = self._num_gold / self._num_instances if self._num_instances > 0 else 0.0
+
         output_dict = {
-            **{ k: v for k, v in stats_dict.items() if isinstance(v, float) },
+            # **{ k: v for k, v in stats_dict.items() if isinstance(v, float) },
             # "gold-not-pruned": get_cov(self._gold_spans_max_coverage),
             # "top-em": get_acc(self._top_em),
             # "top-token-f1": get_macro_f1(self._top_macro_f1),
-            **{ ("f-%s" % k) : v for k, v in above_null_dict.items()}
+            "gold-size": gold_size,
+            **{ ("%s" % k) : v for k, v in above_null_dict.items()}
         }
 
         if reset:

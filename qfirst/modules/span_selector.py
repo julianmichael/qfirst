@@ -166,7 +166,11 @@ class SpanSelector(torch.nn.Module, Registrable):
                 output_dict["loss"] = loss
             if not (self.training and self._skip_metrics_during_training):
                 output_dict = self.decode(output_dict)
-                self._metric(output_dict["spans"], output_dict.get("null_prob"), [m["gold_spans"] for m in metadata])
+                spans_per_answer = span_counts.sum(dim = 1) / num_answers
+                null_output = output_dict.get("null_prob")
+                if null_output is not None:
+                    null_output = null_output.tolist()
+                self._metric(output_dict["spans"], null_output, spans_per_answer.tolist(), [m["gold_spans"] for m in metadata])
 
         return output_dict
 
