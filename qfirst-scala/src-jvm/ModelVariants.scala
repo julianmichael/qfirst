@@ -559,7 +559,7 @@ object ModelVariants extends IOApp {
     )
 
     def span(doDensityEstimation: Boolean) = Model(
-      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_answers")),
+      datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("verb_answers")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_span"))
@@ -741,7 +741,7 @@ object ModelVariants extends IOApp {
   def writeAll(path: Path, model: Model, hyperparams: Hyperparams[List]) = {
     val jsons = model.generateJson(hyperparams)
     for {
-      _ <- (new util.Random()).shuffle(jsons).zipWithIndex.traverse {
+      _ <- (new util.Random()).shuffle(jsons).take(12).zipWithIndex.traverse {
         case (json, index) =>
           FileUtil.writeJson(path.resolve(s"$index.json"), printer)(json)
       }

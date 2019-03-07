@@ -10,6 +10,7 @@ from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 
 from qfirst.common.span import Span
 from qfirst.data.fields.multilabel_field_new import MultiLabelField_New
+from qfirst.data.fields.number_field import NumberField
 from qfirst.data.util import *
 
 from overrides import overrides
@@ -57,9 +58,11 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
             span_counts_field = ListField([LabelField(label = -1, skip_indexing = True)])
         else:
             span_counts_field = ListField([LabelField(label = count, skip_indexing = True) for count in span_counts])
-        num_answers = len([aj for ql in question_labels for aj in ql["answerJudgments"]])
-        num_answers_field = LabelField(label = num_answers, skip_indexing = True)
-        if num_answers > 0:
+        num_questions = len(question_labels)
+        if num_questions > 0:
+            num_answers = len([aj for ql in question_labels for aj in ql["answerJudgments"]]) / num_questions
+            # num_answers_field = LabelField(label = num_answers, skip_indexing = True)
+            num_answers_field = NumberField(num_answers)
             yield {
                 **verb_dict,
                 "answer_spans": answer_spans_field,
