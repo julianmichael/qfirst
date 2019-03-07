@@ -148,7 +148,7 @@ class SpanMetric(Metric, Registrable):
             # "gold-not-pruned": get_cov(self._gold_spans_max_coverage),
             # "top-em": get_acc(self._top_em),
             # "top-token-f1": get_macro_f1(self._top_macro_f1),
-            **{ ("_%s" % k) : v for k, v in above_null_dict.items()}
+            **{ ("f-%s" % k) : v for k, v in above_null_dict.items()}
         }
 
         if reset:
