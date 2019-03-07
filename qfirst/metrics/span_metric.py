@@ -117,8 +117,11 @@ class SpanMetric(Metric, Registrable):
             f1 = 0.
             if precision + recall > 0.0:
                 f1 = 2 * (precision * recall) / (precision + recall)
+            thresh_dict = {}
+            if "threshold" in conf:
+                thresh_dict["threshold"] = conf["threshold"]
             return {
-                "threshold": conf["threshold"],
+                **thresh_dict,
                 "precision": precision,
                 "recall": recall,
                 "f1": f1

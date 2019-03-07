@@ -120,7 +120,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                 output_dict["loss"] = F.binary_cross_entropy_with_logits(span_logits, prediction_mask, weight = span_mask.float(), size_average = False)
             else:
                 assert self._objective == "density_mle"
-                print("span_logits: " + str(span_logits.size()))
+                # print("span_logits: " + str(span_logits.size()))
                 # gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
                 gold_span_indices = self._get_span_indices(answer_spans, num_tokens)
 
@@ -132,31 +132,37 @@ class SpanSelector(torch.nn.Module, Registrable):
                 span_logits_with_null = torch.cat([null_logits, span_logits], -1)
                 span_mask_with_null = torch.cat([null_mask, span_mask], -1)
                 span_indices_with_null = torch.cat([null_indices, gold_span_indices + 1], -1) # shift gold indices +1 accting for 0 baseline
-                span_counts_with_null = torch.cat([null_counts.unsqueeze(-1), span_counts.float()], -1)
+                span_counts_with_null = torch.cat([null_counts.unsqueeze(-1), span_counts], -1)
 
-                span_probs_with_null = util.masked_log_softmax(span_logits_with_null, span_mask_with_null)
+                span_log_probs_with_null = util.masked_log_softmax(span_logits_with_null, span_mask_with_null)
 
-                # print("span_probs_with_null: " + str(span_probs_with_null.size()))
                 # print("gold_span_indices: " + str(gold_span_indices))
                 # print("gold_span_indices + 1: " + str(gold_span_indices + 1))
                 # print("null_indices: " + str(null_indices))
-                print("span_indices_with_null: " + str(span_indices_with_null))
-                print("span_counts_with_null: " + str(span_counts_with_null))
+                # print("span_mask_with_null: " + str(span_mask_with_null))
+                # print("span_logits_with_null: " + str(span_logits_with_null))
+                # print("span_log_probs_with_null: " + str(span_log_probs_with_null))
+                # print("span_indices_with_null: " + str(span_indices_with_null))
+                # print("span_counts_with_null: " + str(span_counts_with_null))
 
                 loss = None
                 num_gold_spans = span_indices_with_null.size(1)
                 for span_num in range(num_gold_spans):
-                    loss_for_span_num = F.nll_loss(span_probs_with_null, span_indices_with_null[:,span_num], reduce = False)
-                    print("### SPAN NUM %s ###" % span_num)
-                    print("loss_for_span_num: " + str(loss_for_span_num))
-                    padded_loss_for_span_num = loss_for_span_num * span_counts_with_null[:,span_num] * span_mask_with_null[:,span_num].float()
-                    print("padded_loss_for_span_num: " + str(padded_loss_for_span_num))
+                    loss_for_span_num = F.nll_loss(span_log_probs_with_null, span_indices_with_null[:,span_num], reduce = False)
+                    # print("### SPAN NUM %s ###" % span_num)
+                    # print("loss_for_span_num: " + str(loss_for_span_num))
+                    # print(("span counts with null[:,%s]: " % span_num) + str(span_counts_with_null[:,span_num]))
+                    # span counts also act as a mask
+                    weighted_loss_for_span_num = loss_for_span_num * span_counts_with_null[:,span_num]
+                    # print("weighted_loss_for_span_num: " + str(weighted_loss_for_span_num))
                     if loss is None:
-                        loss = padded_loss_for_span_num.sum()
+                        loss = weighted_loss_for_span_num.sum()
                     else:
-                        loss += padded_loss_for_span_num.sum()
-                output_dict["span_probs"] = span_probs_with_null[:,1:]
-                output_dict["null_prob"] = span_probs_with_null[:,0]
+                        loss += weighted_loss_for_span_num.sum()
+                span_probs_with_null = span_log_probs_with_null.exp()
+                # print("span_probs_with_null: " + str(span_probs_with_null))
+                output_dict["span_probs"] = span_probs_with_null[:,1:].exp()
+                output_dict["null_prob"] = span_probs_with_null[:,0].exp()
                 output_dict["loss"] = loss
             if not (self.training and self._skip_metrics_during_training):
                 output_dict = self.decode(output_dict)

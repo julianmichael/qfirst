@@ -55,13 +55,12 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
         answer_spans, span_counts = get_answer_spans(question_labels)
         answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
         if len(span_counts) == 0:
-            span_counts_field = ListField([LabelField(label = -1, skip_indexing = True)])
+            span_counts_field = ListField([NumberField(0.0)])
         else:
-            span_counts_field = ListField([LabelField(label = count, skip_indexing = True) for count in span_counts])
+            span_counts_field = ListField([NumberField(float(count)) for count in span_counts])
         num_questions = len(question_labels)
         if num_questions > 0:
             num_answers = len([aj for ql in question_labels for aj in ql["answerJudgments"]]) / num_questions
-            # num_answers_field = LabelField(label = num_answers, skip_indexing = True)
             num_answers_field = NumberField(num_answers)
             yield {
                 **verb_dict,
