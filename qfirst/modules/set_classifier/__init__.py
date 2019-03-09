@@ -1,0 +1,3 @@
+from qfirst.modules.set_classifier.set_classifier import SetClassifier
+from qfirst.modules.set_classifier.set_binary_classifier import SetBinaryClassifier
+# from qfirst.modules.set_classifier.set_density_classifier import SetDensityClassifier

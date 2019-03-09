@@ -17,7 +17,7 @@ from allennlp.nn.util import batched_index_select
 
 from qfirst.common.span import Span
 
-from qfirst.metrics.span_metric import SpanMetric
+# from qfirst.metrics.span_metric import SpanMetric
 
 from qfirst.modules.slot_sequence_encoder import SlotSequenceEncoder
 from qfirst.modules.span_selector import SpanSelector
@@ -35,7 +35,7 @@ class QuestionToSpanModelBert(Model):
         self._qa_outputs = TimeDistributed(Linear(self._text_field_embedder.get_output_dim(), 2))
         self._pruner = Pruner(lambda x: x)
         self._skip_metrics_during_training = skip_metrics_during_training
-        self._metric = SpanMetric()
+        # self._metric = SpanMetric()
 
     def forward(self,  # type: ignore
                 text: Dict[str, torch.LongTensor],
@@ -70,7 +70,7 @@ class QuestionToSpanModelBert(Model):
 
             if not (self.training and self._skip_metrics_during_training):
                 output_dict = self.decode(output_dict)
-                self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
+                # self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
 
         return output_dict
 

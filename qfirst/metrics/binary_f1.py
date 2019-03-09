@@ -20,6 +20,7 @@ class BinaryF1(Metric, Registrable):
         def make_confs(thresholds):
             return [{
                 "threshold": t,
+                "instances": 0,
                 "tp": 0,
                 "tn": 0,
                 "fp": 0,
@@ -28,24 +29,28 @@ class BinaryF1(Metric, Registrable):
         self._confs = make_confs(self._thresholds)
 
     def __call__(self,
-                 probs_tensor,
-                 labels_tensor,
-                 mask_tensor = None):
-        probs, labels = Metric.unwrap_to_tensors(probs_tensor, labels_tensor.long())
-        if mask_tensor is None:
+                 scores,
+                 labels,
+                 mask = None):
+        scores, labels = Metric.unwrap_to_tensors(scores, labels.long())
+        if mask is not None:
+            mask, = Metric.unwrap_to_tensors(mask)
+
+        for conf in self._confs:
+            conf["instances"] += scores.size(0)
+        if mask is None:
             num_true = labels.sum().item()
             for conf in self._confs:
-                preds = (probs >= conf["threshold"]).long()
+                preds = (scores >= conf["threshold"]).long()
                 num_tp = torch.min(preds, labels).sum().item()
                 conf["tp"] += num_tp
                 conf["fn"] += num_true - num_tp
                 conf["fp"] += preds.sum().item() - num_tp
                 conf["tn"] += (1 - torch.max(preds, labels)).sum().item()
         else:
-            mask, = Metric.unwrap_to_tensors(mask_tensor)
             num_true = (labels * mask).sum().item()
             for conf in self._confs:
-                preds = (probs >= conf["threshold"]).long()
+                preds = (scores >= conf["threshold"]).long()
                 num_tp = (torch.min(preds, labels) * mask).sum().item()
                 conf["tp"] += num_tp
                 conf["fn"] += num_true - num_tp
@@ -58,12 +63,14 @@ class BinaryF1(Metric, Registrable):
             fp = conf["fp"]
             tn = conf["tn"]
             fn = conf["fn"]
+            num_predicted = tp + fp
             precision = 0.
-            if tp + fp > 0.0:
-                precision = tp / (tp + fp)
+            if num_predicted > 0.0:
+                precision = tp / num_predicted
+            num_gold = tp + fn
             recall = 0.
-            if tp + fn > 0.0:
-                recall = tp / (tp + fn)
+            if num_gold > 0.0:
+                recall = tp / num_gold
             f1 = 0.
             if precision + recall > 0.0:
                 f1 = 2 * (precision * recall) / (precision + recall)
@@ -74,6 +81,8 @@ class BinaryF1(Metric, Registrable):
                 mcc = mccNum / mccDenom
             return {
                 "threshold": conf["threshold"],
+                "avg-predicted": num_predicted / conf["instances"],
+                "avg-gold": num_gold / conf["instances"],
                 "precision": precision,
                 "recall": recall,
                 "f1": f1,
@@ -84,4 +93,4 @@ class BinaryF1(Metric, Registrable):
         if reset:
             self.reset()
 
-        return { k: v for k, v in stats_dict.items() if isinstance(v, float) }
+        return { k: v for k, v in stats_dict.items() }

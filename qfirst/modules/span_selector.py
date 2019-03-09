@@ -24,22 +24,18 @@ from allennlp.nn.util import masked_log_softmax
 from allennlp.training.metrics import SpanBasedF1Measure
 
 from qfirst.modules.span_rep_assembly import SpanRepAssembly
+from qfirst.modules.set_classifier.set_classifier import SetClassifier
+from qfirst.modules.set_classifier.set_binary_classifier import SetBinaryClassifier
 from qfirst.common.span import Span
 
-from qfirst.metrics.span_metric import SpanMetric
-
-objective_values = ["binary", "density_mle"]
 class SpanSelector(torch.nn.Module, Registrable):
     def __init__(self,
                  input_dim: int,
                  extra_input_dim: int = 0,
                  span_hidden_dim: int = 100,
                  span_ffnn: FeedForward = None,
-                 objective: str = "binary",
-                 uncertainty_factor: float = 2.0,
-                 span_probability_threshold: float = 0.05,
-                 skip_metrics_during_training: bool = False,
-                 metric: SpanMetric = SpanMetric(),
+                 classifier: SetClassifier = SetBinaryClassifier(),
+                 # span_decoding_threshold: float = 0.05,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanSelector, self).__init__()
@@ -48,15 +44,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         self._extra_input_dim = extra_input_dim
         self._span_hidden_dim = span_hidden_dim
         self._span_ffnn = span_ffnn
-        self._objective = objective
-        self._uncertainty_factor = uncertainty_factor
-        self._span_probability_threshold = span_probability_threshold
-        self._skip_metrics_during_training = skip_metrics_during_training
-
-        if objective not in objective_values:
-            raise ConfigurationError("QA objective must be one of the following: " + str(qa_objective_values))
-
-        self._metric = metric
+        self._classifier = classifier
 
         self._span_hidden = SpanRepAssembly(self._input_dim, self._input_dim, self._span_hidden_dim)
         if self._span_ffnn is not None:
@@ -88,7 +76,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                 inputs: torch.LongTensor,
                 input_mask: torch.LongTensor,
                 extra_input_embedding: torch.LongTensor = None,
-                answer_spans: torch.LongTensor = None,
+                # answer_spans: torch.LongTensor = None,
                 span_counts: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
                 metadata = None,
@@ -112,67 +100,72 @@ class SpanSelector(torch.nn.Module, Registrable):
             "span_logits": span_logits
         }
 
-        if answer_spans is not None:
-            if self._objective == "binary":
-                gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
-                prediction_mask = self._get_prediction_map(answer_spans, gold_span_mask, num_tokens)
-                output_dict["span_probs"] = torch.sigmoid(span_logits) * span_mask.float()
-                output_dict["loss"] = F.binary_cross_entropy_with_logits(span_logits, prediction_mask, weight = span_mask.float(), size_average = False)
-            else:
-                assert self._objective == "density_mle"
-                # print("span_logits: " + str(span_logits.size()))
-                # gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
-                gold_span_indices = self._get_span_indices(answer_spans, num_tokens)
+        return self._classifier(logits = span_logits, mask = span_mask, label_counts = span_counts, num_labelers = num_answers)
 
-                null_logits = span_logits.data.new().resize_(batch_size, 1).zero_()
-                null_mask = torch.ones_like(span_mask).resize_(batch_size, 1)
-                null_indices = gold_span_indices.data.new().resize_(batch_size, 1).zero_() # long
-                null_counts = num_answers.float() / self._uncertainty_factor
+        # if span_counts is not None:
+        #     if self._objective == "binary":
+        #         gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
+        #         prediction_mask = self._get_prediction_map(answer_spans, gold_span_mask, num_tokens)
+        #         output_dict["span_probs"] = torch.sigmoid(span_logits) * span_mask.float()
+        #         output_dict["loss"] = F.binary_cross_entropy_with_logits(span_logits, prediction_mask, weight = span_mask.float(), size_average = False)
+        #         if not (self.training and self._skip_metrics_during_training):
+        #             output_dict = self.decode(output_dict)
+        #             self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
+        #     else:
+        #         assert self._objective == "density_mle"
+        #         # print("span_logits: " + str(span_logits.size()))
+        #         # gold_span_mask = (answer_spans[:, :, 0] >= 0).squeeze(-1).long()
+        #         gold_span_indices = self._get_span_indices(answer_spans, num_tokens)
 
-                span_logits_with_null = torch.cat([null_logits, span_logits], -1)
-                span_mask_with_null = torch.cat([null_mask, span_mask], -1)
-                span_indices_with_null = torch.cat([null_indices, gold_span_indices + 1], -1) # shift gold indices +1 accting for 0 baseline
-                span_counts_with_null = torch.cat([null_counts.unsqueeze(-1), span_counts], -1)
+        #         null_logits = span_logits.data.new().resize_(batch_size, 1).zero_()
+        #         null_mask = torch.ones_like(span_mask).resize_(batch_size, 1)
+        #         null_indices = gold_span_indices.data.new().resize_(batch_size, 1).zero_() # long
+        #         null_counts = num_answers.float() / self._uncertainty_factor
 
-                span_log_probs_with_null = util.masked_log_softmax(span_logits_with_null, span_mask_with_null)
+        #         span_logits_with_null = torch.cat([null_logits, span_logits], -1)
+        #         span_mask_with_null = torch.cat([null_mask, span_mask], -1)
+        #         span_indices_with_null = torch.cat([null_indices, gold_span_indices + 1], -1) # shift gold indices +1 accting for 0 baseline
+        #         span_counts_with_null = torch.cat([null_counts.unsqueeze(-1), span_counts], -1)
 
-                # print("gold_span_indices: " + str(gold_span_indices))
-                # print("gold_span_indices + 1: " + str(gold_span_indices + 1))
-                # print("null_indices: " + str(null_indices))
-                # print("span_mask_with_null: " + str(span_mask_with_null))
-                # print("span_logits_with_null: " + str(span_logits_with_null))
-                # print("span_log_probs_with_null: " + str(span_log_probs_with_null))
-                # print("span_indices_with_null: " + str(span_indices_with_null))
-                # print("span_counts_with_null: " + str(span_counts_with_null))
+        #         span_log_probs_with_null = util.masked_log_softmax(span_logits_with_null, span_mask_with_null)
 
-                loss = None
-                num_gold_spans = span_indices_with_null.size(1)
-                for span_num in range(num_gold_spans):
-                    loss_for_span_num = F.nll_loss(span_log_probs_with_null, span_indices_with_null[:,span_num], reduce = False)
-                    # print("### SPAN NUM %s ###" % span_num)
-                    # print("loss_for_span_num: " + str(loss_for_span_num))
-                    # print(("span counts with null[:,%s]: " % span_num) + str(span_counts_with_null[:,span_num]))
-                    # span counts also act as a mask
-                    weighted_loss_for_span_num = loss_for_span_num * span_counts_with_null[:,span_num]
-                    # print("weighted_loss_for_span_num: " + str(weighted_loss_for_span_num))
-                    if loss is None:
-                        loss = weighted_loss_for_span_num.sum()
-                    else:
-                        loss += weighted_loss_for_span_num.sum()
-                span_probs_with_null = span_log_probs_with_null.exp()
-                # print("span_probs_with_null: " + str(span_probs_with_null))
-                output_dict["span_probs"] = span_probs_with_null[:,1:].exp()
-                output_dict["null_prob"] = span_probs_with_null[:,0].exp()
-                output_dict["loss"] = loss
-            if not (self.training and self._skip_metrics_during_training):
-                output_dict = self.decode(output_dict)
-                spans_per_answer = span_counts.sum(dim = 1) / num_answers
-                null_output = output_dict.get("null_prob")
-                if null_output is not None:
-                    null_output = null_output.tolist()
-                self._metric(output_dict["spans"], null_output, spans_per_answer.tolist(), [m["gold_spans"] for m in metadata])
+        #         # print("gold_span_indices: " + str(gold_span_indices))
+        #         # print("gold_span_indices + 1: " + str(gold_span_indices + 1))
+        #         # print("null_indices: " + str(null_indices))
+        #         # print("span_mask_with_null: " + str(span_mask_with_null))
+        #         # print("span_logits_with_null: " + str(span_logits_with_null))
+        #         # print("span_log_probs_with_null: " + str(span_log_probs_with_null))
+        #         # print("span_indices_with_null: " + str(span_indices_with_null))
+        #         # print("span_counts_with_null: " + str(span_counts_with_null))
 
-        return output_dict
+        #         loss = None
+        #         num_gold_spans = span_indices_with_null.size(1)
+        #         for span_num in range(num_gold_spans):
+        #             loss_for_span_num = F.nll_loss(span_log_probs_with_null, span_indices_with_null[:,span_num], reduce = False)
+        #             # print("### SPAN NUM %s ###" % span_num)
+        #             # print("loss_for_span_num: " + str(loss_for_span_num))
+        #             # print(("span counts with null[:,%s]: " % span_num) + str(span_counts_with_null[:,span_num]))
+        #             # span counts also act as a mask
+        #             weighted_loss_for_span_num = loss_for_span_num * span_counts_with_null[:,span_num]
+        #             # print("weighted_loss_for_span_num: " + str(weighted_loss_for_span_num))
+        #             if loss is None:
+        #                 loss = weighted_loss_for_span_num.sum()
+        #             else:
+        #                 loss += weighted_loss_for_span_num.sum()
+        #         span_probs_with_null = span_log_probs_with_null.exp()
+        #         # print("span_probs_with_null: " + str(span_probs_with_null))
+        #         output_dict["span_probs"] = span_probs_with_null[:,1:].exp()
+        #         output_dict["null_prob"] = span_probs_with_null[:,0].exp()
+        #         output_dict["loss"] = loss
+        #         if not (self.training and self._skip_metrics_during_training):
+        #             output_dict = self.decode(output_dict)
+        #             spans_per_answer = span_counts.sum(dim = 1) / num_answers
+        #             null_output = output_dict.get("null_prob")
+        #             if null_output is not None:
+        #                 null_output = null_output.tolist()
+        #             self._metric(output_dict["spans"], null_output, spans_per_answer.tolist(), [m["gold_spans"] for m in metadata])
+
+        # return output_dict
 
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "spans" not in output_dict:
@@ -255,4 +248,4 @@ class SpanSelector(torch.nn.Module, Registrable):
         return torch.autograd.Variable(labels).long()
 
     def get_metrics(self, reset: bool = False):
-        return self._metric.get_metric(reset = reset)
+        return self._classifier.get_metrics(reset = reset)

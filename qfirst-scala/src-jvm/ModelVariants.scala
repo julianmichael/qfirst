@@ -453,18 +453,38 @@ object ModelVariants extends IOApp {
     } yield ()
   }
 
+  sealed trait SetClassifier extends Component[Unit] {
+    def metric: String
+  }
+  case class SetDensityClassifier(uncertaintyFactor: Double = 1.0) extends SetClassifier {
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+      _ <- param("type", H.pure("density"))
+      _ <- param("uncertainty_factor", H.pure(uncertaintyFactor))
+    } yield ()
+    val metric = "-exp-KL"
+  }
+  case class SetBinaryClassifier(labelSelectionPolicy: String = "union") extends SetClassifier {
+    val labelSelectionPolicyValues = Set("union", "majority", "weighted")
+    if(!labelSelectionPolicyValues.contains(labelSelectionPolicy)) {
+      throw new RuntimeException("Label selection policy must be one of: " + labelSelectionPolicyValues.mkString(", "))
+    }
+    def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+      _ <- param("type", H.pure("binary"))
+      _ <- param("label_selection_policy", H.pure(labelSelectionPolicy))
+    } yield ()
+    val metric = "+f1"
+  }
+
   case class SpanSelector(
-    inputDim: Int, extraInputDim: Option[Int], doDensityEstimation: Boolean = false
+    inputDim: Int, extraInputDim: Option[Int], classifier: SetClassifier
   ) extends Component[Unit] {
-    val objective = if(doDensityEstimation) "density_mle" else "binary"
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("input_dim", H.pure(inputDim))
       _ <- param("extra_input_dim", H.pure(extraInputDim.getOrElse(0)))
       spanHiddenDim <- param("span_hidden_dim", H.spanSelectorHiddenDim)
       includeSpanFFNN <- param(H.includeSpanFFNN)
       _ <- (if(includeSpanFFNN) param("span_ffnn", FeedForward(spanHiddenDim)) else param(H.unit))
-      _ <- param("objective", H.pure(objective))
-      _ <- (if(doDensityEstimation) param("uncertainty_factor", H.spanUncertaintyFactor) else param(H.unit))
+      _ <- param("classifier", classifier)
     } yield ()
   }
 
@@ -539,7 +559,8 @@ object ModelVariants extends IOApp {
     def questionToSpan(
       slotNames: List[String],
       classifyInvalids: Boolean,
-      includeClauseData: Boolean = false
+      includeClauseData: Boolean = false,
+      spanClassifier: SetClassifier = SetBinaryClassifier()
     ) = Model(
       datasetReader = DatasetReader(
         QasrlFilter.allQuestions,
@@ -551,14 +572,14 @@ object ModelVariants extends IOApp {
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           questionEncodingDim <- param(H.questionEncoderOutputDim)
           _ <- param("question_encoder", QuestionEncoder(slotNames, encoderOutputDim, questionEncodingDim))
-          _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(questionEncodingDim + encoderOutputDim)))
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(questionEncodingDim + encoderOutputDim), spanClassifier))
           _ <- param("classify_invalids", H.pure(classifyInvalids))
         } yield ()
       },
       validationMetric = if(classifyInvalids) "+span-f1" else "+f1"
     )
 
-    def span(doDensityEstimation: Boolean) = Model(
+    def span(spanClassifier: SetClassifier) = Model(
       datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("verb_answers")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
@@ -566,10 +587,10 @@ object ModelVariants extends IOApp {
           encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
           injectPredicate <- param("inject_predicate", H.injectPredicate)
           extraInputDimOpt = if(injectPredicate) Some(encoderOutputDim) else None
-          _ <- param("span_selector", SpanSelector(encoderOutputDim, extraInputDimOpt, doDensityEstimation))
+          _ <- param("span_selector", SpanSelector(encoderOutputDim, extraInputDimOpt, spanClassifier))
         } yield ()
       },
-      validationMetric = "+f1"
+      validationMetric = spanClassifier.metric
     )
 
     def spanToQuestion(slotNames: List[String]) = Model(
@@ -688,31 +709,31 @@ object ModelVariants extends IOApp {
 
   val models = MapTree.fork(
     "span" -> MapTree.fromPairs(
-      "binary" -> Model.span(doDensityEstimation = false),
-      "density" -> Model.span(doDensityEstimation = true)
+      "binary" -> Model.span(SetBinaryClassifier()),
+      "density" -> Model.span(SetDensityClassifier())
     ),
-    "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
-    "question" -> MapTree.fromPairs(
-      "full" -> Model.question(fullSlots),
-      "no_tan" -> Model.question(noTanSlots),
-      "clausal" -> Model.question(clauseSlots, includeClauseData = true),
-      "clausal_no_tan" -> Model.question(clauseNoTanSlots, includeClauseData = true),
-      "clausal_no_anim" -> Model.question(clauseNoAnimSlots, includeClauseData = true),
-      "clausal_no_tan_or_anim" -> Model.question(clauseNoTanOrAnimSlots, includeClauseData = true),
-    ),
-    "question_to_span" -> MapTree.fromPairs(
-      "full" -> Model.questionToSpan(fullSlots, true),
-      "no_tan" -> Model.questionToSpan(noTanSlots, true),
-      "clausal" -> Model.questionToSpan(clauseSlots, true, includeClauseData = true),
-      "clausal_no_tan" -> Model.questionToSpan(clauseNoTanSlots, true, includeClauseData = true),
-      "clausal_no_anim" -> Model.questionToSpan(clauseNoAnimSlots, true, includeClauseData = true),
-      "clausal_no_tan_or_anim" -> Model.questionToSpan(clauseNoTanOrAnimSlots, true, includeClauseData = true),
-    ),
-    "animacy" -> MapTree.leaf[String](Model.animacy),
-    "tan" -> MapTree.leaf[String](Model.tan),
-    "span_to_tan" -> MapTree.leaf[String](Model.spanToTan),
-    "clause_string" -> MapTree.leaf[String](Model.clauseString),
-    "answer_slot" -> MapTree.leaf[String](Model.answerSlot)
+    // "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
+    // "question" -> MapTree.fromPairs(
+    //   "full" -> Model.question(fullSlots),
+    //   "no_tan" -> Model.question(noTanSlots),
+    //   "clausal" -> Model.question(clauseSlots, includeClauseData = true),
+    //   "clausal_no_tan" -> Model.question(clauseNoTanSlots, includeClauseData = true),
+    //   "clausal_no_anim" -> Model.question(clauseNoAnimSlots, includeClauseData = true),
+    //   "clausal_no_tan_or_anim" -> Model.question(clauseNoTanOrAnimSlots, includeClauseData = true),
+    // ),
+    // "question_to_span" -> MapTree.fromPairs(
+    //   "full" -> Model.questionToSpan(fullSlots, true),
+    //   "no_tan" -> Model.questionToSpan(noTanSlots, true),
+    //   "clausal" -> Model.questionToSpan(clauseSlots, true, includeClauseData = true),
+    //   "clausal_no_tan" -> Model.questionToSpan(clauseNoTanSlots, true, includeClauseData = true),
+    //   "clausal_no_anim" -> Model.questionToSpan(clauseNoAnimSlots, true, includeClauseData = true),
+    //   "clausal_no_tan_or_anim" -> Model.questionToSpan(clauseNoTanOrAnimSlots, true, includeClauseData = true),
+    // ),
+    // "animacy" -> MapTree.leaf[String](Model.animacy),
+    // "tan" -> MapTree.leaf[String](Model.tan),
+    // "span_to_tan" -> MapTree.leaf[String](Model.spanToTan),
+    // "clause_string" -> MapTree.leaf[String](Model.clauseString),
+    // "answer_slot" -> MapTree.leaf[String](Model.answerSlot)
   )
 
   val bertSpecializedModels = MapTree.fork(

@@ -25,7 +25,7 @@ from allennlp.training.metrics import SpanBasedF1Measure
 from qfirst.modules.span_rep_assembly import SpanRepAssembly
 from qfirst.common.span import Span
 
-from qfirst.metrics.span_metric import SpanMetric
+# from qfirst.metrics.span_metric import SpanMetric
 
 # TODO: fix weighted span selection policy.
 # right now it determines the targets. instead it should determine the loss weights.
@@ -42,7 +42,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
                  gold_span_selection_policy: str = "union",
                  pruning_ratio: float = 2.0,
                  skip_metrics_during_training: bool = True,
-                 metric: SpanMetric = SpanMetric(),
+                 # metric: SpanMetric = SpanMetric(),
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(PruningSpanSelector, self).__init__()
@@ -65,7 +65,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
         if objective == "multinomial" and gold_span_selection_policy == "weighted":
             raise ConfigurationError("Cannot use weighted span selection policy with multinomial objective.")
 
-        self._metric = metric
+        # self._metric = metric
 
         self._span_hidden = SpanRepAssembly(input_dim, input_dim, self._span_hidden_dim)
 
@@ -145,7 +145,7 @@ class PruningSpanSelector(torch.nn.Module, Registrable):
             output_dict["loss"] = loss
         if not (self.training and self._skip_metrics_during_training):
             output_dict = self.decode(output_dict)
-            self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
+            # self._metric(output_dict["spans"], [m["gold_spans"] for m in metadata])
         return output_dict
 
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
