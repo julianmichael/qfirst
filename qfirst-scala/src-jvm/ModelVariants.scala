@@ -461,7 +461,7 @@ object ModelVariants extends IOApp {
       _ <- param("type", H.pure("density"))
       _ <- param("uncertainty_factor", H.pure(uncertaintyFactor))
     } yield ()
-    val metric = "-exp-KL"
+    val metric = "-KL"
   }
   case class SetBinaryClassifier(labelSelectionPolicy: String = "union") extends SetClassifier {
     val labelSelectionPolicyValues = Set("union", "majority", "weighted")
@@ -710,7 +710,8 @@ object ModelVariants extends IOApp {
   val models = MapTree.fork(
     "span" -> MapTree.fromPairs(
       "binary" -> Model.span(SetBinaryClassifier()),
-      "density" -> Model.span(SetDensityClassifier())
+      "density_1" -> Model.span(SetDensityClassifier(uncertaintyFactor = 1.0)),
+      "density_2" -> Model.span(SetDensityClassifier(uncertaintyFactor = 2.0)),
     ),
     // "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     // "question" -> MapTree.fromPairs(

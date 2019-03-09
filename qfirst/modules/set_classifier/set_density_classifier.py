@@ -50,7 +50,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
         self._score_metric = score_metric
         self._zero_score_metric = BinaryF1([0])
         self._gold_recall_metric = MomentsMetric()
-        self._divergence_metric = MomentsMetric()
+        self._kl_divergence_metric = MomentsMetric()
         self._null_prob_metric = MomentsMetric()
 
     def forward(self,  # type: ignore
@@ -100,8 +100,8 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
                     gold_items_per_labeler = label_counts.sum(dim = 1) / num_labelers
                     self._gold_recall_metric(gold_items_per_labeler)
                     gold_entropy = torch.distributions.Categorical(probs = full_gold_probs).entropy()
-                    exp_divergence = (cross_entropy - gold_entropy).exp()
-                    self._divergence_metric(exp_divergence)
+                    kl_divergence = (cross_entropy - gold_entropy)
+                    self._kl_divergence_metric(kl_divergence)
                     self._null_prob_metric(null_prob)
             return output_dict
 
@@ -113,7 +113,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
         prob_metrics = self._prob_metric.get_metric(reset = reset)
         score_metrics = self._score_metric.get_metric(reset = reset)
         zero_score_metrics = self._zero_score_metric.get_metric(reset = reset)
-        divergence_metrics = self._divergence_metric.get_metric(reset = reset)
+        kl_divergence_metrics = self._kl_divergence_metric.get_metric(reset = reset)
         null_prob_metrics = self._null_prob_metric.get_metric(reset = reset)
         gold_recall_metrics = self._gold_recall_metric.get_metric(reset = reset)
         return {
@@ -123,5 +123,6 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
             "gold-items-avg": gold_recall_metrics["mean"],
             "null-prob-avg": null_prob_metrics["mean"],
             "null-prob-stdev": null_prob_metrics["stdev"],
-            "exp-KL": divergence_metrics["mean"],
+            "KL": kl_divergence_metrics["mean"],
+            "exp-KL": math.exp(kl_divergence_metrics["mean"]),
         }
