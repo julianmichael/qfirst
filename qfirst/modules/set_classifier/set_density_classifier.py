@@ -123,6 +123,5 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
             "gold-items-avg": gold_recall_metrics["mean"],
             "null-prob-avg": null_prob_metrics["mean"],
             "null-prob-stdev": null_prob_metrics["stdev"],
-            "KL": kl_divergence_metrics["mean"],
-            "exp-KL": math.exp(kl_divergence_metrics["mean"]),
+            "KL": kl_divergence_metrics["mean"]
         }

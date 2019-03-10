@@ -187,24 +187,6 @@ class SpanSelector(torch.nn.Module, Registrable):
             spans.append(batch_spans)
         return spans
 
-    # def _to_scored_spans(self, span_mask, top_span_indices, top_span_mask, top_span_probs):
-    #     span_mask = span_mask.data.cpu()
-    #     top_span_indices = top_span_indices.data.cpu()
-    #     top_span_mask = top_span_mask.data.cpu()
-    #     top_span_probs = top_span_probs.data.cpu()
-    #     batch_size, num_spans = span_mask.size()
-    #     top_spans = []
-    #     for b in range(batch_size):
-    #         batch_spans = []
-    #         for start, end, i in self._start_end_range(num_spans):
-    #             batch_spans.append(Span(start, end))
-    #         batch_top_spans = []
-    #         for i in range(top_span_indices.size(1)):
-    #             if top_span_mask[b, i].item() == 1:
-    #                 batch_top_spans.append((batch_spans[top_span_indices[b, i]], top_span_probs[b, i].item()))
-    #         top_spans.append(batch_top_spans)
-    #     return top_spans
-
     def _start_end_range(self, num_spans):
         n = int(.5 * (math.sqrt(8 * num_spans + 1) -1))
 
@@ -216,36 +198,6 @@ class SpanSelector(torch.nn.Module, Registrable):
                 i += 1
 
         return result
-
-    def _get_prediction_map(self, spans, span_mask, seq_length):
-        batchsize, num_spans, _ = spans.size()
-        num_labels = int((seq_length * (seq_length+1))/2)
-        labels = spans.data.new().resize_(batchsize, num_labels).zero_().float()
-        spans = spans.data
-        arg_indexes = (2 * spans[:,:,0] * seq_length - spans[:,:,0].float().pow(2).long() + spans[:,:,0]) / 2 + (spans[:,:,1] - spans[:,:,0])
-        arg_indexes = arg_indexes * span_mask.data
-
-        for b in range(batchsize):
-            for s in range(num_spans):
-                if span_mask.data[b, s] > 0:
-                    labels[b, arg_indexes[b, s]] = 1
-
-        return torch.autograd.Variable(labels)
-
-    def _get_span_indices(self, spans, seq_length):
-        batch_size, num_gold_spans, _ = spans.size()
-        spans = spans.data
-        labels = spans.new().resize_(batch_size, num_gold_spans).zero_()
-        for b in range(batch_size):
-            for s in range(num_gold_spans):
-                span = spans[b, s]
-                if span[0] == -1:
-                    span_index = 0
-                else:
-                    span_index = (2 * span[0] * seq_length - span[0].float().pow(2).long() + span[0]) / 2 + (span[1] - span[0])
-                labels[b, s] = span_index
-
-        return torch.autograd.Variable(labels).long()
 
     def get_metrics(self, reset: bool = False):
         return self._classifier.get_metrics(reset = reset)
