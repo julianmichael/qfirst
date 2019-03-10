@@ -76,7 +76,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                 inputs: torch.LongTensor,
                 input_mask: torch.LongTensor,
                 extra_input_embedding: torch.LongTensor = None,
-                # answer_spans: torch.LongTensor = None,
+                answer_spans: torch.LongTensor = None,
                 span_counts: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
                 metadata = None,
@@ -100,7 +100,35 @@ class SpanSelector(torch.nn.Module, Registrable):
             "span_logits": span_logits
         }
 
-        return self._classifier(logits = span_logits, mask = span_mask, label_counts = span_counts, num_labelers = num_answers)
+        if answer_spans is not None:
+            num_gold_spans = answer_spans.size(1)
+            span_counts_dist = torch.zeros_like(span_logits)
+            for b in range(batch_size):
+                for s in range(num_gold_spans):
+                    span = answer_spans[b, s]
+                    if span[0] > -1:
+                        span_index = (2 * span[0] * num_tokens - span[0].float().pow(2).long() + span[0]) / 2 + (span[1] - span[0])
+                        span_counts_dist[b, span_index] = span_counts[b, s]
+        else:
+            span_counts_dist = None
+
+        return self._classifier(logits = span_logits, mask = span_mask, label_counts = span_counts_dist, num_labelers = num_answers)
+
+    # def _get_span_indices(self, spans, seq_length):
+    #     batch_size, num_gold_spans, _ = spans.size()
+    #     spans = spans.data
+    #     labels = spans.new().resize_(batch_size, num_gold_spans).zero_()
+    #     for b in range(batch_size):
+    #         for s in range(num_gold_spans):
+    #             span = spans[b, s]
+    #             if span[0] == -1:
+    #                 span_index = 0
+    #             else:
+    #                 span_index = (2 * span[0] * seq_length - span[0].float().pow(2).long() + span[0]) / 2 + (span[1] - span[0])
+    #             labels[b, s] = span_index
+
+    #     return torch.autograd.Variable(labels).long()
+
 
         # if span_counts is not None:
         #     if self._objective == "binary":

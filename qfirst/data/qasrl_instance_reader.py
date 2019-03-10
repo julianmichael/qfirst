@@ -53,26 +53,22 @@ class QasrlVerbAnswersReader(QasrlInstanceReader):
                        question_labels): # -> Iterable[Instance]
         verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
         answer_spans, span_counts = get_answer_spans(question_labels)
-        span_counts_field = self._get_span_counts_field(answer_spans, span_counts, len(sentence_tokens))
+        answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
+        if len(span_counts) == 0:
+            span_counts_field = ListField([NumberField(0.0)])
+        else:
+            span_counts_field = ListField([NumberField(float(count)) for count in span_counts])
         num_questions = len(question_labels)
         if num_questions > 0:
             num_answers = len([aj for ql in question_labels for aj in ql["answerJudgments"]]) / num_questions
-            num_answers_field = NumberField(float(num_answers))
+            num_answers_field = NumberField(num_answers)
             yield {
                 **verb_dict,
+                "answer_spans": answer_spans_field,
                 "span_counts": span_counts_field,
-                "num_answers": num_answers_field
+                "num_answers": num_answers_field,
+                "metadata": {"gold_spans": set(answer_spans)}
             }
-
-    def _get_span_counts_field(self, spans, span_counts, seq_length):
-        num_labels = int((seq_length * (seq_length+1))/2)
-        counts_dist = [NumberField(0.0) for _ in range(num_labels)]
-
-        for s, c in zip(spans, span_counts):
-            span_index = (2 * s.start() * seq_length - (s.start() ** 2) + s.start()) // 2 + (s.end() - s.start())
-            counts_dist[span_index] = NumberField(float(c))
-
-        return ListField(counts_dist)
 
 @QasrlInstanceReader.register("verb_qas")
 class QasrlVerbQAsReader(QasrlInstanceReader):
