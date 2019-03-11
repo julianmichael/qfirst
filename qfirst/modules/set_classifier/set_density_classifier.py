@@ -48,7 +48,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
 
         self._prob_metric = prob_metric
         self._score_metric = score_metric
-        self._zero_score_metric = BinaryF1([0])
+        # self._zero_score_metric = BinaryF1([0])
         self._gold_recall_metric = MomentsMetric()
         self._kl_divergence_metric = MomentsMetric()
         self._null_prob_metric = MomentsMetric()
@@ -96,7 +96,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
                     labels = label_counts > 0.0
                     self._prob_metric(probs, labels, mask)
                     self._score_metric(logits, labels, mask)
-                    self._zero_score_metric(logits, labels, mask)
+                    # self._zero_score_metric(logits, labels, mask)
                     gold_items_per_labeler = label_counts.sum(dim = 1) / num_labelers
                     self._gold_recall_metric(gold_items_per_labeler)
                     gold_entropy = torch.distributions.Categorical(probs = full_gold_probs).entropy()
@@ -112,14 +112,14 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
     def get_metrics(self, reset: bool = False):
         prob_metrics = self._prob_metric.get_metric(reset = reset)
         score_metrics = self._score_metric.get_metric(reset = reset)
-        zero_score_metrics = self._zero_score_metric.get_metric(reset = reset)
+        # zero_score_metrics = self._zero_score_metric.get_metric(reset = reset)
         kl_divergence_metrics = self._kl_divergence_metric.get_metric(reset = reset)
         null_prob_metrics = self._null_prob_metric.get_metric(reset = reset)
         gold_recall_metrics = self._gold_recall_metric.get_metric(reset = reset)
         return {
             **{ ("p-%s" % k): v for k, v in prob_metrics.items() },
             **{ ("s-%s" % k): v for k, v in score_metrics.items() },
-            **{ ("0-%s" % k): v for k, v in zero_score_metrics.items() },
+            # **{ ("0-%s" % k): v for k, v in zero_score_metrics.items() },
             "gold-items-avg": gold_recall_metrics["mean"],
             "null-prob-avg": null_prob_metrics["mean"],
             "null-prob-stdev": null_prob_metrics["stdev"],

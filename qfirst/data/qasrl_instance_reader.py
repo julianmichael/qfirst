@@ -11,6 +11,7 @@ from allennlp.data.tokenizers import Token, Tokenizer, WordTokenizer
 from qfirst.common.span import Span
 from qfirst.data.fields.multilabel_field_new import MultiLabelField_New
 from qfirst.data.fields.number_field import NumberField
+from qfirst.data.fields.multiset_field import MultisetField
 from qfirst.data.util import *
 
 from overrides import overrides
@@ -312,6 +313,55 @@ class QasrlSpanTanReader(QasrlInstanceReader):
                 "tan_spans": ListField(tan_span_fields),
                 "tan_labels": ListField(tan_label_fields)
             }
+
+@QasrlInstanceReader.register("clause_dist")
+class QasrlQuestionFactoredReader(QasrlInstanceReader):
+    def __init__(self,
+                 clause_info_files: List[str] = []):
+        self._clause_info = None
+        if len(clause_info_files) > 0:
+            self._clause_info = {}
+            for file_path in clause_info_files:
+                read_clause_info(self._clause_info, file_path)
+        self._tokenizer = WordTokenizer()
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # Iterable[Dict[str, ?Field]]
+        verb_fields = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        clause_dist_fields = {}
+        if self._clause_info is not None:
+            clause_counter = Counter()
+            for question_label in question_labels:
+                clause_slots = {}
+                try:
+                    clause_slots = self._clause_info[sentence_id][verb_index][question_label["questionString"]]["slots"]
+                except KeyError:
+                    logger.info("Omitting instance without clause data: %s / %s / %s" % (sentence_id, verb_index, question_label["questionString"]))
+                    continue
+
+                def abst_noun(x):
+                    return "something" if (x == "someone") else x
+                clause_slots["abst-subj"] = abst_noun(clause_slots["subj"])
+                clause_slots["abst-verb"] = "verb[pss]" if question_label["isPassive"] else "verb"
+                clause_slots["abst-obj"] = abst_noun(clause_slots["obj"])
+                clause_slots["abst-prep1-obj"] = abst_noun(clause_slots["prep1-obj"])
+                clause_slots["abst-prep2-obj"] = abst_noun(clause_slots["prep2-obj"])
+                clause_slots["abst-misc"] = abst_noun(clause_slots["misc"])
+                abst_slot_names = ["abst-subj", "abst-verb", "abst-obj", "prep1", "abst-prep1-obj", "prep2", "abst-prep2-obj", "abst-misc"]
+                clause_string = " ".join([clause_slots[slot_name] for slot_name in abst_slot_names])
+                clause_counter[clause_string] += 1
+
+            clause_dist_fields["clause_dist"] = MultisetField(labels = clause_counter, label_namespace = "abst-clause-labels")
+
+        yield {
+            **verb_fields,
+            **clause_dist_fields
+        }
 
 @QasrlInstanceReader.register("question_factored")
 class QasrlQuestionFactoredReader(QasrlInstanceReader):

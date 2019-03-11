@@ -698,6 +698,27 @@ object ModelVariants extends IOApp {
       },
       validationMetric = "+f1"
     )
+
+    def clauseFrame(numFrames: Int) = Model(
+      datasetReader = DatasetReader(
+        QasrlFilter.validQuestions,
+        QasrlInstanceReader("clause_dist", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
+      ),
+      model = new Component[Unit] {
+        def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+          _ <- param("type", H.pure("qasrl_clause_frame"))
+          encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+          _ <- param("num_frames", H.pure(numFrames))
+          _ <- param(
+            "initializer", H.pure(
+              List(
+                "frames_matrix" -> Json.obj("type" -> "orthogonal".asJson)
+              )
+            ))
+        } yield ()
+      },
+      validationMetric = "-KL"
+    )
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
@@ -714,6 +735,9 @@ object ModelVariants extends IOApp {
       "binary_weighted" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "weighted")),
       "density" -> Model.span(SetDensityClassifier(uncertaintyFactor = 1.0)),
     ),
+    "clause_frame" -> MapTree.fromPairs(
+      "plain_100" -> Model.clauseFrame(numFrames = 100)
+    )
     // "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     // "question" -> MapTree.fromPairs(
     //   "full" -> Model.question(fullSlots),
