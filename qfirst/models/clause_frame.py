@@ -62,14 +62,13 @@ class ClauseFrameModel(Model):
         output_dict = { "probs": frame_probs }
         # TODO figure out how to do this with logits
         # TODO figure out how to handle the null case
-        if clause_dist is not None:
-            gold_clause_probs = F.normalize(clause_dist.float(), dim = 1)
-            inverse_gold_probs = 1.0 - gold_clause_probs
+        if clause_dist is not None and clause_dist.sum().item() > 0.1:
+            gold_clause_probs = F.normalize(clause_dist.float(), p = 1, dim = 1)
             cross_entropy = torch.sum(-gold_clause_probs * clause_log_probs, 1)
             output_dict["loss"] = torch.mean(cross_entropy)
-            # gold_entropy = torch.distributions.Categorical(probs = gold_clause_probs).entropy()
-            gold_entropy = torch.sum(-gold_clause_probs * gold_clause_probs.log(), 1)
-            gold_entropy[gold_entropy != gold_entropy] = 0.0
+            gold_entropy = -gold_clause_probs * gold_clause_probs.log() # entropy summands
+            gold_entropy[gold_entropy != gold_entropy] = 0.0 # zero out nans
+            gold_entropy = torch.sum(gold_entropy, dim = 1) # compute sum for per-batch-item entropy
             kl_divergence = cross_entropy - gold_entropy
             self._metric(clause_probs, clause_dist > 0.0)
             self._kl_divergence_metric(kl_divergence)
