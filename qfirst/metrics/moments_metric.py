@@ -25,8 +25,9 @@ class MomentsMetric(Metric, Registrable):
             self._m2 += delta1 * delta2
 
     def get_metric(self, reset = False):
+        stdev = math.sqrt(self._m2 / self._num_values) if self._num_values > 0 else 0.0
         return {
             "n": self._num_values,
             "mean": self._mean,
-            "stdev": math.sqrt(self._m2 / self._num_values)
+            "stdev": stdev
         }
