@@ -169,21 +169,6 @@ class SparsemaxLoss(nn.Module):
             loss = loss.sum() / size
         return loss
 
-def _threshold_and_support_masked(input, mask = None, dim=0):
-    if mask is not None:
-        input_srt, _ = torch.sort(input + mask.float().log(), descending=True, dim=dim)
-    else:
-        input_srt, _ = torch.sort(input, descending=True, dim=dim)
-    input_cumsum = input_srt.cumsum(dim) - 1
-    rhos = _make_ix_like(input, dim)
-    support = rhos * input_srt > input_cumsum
-
-    support_size = support.sum(dim=dim).unsqueeze(dim)
-    tau = input_cumsum.gather(dim, support_size - 1)
-    tau /= support_size.to(input.dtype)
-    return tau, support_size
-
-
 # Masked multi-label versions.
 
 class MultilabelSparsemaxLossFunction(Function):
@@ -202,13 +187,17 @@ class MultilabelSparsemaxLossFunction(Function):
         qz = torch.einsum("ij,ij->i", [input, target])
         qnorm = torch.einsum("ij,ij->i", [target, target]) / 2.0
 
-        tau_z, support_size = _threshold_and_support_masked(input, mask, dim=1)
-        support = input > tau_z
+        if mask is not None:
+            masked_input = input + mask.float().log()
+        else:
+            masked_input = input
+        tau_z, support_size = _threshold_and_support(masked_input, mask, dim=1)
+        support = masked_input > tau_z
         x = torch.where(
             support, input**2 - tau_z**2,
             torch.tensor(0.0, device=input.device)
         ).sum(dim=1)
-        ctx.save_for_backward(input, target, tau_z)
+        ctx.save_for_backward(masked_input, target, tau_z)
         # clamping necessary because of numerical errors: loss should be lower
         # bounded by zero, but negative values near zero are possible without
         # the clamp
