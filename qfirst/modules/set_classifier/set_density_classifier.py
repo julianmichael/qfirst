@@ -25,33 +25,44 @@ from qfirst.metrics.binary_f1 import BinaryF1
 from qfirst.metrics.moments_metric import MomentsMetric
 from qfirst.modules.span_rep_assembly import SpanRepAssembly
 from qfirst.modules.set_classifier.set_classifier import SetClassifier
+from qfirst.util.sparsemax import sparsemax, multilabel_sparsemax_loss
 
-label_selection_policy_values = ["union", "majority", "weighted"]
+objective_values = ["softmax_with_null", "sparsemax"]
 
 @SetClassifier.register("density")
 class SetDensityClassifier(torch.nn.Module, Registrable):
     def __init__(self,
                  # decoding_threshold: float = 0.05,
-                 use_null_calibrator: bool = True,
-                 uncertainty_factor: float = 1.0,
+                 objective: str = "softmax_with_null",
+                 uncertainty_factor: float = 1.0, # only used with softmax/null
+                 sparsemax_gamma: float = 1.0, # only used with sparsemax
                  skip_metrics_during_training: bool = False,
                  prob_metric: BinaryF1 = BinaryF1(),
-                 score_metric: BinaryF1 = BinaryF1([-4, -3, -2, -1, 0, 1, 2])):
+                 score_metric: BinaryF1 = BinaryF1([-4, -3, -2, -1, 0])):
         super(SetDensityClassifier, self).__init__()
+
+        if objective not in objective_values:
+            raise ConfigurationError("SetDensityClassifier objective was %s, must be one of %s" % (objective, objective_values))
+        self._objective = objective
 
         # if uncertainty_factor < 1.0:
         #     raise ConfigurationError("Uncertainty factor must be >= 1.")
 
-        self._use_null_calibrator = use_null_calibrator
         self._uncertainty_factor = uncertainty_factor
+        self._sparsemax_gamma = sparsemax_gamma
         self._skip_metrics_during_training = skip_metrics_during_training
 
-        self._prob_metric = prob_metric
-        self._score_metric = score_metric
-        # self._zero_score_metric = BinaryF1([0])
         self._gold_recall_metric = MomentsMetric()
-        self._kl_divergence_metric = MomentsMetric()
-        self._null_prob_metric = MomentsMetric()
+        self._prob_metric = prob_metric
+
+        if objective == "softmax_with_null":
+            self._score_metric = score_metric
+            self._kl_divergence_metric = MomentsMetric()
+            self._null_prob_metric = MomentsMetric()
+        elif objective == "sparsemax":
+            self._zero_metric = BinaryF1([0.0])
+        else:
+            raise ConfigurationError("should never happen")
 
     def forward(self,  # type: ignore
                 logits: torch.LongTensor, # batch_size, set_size, 1
@@ -63,7 +74,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
 
         batch_size, set_size = logits.size()
 
-        if self._use_null_calibrator:
+        if self._objective == "softmax_with_null":
             null_logits = logits.data.new().resize_(batch_size, 1).zero_()
             null_mask = torch.ones_like(mask).resize_(batch_size, 1) if mask is not None else None
 
@@ -104,24 +115,52 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
                     self._kl_divergence_metric(kl_divergence)
                     self._null_prob_metric(null_prob)
             return output_dict
-
+        elif self._objective == "sparsemax":
+            # TODO figure out how to work gamma into sparsemax + loss
+            probs = sparsemax(logits + mask.float().log(), 1)
+            output_dict = {
+                "logits": logits,
+                "mask": mask,
+                "probs": probs,
+            }
+            gold_probs = F.normalize(label_counts, p = 1, dim = 1)
+            if label_counts is not None:
+                loss = multilabel_sparsemax_loss(logits, gold_probs, mask).mean()
+                output_dict["loss"] = loss
+                if not (self.training and self._skip_metrics_during_training):
+                    labels = label_counts > 0.0
+                    self._prob_metric(probs, labels, mask)
+                    self._zero_metric(probs, labels, mask)
+                    gold_items_per_labeler = label_counts.sum(dim = 1) / num_labelers
+                    self._gold_recall_metric(gold_items_per_labeler)
+            return output_dict
         else:
             raise NotImplementedError
 
 
     def get_metrics(self, reset: bool = False):
         prob_metrics = self._prob_metric.get_metric(reset = reset)
-        score_metrics = self._score_metric.get_metric(reset = reset)
-        # zero_score_metrics = self._zero_score_metric.get_metric(reset = reset)
-        kl_divergence_metrics = self._kl_divergence_metric.get_metric(reset = reset)
-        null_prob_metrics = self._null_prob_metric.get_metric(reset = reset)
         gold_recall_metrics = self._gold_recall_metric.get_metric(reset = reset)
+        if self._objective == "softmax_with_null":
+            score_metrics = self._score_metric.get_metric(reset = reset)
+            kl_divergence_metrics = self._kl_divergence_metric.get_metric(reset = reset)
+            null_prob_metrics = self._null_prob_metric.get_metric(reset = reset)
+            other_metrics = {
+                **{ ("s-%s" % k): v for k, v in score_metrics.items() },
+                "null-prob-avg": null_prob_metrics["mean"],
+                "null-prob-stdev": null_prob_metrics["stdev"],
+                "KL": kl_divergence_metrics["mean"], # this might be incorrect
+                "f1": max(prob_metrics["f1"], score_metrics["f1"])
+            }
+        else:
+            assert self._objective == "sparsemax"
+            zero_metrics = self._zero_metric.get_metric(reset = reset)
+            other_metrics = {
+                **{ ("0-%s" % k): v for k, v in zero_metrics.items() },
+                "f1": max(prob_metrics["f1"], zero_metrics["f1"])
+            }
         return {
             **{ ("p-%s" % k): v for k, v in prob_metrics.items() },
-            **{ ("s-%s" % k): v for k, v in score_metrics.items() },
-            # **{ ("0-%s" % k): v for k, v in zero_score_metrics.items() },
             "gold-items-avg": gold_recall_metrics["mean"],
-            "null-prob-avg": null_prob_metrics["mean"],
-            "null-prob-stdev": null_prob_metrics["stdev"],
-            "KL": kl_divergence_metrics["mean"]
+            **other_metrics
         }

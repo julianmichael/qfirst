@@ -456,12 +456,13 @@ object ModelVariants extends IOApp {
   sealed trait SetClassifier extends Component[Unit] {
     def metric: String
   }
-  case class SetDensityClassifier(uncertaintyFactor: Double = 1.0) extends SetClassifier {
+  case class SetDensityClassifier(objective: String, uncertaintyFactor: Double = 1.0) extends SetClassifier {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("density"))
+      _ <- param("objective", H.pure(objective))
       _ <- param("uncertainty_factor", H.pure(uncertaintyFactor))
     } yield ()
-    val metric = "-KL"
+    val metric = "+f1"
   }
   case class SetBinaryClassifier(labelSelectionPolicy: String = "union") extends SetClassifier {
     val labelSelectionPolicyValues = Set("union", "majority", "weighted")
@@ -733,7 +734,8 @@ object ModelVariants extends IOApp {
       "binary_union" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "union")),
       "binary_majority" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "majority")),
       "binary_weighted" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "weighted")),
-      "density" -> Model.span(SetDensityClassifier(uncertaintyFactor = 1.0)),
+      "density_softmax" -> Model.span(SetDensityClassifier(objective = "softmax_with_null")),
+      "density_sparsemax" -> Model.span(SetDensityClassifier(objective = "sparsemax")),
     ),
     "clause_frame" -> MapTree.fromPairs(
       "plain_100" -> Model.clauseFrame(numFrames = 100)
@@ -762,15 +764,15 @@ object ModelVariants extends IOApp {
     // "answer_slot" -> MapTree.leaf[String](Model.answerSlot)
   )
 
-  val bertSpecializedModels = MapTree.fork(
-    "question_to_span" -> MapTree.fromPairs(
-      "full-bert-specialized-valid" -> Model.questionToSpanBert(validQuestionsOnly = true),
-      "full-bert-specialized" -> Model.questionToSpanBert(validQuestionsOnly = false),
-    )
-  )
+  // val bertSpecializedModels = MapTree.fork(
+  //   "question_to_span" -> MapTree.fromPairs(
+  //     "full-bert-specialized-valid" -> Model.questionToSpanBert(validQuestionsOnly = true),
+  //     "full-bert-specialized" -> Model.questionToSpanBert(validQuestionsOnly = false),
+  //   )
+  // )
 
   val testModels = models
-    .merge(bertSpecializedModels, (x, y) => y)
+    // .merge(bertSpecializedModels, (x, y) => y)
 
   import java.nio.file.Paths
   import java.nio.file.Path
@@ -808,9 +810,9 @@ object ModelVariants extends IOApp {
     _ <- modelsWithPaths(models, root.resolve("bert-finetune")).traverse {
       case (path, model) => writeAll(path, model, Hyperparams.bertListFinetune)
     }
-    _ <- modelsWithPaths(bertSpecializedModels, root.resolve("bert-specialized")).traverse {
-      case (path, model) => writeAll(path, model, Hyperparams.bertListShallowFinetune)
-    }
+    // _ <- modelsWithPaths(bertSpecializedModels, root.resolve("bert-specialized")).traverse {
+    //   case (path, model) => writeAll(path, model, Hyperparams.bertListShallowFinetune)
+    // }
   } yield ExitCode.Success
 
   val command = Command(

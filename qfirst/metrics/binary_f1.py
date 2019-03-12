@@ -41,7 +41,7 @@ class BinaryF1(Metric, Registrable):
         if mask is None:
             num_true = labels.sum().item()
             for conf in self._confs:
-                preds = (scores >= conf["threshold"]).long()
+                preds = (scores > conf["threshold"]).long()
                 num_tp = torch.min(preds, labels).sum().item()
                 conf["tp"] += num_tp
                 conf["fn"] += num_true - num_tp
@@ -50,7 +50,7 @@ class BinaryF1(Metric, Registrable):
         else:
             num_true = (labels * mask).sum().item()
             for conf in self._confs:
-                preds = (scores >= conf["threshold"]).long()
+                preds = (scores > conf["threshold"]).long()
                 num_tp = (torch.min(preds, labels) * mask).sum().item()
                 conf["tp"] += num_tp
                 conf["fn"] += num_true - num_tp
