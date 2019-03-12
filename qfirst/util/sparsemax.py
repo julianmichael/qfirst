@@ -191,7 +191,7 @@ class MultilabelSparsemaxLossFunction(Function):
             masked_input = input + mask.float().log()
         else:
             masked_input = input
-        tau_z, support_size = _threshold_and_support(masked_input, mask, dim=1)
+        tau_z, support_size = _threshold_and_support(masked_input, dim=1)
         support = masked_input > tau_z
         x = torch.where(
             support, input**2 - tau_z**2,

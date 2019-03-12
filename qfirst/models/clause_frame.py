@@ -22,6 +22,7 @@ from allennlp.training.metrics import SpanBasedF1Measure
 from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.metrics.binary_f1 import BinaryF1
 from qfirst.metrics.moments_metric import MomentsMetric
+from qfirst.util.sparsemax import sparsemax
 
 @Model.register("qasrl_clause_frame")
 class ClauseFrameModel(Model):
@@ -55,7 +56,7 @@ class ClauseFrameModel(Model):
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         # Shape: batch_size, get_vocab_size(self._label_namespace)
         frame_logits = self._frame_pred(pred_rep)
-        frame_probs = F.softmax(frame_logits, dim = 1)
+        frame_probs = sparsemax(frame_logits, 1)
         frames = F.softmax(self._frames_matrix, dim = 1)
         clause_probs = torch.matmul(frame_probs, frames)
         clause_log_probs = clause_probs.log()
