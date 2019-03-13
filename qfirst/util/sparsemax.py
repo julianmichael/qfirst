@@ -78,8 +78,8 @@ class SparsemaxFunction(Function):
         return grad_input, None
 
 
-sparsemax = SparsemaxFunction.apply
-
+def sparsemax(input, dim = 0):
+    return SparsemaxFunction.apply(input, dim)
 
 class Sparsemax(nn.Module):
 
@@ -134,7 +134,8 @@ class SparsemaxLossFunction(Function):
         return sparsemax_out - delta, None
 
 
-sparsemax_loss = SparsemaxLossFunction.apply
+def sparsemax_loss(input, target):
+    return SparsemaxLossFunction.apply(input, target)
 
 class SparsemaxLoss(nn.Module):
     """
@@ -210,7 +211,8 @@ class MultilabelSparsemaxLossFunction(Function):
         return sparsemax_out - target, None, None
 
 
-multilabel_sparsemax_loss = MultilabelSparsemaxLossFunction.apply
+def multilabel_sparsemax_loss(input, target, mask = None):
+    return MultilabelSparsemaxLossFunction.apply(input, target, mask)
 
 class MultilabelSparsemaxLoss(nn.Module):
 

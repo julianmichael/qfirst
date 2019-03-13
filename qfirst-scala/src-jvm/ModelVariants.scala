@@ -48,9 +48,14 @@ object ModelVariants extends IOApp {
     // optimization params
     useBertAdam: F[Boolean],
     baseAdamLR: F[Double],
-    useBertWarmupSchedule: F[Boolean],
+    useSeperateBertAdamLR: F[Boolean],
     bertWeightsAdamLR: F[Double],
+    useBertWarmupSchedule: F[Boolean],
     bertWeightsWarmupNumSteps: F[Int],
+    // optimization params for frame learner
+    useSeparateFramesLR: F[Boolean],
+    framesLR: F[Double],
+    framesWarmupNumSteps: F[Int],
     // test/prod varying params
     trainPath: F[String],
     devPath: F[String],
@@ -85,9 +90,13 @@ object ModelVariants extends IOApp {
       injectPredicate = f(injectPredicate),
       useBertAdam = f(useBertAdam),
       baseAdamLR = f(baseAdamLR),
-      useBertWarmupSchedule = f(useBertWarmupSchedule),
+      useSeperateBertAdamLR = f(useSeperateBertAdamLR),
       bertWeightsAdamLR = f(bertWeightsAdamLR),
+      useBertWarmupSchedule = f(useBertWarmupSchedule),
       bertWeightsWarmupNumSteps = f(bertWeightsWarmupNumSteps),
+      useSeparateFramesLR = f(useSeparateFramesLR),
+      framesLR = f(framesLR),
+      framesWarmupNumSteps = f(framesWarmupNumSteps),
       trainPath = f(trainPath),
       devPath = f(devPath),
       numEpochs = f(numEpochs),
@@ -118,11 +127,15 @@ object ModelVariants extends IOApp {
       textEmbeddingDropout = 0.0,
       injectPredicate = false,
       // optimization
-      useBertAdam = false,
+      useBertAdam = true,
       baseAdamLR = 0.00005,
-      useBertWarmupSchedule = false,
+      useSeperateBertAdamLR = false,
       bertWeightsAdamLR = 0.00002,
+      useBertWarmupSchedule = false,
       bertWeightsWarmupNumSteps = 10000,
+      useSeparateFramesLR = true,
+      framesLR = 0.00002,
+      framesWarmupNumSteps = 10000,
       // test/prod
       trainPath = "dev-mini.jsonl",
       devPath = "dev-mini.jsonl",
@@ -147,16 +160,20 @@ object ModelVariants extends IOApp {
       spanUncertaintyFactor = List(1.1, 1.5, 2.0, 4.0),
       spanSelectorHiddenDim = List(50, 100, 200),
       predicateFeatureDim = List(100),
-      sentenceEncoderNumLayers = List(4, 8),
-      sentenceEncoderHiddenDimOpt = List(Some(300), Some(600)),
+      sentenceEncoderNumLayers = List(4),
+      sentenceEncoderHiddenDimOpt = List(Some(300)),
       textEmbeddingDropout = List(0.0),
       injectPredicate = List(false),
       // optimization
-      useBertAdam = List(false),
+      useBertAdam = List(true),
       baseAdamLR = List(0.00005),
-      useBertWarmupSchedule = List(false),
+      useSeperateBertAdamLR = List(false),
       bertWeightsAdamLR = List(0.00002),
+      useBertWarmupSchedule = List(false),
       bertWeightsWarmupNumSteps = List(10000),
+      useSeparateFramesLR = List(false, true),
+      framesLR = List(5e-6),
+      framesWarmupNumSteps = List(300, 1000),
       // test/prod
       trainPath = List("qasrl-v2_1/expanded/train.jsonl.gz"),
       devPath = List("qasrl-v2_1/expanded/dev.jsonl.gz"),
@@ -178,6 +195,7 @@ object ModelVariants extends IOApp {
       injectPredicate = List(true),
       useBertAdam = List(true),
       baseAdamLR = List(5e-5, 2e-4),
+      useSeperateBertAdamLR = List(true),
       bertWeightsAdamLR = List(1e-5, 2e-5, 3e-5),
       useBertWarmupSchedule = List(true),
       bertWeightsWarmupNumSteps = List(100, 1000, 10000),
@@ -187,6 +205,7 @@ object ModelVariants extends IOApp {
     val bertListShallowFinetune = bertListFinetune.copy[List](
       tokenHandler = TokenHandler.bert[List](finetune = true),
       useBertAdam = List(true),
+      useSeperateBertAdamLR = List(true),
       bertWeightsAdamLR = List(2e-5, 3e-5, 5e-5),
       useBertWarmupSchedule = List(false),
       numEpochs = List(10),
@@ -353,6 +372,9 @@ object ModelVariants extends IOApp {
     } yield ()
   }
 
+  type ParamGroupSetting = (List[String], Json)
+
+  // TODO use param groups
   case class AdadeltaOptimizer() extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("adadelta"))
@@ -360,30 +382,63 @@ object ModelVariants extends IOApp {
     } yield ()
   }
 
-  case class BertAdamOptimizer() extends Component[Unit] {
+  def getBertParamGroupSetting[F[_]](implicit H: Hyperparams[F]): F[Option[ParamGroupSetting]] = {
+    for {
+      useSeparateBertLR <- H.useSeperateBertAdamLR
+      useBertWarmup <- H.useBertWarmupSchedule
+      res <- {
+        if(useSeparateBertLR) {
+          if(useBertWarmup) {
+            for {
+              warmupTotal <- H.bertWeightsWarmupNumSteps
+              bertLR <- H.bertWeightsAdamLR
+            } yield Option(
+              List("bert_model") -> Json.obj(
+                "lr" -> bertLR.asJson,
+                "t_total" -> warmupTotal.asJson,
+                "schedule" -> "warmup_constant".asJson
+              )
+            )
+          } else {
+            for {
+              bertLR <- H.bertWeightsAdamLR
+            } yield Option {
+              List("bert_model") -> Json.obj(
+                "lr" -> bertLR.asJson
+              )
+            }
+          }
+        } else H.pure(None)
+      }
+    } yield res 
+  }
+
+  def getFramesParamGroupSetting[F[_]](implicit H: Hyperparams[F]): F[Option[ParamGroupSetting]] = {
+    H.useSeparateFramesLR.flatMap { useSeparateFramesLR =>
+      if(useSeparateFramesLR) {
+        for {
+          framesLR <- H.framesLR
+          framesWarmupNumSteps <- H.framesWarmupNumSteps
+        } yield Option {
+          List("frames_matrix") -> Json.obj(
+            "lr" -> framesLR.asJson,
+            "t_total" -> framesWarmupNumSteps.asJson,
+            "schedule" -> "warmup_constant".asJson
+          )
+        }
+      } else H.pure(None: Option[ParamGroupSetting])
+    }
+  }
+
+  case class BertAdamOptimizer(paramGroups: List[ParamGroupSetting]) extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("bert_adam"))
-      useWarmup <- param(H.useBertWarmupSchedule)
-      _ <- {
-        if(useWarmup) {
-          for {
-            _ <- param("lr", H.baseAdamLR)
-            warmupTotal <- param(H.bertWeightsWarmupNumSteps)
-            bertLR <- param(H.bertWeightsAdamLR)
-            _ <- param(
-              "parameter_groups", H.pure(
-                List(List("bert_model") -> Json.obj(
-                       "lr" -> bertLR.asJson,
-                       "t_total" -> warmupTotal.asJson,
-                       "schedule" -> "warmup_constant".asJson
-                     ))))
-          } yield ()
-        } else param("lr", H.bertWeightsAdamLR)
-      }
+      _ <- param("lr", H.baseAdamLR)
+      _ <- param("parameter_groups", H.pure(paramGroups))
     } yield ()
   }
 
-  case class Trainer(validationMetric: String) extends Component[Unit] {
+  case class Trainer(validationMetric: String, optimizerParamGroups: List[ParamGroupSetting] = Nil) extends Component[Unit] {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("num_epochs", H.numEpochs)
       _ <- param("grad_norm", H.pure(1.0))
@@ -391,7 +446,7 @@ object ModelVariants extends IOApp {
       _ <- param("validation_metric", H.pure(validationMetric))
       _ <- param("cuda_device", H.cudaDevice)
       useBertAdam <- param(H.useBertAdam)
-      _ <- param("optimizer", if(useBertAdam) BertAdamOptimizer() else AdadeltaOptimizer())
+      _ <- param("optimizer", if(useBertAdam) BertAdamOptimizer(optimizerParamGroups) else AdadeltaOptimizer())
     } yield ()
   }
 
@@ -527,22 +582,26 @@ object ModelVariants extends IOApp {
     } yield ()
   }
 
-  case class Model(
+  class Model(
     datasetReader: DatasetReader,
     model: Component[Unit],
     validationMetric: String
   ) extends Component[Unit] {
+    def getParamGroupSettings[F[_]](implicit H: Hyperparams[F]): F[List[ParamGroupSetting]] = {
+      getBertParamGroupSetting[F].map(_.toList)
+    }
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("dataset_reader", datasetReader)
       _ <- param("train_data_path", H.trainPath)
       _ <- param("validation_data_path", H.devPath)
       _ <- param("model", model)
       _ <- param("iterator", AllenNLPIterator())
-      _ <- param("trainer", Trainer(validationMetric))
+      paramGroupSettings <- param(getParamGroupSettings[F])
+      _ <- param("trainer", Trainer(validationMetric, paramGroupSettings))
     } yield ()
   }
   object Model {
-    def question(slotNames: List[String], includeClauseData: Boolean = false) = Model(
+    def question(slotNames: List[String], includeClauseData: Boolean = false) = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.validQuestions,
         QasrlInstanceReader("question", slotNames = Some(slotNames), clauseInfoFile = Some("clause-data-train-dev.jsonl").filter(_ => includeClauseData))
@@ -562,7 +621,7 @@ object ModelVariants extends IOApp {
       classifyInvalids: Boolean,
       includeClauseData: Boolean = false,
       spanClassifier: SetClassifier = SetBinaryClassifier()
-    ) = Model(
+    ) = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.allQuestions,
         QasrlInstanceReader("question", slotNames = Some(slotNames), clauseInfoFile = Some("clause-data-train-dev.jsonl").filter(_ => includeClauseData))
@@ -580,7 +639,7 @@ object ModelVariants extends IOApp {
       validationMetric = if(classifyInvalids) "+span-f1" else "+f1"
     )
 
-    def span(spanClassifier: SetClassifier) = Model(
+    def span(spanClassifier: SetClassifier) = new Model(
       datasetReader = DatasetReader(QasrlFilter.validQuestions, QasrlInstanceReader("verb_answers")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
@@ -594,7 +653,7 @@ object ModelVariants extends IOApp {
       validationMetric = spanClassifier.metric
     )
 
-    def spanToQuestion(slotNames: List[String]) = Model(
+    def spanToQuestion(slotNames: List[String]) = new Model(
       datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_qas")),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
@@ -608,7 +667,7 @@ object ModelVariants extends IOApp {
       validationMetric = "-perplexity-per-question"
     )
 
-    def questionToSpanBert(validQuestionsOnly: Boolean) = Model(
+    def questionToSpanBert(validQuestionsOnly: Boolean) = new Model(
       datasetReader = DatasetReader(
         if(validQuestionsOnly) QasrlFilter.validQuestions else QasrlFilter.allQuestions,
         QasrlInstanceReader("question_with_sentence_single_span")),
@@ -621,7 +680,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    val animacy = Model(
+    val animacy = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.questionsWithAnswers,
         QasrlInstanceReader("span_animacy")
@@ -637,7 +696,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    val tan = Model(
+    val tan = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.validQuestions,
         QasrlInstanceReader("question_factored")
@@ -653,7 +712,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    val spanToTan = Model(
+    val spanToTan = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.questionsWithAnswers,
         QasrlInstanceReader("span_tan")
@@ -669,7 +728,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    val clauseString = Model(
+    val clauseString = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.validQuestions,
         QasrlInstanceReader("question_factored", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
@@ -685,7 +744,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    val answerSlot = Model(
+    val answerSlot = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.questionsWithAnswers,
         QasrlInstanceReader("question_factored", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
@@ -700,7 +759,7 @@ object ModelVariants extends IOApp {
       validationMetric = "+f1"
     )
 
-    def clauseFrame(numFrames: Int) = Model(
+    def clauseFrame(numFrames: Int) = new Model(
       datasetReader = DatasetReader(
         QasrlFilter.validQuestions,
         QasrlInstanceReader("clause_dist", clauseInfoFile = Some("clause-data-train-dev.jsonl"))
@@ -719,7 +778,14 @@ object ModelVariants extends IOApp {
         } yield ()
       },
       validationMetric = "-KL"
-    )
+    ) {
+      override def getParamGroupSettings[F[_]](implicit H: Hyperparams[F]): F[List[ParamGroupSetting]] = {
+        for {
+          superSettings <- super.getParamGroupSettings[F]
+          frameSettings <- getFramesParamGroupSetting[F].map(_.toList)
+        } yield superSettings ++ frameSettings
+      }
+    }
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
