@@ -1,5 +1,9 @@
 package qfirst.frames
 
+import scala.collection.immutable.SortedSet
+
+import cats.Order
+import cats.data.NonEmptySet
 import cats.implicits._
 
 import qasrl.util.DependentMap
@@ -35,6 +39,15 @@ object implicits {
   }
   implicit val tenseDecoder: Decoder[Tense] = {
     io.circe.generic.semiauto.deriveDecoder[Tense]
+  }
+
+  implicit def nonEmptySetDecoder[A: Decoder : Order]: Decoder[NonEmptySet[A]] = {
+    import io.circe.generic.auto._
+    implicitly[Decoder[List[A]]].map(l => NonEmptySet.fromSetUnsafe[A](SortedSet(l: _*)))
+  }
+  implicit def nonEmptySetEncoder[A: Encoder]: Encoder[NonEmptySet[A]] = {
+    import io.circe.generic.auto._
+    implicitly[Encoder[List[A]]].contramap[NonEmptySet[A]](_.toList)
   }
 
   trait DependentEncoder[F[_], G[_]] {

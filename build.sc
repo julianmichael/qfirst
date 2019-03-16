@@ -229,6 +229,18 @@ object qfirst extends Module {
         ) ++ args)
     }
 
+    def runVerbAnn(args: String*) = T.command {
+      val jsPath = qfirst.js.fastOpt().path.toString
+      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
+      val runMain = runMainFn()
+      runMain(
+        "qfirst.frames.verbal.Serve",
+        List(
+          "--jsDeps", jsDepsPath,
+          "--js", jsPath
+        ) ++ args)
+    }
+
     object test extends Tests with CommonModule {
       override def scalaVersion = jvm.this.scalaVersion
       def platformSegment = jvm.this.platformSegment

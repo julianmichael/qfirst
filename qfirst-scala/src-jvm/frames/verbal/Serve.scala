@@ -1,4 +1,4 @@
-package qfirst.frames.annotation
+package qfirst.frames.verbal
 import qfirst.FileUtil
 
 import qasrl.bank.Data
@@ -34,9 +34,9 @@ object Serve extends IOApp {
   ): IO[ExitCode] = {
     IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get).flatMap { data =>
       val docApiSuffix = "doc"
-      val annApiSuffix = "ann"
+      val verbApiSuffix = "verb"
       val pageService = StaticPageService.makeService(
-        docApiSuffix, annApiSuffix,
+        docApiSuffix, verbApiSuffix,
         jsDepsPath, jsPath, port
       )
 
@@ -45,23 +45,23 @@ object Serve extends IOApp {
       val searchIndex = Search.createSearchIndex(docs.values.toList)
       val docService = HttpDocumentService.makeService(index, docs, searchIndex)
 
-      val saveData = (data: ClauseResolutionData) => {
+      val saveData = (data: VerbFrameData) => {
         FileUtil.writeJson(savePath, io.circe.Printer.noSpaces)(data)
       }
 
       for {
         initData <- {
-          if(Files.exists(savePath)) FileUtil.readJson[ClauseResolutionData](savePath)
-          else IO(ClauseResolutionData(Map(), Map()))
+          if(Files.exists(savePath)) FileUtil.readJson[VerbFrameData](savePath)
+          else IO.pure(VerbFrameData.newFromDataset(data.trainExpanded))
         }
         initDataRef <- Ref[IO].of(initData)
-        annotationService = ClauseAnnotationHttpService.make(
-          ClauseAnnotationServiceIO(data.devExpanded, initDataRef, saveData)
+        annotationService = VerbAnnotationHttpService.make(
+          VerbAnnotationServiceIO(initDataRef, saveData)
         )
         app = Router(
           "/" -> pageService,
           s"/$docApiSuffix" -> docService,
-          s"/$annApiSuffix" -> annotationService
+          s"/$verbApiSuffix" -> annotationService
         ).orNotFound
         _ <- BlazeServerBuilder[IO]
         .bindHttp(port, "0.0.0.0")
@@ -99,7 +99,7 @@ object Serve extends IOApp {
     // ).map(NonEmptySet.of(_)).orNone
 
     val command = Command(
-      name = "mill -i qfirst.jvm.runAnnotation",
+      name = "mill -i qfirst.jvm.runVerbAnn",
       header = "Spin up the annotation server for QA-SRL Clause frames.") {
       (jsDepsPathO, jsPathO, qasrlBankO, saveO, portO).mapN(_run(_, _, _, _, _))
     }
