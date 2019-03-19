@@ -3,6 +3,7 @@ package qfirst.frames.verbal
 import cats.implicits._
 
 import org.scalajs.dom
+import org.scalajs.dom.experimental
 
 import scalacss.DevDefaults._
 
@@ -66,9 +67,17 @@ object Main {
       }
     }
 
+    val path = dom.window.location.pathname.tail
+    val verbMatch = Option(path).filter(_.nonEmpty).foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    val verbRemainderOpt = Option(path.dropWhile(_ != '/')).filter(_.nonEmpty).map(_.tail).filter(_.nonEmpty)
+    val docMatch = verbRemainderOpt.foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    val docRemainderOpt = verbRemainderOpt.map(_.dropWhile(_ != '/')).filter(_.nonEmpty).map(_.tail).filter(_.nonEmpty)
+    val sentMatch = docRemainderOpt.foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    val query = NavQuery(verbMatch, docMatch, sentMatch)
+
     VerbAnnUI.Component(
       VerbAnnUI.Props(
-        CachedDataService, VerbAnnotationClient(verbApiEndpoint)
+        CachedDataService, VerbAnnotationClient(verbApiEndpoint), query
       )
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)

@@ -11,6 +11,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val headerBackgroundColor = grey(240)
   val headerContentColor = black
 
+  val labeledHighlightColor = rgba(  0, 128, 256, 0.1)
   val selectedHighlightColor = grey(200)
   val hoverHighlightColor = grey(240)
   val alternatingRowBackgroundColor1 = white
@@ -28,6 +29,12 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val paneDivisionBorderWidth = 1 px
   val paneDivisionBorderColor = metadataLabelBackgroundColor
 
+  val documentSelectionPaneBorder = style(
+    borderLeftColor(paneDivisionBorderColor),
+    borderLeftStyle.solid,
+    borderLeftWidth(paneDivisionBorderWidth),
+  )
+
   val sentenceSelectionPaneBorder = style(
     borderLeftColor(paneDivisionBorderColor),
     borderRightColor(paneDivisionBorderColor),
@@ -35,6 +42,13 @@ object VerbAnnStyles extends StyleSheet.Inline {
     borderRightStyle.solid,
     borderLeftWidth(paneDivisionBorderWidth),
     borderRightWidth(paneDivisionBorderWidth)
+  )
+
+  val auditingPaneBorder = style(
+    borderTopColor(paneDivisionBorderColor),
+    borderTopStyle.solid,
+    borderTopWidth(paneDivisionBorderWidth),
+
   )
 
   // styles
@@ -266,6 +280,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val documentSelectionPaneContainer = style(
     contentPaneContainer,
+    documentSelectionPaneBorder,
     width(documentSelectionPaneWidth),
   )
 
@@ -310,6 +325,16 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val sentenceSelectionEntry = style(
     selectionEntry,
+  )
+
+  val labeledDocumentSelectionEntry = style(
+    selectionEntry,
+    backgroundColor(labeledHighlightColor)
+  )
+
+  val labeledSentenceSelectionEntry = style(
+    selectionEntry,
+    backgroundColor(labeledHighlightColor)
   )
 
   val sentenceSelectionEntryText = style(
@@ -498,28 +523,56 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val verbDropdown = style()
   val frameContainer = style(
     addClassNames("p-3"),
-    width(400 px)
+    width(40 rem)
   )
   val frameHeading = verbHeading
   val frameHeadingText = verbHeadingText
   val clauseSetDisplay = style(
     addClassNames("p-1")
   )
-  val addClauseOption = style(
-    color(grey(200))
+  val mutedControl = style(
+    color(grey(200)),
+    &.hover(
+      fontWeight.bold,
+      color(black)
+    )
   )
-  val addFrameOption = addClauseOption
-  val frameDeleteText = addClauseOption
-  val clauseDeleteText = addClauseOption
+  val addClauseOption = style()
+  val addFrameOption = mutedControl
+  val frameDeleteText = mutedControl
+  val frameLinkAllValidText = mutedControl
+  val clauseDeleteText = mutedControl
   val candidateClauseChoice = style(
-    backgroundColor(rgba(64, 192, 0, 0.3))
+    backgroundColor(rgba(256, 128, 0, 0.5))
+  )
+  val coveredClause = style(
+    backgroundColor(rgba(0, 128, 256, 0.25))
+  )
+  val hoveredClause = style(
+    backgroundColor(rgba(64, 192, 0, 0.4))
   )
 
+  val coveredQuestion = coveredClause
+  val hoveredQuestion = hoveredClause
+
   val frameSpecDisplay = style(
-    height(50 vh)
+    height(70 vh)
   )
   val frameAuditingDisplay = style(
-    height(50 vh)
+    height(30 vh),
+    auditingPaneBorder
   )
   val singleFrameAuditingDisplay = style()
+  val prevFrameInstanceText = mutedControl
+  val nextFrameInstanceText = mutedControl
+  val substitutedArgString = style(
+    fontWeight.bold
+  )
+  val argPlaceholder = style()
+  val argSigil = style(
+    fontWeight.bold
+  )
+  val sentenceLink = style(
+    addClassNames("pl-2")
+  )
 }

@@ -24,5 +24,5 @@
       id := SharedConstants.verbApiUrlElementId
     )
     @config.bootstrapScripts
-    @script(src := config.jsDepsPath)
-    @script(src := config.jsPath)
+    @script(src := "/" + config.jsDepsPath)
+    @script(src := "/" + config.jsPath)

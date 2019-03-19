@@ -172,52 +172,62 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
       }
   }
 
-  private[this] def append(word: String): StateT[List, List[String], Unit] =
-    StateT.modify[List, List[String]](word :: _)
-  private[this] def appendAll[F[_]: Foldable](fs: F[String]): StateT[List, List[String], Unit] =
-    fs.foldM[StateT[List, List[String], ?], Unit](()) { case (_, s) => append(s) }
-  private[this] def choose[F[_]: Foldable, A](as: F[A]): StateT[List, List[String], A] =
-    StateT.liftF[List, List[String], A](as.toList)
-  private[this] def pass: StateT[List, List[String], Unit] =
-    StateT.pure[List, List[String], Unit](())
-  private[this] def abort: StateT[List, List[String], Unit] =
-    choose(List[Unit]())
+  private[this] def append[A](a: A): StateT[List, List[Either[String, A]], Unit] =
+    StateT.modify[List, List[Either[String, A]]](Right(a) :: _)
+  private[this] def appendString[A](word: String): StateT[List, List[Either[String, A]], Unit] =
+    StateT.modify[List, List[Either[String, A]]](Left(word) :: _)
+  private[this] def appendEither[A](e: Either[String, A]): StateT[List, List[Either[String, A]], Unit] =
+    StateT.modify[List, List[Either[String, A]]](e :: _)
+  private[this] def appendAllStrings[F[_]: Foldable, A](fs: F[String]): StateT[List, List[Either[String, A]], Unit] =
+    fs.foldM[StateT[List, List[Either[String, A]], ?], Unit](()) { case (_, s) => appendString(s) }
+  private[this] def appendAll[F[_]: Foldable, A](fs: F[Either[String, A]]): StateT[List, List[Either[String, A]], Unit] =
+    fs.foldM[StateT[List, List[Either[String, A]], ?], Unit](()) { case (_, s) => appendEither(s) }
+  private[this] def choose[A, B](as: List[A]): StateT[List, List[Either[String, B]], A] =
+    StateT.liftF[List, List[Either[String, B]], A](as)
+  private[this] def pass[A]: StateT[List, List[Either[String, A]], Unit] =
+    StateT.pure[List, List[Either[String, A]], Unit](())
+  // private[this] def abort[A]: StateT[List, List[Either[String, A]], Unit] =
+  //   choose[Unit, A](List[Unit]())
 
-  type ArgMap = Map[ArgumentSlot, String]
+  type ArgMap[A] = Map[ArgumentSlot, A]
 
-  private[this] def renderNecessaryNoun(slot: ArgumentSlot.Aux[Noun], argValues: ArgMap) = args.get(slot) match {
-    case None       => choose(List("someone", "something")) >>= append
-    case Some(noun) => appendAll(argValues.get(slot).fold(noun.placeholder)(List(_)))
+  private[this] def renderNecessaryNoun[A](slot: ArgumentSlot.Aux[Noun], argValues: ArgMap[A]) = args.get(slot) match {
+    case None       => choose[String, A](List("someone", "something")) >>= appendString[A]
+    case Some(noun) => argValues.get(slot).fold(appendAllStrings[List, A](noun.placeholder))(append[A])
   }
 
-  private[this] def renderWhNoun(slot: ArgumentSlot.Aux[Noun]) = args.get(slot) match {
-    case None       => choose(List("Who", "What")) >>= append
-    case Some(noun) => choose(noun.wh) >>= append
+  private[this] def renderWhNoun[A](slot: ArgumentSlot.Aux[Noun]) = args.get(slot) match {
+    case None       => choose[String, A](List("Who", "What")) >>= appendString[A]
+    case Some(noun) => choose[String, A](noun.wh.toList) >>= appendString[A]
   }
 
-  private[this] def renderWhOrAbort[Arg <: Argument](slot: ArgumentSlot.Aux[Arg]) =
-    choose(args.get(slot) >>= (_.wh)) >>= append
+  private[this] def renderWhOrAbort[Arg <: Argument, A](slot: ArgumentSlot.Aux[Arg]) =
+    choose[String, A]((args.get(slot) >>= (_.wh)).toList) >>= appendString[A]
 
-  private[this] def renderArgIfPresent[Arg <: Argument](slot: ArgumentSlot.Aux[Arg], argValues: ArgMap) =
-    appendAll(args.get(slot).toList >>= (v => argValues.get(slot).fold(v.placeholder)(str => v.unGap ++ List(str))))
+  private[this] def renderArgIfPresent[Arg <: Argument, A](slot: ArgumentSlot.Aux[Arg], argValues: ArgMap[A]) =
+    args.get(slot).fold(pass[A])(argSlotValue =>
+      argValues.get(slot).fold(appendAllStrings[List, A](argSlotValue.unGap ++ argSlotValue.placeholder))(argMapValue =>
+        appendAll(argSlotValue.unGap.map(Left[String, A](_)) ++ List(Right[String, A](argMapValue)))
+      )
+    )
 
-  private[this] def renderGap[Arg <: Argument](slot: ArgumentSlot.Aux[Arg]) =
-    appendAll(args.get(slot).toList >>= (_.gap))
+  private[this] def renderGap[Arg <: Argument, A](slot: ArgumentSlot.Aux[Arg]) =
+    appendAllStrings[List, A](args.get(slot).toList >>= (_.gap))
 
-  private[this] def renderAuxThroughVerb(includeSubject: Boolean, argValues: ArgMap) = {
+  private[this] def renderAuxThroughVerb[A](includeSubject: Boolean, argValues: ArgMap[A]) = {
     val verbStack = getVerbStack
     if (includeSubject) {
       val splitVerbStack = splitVerbStackIfNecessary(verbStack)
       val (aux, verb) = (splitVerbStack.head, splitVerbStack.tail)
-      append(aux) >> renderNecessaryNoun(Subj, argValues) >> appendAll(verb)
-    } else appendAll(verbStack)
+      appendString[A](aux) >> renderNecessaryNoun(Subj, argValues) >> appendAllStrings[List, A](verb)
+    } else appendAllStrings[NonEmptyList, A](verbStack)
   }
 
   def questionsForSlot(slot: ArgumentSlot) = questionsForSlotWithArgs(slot, Map())
 
   def clauses(addParens: Boolean = false) = clausesWithArgs(Map(), addParens)
 
-  def clausesWithArgs(argValues: ArgMap, addParens: Boolean = false) = {
+  def clausesWithArgs(argValues: ArgMap[String], addParens: Boolean = false) = {
     val qStateT = {
       renderNecessaryNoun(Subj, argValues) >>
         renderAuxThroughVerb(includeSubject = false, argValues) >>
@@ -234,46 +244,64 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
           }
         )
     }
-    qStateT.runS(List.empty[String]).map(_.reverse.mkString(" "))
+    qStateT.runS(List.empty[Either[String, String]]).map(_.map(_.merge)).map(_.reverse.mkString(" "))
   }
 
-  def questionsForSlotWithArgs(slot: ArgumentSlot, argValues: ArgMap) = {
+  def genClausesWithArgs[A](
+    argValues: Map[ArgumentSlot, A]
+  ): List[List[Either[String, A]]] = {
+    val qStateT = {
+      renderNecessaryNoun(Subj, argValues) >>
+        renderAuxThroughVerb(includeSubject = false, argValues) >>
+        renderArgIfPresent(Obj  , argValues) >>
+        renderArgIfPresent(Prep1, argValues) >>
+        renderArgIfPresent(Prep2, argValues) >>
+        renderArgIfPresent(Misc , argValues)
+    }
+    qStateT.runS(List.empty[Either[String, A]]).map(_.reverse)
+  }
+
+  def clausesWithArgMarkers = {
+    genClausesWithArgs(args.keys.map(a => a.asInstanceOf[ArgumentSlot.Aux[Argument]]).map(a => a -> a).toMap)
+  }
+
+  def questionsForSlotWithArgs(slot: ArgumentSlot, argValues: ArgMap[String]) = {
     val qStateT = slot match {
       case Subj =>
-        renderWhNoun(Subj) >>
+        renderWhNoun[String](Subj) >>
         renderAuxThroughVerb(includeSubject = false, argValues) >>
         renderArgIfPresent(Obj  , argValues) >>
         renderArgIfPresent(Prep1, argValues) >>
         renderArgIfPresent(Prep2, argValues) >>
         renderArgIfPresent(Misc , argValues)
       case Obj =>
-        renderWhNoun(Obj) >>
+        renderWhNoun[String](Obj) >>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
-        renderGap(Obj) >>
+        renderGap[Noun, String](Obj) >>
         renderArgIfPresent(Prep1, argValues) >>
         renderArgIfPresent(Prep2, argValues) >>
         renderArgIfPresent(Misc , argValues)
       case Prep1 =>
-        renderWhOrAbort(Prep1) >>
+        renderWhOrAbort[Preposition, String](Prep1) >>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
         renderArgIfPresent(Obj, argValues) >>
-        renderGap(Prep1) >>
+        renderGap[Preposition, String](Prep1) >>
         renderArgIfPresent(Prep2, argValues) >>
         renderArgIfPresent(Misc , argValues)
       case Prep2 =>
-        renderWhOrAbort(Prep2) >>
+        renderWhOrAbort[Preposition, String](Prep2) >>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
         renderArgIfPresent(Obj  , argValues) >>
         renderArgIfPresent(Prep1, argValues) >>
-        renderGap(Prep2) >>
+        renderGap[Preposition, String](Prep2) >>
         renderArgIfPresent(Misc , argValues)
       case Misc =>
-        renderWhOrAbort(Misc) >>
+        renderWhOrAbort[NonPrepArgument, String](Misc) >>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
         renderArgIfPresent(Obj  , argValues) >>
         renderArgIfPresent(Prep1, argValues) >>
         renderArgIfPresent(Prep2, argValues) >>
-        renderGap(Misc)
+        renderGap[NonPrepArgument, String](Misc)
       case Adv(wh) =>
         append(wh.toString.capitalize) >>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
@@ -282,7 +310,7 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
         renderArgIfPresent(Prep2, argValues) >>
         renderArgIfPresent(Misc , argValues)
     }
-    qStateT.runS(List.empty[String]).map(_.reverse.mkString(" ") + "?")
+    qStateT.runS(List.empty[Either[String, String]]).map(_.map(_.merge)).map(_.reverse.mkString(" ") + "?")
   }
 }
 

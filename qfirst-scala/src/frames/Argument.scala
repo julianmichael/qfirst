@@ -39,9 +39,9 @@ import monocle.macros.GenPrism
   preposition: LowerCaseString,
   objOpt: Option[NounLikeArgument]
 ) extends Argument {
-  override def placeholder = preposition.toString :: objOpt.toList.flatMap(_.placeholder)
+  override def placeholder = objOpt.toList.flatMap(_.placeholder)
   override def gap = List(preposition.toString) ++ objOpt.toList.flatMap(_.gap)
-  override def unGap = List(preposition.toString)
+  override def unGap = List(preposition.toString) ++ objOpt.toList.flatMap(_.unGap)
   override def wh = objOpt.flatMap(_.wh)
 }
 object Preposition {
@@ -74,7 +74,7 @@ object Complement {
   @JsonCodec sealed trait Form {
     import Form._
     def placeholder = this match {
-      case Infinitive => List("to", "do", "something")
+      case Infinitive => List("do", "something")
       case Bare => List("do", "something")
     }
     def gap = this match {

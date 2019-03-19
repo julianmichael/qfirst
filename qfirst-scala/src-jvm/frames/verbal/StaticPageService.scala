@@ -101,14 +101,14 @@ object StaticPageService {
     import org.http4s.dsl.io._
 
     HttpRoutes.of[IO] {
-      case GET -> Root => Ok(indexStr)
-          .map(_.withContentType(`Content-Type`(MediaType.text.`html`)))
       case req @ GET -> Root / `jsDepsSuffix` =>
         StaticFile.fromString(jsDepsPath.toString, ec, Some(req))
           .getOrElseF(NotFound())
       case req @ GET -> Root / `jsSuffix` =>
         StaticFile.fromString(jsPath.toString, ec, Some(req))
           .getOrElseF(NotFound())
+      case GET -> _ => Ok(indexStr)
+          .map(_.withContentType(`Content-Type`(MediaType.text.`html`)))
     }
   }
 

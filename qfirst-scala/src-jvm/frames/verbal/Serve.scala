@@ -61,7 +61,7 @@ object Serve extends IOApp {
         app = Router(
           "/" -> pageService,
           s"/$docApiSuffix" -> docService,
-          s"/$verbApiSuffix" -> annotationService
+          s"/$verbApiSuffix" -> annotationService,
         ).orNotFound
         _ <- BlazeServerBuilder[IO]
         .bindHttp(port, "0.0.0.0")
