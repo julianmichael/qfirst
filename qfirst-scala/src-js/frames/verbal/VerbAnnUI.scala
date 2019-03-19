@@ -977,10 +977,11 @@ object VerbAnnUI {
                 val syncedFrameOpt = curFrame.value.map { frame =>
                   StateSnapshot.withReuse.prepare[VerbFrame](
                     (vfOpt, cb) => vfOpt.fold(cb)(vf =>
-                      Callback(
-                        props.verbService.saveFrame(vf)
-                          .foreach(newVF => curFrame.setState(Some(newVF), cb).runNow)
-                      )
+                      curFrame.setState(Some(vf), cb) >>
+                        Callback(
+                          props.verbService.saveFrame(vf)
+                            .foreach(newVF => curFrame.setState(Some(newVF), cb).runNow)
+                        )
                     )
                   )(frame)(Reusability.by_==[VerbFrame])
                 }
