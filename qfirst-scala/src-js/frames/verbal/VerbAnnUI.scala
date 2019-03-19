@@ -96,6 +96,14 @@ case class NavQuery(
 }
 object NavQuery {
   def empty = NavQuery(Set(), Set(), Set())
+  def fromString(path: String) = {
+    val verbMatch = Option(path).filter(_.nonEmpty).foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    val verbRemainderOpt = Option(path.dropWhile(_ != '/')).filter(_.nonEmpty).map(_.tail).filter(_.nonEmpty)
+    val docMatch = verbRemainderOpt.foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    val docRemainderOpt = verbRemainderOpt.map(_.dropWhile(_ != '/')).filter(_.nonEmpty).map(_.tail).filter(_.nonEmpty)
+    val sentMatch = docRemainderOpt.foldMap(_.takeWhile(_ != '/').split(",").map(_.lowerCase).toSet)
+    NavQuery(verbMatch, docMatch, sentMatch)
+  }
 }
 
 object VerbAnnUI {
@@ -1064,6 +1072,23 @@ object VerbAnnUI {
                                   ^.key := inflToString(forms),
                                   ^.value := inflToString(forms),
                                   f"$count%5d ${forms.allForms.mkString(", ")}%s"
+                                )
+                              }
+                            ),
+                            <.div(S.goDisplay)(
+                              <.span(S.goLabelText)("Go: "),
+                              StringLocal.make(initialValue = "") { goQueryString =>
+                                <.input(S.goTextField)(
+                                  ^.`type` := "text",
+                                  ^.value := goQueryString.value,
+                                  ^.onChange ==> ((e: ReactEventFromInput) => goQueryString.setState(e.target.value)),
+                                  ^.onKeyDown ==> ((e: ReactKeyboardEventFromInput) =>
+                                    CallbackOption.keyCodeSwitch(e) {
+                                      case KeyCode.Enter =>
+                                        navQuery.setState(NavQuery.fromString(goQueryString.value)) >>
+                                          goQueryString.setState("")
+                                    }
+                                  )
                                 )
                               }
                             ),

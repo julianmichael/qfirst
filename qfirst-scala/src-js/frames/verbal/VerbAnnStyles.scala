@@ -572,7 +572,12 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val argSigil = style(
     fontWeight.bold
   )
-  val sentenceLink = style(
-    addClassNames("pl-2")
+  val sentenceLink = style()
+
+
+  val goDisplay = style(
+    addClassNames("mx-2")
   )
+  val goLabelText = style()
+  val goTextField = style()
 }
