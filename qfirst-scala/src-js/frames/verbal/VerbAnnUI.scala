@@ -862,7 +862,7 @@ object VerbAnnUI {
             )
           )
         },
-        <.div(S.addFrameOption)(
+        <.div(S.addFrameOption, S.candidateClauseChoice.when(clauseOptions.value.nonEmpty))(
           "(+) new frame",
           ^.onClick --> frame.zoomStateL(VerbFrame.clauseSets).modState(
             _ ++ List(Nil)
