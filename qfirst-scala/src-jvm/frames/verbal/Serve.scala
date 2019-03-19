@@ -30,12 +30,14 @@ object Serve extends IOApp {
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
-    qasrlBankPath: Path, savePath: Path, port: Int
+    qasrlBankPath: Path, savePath: Path,
+    domain: String, port: Int
   ): IO[ExitCode] = {
     IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get).flatMap { data =>
       val docApiSuffix = "doc"
       val verbApiSuffix = "verb"
       val pageService = StaticPageService.makeService(
+        domain,
         docApiSuffix, verbApiSuffix,
         jsDepsPath, jsPath, port
       )
@@ -89,6 +91,10 @@ object Serve extends IOApp {
       "save", metavar = "path", help = "Where to save the clause resolution json object."
     )
 
+    val domainO = Opts.option[String](
+      "domain", metavar = "domain", help = "domain name the server is being hosted at."
+    )
+
     val portO = Opts.option[Int](
       "port", metavar = "port number", help = "Port to host the HTTP service on."
     )
@@ -101,7 +107,7 @@ object Serve extends IOApp {
     val command = Command(
       name = "mill -i qfirst.jvm.runVerbAnn",
       header = "Spin up the annotation server for QA-SRL Clause frames.") {
-      (jsDepsPathO, jsPathO, qasrlBankO, saveO, portO).mapN(_run(_, _, _, _, _))
+      (jsDepsPathO, jsPathO, qasrlBankO, saveO, domainO, portO).mapN(_run(_, _, _, _, _, _))
     }
 
     command.parse(args) match {

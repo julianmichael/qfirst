@@ -75,6 +75,7 @@ object StaticPageService {
   }
 
   def makeService(
+    domain: String,
     docApiSuffix: String,
     verbApiSuffix: String,
     jsDepsPath: Path,
@@ -87,8 +88,8 @@ object StaticPageService {
     val config = {
       import scalatags.Text.all._
       PageConfig(
-        docApiUrl = s"http://localhost:$port/$docApiSuffix",
-        verbApiUrl = s"http://localhost:$port/$verbApiSuffix",
+        docApiUrl = s"http://$domain:$port/$docApiSuffix",
+        verbApiUrl = s"http://$domain:$port/$verbApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
         jsDepsPath = jsDepsSuffix,
