@@ -1064,8 +1064,7 @@ object VerbAnnUI {
                             <.select(S.verbDropdown)(
                               ^.value := inflToString(curVerb.value),
                               ^.onChange ==> ((e: ReactEventFromInput) =>
-                                navQuery.setState(NavQuery.empty) >>
-                                  curVerb.setState(inflFromString(e.target.value))
+                                curVerb.setState(inflFromString(e.target.value))
                               ),
                               sortedVerbCounts.toVdomArray { case (forms, count) =>
                                 <.option(
