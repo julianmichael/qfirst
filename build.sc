@@ -17,7 +17,7 @@ val catsVersion = "1.1.0"
 val catsEffectVersion = "1.0.0"
 val kittensVersion = "1.1.1"
 val nlpdataVersion = "0.2.1-SNAPSHOT"
-val qasrlVersion = "0.1.1-SNAPSHOT"
+val qasrlVersion = "0.1.2-SNAPSHOT"
 val qasrlBankVersion = "0.1.1-SNAPSHOT"
 val circeVersion = "0.11.1"
 val declineVersion = "0.4.2"
@@ -239,6 +239,11 @@ object qfirst extends Module {
           "--jsDeps", jsDepsPath,
           "--js", jsPath
         ) ++ args)
+    }
+
+    def runTopics(args: String*) = T.command {
+      val runMain = runMainFn()
+      runMain("qfirst.topics.TopicModelingApp", args)
     }
 
     object test extends Tests with CommonModule {

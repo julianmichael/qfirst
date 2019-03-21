@@ -1,6 +1,7 @@
 package qfirst.frames
 
 import nlpdata.util.LowerCaseStrings._
+import qasrl.util.implicits._
 
 sealed trait ArgumentSlot { type Arg }
 case object Subj extends ArgumentSlot { type Arg = Noun }
@@ -45,7 +46,6 @@ object ArgumentSlot {
   implicit val argumentSlotKeyEncoder = KeyEncoder.instance(ArgumentSlot.toString)
   implicit val argumentSlotKeyDecoder = KeyDecoder.instance(ArgumentSlot.fromString)
 
-  import qfirst.frames.implicits.{DependentEncoder, DependentDecoder}
   import cats.Id
 
   implicit val dependentArgumentEncoder = new DependentEncoder[ArgumentSlot.Aux, Id] {

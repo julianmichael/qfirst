@@ -3,6 +3,7 @@ import qfirst.frames.implicits._
 
 import qasrl.util.DependentMap
 import qasrl.{Tense, Modal, PresentTense, PastTense}
+import qasrl.util.implicits._
 
 import cats.Id
 import cats.Foldable
