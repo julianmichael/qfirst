@@ -93,7 +93,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         else:
             full_hidden = span_hidden
 
-        span_logits = self._span_scorer(span_hidden).squeeze(-1)
+        span_logits = self._span_scorer(full_hidden).squeeze(-1)
 
         output_dict = {
             "span_mask": span_mask,
