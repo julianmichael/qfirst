@@ -45,7 +45,7 @@ object ClauseResolutionApp extends IOApp {
         "sentenceId" -> sentence.sentenceId.asJson,
         "verbs" -> Json.obj(
           sentence.verbEntries.values.toList.map { verb =>
-            val qLabels = filterGoldNonDense(verb)._2.toList.map(_._2)
+            val qLabels = verb.questionLabels.toList.map(_._2)
             val framePairs = getResolvedFramePairs(verb.verbInflectedForms, qLabels)
             verb.verbIndex.toString -> Json.obj(
               qLabels.zip(framePairs).map { case (qLabel, (frame, slot)) =>
