@@ -42,8 +42,17 @@ class QasrlVerbOnlyReader(QasrlInstanceReader):
                        question_labels): # Iterable[Instance]
         yield get_verb_fields(token_indexers, sentence_tokens, verb_index)
 
+# simple_clause_arg_slots = ["subj", "obj", "obj2"]
+
 @QasrlInstanceReader.register("clause_answers")
 class QasrlClauseAnswersReader(QasrlInstanceReader):
+    def __init__(self,
+                 clause_info_files: List[str] = []):
+        self._clause_info = None
+        if len(clause_info_files) > 0:
+            self._clause_info = {}
+            for file_path in clause_info_files:
+                read_simple_clause_info(self._clause_info, file_path)
     @overrides
     def read_instances(self,
                        token_indexers: Dict[str, TokenIndexer],
@@ -54,12 +63,9 @@ class QasrlClauseAnswersReader(QasrlInstanceReader):
                        question_labels): # -> Iterable[Instance]
         verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
         for question_label in question_labels:
-            clause_info = self._clause_info[sentence_id][verb_index][question_label["questionString"]]
-            if 
-            clause_field = LabelField(label = clause_info["string"], label_namespace = "clause-template-labels")
-            answer_slot_field 
-            ["slots"]
-            clause_slots = self._clause_info
+            clause_info = self._clause_info[sentence_id][str(verb_index)][question_label["questionString"]]
+            clause_field = LabelField(label = clause_info["clause"], label_namespace = "clause-template-labels")
+            answer_slot_field = LabelField(label = clause_info["slot"], label_namespace = "answer-slot-labels")
             answer_spans, span_counts = get_answer_spans([question_label])
             answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
             if len(span_counts) == 0:
@@ -70,8 +76,8 @@ class QasrlClauseAnswersReader(QasrlInstanceReader):
             num_answers_field = NumberField(num_answers)
             yield {
                 **verb_dict,
-                "clause": ???,
-                "answer_slot": ???,
+                "clause": clause_field,
+                "answer_slot": answer_slot_field,
                 "answer_spans": answer_spans_field,
                 "span_counts": span_counts_field,
                 "num_answers": num_answers_field,

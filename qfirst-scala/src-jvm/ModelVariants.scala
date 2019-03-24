@@ -511,11 +511,11 @@ object ModelVariants extends IOApp {
   sealed trait SetClassifier extends Component[Unit] {
     def metric: String
   }
-  case class SetDensityClassifier(objective: String, uncertaintyFactor: Double = 1.0) extends SetClassifier {
+  case class SetDensityClassifier(objective: String, uncertaintyFactor: Option[Double] = None) extends SetClassifier {
     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
       _ <- param("type", H.pure("density"))
       _ <- param("objective", H.pure(objective))
-      _ <- param("uncertainty_factor", H.pure(uncertaintyFactor))
+      _ <- uncertaintyFactor.fold(param(H.unit))(uf => param_("uncertainty_factor", H.pure(uf)))
     } yield ()
     val metric = "+f1"
   }
@@ -787,19 +787,25 @@ object ModelVariants extends IOApp {
       }
     }
 
-    // val clauseAnswering = new Model(
-    //   datasetReader = DatasetReader(
-    //     QasrlFilter.validQuestions,
-    //     QasrlInstanceReader("clause_answering", clauseInfoFile = Some("clause-data-train-dev-simple.jsonl"))
-    //   ),
-    //   model = new Component[Unit] {
-    //     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
-    //       _ <- param("type", H.pure("qasrl_clause_answering"))
-    //       encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
-    //     } yield ()
-    //   },
-    //   validationMetric = "+f1"
-    // )
+    val clauseAnswering = {
+      val densityClassifier = SetDensityClassifier("softmax_with_null")
+      new Model(
+        datasetReader = DatasetReader(
+          QasrlFilter.validQuestions,
+          QasrlInstanceReader("clause_answers", clauseInfoFile = Some("clause-data-train-dev-simple.jsonl"))
+        ),
+        model = new Component[Unit] {
+          def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+            _ <- param("type", H.pure("qasrl_clause_answering"))
+            encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+            _ <- param("clause_embedding_dim", H.pure(100))
+            _ <- param("slot_embedding_dim", H.pure(100))
+            _ <- param("span_selector", SpanSelector(encoderOutputDim, Some(300), densityClassifier))
+          } yield ()
+        },
+        validationMetric = densityClassifier.metric
+      )
+    }
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
@@ -817,6 +823,7 @@ object ModelVariants extends IOApp {
       "density_softmax" -> Model.span(SetDensityClassifier(objective = "softmax_with_null")),
       // "density_sparsemax" -> Model.span(SetDensityClassifier(objective = "sparsemax")),
     ),
+    "clause_answering" -> MapTree.leaf[String](Model.clauseAnswering)
     // "clause_frame" -> MapTree.fromPairs(
     //   "plain_100" -> Model.clauseFrame(numFrames = 100)
     // )

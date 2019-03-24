@@ -18,16 +18,16 @@ from allennlp.nn.util import batched_index_select
 from qfirst.metrics.binary_f1 import BinaryF1
 
 from qfirst.modules.slot_sequence_encoder import SlotSequenceEncoder
-from qfirst.modules.pruning_span_selector import PruningSpanSelector
+from qfirst.modules.span_selector import SpanSelector
 from qfirst.modules.sentence_encoder import SentenceEncoder
 
-@Model.register("clause_answering")
+@Model.register("qasrl_clause_answering")
 class ClauseAnsweringModel(Model):
     def __init__(self, vocab: Vocabulary,
                  sentence_encoder: SentenceEncoder,
                  clause_embedding_dim: int,
                  slot_embedding_dim: int,
-                 span_selector: PruningSpanSelector,
+                 span_selector: SpanSelector,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(ClauseAnsweringModel, self).__init__(vocab, regularizer)
@@ -37,8 +37,8 @@ class ClauseAnsweringModel(Model):
         self._span_selector = span_selector
         self._question_embedding_dim = span_selector.get_extra_input_dim()
 
-        self._clause_embedding = Embedding(clause_embedding_dim)
-        self._slot_embedding = Embedding(slot_embedding_dim)
+        self._clause_embedding = Embedding(vocab.get_vocab_size("clause-template-labels"), clause_embedding_dim)
+        self._slot_embedding = Embedding(vocab.get_vocab_size("answer-slot-labels"), slot_embedding_dim)
 
         self._combined_embedding_dim = self._sentence_encoder.get_output_dim() + \
                                        self._clause_embedding_dim + \
@@ -55,11 +55,12 @@ class ClauseAnsweringModel(Model):
                 clause: torch.LongTensor,
                 answer_slot: torch.LongTensor,
                 answer_spans: torch.LongTensor = None,
+                span_counts: torch.LongTensor = None,
                 num_answers: torch.LongTensor = None,
                 metadata = None,
                 **kwargs):
         embedded_clause = self._clause_embedding(clause)
-        embedded_slot = self._slot_embedding(slot)
+        embedded_slot = self._slot_embedding(answer_slot)
         encoded_text, text_mask = self._sentence_encoder(text, predicate_indicator)
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         combined_embedding = torch.cat([embedded_clause, embedded_slot, pred_rep], -1)
@@ -68,6 +69,7 @@ class ClauseAnsweringModel(Model):
             encoded_text, text_mask,
             extra_input_embedding = question_embedding,
             answer_spans = answer_spans,
+            span_counts = span_counts,
             num_answers = num_answers,
             metadata = metadata)
 

@@ -109,7 +109,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
                     self._prob_metric(probs, labels, mask)
                     self._score_metric(logits, labels, mask)
                     # self._zero_score_metric(logits, labels, mask)
-                    gold_items_per_labeler = label_counts.sum(dim = 1) / num_labelers
+                    gold_items_per_labeler = label_counts.sum(dim = 1).float() / num_labelers.float()
                     self._gold_recall_metric(gold_items_per_labeler)
                     gold_entropy = torch.distributions.Categorical(probs = full_gold_probs).entropy()
                     kl_divergence = (cross_entropy - gold_entropy)

@@ -63,14 +63,13 @@ object ClauseResolutionApp extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     val outPath = Paths.get(args(0))
-    Stream.emits[IO, Path](paths).flatMap { path =>
-        Stream.resource(FileUtil.blockingExecutionContext).flatMap { _ec =>
-          FileUtil.streamJsonLines[Sentence](path, _ec)
-            .map(processSentence)
-            .intersperse("\n")
-            .through(fs2.text.utf8Encode)
-            .through(fs2.io.file.writeAll(outPath, _ec))
-        }
-      }.compile.drain.as(ExitCode.Success)
+    Stream.resource(FileUtil.blockingExecutionContext).flatMap { _ec =>
+      Stream.emits[IO, Path](paths)
+        .flatMap(path => FileUtil.streamJsonLines[Sentence](path, _ec))
+        .map(processSentence)
+        .intersperse("\n")
+        .through(fs2.text.utf8Encode)
+        .through(fs2.io.file.writeAll(outPath, _ec))
+    }.compile.drain.as(ExitCode.Success)
   }
 }
