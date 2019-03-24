@@ -20,6 +20,7 @@ from allennlp.training.metrics import SpanBasedF1Measure
 
 from qfirst.modules.sentence_encoder import SentenceEncoder
 from qfirst.metrics.binary_f1 import BinaryF1
+from qfirst.modules.set_classifier import SetClassifier
 
 @Model.register("qasrl_multiclass")
 class MulticlassModel(Model):
@@ -27,12 +28,14 @@ class MulticlassModel(Model):
                  sentence_encoder: SentenceEncoder,
                  label_name: str,
                  label_namespace: str,
+                 classifier: SetClassifier,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(MulticlassModel, self).__init__(vocab, regularizer)
         self._sentence_encoder = sentence_encoder
         self._label_name = label_name
         self._label_namespace = label_namespace
+        self._classifier = classifier
         self._final_pred = Linear(self._sentence_encoder.get_output_dim(), self.vocab.get_vocab_size(self._label_namespace))
         self._metric = BinaryF1()
 
@@ -48,15 +51,7 @@ class MulticlassModel(Model):
         pred_rep = batched_index_select(encoded_text, predicate_index).squeeze(1)
         # Shape: batch_size, get_vocab_size(self._label_namespace)
         logits = self._final_pred(pred_rep)
-        probs = torch.sigmoid(logits)
-        output_dict = { "logits": logits, "probs": probs }
-        if self._label_name in kwargs and kwargs[self._label_name] is not None:
-            label_set = kwargs[self._label_name]
-            output_dict["loss"] = F.binary_cross_entropy_with_logits(
-                logits, label_set, reduction = "sum"
-            )
-            self._metric(probs, label_set)
-        return output_dict
+        return self._classifier(logits, None, kwargs.get(self._label_name), kwargs.get(self._label_name + "_counts"))
 
     def get_metrics(self, reset: bool = False):
-        return self._metric.get_metric(reset=reset)
+        return self._classifier.get_metric(reset = reset)

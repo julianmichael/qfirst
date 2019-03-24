@@ -42,6 +42,42 @@ class QasrlVerbOnlyReader(QasrlInstanceReader):
                        question_labels): # Iterable[Instance]
         yield get_verb_fields(token_indexers, sentence_tokens, verb_index)
 
+@QasrlInstanceReader.register("clause_answers")
+class QasrlClauseAnswersReader(QasrlInstanceReader):
+    @overrides
+    def read_instances(self,
+                       token_indexers: Dict[str, TokenIndexer],
+                       sentence_id: str,
+                       sentence_tokens: List[str],
+                       verb_index: int,
+                       verb_inflected_forms: Dict[str, str],
+                       question_labels): # -> Iterable[Instance]
+        verb_dict = get_verb_fields(token_indexers, sentence_tokens, verb_index)
+        for question_label in question_labels:
+            clause_info = self._clause_info[sentence_id][verb_index][question_label["questionString"]]
+            if 
+            clause_field = LabelField(label = clause_info["string"], label_namespace = "clause-template-labels")
+            answer_slot_field 
+            ["slots"]
+            clause_slots = self._clause_info
+            answer_spans, span_counts = get_answer_spans([question_label])
+            answer_spans_field = get_answer_spans_field(answer_spans, verb_dict["text"])
+            if len(span_counts) == 0:
+                span_counts_field = ListField([NumberField(0.0)])
+            else:
+                span_counts_field = ListField([NumberField(float(count)) for count in span_counts])
+            num_answers = len([aj for aj in question_label["answerJudgments"]])
+            num_answers_field = NumberField(num_answers)
+            yield {
+                **verb_dict,
+                "clause": ???,
+                "answer_slot": ???,
+                "answer_spans": answer_spans_field,
+                "span_counts": span_counts_field,
+                "num_answers": num_answers_field,
+                "metadata": {"gold_spans": set(answer_spans)}
+            }
+
 @QasrlInstanceReader.register("verb_answers")
 class QasrlVerbAnswersReader(QasrlInstanceReader):
     @overrides

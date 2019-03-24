@@ -10,7 +10,7 @@ class SetClassifier(torch.nn.Module, Registrable):
 
     def forward(self,  # type: ignore
                 logits: torch.LongTensor, # batch_size, set_size, 1
-                mask: torch.LongTensor, # batch_size, set_size
+                mask: torch.LongTensor = None, # batch_size, set_size
                 label_counts: torch.LongTensor = None, # batch_size, set_size
                 num_labelers: torch.LongTensor = None): # batch_size
         raise NotImplementedError

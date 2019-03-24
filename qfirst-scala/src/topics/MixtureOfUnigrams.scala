@@ -1,5 +1,6 @@
 package qfirst.topics
 
+import cats.Foldable
 import cats.data.NonEmptyList
 import cats.implicits._
 
@@ -7,7 +8,17 @@ import scala.util.Random
 
 import io.circe.generic.JsonCodec
 
+// class Dist(private[this] values: Array[Double]) {
+
+// }
+// object Dist {
+//   def fromNormalized(values: Array[Double]) = new Dist(values)
+//   def fromUnnormalized
+// }
+
 object MixtureOfUnigrams {
+
+  val clusterSmoothingCounts = 1.0
 
   type Counts = Map[Int, Int]
   // assume sum to 1
@@ -22,7 +33,7 @@ object MixtureOfUnigrams {
     def numItems = clusters.head.size
   }
   object UnigramMixtureModel {
-    def init(numClusters: Int, numItems: Int, rand: Random): UnigramMixtureModel = {
+    def initRandom(numClusters: Int, numItems: Int, rand: Random): UnigramMixtureModel = {
       val clusterInitNums = (1 to numItems).toVector
       val numsTotal = clusterInitNums.sum
       val clusterInitProbs = clusterInitNums.map(_.toDouble / numsTotal)
@@ -32,25 +43,48 @@ object MixtureOfUnigrams {
       )
     }
 
-    // TODO kmeans++ initialization
+    def initClever(instances: List[Counts], numClusters: Int, numItems: Int, rand: Random) = {
+      assert(numClusters >= 1)
+      val firstCluster = makeClusterFromCounts(instances(rand.nextInt(instances.size)), numItems, clusterSmoothingCounts)
+      val initModel = UnigramMixtureModel(
+        prior = Vector(1.0),
+        clusters = Vector(firstCluster))
+      val uniqueInstances = instances.groupBy(x => x).keys.toList
+      initCleverAux(uniqueInstances, numItems, initModel, numClusters - 1, rand)
+    }
+    def initCleverAux(instances: List[Counts], numItems: Int, prevModel: UnigramMixtureModel, numClustersLeft: Int, rand: Random): UnigramMixtureModel = {
+      if(numClustersLeft <= 0) prevModel else {
+        val (_, nlls) = softEStep(instances, prevModel)
+        val totalNLL = nlls.sum
+        val normalizedNLLs = nlls.map(_ / nlls.sum)
+        val newCenterIndex = sample(normalizedNLLs, rand)
+        val newCenter = makeClusterFromCounts(instances(newCenterIndex), numItems, clusterSmoothingCounts)
+        val newNumClusters = prevModel.numClusters + 1
+        val newModel = UnigramMixtureModel(
+          prior = Vector.fill(newNumClusters)(1.0 / newNumClusters),
+          clusters = prevModel.clusters :+ newCenter
+        )
+        initCleverAux(instances.take(newCenterIndex) ++ instances.drop(newCenterIndex + 1), numItems, newModel, numClustersLeft - 1, rand)
+      }
+    }
   }
 
   def softEStep(
     instances: List[Counts],
     model: UnigramMixtureModel
-  ): (List[Dist], Double) = {
+  ): (List[Dist], List[Double]) = {
     val (assignments, nlls) = instances.map { instance =>
-      val unnormClusterProbs = model.prior.indices.map { clusterNum =>
-        instance.map { case (itemNum, itemCount) =>
-          math.pow(model.prior(clusterNum) * model.clusters(clusterNum)(itemNum), itemCount)
-        }.product
+      val unnormClusterLogProbs = model.prior.indices.map { clusterNum =>
+        instance.iterator.map { case (itemNum, itemCount) =>
+          itemCount * (math.log(model.prior(clusterNum)) + math.log(model.clusters(clusterNum)(itemNum)))
+        }.sum
       }.toVector
-      val likelihood = unnormClusterProbs.sum
-      val clusterProbs = unnormClusterProbs.map(_ / likelihood)
-      val negLogLikelihood = -math.log(likelihood)
-      clusterProbs -> negLogLikelihood
+      val logLikelihood = logSumExp(unnormClusterLogProbs)
+      val clusterProbs = unnormClusterLogProbs.map(logProb => math.exp(logProb - logLikelihood))
+      val negLogLikelihood = -math.log(logLikelihood)
+      clusterProbs -> (-logLikelihood)
     }.unzip
-    assignments -> (nlls.sum / nlls.size)
+    assignments -> nlls
   }
 
   def softMStep(
@@ -67,12 +101,7 @@ object MixtureOfUnigrams {
           itemNum -> (assignment(clusterNum) * count)
         }
       }
-      // add-0.01 smooth clusters
-      val pseudoCountSum = pseudoCounts.values.sum
-      pseudoCounts.foldLeft(Vector.fill(numItems)(0.01 / numItems)) {
-        case (vec, (idx, pcount)) =>
-          vec.updated(idx, (0.01 + pcount) / (pseudoCountSum + (0.01 * numItems)))
-      }
+      makeClusterFromCounts(pseudoCounts, numItems, clusterSmoothingCounts)
     }.toVector
     UnigramMixtureModel(prior, clusters)
   }
@@ -83,8 +112,8 @@ object MixtureOfUnigrams {
     stoppingThreshold: Double,
     shouldLog: Boolean = true
   ): (UnigramMixtureModel, List[Vector[Double]], Double) = {
-    var (assignments, loss) = softEStep(instances, initModel)
-    var losses: List[Double] = List(loss)
+    var (assignments, stepLosses) = softEStep(instances, initModel)
+    var losses: List[Double] = List(mean(stepLosses))
     var model: UnigramMixtureModel = initModel
     def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
     def shouldContinue = getDelta.forall(_ > stoppingThreshold)
@@ -92,11 +121,12 @@ object MixtureOfUnigrams {
       model = softMStep(model.numItems, instances, assignments)
       val p = softEStep(instances, model)
       assignments = p._1
-      loss = p._2
+      stepLosses = p._2
+      val loss = mean(stepLosses)
       losses = loss :: losses
       if(shouldLog) {
         println("=== Stepping ===")
-        println(s"Prior: " + model.prior.sortBy(-_).take(10).map(x => f"$x%.2f").mkString(", "))
+        println(s"Prior: " + model.prior.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
         println(s"Loss: $loss")
       }
     }

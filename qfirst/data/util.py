@@ -52,6 +52,25 @@ def read_clause_info(target, file_path):
         add_json(json.loads(line))
     return
 
+def read_simple_clause_info(target, file_path):
+    def get(targ, key):
+        if key not in targ:
+            targ[key] = {}
+        return targ[key]
+    def add_json(obj):
+        sentence = get(target, obj["sentenceId"])
+        verb = get(sentence, obj["verbIndex"])
+        clause = get(verb, obj["question"])
+        slot_dict = obj["slots"]
+        slot_dict["qarg"] = obj["answerSlot"]
+        clause["slots"] = slot_dict
+
+    import json
+    for line in read_lines(file_path):
+        obj = json.loads(line)
+        target[obj["sentenceId"]] = obj["verbs"]
+    return
+
 qasrl_slot_names = ["wh", "aux", "subj", "verb", "obj", "prep", "obj2"]
 
 abstract_slot_names = [

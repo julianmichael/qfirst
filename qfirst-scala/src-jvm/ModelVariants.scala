@@ -786,6 +786,20 @@ object ModelVariants extends IOApp {
         } yield superSettings ++ frameSettings
       }
     }
+
+    // val clauseAnswering = new Model(
+    //   datasetReader = DatasetReader(
+    //     QasrlFilter.validQuestions,
+    //     QasrlInstanceReader("clause_answering", clauseInfoFile = Some("clause-data-train-dev-simple.jsonl"))
+    //   ),
+    //   model = new Component[Unit] {
+    //     def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
+    //       _ <- param("type", H.pure("qasrl_clause_answering"))
+    //       encoderOutputDim <- param("sentence_encoder", SentenceEncoder())
+    //     } yield ()
+    //   },
+    //   validationMetric = "+f1"
+    // )
   }
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
@@ -797,15 +811,15 @@ object ModelVariants extends IOApp {
 
   val models = MapTree.fork(
     "span" -> MapTree.fromPairs(
-      "binary_union" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "union")),
-      "binary_majority" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "majority")),
-      "binary_weighted" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "weighted")),
+      // "binary_union" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "union")),
+      // "binary_majority" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "majority")),
+      // "binary_weighted" -> Model.span(SetBinaryClassifier(labelSelectionPolicy = "weighted")),
       "density_softmax" -> Model.span(SetDensityClassifier(objective = "softmax_with_null")),
-      "density_sparsemax" -> Model.span(SetDensityClassifier(objective = "sparsemax")),
+      // "density_sparsemax" -> Model.span(SetDensityClassifier(objective = "sparsemax")),
     ),
-    "clause_frame" -> MapTree.fromPairs(
-      "plain_100" -> Model.clauseFrame(numFrames = 100)
-    )
+    // "clause_frame" -> MapTree.fromPairs(
+    //   "plain_100" -> Model.clauseFrame(numFrames = 100)
+    // )
     // "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
     // "question" -> MapTree.fromPairs(
     //   "full" -> Model.question(fullSlots),

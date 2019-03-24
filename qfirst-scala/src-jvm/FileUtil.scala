@@ -21,20 +21,37 @@ import io.circe.Printer
 
 object FileUtil {
 
+  sealed trait CompressionSetting
+  case object Compressed extends CompressionSetting
+  case object Uncompressed extends CompressionSetting
+  case object AutoCompress extends CompressionSetting
+
+  def useCompression(path: NIOPath, setting: CompressionSetting): Boolean = setting match {
+    case Compressed => true
+    case Uncompressed => false
+    case AutoCompress => path.toString.endsWith(".gz")
+  }
+
   val blockingExecutionContext =
     Resource.make(IO(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(2))))(ec => IO(ec.shutdown()))
 
   def streamJsonLines[A](
-    path: NIOPath, ec: ExecutionContext)(
+    path: NIOPath, ec: ExecutionContext, compression: CompressionSetting = AutoCompress)(
     implicit cs: ContextShift[IO], decoder: Decoder[A]
-  ): Stream[IO, A] = fs2.io.file.readAll[IO](path, ec, 4096)
-    .through(fs2.text.utf8Decode)
-    .through(fs2.text.lines)
-    .filter(_.nonEmpty)
-    .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(e => new RuntimeException(s"${e.show}\n$line"))))
+  ): Stream[IO, A] = {
+    val fileBytes = fs2.io.file.readAll[IO](path, ec, 4096)
+    val textBytes = if(useCompression(path, compression)) {
+      fileBytes.through(fs2.compress.gunzip(4096))
+    } else fileBytes
+    textBytes
+      .through(fs2.text.utf8Decode)
+      .through(fs2.text.lines)
+      .filter(_.nonEmpty)
+      .flatMap(line => Stream.fromEither[IO](jawn.decode[A](line).left.map(e => new RuntimeException(s"${e.show}\n$line"))))
+  }
 
   def readJsonLines[A](
-    path: NIOPath)(
+    path: NIOPath, compression: CompressionSetting = AutoCompress)(
     implicit cs: ContextShift[IO], decoder: Decoder[A]
   ): Stream[IO, A] = {
     Stream.resource(blockingExecutionContext).flatMap { _ec =>

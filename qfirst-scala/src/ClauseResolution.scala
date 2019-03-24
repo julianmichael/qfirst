@@ -2,6 +2,7 @@ package qfirst
 
 import qfirst.frames.implicits._
 
+import cats._
 import cats.implicits._
 
 import nlpdata.datasets.wiktionary.InflectedForms
@@ -12,8 +13,35 @@ import nlpdata.util.LowerCaseStrings._
 import qasrl._
 import qasrl.data._
 import qasrl.labeling._
+import qasrl.util._
+import qasrl.util.implicits._
+
+import io.circe.generic.JsonCodec
 
 object ClauseResolution {
+
+  @JsonCodec case class ArgStructure(
+    args: DependentMap[ArgumentSlot.Aux, Id],
+    isPassive: Boolean
+  ) {
+    def forgetAnimacy = {
+      val newArgs = args.keys.foldLeft(DependentMap.empty[ArgumentSlot.Aux, Id]) {
+        (m, k) => k match {
+          case Subj   => m.put(Subj, Noun(false))
+          case Obj    => m.put(Obj, Noun(false))
+          case Obj2  => m.put(
+            Obj2, args.get(Obj2).get match {
+              case Noun(_) => Noun(false)
+              case Prep(p, Some(Noun(_))) => Prep(p, Some(Noun(false)))
+              case x => x
+            }
+          )
+          case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
+        }
+      }
+      this.copy(args = newArgs)
+    }
+  }
 
   def getFramesWithAnswerSlots(verbInflectedForms: InflectedForms, question: String) = {
     val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
@@ -82,4 +110,18 @@ object ClauseResolution {
     else if(isDitransitiveAmb) "ditransitive"
     else "other"
   }
+
+  def getResolvedFramePairs(verbInflectedForms: InflectedForms, qLabels: List[QuestionLabel]) = {
+    val frameSets = qLabels.map(_.questionString)
+      .map(getFramesWithAnswerSlots(verbInflectedForms, _))
+    val locallyResolvedFramePairSets = locallyResolve(frameSets)
+    qLabels.map(_.questionSlots)
+      .zip(locallyResolvedFramePairSets)
+      .map(Function.tupled(fallbackResolve(_, _)))
+  }
+
+  def getClauseTemplate(frame: Frame) = {
+    ArgStructure(frame.args, frame.isPassive).forgetAnimacy
+  }
+
 }

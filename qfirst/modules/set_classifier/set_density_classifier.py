@@ -34,7 +34,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
     def __init__(self,
                  # decoding_threshold: float = 0.05,
                  objective: str = "softmax_with_null",
-                 uncertainty_factor: float = 1.0, # only used with softmax/null
+                 uncertainty_factor: float = None, # only used with softmax/null
                  sparsemax_gamma: float = 1.0, # only used with sparsemax
                  skip_metrics_during_training: bool = False,
                  prob_metric: BinaryF1 = BinaryF1(),
@@ -44,9 +44,6 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
         if objective not in objective_values:
             raise ConfigurationError("SetDensityClassifier objective was %s, must be one of %s" % (objective, objective_values))
         self._objective = objective
-
-        # if uncertainty_factor < 1.0:
-        #     raise ConfigurationError("Uncertainty factor must be >= 1.")
 
         self._uncertainty_factor = uncertainty_factor
         self._sparsemax_gamma = sparsemax_gamma
@@ -98,7 +95,11 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
             }
 
             if label_counts is not None:
-                null_counts = num_labelers.float() / self._uncertainty_factor
+                if self._uncertainty_factor is not None:
+                    # TODO not sure if this makes sense anymore...
+                    null_counts = num_labelers.float() / self._uncertainty_factor
+                else:
+                    null_counts = torch.zeros_like(num_labelers).float()
                 full_gold_counts = torch.cat([null_counts.unsqueeze(-1), label_counts], -1)
                 full_gold_probs = F.normalize(full_gold_counts, p = 1, dim = 1)
                 cross_entropy = torch.sum(-full_gold_probs * full_log_probs, 1)
