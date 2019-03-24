@@ -38,7 +38,7 @@ class SetDensityClassifier(torch.nn.Module, Registrable):
                  sparsemax_gamma: float = 1.0, # only used with sparsemax
                  skip_metrics_during_training: bool = False,
                  prob_metric: BinaryF1 = BinaryF1(),
-                 score_metric: BinaryF1 = BinaryF1([-4, -3, -2, -1, 0])):
+                 score_metric: BinaryF1 = BinaryF1([-1, 0, 1, 2, 3, 4])):
         super(SetDensityClassifier, self).__init__()
 
         if objective not in objective_values:
