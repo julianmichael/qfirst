@@ -1,4 +1,4 @@
-package qfirst.frames.verbal
+package qfirst
 
 import japgolly.scalajs.react.vdom.html_<^._
 import japgolly.scalajs.react._

@@ -1,6 +1,7 @@
-package qfirst.frames.verbal
+package qfirst.browse
 import qfirst.Mounting
-import qfirst.frames._
+import qfirst.ClauseResolution
+import qfirst.ClauseResolution.ArgStructure
 
 import cats.Id
 import cats.Order
@@ -28,28 +29,14 @@ import monocle.function.{all => Optics}
 import monocle.macros._
 import japgolly.scalajs.react.MonocleReact._
 
-import qasrl.bank.AnswerSource
-import qasrl.bank.AnnotationRound
-import qasrl.bank.DataIndex
-import qasrl.bank.DatasetPartition
-import qasrl.bank.Document
-import qasrl.bank.DocumentId
-import qasrl.bank.DocumentMetadata
-import qasrl.bank.Domain
-import qasrl.bank.QuestionSource
-import qasrl.bank.SentenceId
+import qasrl._
+import qasrl.data._
+
+import qasrl.bank._
 
 import qasrl.bank.service.DocumentService
 import qasrl.bank.service.Search
 
-import qasrl.data.AnswerLabel
-import qasrl.data.AnswerJudgment
-import qasrl.data.AnswerSpan
-import qasrl.data.Answer
-import qasrl.data.InvalidQuestion
-import qasrl.data.Sentence
-import qasrl.data.VerbEntry
-import qasrl.data.QuestionLabel
 
 import nlpdata.datasets.wiktionary.InflectedForms
 import nlpdata.util.Text
@@ -114,9 +101,9 @@ object VerbAnnUI {
   val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[InflectedForms, Int])]
   val DocFetch = new CacheCallContent[Option[DocumentId], Option[Document]]
   val SearchFetch = new CacheCallContent[Search.Query, Set[DocumentId]]
-  val FrameFetch = new CacheCallContent[InflectedForms, VerbFrame]
+  // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
   val VerbLocal = new LocalState[InflectedForms]
-  val FrameLocal = new LocalState[Option[VerbFrame]]
+  val FramesetLocal = new LocalState[Option[VerbFrameset]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]
@@ -138,7 +125,7 @@ object VerbAnnUI {
 
   case class Props(
     docService: DocumentService[CacheCall],
-    verbService: VerbAnnotationService[Future],
+    verbService: VerbFrameService[Future],
     urlNavQuery: NavQuery
   )
 
@@ -329,9 +316,7 @@ object VerbAnnUI {
     color: Rgba,
     qid: QuestionId,
     resolutions: Set[(Frame, ArgumentSlot)],
-    frameChoices: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
-    hoveredQids: StateSnapshot[Set[QuestionId]],
-    canDeleteCoveringInstance: Option[Callback]
+    hoveredQids: StateSnapshot[Set[QuestionId]]
   ) = {
     val answerJudgments = label.answerJudgments
     val qSource = label.questionSources.map(s => QuestionSource.fromString(s): QuestionSource).min
@@ -344,24 +329,13 @@ object VerbAnnUI {
         if(hasAnswersInExpansion) S.expansionRoundIndicator else S.evalRoundIndicator
     }
     val questionChoiceSet = resolutions.map { case (frame, argSlot) =>
-      (qid, frame.structure.forgetAnimacy, argSlot)
+      (qid, ClauseResolution.getClauseTemplate(frame), argSlot)
     }.toSet
-    val isNotChosen = frameChoices.value.forall { case (chosenQid, chosenArgs, argSlot) =>
-      chosenQid != qid
-    }
 
     <.tr(S.qaPairRow)(
       <.td(roundIndicatorStyle),
       <.td(S.questionCell,
-           if(!isNotChosen) S.candidateClauseChoice
-           else if(hoveredQids.value.contains(qid) && canDeleteCoveringInstance.nonEmpty) S.hoveredQuestion
-           else S.coveredQuestion.when(canDeleteCoveringInstance.nonEmpty))(
-        ^.onClick --> (
-          canDeleteCoveringInstance.getOrElse {
-            if(isNotChosen) frameChoices.setState(questionChoiceSet)
-            else frameChoices.setState(Set())
-          }
-        ),
+           S.hoveredQuestion.when(hoveredQids.value.contains(qid)))(
         ^.onMouseMove --> (
           if(hoveredQids.value != Set(qid)) hoveredQids.setState(Set(qid))
           else Callback.empty
@@ -395,16 +369,16 @@ object VerbAnnUI {
 
   def verbEntryDisplay(
     curSentence: Sentence,
-    syncedFrameOpt: Option[StateSnapshot[VerbFrame]],
+    curFrameset: Option[VerbFrameset],
     verb: VerbEntry,
     color: Rgba,
-    frameChoices: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
     hoveredQids: StateSnapshot[Set[QuestionId]],
     navQuery: StateSnapshot[NavQuery],
     displayQAs: Boolean
   ) = {
-    val coveredQids = syncedFrameOpt
-      .foldMap(_.value.clauseSets.foldMap(_.foldMap(_.instances.values.toList.foldMap(_.toSortedSet.toSet))))
+    // TODO
+    // val coveredQids = curFrameset
+    //   .foldMap(_.frames.foldMap(_.foldMap(_.instances.values.toList.foldMap(_.toSortedSet.toSet))))
     val qaTable = if(displayQAs) Some {
       <.table(S.verbQAsTable)(
           <.tbody(S.verbQAsTableBody) {
@@ -414,29 +388,7 @@ object VerbAnnUI {
             } else questionLabels.toVdomArray { label =>
               val qid = QuestionId(SentenceId.fromString(curSentence.sentenceId), verb.verbIndex, label.questionString)
               val resolutions = getFramesForQid(verb.verbInflectedForms, qid)
-              val canDeleteCoveringInstance = {
-                val deletionFunctions = for {
-                  frame <- syncedFrameOpt.toList
-                  (clauseSet, clauseSetIndex) <- frame.value.clauseSets.zipWithIndex
-                  (frameClause, frameClauseIndex) <- clauseSet.zipWithIndex
-                  (argSlot, qids) <- frameClause.instances.toList
-                  if qids.contains(qid)
-                } yield {
-                  VerbFrame.clauseSets
-                    .composeLens(unsafeListAt(clauseSetIndex))
-                    .composeLens(unsafeListAt(frameClauseIndex))
-                    .composeLens(FrameClause.instances)
-                    .composeLens(Optics.at(argSlot))
-                    .composeIso(nonEmptySetOptionIso[QuestionId])
-                    .modify(_ - qid)
-                }
-                if(deletionFunctions.isEmpty) None
-                else syncedFrameOpt.map(_.modState(deletionFunctions.reduce(_ compose _)))
-              }
-              val hasCoveringInstance =
-                syncedFrameOpt
-                coveredQids.contains(qid)
-              qaLabelRow(curSentence, label, color, qid, resolutions, frameChoices, hoveredQids, canDeleteCoveringInstance)(^.key := s"short-${label.questionString}"),
+              qaLabelRow(curSentence, label, color, qid, resolutions, hoveredQids)(^.key := s"short-${label.questionString}"),
             }
           }
       )
@@ -472,7 +424,6 @@ object VerbAnnUI {
   def docSelectionPane(
     totalNumDocs: Int,
     curDocMetas: SortedSet[DocumentMetadata],
-    labeledDocuments: Set[DocumentId],
     curDocMeta: StateSnapshot[DocumentMetadata]
   ) = {
     <.div(S.documentSelectionPaneContainer)(
@@ -483,7 +434,7 @@ object VerbAnnUI {
       ),
       <.div(S.documentSelectionPane)(
         curDocMetas.toVdomArray { docMeta =>
-          <.div(S.documentSelectionEntry, S.labeledDocumentSelectionEntry.when(labeledDocuments.contains(docMeta.id)))(
+          <.div(S.documentSelectionEntry)(
             ^.key := docMeta.id.toString,
             if(docMeta == curDocMeta.value) S.currentSelectionEntry else S.nonCurrentSelectionEntry,
             ^.onClick --> curDocMeta.setState(docMeta),
@@ -499,7 +450,6 @@ object VerbAnnUI {
   def sentenceSelectionPane(
     numSentencesInDocument: Int,
     curSentences: SortedSet[Sentence],
-    labeledSentences: Set[SentenceId],
     searchQuery: Search.Query,
     curSentence: StateSnapshot[Sentence]
   ) = {
@@ -522,7 +472,7 @@ object VerbAnnUI {
           val spanHighlights = qasrl.bank.service.Search.getQueryMatchesInSentence(sentence, searchQuery).toList.map(index =>
             AnswerSpan(index, index + 1) -> queryKeywordHighlightLayer
           )
-          <.div(S.sentenceSelectionEntry, S.labeledSentenceSelectionEntry.when(labeledSentences.contains(curSentenceId)))(
+          <.div(S.sentenceSelectionEntry)(
             ^.key := sentence.sentenceId,
             if(sentence == curSentence.value) S.currentSelectionEntry else S.nonCurrentSelectionEntry,
             ^.onClick --> curSentence.setState(sentence),
@@ -561,8 +511,7 @@ object VerbAnnUI {
     docMeta: DocumentMetadata,
     sentence: Sentence,
     verbForms: InflectedForms,
-    syncedFrameOpt: Option[StateSnapshot[VerbFrame]],
-    frameChoices: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
+    curFrameset: Option[VerbFrameset],
     hoveredQids: StateSnapshot[Set[QuestionId]],
     navQuery: StateSnapshot[NavQuery]
   ) = {
@@ -626,7 +575,7 @@ object VerbAnnUI {
         ),
         <.div(S.verbEntriesContainer)(
           sortedVerbs.toVdomArray { verb =>
-            verbEntryDisplay(sentence, syncedFrameOpt, verb, verbColorMap(verb.verbIndex), frameChoices, hoveredQids, navQuery, displayQAs = verb.verbInflectedForms == verbForms)(
+            verbEntryDisplay(sentence, curFrameset, verb, verbColorMap(verb.verbIndex), hoveredQids, navQuery, displayQAs = verb.verbInflectedForms == verbForms)(
               S.hoverHighlightedVerbTable.when(highlightedVerbIndices.value == Set(verb.verbIndex)),
               ^.key := verb.verbIndex,
               ^.onMouseMove --> (
@@ -652,48 +601,32 @@ object VerbAnnUI {
     verbInflectedForms: InflectedForms,
     curDocMetasOpt: Option[Set[DocumentMetadata]],
     sentenceOpt: Option[Sentence],
-    frame: StateSnapshot[VerbFrame],
-    clauseOptions: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
+    frameset: VerbFrameset,
     hoveredQids: StateSnapshot[Set[QuestionId]],
     navQuery: StateSnapshot[NavQuery]
   ) = {
+    // TODO this whole method
     val sentenceIdOpt = sentenceOpt.map(s => SentenceId.fromString(s.sentenceId))
-    val presentTan = TAN(qasrl.PresentTense, false, false, false)
-    val mightTan = TAN(qasrl.Modal("might".lowerCase), false, false, false)
+    def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
+      Frame(
+        forms, structure.args,
+        tense = (if(useModal) Modal("might".lowerCase) else PresentTense),
+        isPassive = structure.isPassive,
+        isPerfect = false,
+        isProgressive = false,
+        isNegated = false)
+    }
+    // val presentTan = TAN(qasrl.PresentTense, false, false, false)
+    // val mightTan = TAN(qasrl.Modal("might".lowerCase), false, false, false)
     val docIdToDocMetaOpt = curDocMetasOpt.map(_.map(m => m.id -> m).toMap)
     <.div(S.frameContainer)(
       <.div(S.frameSpecDisplay, S.scrollPane)(
-        frame.value.clauseSets.zipWithIndex.toVdomArray { case (clauseSet, clauseSetIndex) =>
-          val clauseSetLens = VerbFrame.clauseSets
-            .composeLens(unsafeListAt[List[FrameClause]](clauseSetIndex))
-          val newClauseOptions = clauseOptions.value.filter(p => !clauseSet.exists(_.args == p._2))
-          def questionIsValid(question: QuestionLabel) = {
-            val numValids = question.answerJudgments.filter(_.judgment.isAnswer).size
-            val numTotal = question.answerJudgments.size
-            (numValids.toDouble / numTotal) >= 5.0/6
-          }
-          val validLinkableQuestionsOpt = sentenceOpt.map { sentence =>
-            val res = for {
-              verb <- sentence.verbEntries.values.toList
-              if verb.verbInflectedForms == verbInflectedForms
-              question <- verb.questionLabels.values.toList
-              if questionIsValid(question)
-              qid = QuestionId(SentenceId.fromString(sentence.sentenceId), verb.verbIndex, question.questionString)
-              (frame, argSlot) <- getFramesForQid(verb.verbInflectedForms, qid).toList
-            } yield {
-              Map(
-                frame.structure.forgetAnimacy -> Map(
-                  argSlot -> NonEmptySet.of(qid)
-                )
-              )
-            }
-            res.combineAll
-          }
-          val allSentencesForClauseSetOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
-            (clauseSet.foldMap { frameClause =>
-               frameClause.instances.values.toList.foldMap(_.map(_.sentenceId).toList.toSet)
-             } + SentenceId.fromString(sentence.sentenceId))
-              .toList
+        frameset.frames.zipWithIndex.toVdomArray { case (frame, frameIndex) =>
+          val frameLens = VerbFrameset.frames
+            .composeLens(unsafeListAt[VerbFrame](frameIndex))
+          val matchesCurrentSentence = sentenceOpt.exists(s => frame.instances.contains(SentenceId.fromString(s.sentenceId)))
+          val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
+            (frame.instances.toSet + SentenceId.fromString(sentence.sentenceId)).toList
               .map(sid => sid -> docIdToDocMeta(sid.documentId))
               .sorted(
                 Order.catsKernelOrderingForOrder(
@@ -705,51 +638,34 @@ object VerbAnnUI {
               )
           }
           def makeNavQueryForSentenceIndexOpt(index: Int) = {
-            allSentencesForClauseSetOpt.map { allSentencesForClauseSet =>
-              val sid = allSentencesForClauseSet(index)._1
+            frameSentenceDocPairsOpt.map { allSentencesForFrame =>
+              val sid = allSentencesForFrame(index)._1
               val sidStr = SentenceId.toString(sid)
               val docIdStr = sid.documentId.toString
               NavQuery(verbInflectedForms.allForms.toSet, Set(docIdStr.lowerCase), Set(sidStr.lowerCase))
             }
           }
-          val curSentenceIndexOpt = (allSentencesForClauseSetOpt, sentenceIdOpt).mapN { (allSentencesForClauseSet, sentenceId) =>
-            allSentencesForClauseSet
+          val curSentenceIndexOpt = (frameSentenceDocPairsOpt, sentenceIdOpt).mapN { (frameSentenceDocPairs, sentenceId) =>
+            frameSentenceDocPairs
               .zipWithIndex
               .find(t => t._1._1 == sentenceId)
               .map(_._2)
           }.flatten
-          def makePrevQuery = (allSentencesForClauseSetOpt, curSentenceIndexOpt).mapN { (allSentencesForClauseSet, curSentenceIndex) =>
+          def makePrevQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
             makeNavQueryForSentenceIndexOpt(
-              (curSentenceIndex - 1 + allSentencesForClauseSet.size) % allSentencesForClauseSet.size
+              (curSentenceIndex - 1 + frameSentenceDocPairs.size) % frameSentenceDocPairs.size
             )
           }.flatten
-          def makeNextQuery = (allSentencesForClauseSetOpt, curSentenceIndexOpt).mapN { (allSentencesForClauseSet, curSentenceIndex) =>
+          def makeNextQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
             makeNavQueryForSentenceIndexOpt(
-              (curSentenceIndex + 1) % allSentencesForClauseSet.size
+              (curSentenceIndex + 1) % frameSentenceDocPairs.size
             )
           }.flatten
-
-          <.div(
-            ^.key := "clause-set-" + clauseSetIndex.toString,
+          <.div(S.matchingFrame.when(matchesCurrentSentence))(
+            ^.key := "clause-set-" + frameIndex.toString,
             <.div(S.frameHeading)(
               <.span(S.frameHeadingText)(
-                s"Frame $clauseSetIndex "
-              ),
-              <.span(S.frameDeleteText)(
-                "(delete)",
-                ^.onClick --> frame.zoomStateL(VerbFrame.clauseSets).modState(_.patch(clauseSetIndex, Nil, 1))
-              ),
-              validLinkableQuestionsOpt.whenDefined(validLinkableQuestions =>
-                <.span(S.frameLinkAllValidText)(
-                  " (link all valid)",
-                  ^.onClick --> frame.zoomStateL(clauseSetLens).modState(
-                    _.map(frameClause =>
-                      validLinkableQuestions.get(frameClause.args).fold(frameClause) { newArgs =>
-                        FrameClause.instances.modify(_ |+| newArgs)(frameClause)
-                      }
-                    )
-                  )
-                )
+                f"Frame $frameIndex%s (${frame.probability}%.4f)"
               ),
               makePrevQuery.whenDefined(goToPrev =>
                 <.span(S.prevFrameInstanceText)(
@@ -763,112 +679,57 @@ object VerbAnnUI {
               )
             ),
             <.div(S.clauseSetDisplay)(
-              clauseSet.zipWithIndex.toVdomArray { case (frameClause, clauseIndex) =>
-                val qidsInSentence = sentenceIdOpt.foldMap(sentenceId =>
-                  frameClause.instances.toList.foldMap(_._2.filter(_.sentenceId == sentenceId).toSet)
-                )
-                val validInstance = clauseOptions.value.find(_._2 == frameClause.args)
-                val frameClauseLens = clauseSetLens
+              frame.clauseTemplates.zipWithIndex.toVdomArray { case (frameClause, clauseIndex) =>
+                // TODO compute based on probabilities
+                // val qidsInSentence = sentenceIdOpt.foldMap(sentenceId =>
+                //   frameClause.instances.toList.foldMap(_._2.filter(_.sentenceId == sentenceId).toSet)
+                // )
+                val frameClauseLens = frameLens
+                  .composeLens(VerbFrame.clauseTemplates)
                   .composeLens(unsafeListAt[FrameClause](clauseIndex))
-                val instancesLens = frameClauseLens
-                  .composeLens(FrameClause.instances)
-                val surrogateFrame = Frame(frameClause.args, verbInflectedForms, presentTan)
+                // val instancesLens = frameClauseLens
+                //   .composeLens(FrameClause.instances)
+                val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
 
                 <.div(
-                  if(validInstance.nonEmpty) S.candidateClauseChoice
-                  else if(hoveredQids.value.intersect(qidsInSentence).nonEmpty) S.hoveredClause
-                  else S.coveredClause.when(qidsInSentence.nonEmpty)
+                  // if(hoveredQids.value.intersect(qidsInSentence).nonEmpty) S.hoveredClause
+                  // else S.coveredClause.when(qidsInSentence.nonEmpty)
                 )(
                   ^.key := "clause-" + clauseIndex.toString,
-                  <.span(S.clauseDeleteText)(
-                    "(-)",
-                    ^.onClick --> frame.zoomStateL(clauseSetLens).modState(_.patch(clauseIndex, Nil, 1))
-                  ),
                   <.span(
-                    ^.onMouseMove --> (
-                      if(hoveredQids.value != qidsInSentence) hoveredQids.setState(qidsInSentence)
-                      else Callback.empty
-                    ),
-                    ^.onMouseOut --> hoveredQids.setState(Set()),
-                    <.span(" "),
-                    surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
-                      case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
-                      case (Right(argSlot), i) => <.span(
-                        ^.key := s"frame-clause-$i",
-                        BoolLocal.make(initialValue = false) { isEditingSlot =>
-                          val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
-                            case Noun(_) => ""
-                            case Preposition(_, _) => ""
-                            case Locative => "[where]"
-                            case Complement(_) => "[verb]"
-                            case Gerund => "[ing]"
-                          }
-                          if(!isEditingSlot.value) {
-                            frameClause.argMapping.get(argSlot).map(s => <.span(S.argSigil)(s + sigilSuffix)).getOrElse(
-                              <.span(S.argPlaceholder)(
-                                surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
-                              )
-                            )((^.onClick --> isEditingSlot.setState(true)).when(validInstance.isEmpty))
-                          } else {
-                            Mounting.make(textFocusingRef.foreach(_.focus())) {
-                              StringLocal.make(
-                                initialValue = frameClause.argMapping.get(argSlot).getOrElse("")
-                              ) { argSigil =>
-                                val argLens = frameClauseLens
-                                  .composeLens(FrameClause.argMapping)
-                                  .composeLens(Optics.at(argSlot: ArgumentSlot))
-                                  <.input(
-                                    ^.`type` := "text",
-                                    ^.value := argSigil.value,
-                                    ^.onChange ==> ((e: ReactEventFromInput) => argSigil.setState(e.target.value)),
-                                    ^.onKeyDown ==> ((e: ReactKeyboardEventFromInput) =>
-                                      CallbackOption.keyCodeSwitch(e) {
-                                        case KeyCode.Enter => frame.zoomStateL(argLens).setState(
-                                          Some(argSigil.value).filter(_.nonEmpty)
-                                        )
-                                      } >> isEditingSlot.setState(false)
-                                    )
-                                  ).withRef(textFocusingRef)
-                              }
-                            }
-                          }
-                        }
-                      )
-                    }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.map(p => p._1(^.key := "frame-clause-tok-" + p._2.toString)).toVdomArray,
-                    validInstance.whenDefined { instance =>
-                      val instanceLens = instancesLens
-                        .composeLens(Optics.at(instance._3))
-                        .composeIso(nonEmptySetOptionIso[QuestionId])
-                      (^.onClick --> (
-                         frame.zoomStateL(instanceLens).modState(_ + instance._1) >>
-                           clauseOptions.setState(Set())
-                       )
-                      )
-                    }
-                  )
-                )
-              },
-              newClauseOptions.zipWithIndex.toVdomArray { case ((qid, thisFrame, argSlot), index) =>
-                val surrogateFrame = Frame(thisFrame, verbInflectedForms, presentTan)
-                <.div(S.addClauseOption, S.candidateClauseChoice)(
-                  ^.key := "new-clause-" + index.toString,
-                  s"(+) ${surrogateFrame.clauses().head}",
-                  ^.onClick --> (
-                    frame.zoomStateL(clauseSetLens).modState(
-                      _ ++ List(FrameClause(thisFrame, Map(), Map(argSlot -> NonEmptySet.of(qid))))
-                    ) >> clauseOptions.setState(Set())
+                    // ^.onMouseMove --> (
+                    //   if(hoveredQids.value != qidsInSentence) hoveredQids.setState(qidsInSentence)
+                    //   else Callback.empty
+                    // ),
+                    // ^.onMouseOut --> hoveredQids.setState(Set()),
+                    f"(${frameClause.probability}%.2f) ${surrogateFrame.clauses.head}"
+                      // TODO fix to include arg sigils once we have them
+                    // surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
+                    //   case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
+                    //   case (Right(argSlot), i) => <.span(
+                    //     ^.key := s"frame-clause-$i",
+                    //     BoolLocal.make(initialValue = false) { isEditingSlot =>
+                    //       val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
+                    //         case Noun(_) => ""
+                    //         case Preposition(_, _) => ""
+                    //         case Locative => "[where]"
+                    //         // case Complement(_) => "[verb]"
+                    //         // case Gerund => "[ing]"
+                    //       }
+                    //       frameClause.argMapping.get(argSlot).map(s => <.span(S.argSigil)(s + sigilSuffix): VdomElement).getOrElse(
+                    //         <.span(S.argPlaceholder)(
+                    //           surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+                    //         )
+                    //       )
+                    //     }
+                    //   )
+                    // }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.map(p => p._1(^.key := "frame-clause-tok-" + p._2.toString)).toVdomArray,
                   )
                 )
               }
             )
           )
-        },
-        <.div(S.addFrameOption, S.candidateClauseChoice.when(clauseOptions.value.nonEmpty))(
-          "(+) new frame",
-          ^.onClick --> frame.zoomStateL(VerbFrame.clauseSets).modState(
-            _ ++ List(Nil)
-          )
-        )
+        }
       ),
       <.div(S.frameAuditingDisplay, S.scrollPane) {
         def getInstancesForSentence(
@@ -890,55 +751,56 @@ object VerbAnnUI {
             .toList.sortBy(-_._2.size)
             .headOption.map(_._1)
         }
-        frame.value.clauseSets.zipWithIndex
-          .filter(_._1.exists(fc => getInstancesForSentence(fc.instances).nonEmpty)).zipWithIndex
-          .toVdomArray { case ((clauseSet, clauseSetIndex), index) =>
-            val instancesForClauseSet = clauseSet.map(_.instances).map(getInstancesForSentence)
-            val qidsForSigils = clauseSet.zip(instancesForClauseSet).foldMap { case (frameClause, instances) =>
-              frameClause.argMapping.map { case (argSlot, sigil) =>
-                sigil -> instances.get(argSlot).combineAll
-              }.toMap
-            }
-            val spansForSigils = qidsForSigils.flatMap { case (sigil, qids) =>
-              getSpanForQids(qids.toList).map(sigil -> _)
-            }
-            <.div(S.singleFrameAuditingDisplay)(
-              ^.key := "frame-audit-" + index.toString,
-              <.div(S.frameHeading)(
-                <.span(S.frameHeadingText)(
-                  s"Frame $clauseSetIndex"
-                )
-              ),
-              <.div(S.clauseSetDisplay)(
-                <.ul(
-                  clauseSet.zip(instancesForClauseSet).zipWithIndex.toVdomArray { case ((frameClause, instances), index) =>
-                    val argSlots = instances.keySet ++ frameClause.argMapping.keySet
-                    val argMap = argSlots.toList.flatMap { argSlot =>
-                      frameClause.argMapping
-                        .get(argSlot)
-                        .flatMap(spansForSigils.get)
-                        .orElse(instances.get(argSlot).map(_.toList).flatMap(getSpanForQids))
-                        .map(argSlot -> _)
-                    }.toMap
-                    val surrogateFrame = Frame(frameClause.args, verbInflectedForms, mightTan)
-                      <.li(
-                        ^.key := "audited-clause-set-" + index.toString,
-                        <.span(
-                          surrogateFrame.clausesWithArgMarkers.head.map {
-                            case Left(s) => <.span(s)
-                            case Right(argSlot) =>
-                              argMap.get(argSlot).fold(
-                                <.span(surrogateFrame.args.get(argSlot).get.placeholder.mkString(" "))
-                              )(phrase => <.span(S.substitutedArgString)(phrase))
-                          }.map(List(_)).intercalate(List(<.span(" ")))
-                            .zipWithIndex.map(p => p._1(^.key := "audit-clause-token-" + p._2.toString)).toVdomArray
-                        )
-                      )
-                  }
-                )
-              )
-            )
-        }
+        <.div() // TODO auditing display once we have question connections
+        // frameset.value.frame.zipWithIndex
+        //   .filter(_._1.exists(fc => getInstancesForSentence(fc.instances).nonEmpty)).zipWithIndex
+        //   .toVdomArray { case ((frames, frameIndex), index) =>
+        //     val instancesForClauseSet = clauseSet.map(_.instances).map(getInstancesForSentence)
+        //     val qidsForSigils = clauseSet.zip(instancesForClauseSet).foldMap { case (frameClause, instances) =>
+        //       frameClause.argMapping.map { case (argSlot, sigil) =>
+        //         sigil -> instances.get(argSlot).combineAll
+        //       }.toMap
+        //     }
+        //     val spansForSigils = qidsForSigils.flatMap { case (sigil, qids) =>
+        //       getSpanForQids(qids.toList).map(sigil -> _)
+        //     }
+        //     <.div(S.singleFrameAuditingDisplay)(
+        //       ^.key := "frame-audit-" + index.toString,
+        //       <.div(S.frameHeading)(
+        //         <.span(S.frameHeadingText)(
+        //           s"Frame $clauseSetIndex"
+        //         )
+        //       ),
+        //       <.div(S.clauseSetDisplay)(
+        //         <.ul(
+        //           clauseSet.zip(instancesForClauseSet).zipWithIndex.toVdomArray { case ((frameClause, instances), index) =>
+        //             val argSlots = instances.keySet ++ frameClause.argMapping.keySet
+        //             val argMap = argSlots.toList.flatMap { argSlot =>
+        //               frameClause.argMapping
+        //                 .get(argSlot)
+        //                 .flatMap(spansForSigils.get)
+        //                 .orElse(instances.get(argSlot).map(_.toList).flatMap(getSpanForQids))
+        //                 .map(argSlot -> _)
+        //             }.toMap
+        //             val surrogateFrame = Frame(frameClause.args, verbInflectedForms, mightTan)
+        //               <.li(
+        //                 ^.key := "audited-clause-set-" + index.toString,
+        //                 <.span(
+        //                   surrogateFrame.clausesWithArgMarkers.head.map {
+        //                     case Left(s) => <.span(s)
+        //                     case Right(argSlot) =>
+        //                       argMap.get(argSlot).fold(
+        //                         <.span(surrogateFrame.args.get(argSlot).get.placeholder.mkString(" "))
+        //                       )(phrase => <.span(S.substitutedArgString)(phrase))
+        //                   }.map(List(_)).intercalate(List(<.span(" ")))
+        //                     .zipWithIndex.map(p => p._1(^.key := "audit-clause-token-" + p._2.toString)).toVdomArray
+        //                 )
+        //               )
+        //           }
+        //         )
+        //       )
+        //     )
+        // }
       }
     )
   }
@@ -982,24 +844,7 @@ object VerbAnnUI {
                   else remVerbs.filter(_.contains(nextVerb)) -> (spec + nextVerb)
               }._2
               val searchQuery = Search.Query(predicateOpt = Some(curVerb.value), keywords = Set())
-              FrameLocal.make(initialValue = None) { curFrame =>
-                val syncedFrameOpt = curFrame.value.map { frame =>
-                  StateSnapshot.withReuse.prepare[VerbFrame](
-                    (vfOpt, cb) => vfOpt.fold(cb)(vf =>
-                      curFrame.setState(Some(vf), cb) >>
-                        Callback(
-                          props.verbService.saveFrame(vf)
-                            .foreach(newVF => curFrame.setState(Some(newVF), cb).runNow)
-                        )
-                    )
-                  )(frame)(Reusability.by_==[VerbFrame])
-                }
-                val labeledSentences = curFrame.value.foldMap(
-                  _.clauseSets.flatten.foldMap(
-                    _.instances.values.toList.foldMap(_.map(_.sentenceId).toList.toSet)
-                  )
-                )
-                val labeledDocuments = labeledSentences.map(_.documentId)
+              FramesetLocal.make(initialValue = None) { curFrameset =>
                 SearchFetch.make(request = searchQuery, sendRequest = props.docService.searchDocuments _) { searchFetchCtx =>
                   val searchCtx = searchFetchCtx match {
                     case SearchFetch.Loading => None
@@ -1106,57 +951,52 @@ object VerbAnnUI {
                             }.whenDefined
                           ),
                           QuestionSetLocal.make(initialValue = Set()) { hoveredQids =>
-                            FrameChoiceLocal.make(initialValue = Set()) { curFrameOptions =>
-                              <.div(S.dataContainer)(
-                                syncedFrameOpt.filter(_.value.inflectedForms == curVerb.value) match {
-                                  case None =>
-                                    Mounting.make(
-                                      Callback.future(
-                                        props.verbService.getFrame(curVerb.value)
-                                          .map(f => curFrame.setState(Some(f)))))(
-                                      <.div(S.loadingNotice)("Loading frame..."))
-                                  case Some(frame) => frameDisplayPane(
-                                    dataIndex, curVerb.value, curDocMetasOpt, curSentenceOpt.value,
-                                    frame, curFrameOptions, hoveredQids, navQuery
-                                  )
-                                },
-                                (searchCtx, zoomOpt(curDocMetaOpt)(Reusability.by_==[DocumentMetadata])) match {
-                                  case (None, _) | (_, None) => <.div(S.loadingNotice)("Loading document list...")
-                                  case (Some((_, docMetas, _)), Some(curDocMeta)) =>
-                                    <.div(S.dataContainer)(
-                                      docSelectionPane(
-                                        dataIndex.documents(DatasetPartition.Train).size,
-                                        docMetas,
-                                        labeledDocuments,
-                                        curDocMeta
-                                      ),
-                                      (docCtx, zoomOpt(curSentenceOpt)(Reusability.by_==[Sentence])) match {
-                                        case (None, _) | (_, None) => <.div(S.loadingNotice)("Loading document...")
-                                        case (Some((doc, curSentences, _)), Some(curSentence)) =>
-                                          <.div(S.documentContainer)(
-                                            sentenceSelectionPane(
-                                              doc.sentences.size,
-                                              curSentences,
-                                              labeledSentences,
-                                              searchQuery,
-                                              curSentence
-                                            ),
-                                            sentenceDisplayPane(
-                                              dataIndex.getPart(curDocMeta.value.id),
-                                              curDocMeta.value,
-                                              curSentence.value,
-                                              curVerb.value,
-                                              syncedFrameOpt,
-                                              curFrameOptions,
-                                              hoveredQids,
-                                              navQuery
-                                            )
+                            <.div(S.dataContainer)(
+                              curFrameset.value.filter(_.inflectedForms == curVerb.value) match {
+                                case None =>
+                                  Mounting.make(
+                                    Callback.future(
+                                      props.verbService.getFrame(curVerb.value)
+                                        .map(f => curFrameset.setState(Some(f)))))(
+                                    <.div(S.loadingNotice)("Loading frame..."))
+                                case Some(frame) => frameDisplayPane(
+                                  dataIndex, curVerb.value, curDocMetasOpt, curSentenceOpt.value,
+                                  frame, hoveredQids, navQuery
+                                )
+                              },
+                              (searchCtx, zoomOpt(curDocMetaOpt)(Reusability.by_==[DocumentMetadata])) match {
+                                case (None, _) | (_, None) => <.div(S.loadingNotice)("Loading document list...")
+                                case (Some((_, docMetas, _)), Some(curDocMeta)) =>
+                                  <.div(S.dataContainer)(
+                                    docSelectionPane(
+                                      dataIndex.documents(DatasetPartition.Train).size,
+                                      docMetas,
+                                      curDocMeta
+                                    ),
+                                    (docCtx, zoomOpt(curSentenceOpt)(Reusability.by_==[Sentence])) match {
+                                      case (None, _) | (_, None) => <.div(S.loadingNotice)("Loading document...")
+                                      case (Some((doc, curSentences, _)), Some(curSentence)) =>
+                                        <.div(S.documentContainer)(
+                                          sentenceSelectionPane(
+                                            doc.sentences.size,
+                                            curSentences,
+                                            searchQuery,
+                                            curSentence
+                                          ),
+                                          sentenceDisplayPane(
+                                            dataIndex.getPart(curDocMeta.value.id),
+                                            curDocMeta.value,
+                                            curSentence.value,
+                                            curVerb.value,
+                                            curFrameset.value,
+                                            hoveredQids,
+                                            navQuery
                                           )
-                                      }
-                                    )
-                                }
-                              )
-                            }
+                                        )
+                                    }
+                                  )
+                              }
+                            )
                           }
                         )
                       }

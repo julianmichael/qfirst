@@ -241,6 +241,18 @@ object qfirst extends Module {
         ) ++ args)
     }
 
+    def runBrowse(args: String*) = T.command {
+      val jsPath = qfirst.js.fastOpt().path.toString
+      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
+      val runMain = runMainFn()
+      runMain(
+        "qfirst.browse.Serve",
+        List(
+          "--jsDeps", jsDepsPath,
+          "--js", jsPath
+        ) ++ args)
+    }
+
     def runTopics(args: String*) = T.command {
       val runMain = runMainFn()
       runMain("qfirst.topics.TopicModelingApp", args)

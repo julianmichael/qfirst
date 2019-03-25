@@ -142,8 +142,12 @@ object TopicModelingApp extends App {
   object PLSIApp {
     import PLSI.PLSIModel
     def run(verbVocab: VerbVocab, clauseVocab: ClauseVocab, data: Dataset, numFrames: Int = 100, rand: Random) = {
-      val verbs = Dataset.verbEntries.getAll(data)
-      val verbsByType = verbs.groupBy(_.verbInflectedForms)
+      val sentenceVerbPairs = data.sentences.values.toList.flatMap(sentence =>
+        sentence.verbEntries.values.toList.map(sentence.sentenceId -> _)
+      )
+      val pairsByVerbType = sentenceVerbPairs.groupBy(_._2.verbInflectedForms)
+      val verbsByType = pairsByVerbType.map { case (v, ps) => v -> ps.map(_._2) }
+      val sentencesByVerb = pairsByVerbType.map { case (v, ps) => v -> ps.map(_._1) }
 
       print("Preparing instances... ")
       val documents = (verbVocab.indexToVerb: Vector[InflectedForms]).map { verb =>
@@ -164,7 +168,50 @@ object TopicModelingApp extends App {
         documents = documents,
         stoppingThreshold = 0.001
       )
-      (model, assignments, nll)
+      (model, assignments, sentencesByVerb, nll)
+    }
+
+    def save(
+      verbFreqs: Map[InflectedForms, Int],
+      verbVocab: VerbVocab, clauseVocab: ClauseVocab,
+      model: PLSIModel,
+      assignments: Vector[Vector[Vector[Double]]],
+      sentenceIdsByVerb: Map[InflectedForms, List[String]],
+      path: Path
+    ) = {
+      val frameInclusionMinimum = 1
+      val clauseInclusionMinimum = 2
+      val frameInclusionThreshold = 0.04
+      val clauseInclusionThreshold = 0.01
+      import qfirst.browse._
+      val allFrames: Map[InflectedForms, VerbFrameset] = model.priors.zipWithIndex
+        .iterator.map { case (frameDist, verbIndex) =>
+          val verbInflectedForms = verbVocab.indexToVerb(verbIndex)
+          val sentencesAndAssignmentsForVerb = sentenceIdsByVerb(verbInflectedForms).zip(assignments(verbIndex))
+          val framesByProb = frameDist.zipWithIndex.sortBy(-_._1)
+          val numFrames = math.max(framesByProb.takeWhile(_._1 > frameInclusionThreshold).size, frameInclusionMinimum)
+          val frames = framesByProb.take(numFrames).map {
+            case (frameProb, frameIndex) =>
+              val sentenceIds = sentencesAndAssignmentsForVerb.flatMap {
+                case (sid, frameDist) =>
+                  val frameMaxProb = frameDist.max
+                  if(frameMaxProb == frameDist(frameIndex) && frameMaxProb > 0.20) Some(SentenceId.fromString(sid))
+                  else None
+              }
+              val clauseDist = model.clusters(frameIndex)
+              val clausesByProb = clauseDist.zipWithIndex.sortBy(-_._1)
+              val numClauses = math.max(clausesByProb.takeWhile(_._1 > clauseInclusionThreshold).size, clauseInclusionMinimum)
+              val clauses = clausesByProb.take(numClauses).map {
+                case (clauseProb, clauseIndex) =>
+                  FrameClause(clauseVocab.indexToClause(clauseIndex), Map(), clauseProb) // TODO add argument sigils? need other output file.
+              }.toList
+              VerbFrame(clauses, sentenceIds, frameProb)
+          }.toList
+          val frameset = VerbFrameset(verbInflectedForms, frames)
+          verbInflectedForms -> frameset
+      }.toMap
+      val data = VerbFrameData(verbFreqs, allFrames)
+      FileUtil.writeJson(path, io.circe.Printer.noSpaces)(data).unsafeRunSync
     }
 
     def printResults(
@@ -219,23 +266,27 @@ object TopicModelingApp extends App {
     }
   }
 
-  lazy val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
+  lazy val trainOrig = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
+  lazy val trainExpanded = Data.readDataset(Paths.get("qasrl-v2_1").resolve("expanded").resolve("train.jsonl.gz"))
   lazy val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
   lazy val devMini = Data.readDataset(Paths.get("dev-mini.jsonl.gz"))
 
   // actual running stuff
+  val algorithm = args(0)
   val dataset = args.lift(1).getOrElse("dev-mini") match {
-    case "train" => train
+    case "train-orig" => trainOrig
+    case "train" | "train-expanded" => trainExpanded
     case "dev" => dev
     case "dev-mini" => devMini
   }
   val clauseVocab = makeClauseVocab(dataset)
   val numFrames = args(2).toInt
-  val rand = args.lift(3).fold(new Random)(seed => new Random(seed.toLong))
+  val savePath = Paths.get(args(3))
+  val rand = args.lift(4).fold(new Random)(seed => new Random(seed.toLong))
   // val pathOpt = args.lift(3).map(Paths.get(_))
   val frameProbThreshold = 0.04
   val clauseProbThreshold = 0.01
-  args(0) match {
+  algorithm match {
     case "mix-unigrams" =>
       val (model, assignments, nll) = MixtureOfUnigramsApp.run(clauseVocab, dataset, numFrames, rand)
       println(s"Loss: $nll")
@@ -244,8 +295,9 @@ object TopicModelingApp extends App {
       val verbFreqs = Dataset.verbEntries.getAll(dataset).groupBy(_.verbInflectedForms)
         .map { case (forms, instances) => forms -> instances.size }
       val verbVocab = makeVerbVocab(dataset)
-      val (model, assignments, nll) = PLSIApp.run(verbVocab, clauseVocab, dataset, numFrames, rand)
+      val (model, assignments, sentencesByVerb, nll) = PLSIApp.run(verbVocab, clauseVocab, dataset, numFrames, rand)
       println(s"Loss: $nll")
       PLSIApp.printResults(verbFreqs, verbVocab, clauseVocab, model, assignments)
+      PLSIApp.save(verbFreqs, verbVocab, clauseVocab, model, assignments, sentencesByVerb, savePath)
   }
 }
