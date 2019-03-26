@@ -12,6 +12,10 @@ from allennlp.predictors.predictor import Predictor
 from qfirst.data.dataset_readers import QasrlReader
 from qfirst.data.util import get_verb_fields
 
+def chunks(l, n):
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
 @Predictor.register("qasrl_clause_answering")
 class ClauseAnsweringPredictor(Predictor):
     def __init__(self, model: Model, dataset_reader: QasrlReader) -> None:
@@ -51,7 +55,10 @@ class ClauseAnsweringPredictor(Predictor):
                     }))
         if len(input_instances) == 0:
             return []
-        outputs = sanitize(self._model.forward_on_instances(input_instances))
+        # make sure to reproduce desired batch size
+        outputs = []
+        for input_batch in chunks(input_instances, len(inputs)):
+            outputs.extend(sanitize(self._model.forward_on_instances(input_batch)))
         outputs_grouped = {}
         def get(targ, key, default):
             if key not in targ:
