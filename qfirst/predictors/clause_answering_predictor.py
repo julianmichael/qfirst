@@ -52,13 +52,13 @@ class ClauseAnsweringPredictor(Predictor):
         if len(input_instances) == 0:
             return []
         outputs = sanitize(self._model.forward_on_instances(input_instances))
-        outputs_grouped = {}
+        outputs_grouped = { sid: {} for sid in sentence_ids}
         def get(targ, key, default):
             if key not in targ:
                 targ[key] = default
             return targ[key]
         for input_meta, output in zip(input_metas, outputs):
-            sentence = get(outputs_grouped, input_meta["sentenceId"], {})
+            sentence = outputs_grouped[input_meta["sentenceId"]]
             verb = get(sentence, str(input_meta["verbIndex"]), [])
             spans = [[[s[0], s[1]], p] for s, p in output["spans"]]
             results = {
