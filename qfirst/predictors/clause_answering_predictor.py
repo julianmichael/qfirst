@@ -73,7 +73,7 @@ class ClauseAnsweringPredictor(Predictor):
                 "spans": output["spans"]
             }
             verb.append(results)
-        return [outputs_grouped[sid] for sid in sentence_ids]
+        return [{ "sentenceId": sid, "verbs": outputs_grouped[sid] } for sid in sentence_ids]
 
 
 
