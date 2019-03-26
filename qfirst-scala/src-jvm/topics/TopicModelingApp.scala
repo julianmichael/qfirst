@@ -4,6 +4,7 @@ import qfirst._
 import qfirst.frames.implicits._
 
 import cats.Id
+import cats.effect._
 import cats.implicits._
 
 import java.nio.file._
@@ -20,12 +21,13 @@ import qasrl.bank._
 import nlpdata.datasets.wiktionary._
 import nlpdata.util.LowerCaseStrings._
 
+import io.circe.Json
 import io.circe.generic.JsonCodec
 import io.circe.syntax._
 
 import scala.util.Random
 
-object TopicModelingApp extends App {
+object TopicModelingApp extends IOApp {
 
   import ClauseResolution._
 
@@ -113,7 +115,7 @@ object TopicModelingApp extends App {
       model.prior.zip(frames).zipWithIndex.sortBy(-_._1._1).foreach {
         case ((frameProb, frame), frameIndex) =>
           println(f"Frame $frameIndex%s: $frameProb%.6f")
-          frame.takeWhile(_._2 > clauseProbThreshold)
+          frame.takeWhile(_._2 > clauseInclusionThreshold)
             .foreach { case (argStructure, clauseProb) =>
               println(f"\t$clauseProb%5.4f ${getClause(argStructure)}")
             }
@@ -139,6 +141,11 @@ object TopicModelingApp extends App {
     }
   }
 
+  val frameInclusionMinimum = 1
+  val clauseInclusionMinimum = 2
+  val frameInclusionThreshold = 0.04
+  val clauseInclusionThreshold = 0.01
+
   object PLSIApp {
     import PLSI.PLSIModel
     def run(verbVocab: VerbVocab, clauseVocab: ClauseVocab, data: Dataset, numFrames: Int = 100, rand: Random) = {
@@ -147,7 +154,7 @@ object TopicModelingApp extends App {
       )
       val pairsByVerbType = sentenceVerbPairs.groupBy(_._2.verbInflectedForms)
       val verbsByType = pairsByVerbType.map { case (v, ps) => v -> ps.map(_._2) }
-      val sentencesByVerb = pairsByVerbType.map { case (v, ps) => v -> ps.map(_._1) }
+      val locationsByVerb = pairsByVerbType.map { case (v, ps) => v -> ps.map(p => p._1 -> p._2.verbIndex) }
 
       print("Preparing instances... ")
       val documents = (verbVocab.indexToVerb: Vector[InflectedForms]).map { verb =>
@@ -168,7 +175,7 @@ object TopicModelingApp extends App {
         documents = documents,
         stoppingThreshold = 0.001
       )
-      (model, assignments, sentencesByVerb, nll)
+      (model, assignments, locationsByVerb, nll)
     }
 
     def save(
@@ -176,18 +183,14 @@ object TopicModelingApp extends App {
       verbVocab: VerbVocab, clauseVocab: ClauseVocab,
       model: PLSIModel,
       assignments: Vector[Vector[Vector[Double]]],
-      sentenceIdsByVerb: Map[InflectedForms, List[String]],
+      locationsByVerb: Map[InflectedForms, List[(String, Int)]],
       path: Path
     ) = {
-      val frameInclusionMinimum = 1
-      val clauseInclusionMinimum = 2
-      val frameInclusionThreshold = 0.04
-      val clauseInclusionThreshold = 0.01
       import qfirst.browse._
       val allFrames: Map[InflectedForms, VerbFrameset] = model.priors.zipWithIndex
         .iterator.map { case (frameDist, verbIndex) =>
           val verbInflectedForms = verbVocab.indexToVerb(verbIndex)
-          val sentencesAndAssignmentsForVerb = sentenceIdsByVerb(verbInflectedForms).zip(assignments(verbIndex))
+          val sentencesAndAssignmentsForVerb = locationsByVerb(verbInflectedForms).map(_._1).zip(assignments(verbIndex))
           val framesByProb = frameDist.zipWithIndex.sortBy(-_._1)
           val numFrames = math.max(framesByProb.takeWhile(_._1 > frameInclusionThreshold).size, frameInclusionMinimum)
           val frames = framesByProb.take(numFrames).map {
@@ -214,6 +217,49 @@ object TopicModelingApp extends App {
       FileUtil.writeJson(path, io.circe.Printer.noSpaces)(data).unsafeRunSync
     }
 
+    def saveForQA(
+      dataset: Dataset,
+      verbFreqs: Map[InflectedForms, Int],
+      verbVocab: VerbVocab, clauseVocab: ClauseVocab,
+      model: PLSIModel,
+      assignments: Vector[Vector[Vector[Double]]],
+      locationsByVerb: Map[InflectedForms, List[(String, Int)]], // verb type -> (sid, verb index)
+      savePath: Path
+    ) = {
+      val sentenceJsons = dataset.sentences.iterator.map { case (sentenceId, sentence) =>
+        Json.obj(
+          "sentenceId" -> sentenceId.asJson,
+          "sentenceTokens" -> sentence.sentenceTokens.asJson,
+          "verbs" -> sentence.verbEntries.values.toList.flatMap { verb =>
+            val instanceIndex = locationsByVerb(verb.verbInflectedForms).indexOf(sentenceId -> verb.verbIndex)
+            val frameDist = assignments(verbVocab.verbToIndex(verb.verbInflectedForms))(instanceIndex)
+            val bestFrames = frameDist.zipWithIndex.maximaBy(_._1)
+            if(bestFrames.size != 1) None else Some {
+              val bestFrameClauseDist = model.clusters(bestFrames.head._2)
+              val clausesByProb = bestFrameClauseDist.zipWithIndex.sortBy(-_._1)
+              val numClauses = math.max(clausesByProb.takeWhile(_._1 > clauseInclusionThreshold).size, clauseInclusionMinimum)
+              val clauses = clausesByProb.take(numClauses).map(_._2).flatMap { clauseIndex =>
+                val clauseTemplate = clauseVocab.indexToClause(clauseIndex)
+                val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
+                val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
+                argSlots.map(slot =>
+                  Json.obj(
+                    "clause" -> clauseTemplateString.asJson,
+                    "slot" -> slot.asJson
+                  )
+                )
+              }.toList
+              Json.obj(
+                "verbIndex" -> verb.verbIndex.asJson,
+                "clauses" -> clauses.asJson
+              )
+            }
+          }.asJson
+        )
+      }.toList
+      FileUtil.writeJsonLines(savePath, io.circe.Printer.noSpaces)(sentenceJsons).unsafeRunSync
+    }
+
     def printResults(
       verbFreqs: Map[InflectedForms, Int],
       verbVocab: VerbVocab, clauseVocab: ClauseVocab, model: PLSIModel, assignments: Vector[Vector[Vector[Double]]]
@@ -237,7 +283,7 @@ object TopicModelingApp extends App {
       }
       val avgPrior = model.priors.transpose.map(p => mean(p.toVector))
       def framePrintLines(frame: Vector[(ArgStructure, Double)], frameProb: Double, frameIndex: Int) = {
-        val numToPrint = math.max(frame.takeWhile(_._2 > clauseProbThreshold).size, 2)
+        val numToPrint = math.max(frame.takeWhile(_._2 > clauseInclusionThreshold).size, clauseInclusionMinimum)
         f"Frame $frameIndex%s: $frameProb%.6f" +: frame.take(numToPrint)
           .map { case (argStructure, clauseProb) =>
             f"\t$clauseProb%5.4f ${getClause(genericInflectedForms, argStructure)}"
@@ -255,7 +301,7 @@ object TopicModelingApp extends App {
         println(verbInflectedForms.allForms.mkString(", ") + s"($verbCount)")
         val verbPriors = model.priors(verbVocab.verbToIndex(verbInflectedForms))
           .zipWithIndex.sortBy(-_._1)
-        val numToPrint = math.max(verbPriors.takeWhile(_._1 > frameProbThreshold).size, 1)
+        val numToPrint = math.max(verbPriors.takeWhile(_._1 > frameInclusionThreshold).size, frameInclusionMinimum)
         verbPriors
           .take(numToPrint)
           .foreach { case (frameProb, frameIndex) =>
@@ -272,32 +318,35 @@ object TopicModelingApp extends App {
   lazy val devMini = Data.readDataset(Paths.get("dev-mini.jsonl.gz"))
 
   // actual running stuff
-  val algorithm = args(0)
-  val dataset = args.lift(1).getOrElse("dev-mini") match {
-    case "train-orig" => trainOrig
-    case "train" | "train-expanded" => trainExpanded
-    case "dev" => dev
-    case "dev-mini" => devMini
-  }
-  val clauseVocab = makeClauseVocab(dataset)
-  val numFrames = args(2).toInt
-  val savePath = Paths.get(args(3))
-  val rand = args.lift(4).fold(new Random)(seed => new Random(seed.toLong))
-  // val pathOpt = args.lift(3).map(Paths.get(_))
-  val frameProbThreshold = 0.04
-  val clauseProbThreshold = 0.01
-  algorithm match {
-    case "mix-unigrams" =>
-      val (model, assignments, nll) = MixtureOfUnigramsApp.run(clauseVocab, dataset, numFrames, rand)
-      println(s"Loss: $nll")
-      MixtureOfUnigramsApp.printResults(clauseVocab, model, assignments)
-    case "plsi" =>
-      val verbFreqs = Dataset.verbEntries.getAll(dataset).groupBy(_.verbInflectedForms)
-        .map { case (forms, instances) => forms -> instances.size }
-      val verbVocab = makeVerbVocab(dataset)
-      val (model, assignments, sentencesByVerb, nll) = PLSIApp.run(verbVocab, clauseVocab, dataset, numFrames, rand)
-      println(s"Loss: $nll")
-      PLSIApp.printResults(verbFreqs, verbVocab, clauseVocab, model, assignments)
-      PLSIApp.save(verbFreqs, verbVocab, clauseVocab, model, assignments, sentencesByVerb, savePath)
-  }
+
+  def run(args: List[String]): IO[ExitCode] = IO {
+    val algorithm = args(0)
+    val dataset = args.lift(1).getOrElse("dev-mini") match {
+      case "train-orig" => trainOrig
+      case "train" | "train-expanded" => trainExpanded
+      case "dev" => dev
+      case "dev-mini" => devMini
+    }
+    val clauseVocab = makeClauseVocab(dataset)
+    val numFrames = args(2).toInt
+    val frameSavePath = Paths.get(args(3))
+    val qaInputSavePath = Paths.get(args(4))
+    val rand = args.lift(5).fold(new Random)(seed => new Random(seed.toLong))
+    // val pathOpt = args.lift(3).map(Paths.get(_))
+    algorithm match {
+      case "mix-unigrams" =>
+        val (model, assignments, nll) = MixtureOfUnigramsApp.run(clauseVocab, dataset, numFrames, rand)
+        println(s"Loss: $nll")
+        MixtureOfUnigramsApp.printResults(clauseVocab, model, assignments)
+      case "plsi" =>
+        val verbFreqs = Dataset.verbEntries.getAll(dataset).groupBy(_.verbInflectedForms)
+          .map { case (forms, instances) => forms -> instances.size }
+        val verbVocab = makeVerbVocab(dataset)
+        val (model, assignments, locationsByVerb, nll) = PLSIApp.run(verbVocab, clauseVocab, dataset, numFrames, rand)
+        println(s"Loss: $nll")
+        PLSIApp.printResults(verbFreqs, verbVocab, clauseVocab, model, assignments)
+        PLSIApp.save(verbFreqs, verbVocab, clauseVocab, model, assignments, locationsByVerb, frameSavePath)
+        PLSIApp.saveForQA(dataset, verbFreqs, verbVocab, clauseVocab, model, assignments, locationsByVerb, qaInputSavePath)
+    }
+  }.as(ExitCode.Success)
 }

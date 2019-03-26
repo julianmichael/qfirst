@@ -35,7 +35,7 @@ class SpanSelector(torch.nn.Module, Registrable):
                  span_hidden_dim: int = 100,
                  span_ffnn: FeedForward = None,
                  classifier: SetClassifier = SetBinaryClassifier(),
-                 # span_decoding_threshold: float = 0.05,
+                 span_decoding_threshold: float = 0.05,
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: Optional[RegularizerApplicator] = None):
         super(SpanSelector, self).__init__()
@@ -45,6 +45,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         self._span_hidden_dim = span_hidden_dim
         self._span_ffnn = span_ffnn
         self._classifier = classifier
+        self._span_decoding_threshold = span_decoding_threshold
 
         self._span_hidden = SpanRepAssembly(self._input_dim, self._input_dim, self._span_hidden_dim)
         if self._span_ffnn is not None:
@@ -95,10 +96,10 @@ class SpanSelector(torch.nn.Module, Registrable):
 
         span_logits = self._span_scorer(full_hidden).squeeze(-1)
 
-        output_dict = {
-            "span_mask": span_mask,
-            "span_logits": span_logits
-        }
+        # output_dict = {
+        #     "span_mask": span_mask,
+        #     "span_logits": span_logits
+        # }
 
         if answer_spans is not None:
             num_gold_spans = answer_spans.size(1)
@@ -117,7 +118,7 @@ class SpanSelector(torch.nn.Module, Registrable):
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         if "spans" not in output_dict:
             o = output_dict
-            spans = self._to_scored_spans(o["span_probs"], o["span_mask"])
+            spans = self._to_scored_spans(o["probs"], o["mask"])
             output_dict["spans"] = spans
         return output_dict
 
@@ -129,7 +130,7 @@ class SpanSelector(torch.nn.Module, Registrable):
         for b in range(batch_size):
             batch_spans = []
             for start, end, i in self._start_end_range(num_spans):
-                if score_mask[b, i] == 1 and probs[b, i] > self._span_probability_threshold:
+                if score_mask[b, i] == 1 and probs[b, i] > self._span_decoding_threshold:
                     batch_spans.append((Span(start, end), probs[b, i].item()))
             spans.append(batch_spans)
         return spans
