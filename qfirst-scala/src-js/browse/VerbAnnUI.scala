@@ -702,28 +702,30 @@ object VerbAnnUI {
                     //   else Callback.empty
                     // ),
                     // ^.onMouseOut --> hoveredQids.setState(Set()),
-                    f"(${frameClause.probability}%.2f) ${surrogateFrame.clauses.head}"
+                    <.span(f"(${frameClause.probability}%.2f) "),
+                        // ${surrogateFrame.clauses.head}"
                       // TODO fix to include arg sigils once we have them
-                    // surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
-                    //   case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
-                    //   case (Right(argSlot), i) => <.span(
-                    //     ^.key := s"frame-clause-$i",
-                    //     BoolLocal.make(initialValue = false) { isEditingSlot =>
-                    //       val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
-                    //         case Noun(_) => ""
-                    //         case Preposition(_, _) => ""
-                    //         case Locative => "[where]"
-                    //         // case Complement(_) => "[verb]"
-                    //         // case Gerund => "[ing]"
-                    //       }
-                    //       frameClause.argMapping.get(argSlot).map(s => <.span(S.argSigil)(s + sigilSuffix): VdomElement).getOrElse(
-                    //         <.span(S.argPlaceholder)(
-                    //           surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
-                    //         )
-                    //       )
-                    //     }
-                    //   )
-                    // }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.map(p => p._1(^.key := "frame-clause-tok-" + p._2.toString)).toVdomArray,
+                    surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
+                      case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
+                      case (Right(argSlot), i) => <.span(
+                        ^.key := s"frame-clause-$i",
+                        BoolLocal.make(initialValue = false) { isEditingSlot =>
+                          val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
+                            case Noun(_) => ""
+                            case Prep(p, _) =>
+                              if(p.toString.contains(" do")) "[inf]"
+                              else if(p.toString.contains(" doing")) "[ng]"
+                              else ""
+                            case Locative => "[where]"
+                          }
+                          frameClause.argMapping.get(argSlot).map(s => <.span(S.argSigil)(s + sigilSuffix): VdomElement).getOrElse(
+                            <.span(S.argPlaceholder)(
+                              surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+                            )
+                          )
+                        }
+                      )
+                    }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.map(p => p._1(^.key := "frame-clause-tok-" + p._2.toString)).toVdomArray,
                   )
                 )
               }

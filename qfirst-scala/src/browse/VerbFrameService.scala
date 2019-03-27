@@ -41,7 +41,7 @@ object FrameClause
 
 @Lenses @JsonCodec case class VerbFrame(
   clauseTemplates: List[FrameClause],
-  instances: List[SentenceId],
+  instances: List[SentenceId], // TODO pair sentence ID and verb index
   probability: Double)
 object VerbFrame
 
