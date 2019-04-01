@@ -46,6 +46,9 @@ object BoundedAcc {
     )
   }
   object Stats {
+    def correct(n: Int = 1) = Stats(correct = n)
+    def incorrect(n: Int = 1) = Stats(incorrect = n)
+    def uncertain(n: Int = 1) = Stats(uncertain = n)
     implicit val boundedAccStatsMonoid: Monoid[Stats] = {
       import cats.derived.auto.monoid._
       cats.derived.semi.monoid

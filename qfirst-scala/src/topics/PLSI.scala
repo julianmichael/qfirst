@@ -37,8 +37,9 @@ object PLSI {
       )
     }
 
+    // TODO: concentration parameter
     def initClever(documents: Vector[Vector[Counts]], numClusters: Int, numItems: Int, rand: Random) = {
-      val unigramMixtureModel = MixtureOfUnigrams.UnigramMixtureModel.initClever(documents.flatten.toList, numClusters, numItems, rand)
+      val unigramMixtureModel = MixtureOfUnigrams.UnigramMixtureModel.initClever(documents.flatten.toList, numClusters, numItems, 1.0, rand)
       val uniformPrior = Vector.fill(numClusters)(1.0 / numClusters)
       PLSIModel(
         priors = documents.as(uniformPrior),
@@ -82,7 +83,7 @@ object PLSI {
           itemNum -> (assignment(clusterNum) * count)
         }
       }
-      makeClusterFromCounts(pseudoCounts, numItems, clusterSmoothingCounts)
+      dirichletPosteriorFromSparse(pseudoCounts, numItems, clusterSmoothingCounts)
     }.toVector
     PLSIModel(priors, clusters)
   }

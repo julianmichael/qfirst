@@ -25,13 +25,24 @@ package object topics {
     max + math.log(sumExp)
   }
 
-  def makeClusterFromCounts[A](counts: Map[Int, A], numItems: Int, clusterSmoothingCounts: Double)(implicit N: Numeric[A]) = {
-    val countSum = N.toDouble(counts.values.sum)
-    val denom = countSum + clusterSmoothingCounts
-    val smoothNum = clusterSmoothingCounts / numItems
-    counts.foldLeft(Vector.fill(numItems)(smoothNum / denom)) {
+  def uniform(supportSize: Int) = {
+    Vector.fill(supportSize)(1.0 / supportSize)
+  }
+
+  // alpha is TOTAL of prior counts
+  def dirichletPosteriorFromDense[A](pseudoCounts: Vector[Double], alpha: Double) = {
+    val priorCount = alpha / pseudoCounts.size
+    val normalization = pseudoCounts.sum + alpha
+    pseudoCounts.map(pc => (pc + priorCount) / normalization)
+  }
+
+  // alpha is TOTAL of prior counts
+  def dirichletPosteriorFromSparse[A](pseudoCounts: Map[Int, A], supportSize: Int, alpha: Double)(implicit N: Numeric[A]) = {
+    val normalization = N.toDouble(pseudoCounts.values.sum) + alpha
+    val priorCount = alpha / supportSize
+    pseudoCounts.foldLeft(Vector.fill(supportSize)(priorCount / normalization)) {
       case (vec, (idx, count)) =>
-        vec.updated(idx, (smoothNum + N.toDouble(count)) / denom)
+        vec.updated(idx, (priorCount + N.toDouble(count)) / normalization)
     }
   }
 }

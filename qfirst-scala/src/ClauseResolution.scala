@@ -43,29 +43,45 @@ object ClauseResolution {
     }
   }
 
-  def getFramesWithAnswerSlots(verbInflectedForms: InflectedForms, question: String) = {
-    val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
-    val qPreps = questionTokensIsh.filter(TemplateStateMachine.allPrepositions.contains).toSet
-    val qPrepBigrams = questionTokensIsh
-      .sliding(2)
-      .filter(_.forall(TemplateStateMachine.allPrepositions.contains))
-      .map(_.mkString(" ").lowerCase)
-      .toSet
-    val stateMachine =
-      new TemplateStateMachine(Vector(), verbInflectedForms, Some(qPreps ++ qPrepBigrams))
-    val template = new QuestionProcessor(stateMachine)
-    val framesWithAnswerSlots = template.processStringFully(question) match {
-      case Left(QuestionProcessor.AggregatedInvalidState(_, _)) =>
-        println("Failed! " + question)
-        ???
-      case Right(goodStates) => goodStates.toList.collect {
-        case QuestionProcessor.CompleteState(_, frame, answerSlot) =>
-          frame -> answerSlot
-      }.toSet
-    }
-    framesWithAnswerSlots
-  }
+  val genericInflectedForms = InflectedForms(
+    stem = "stem".lowerCase,
+    present = "present".lowerCase,
+    presentParticiple = "presentParticiple".lowerCase,
+    past = "past".lowerCase,
+    pastParticiple = "pastParticiple".lowerCase
+  )
 
+  // returns generic inflected forms
+  import scala.collection.mutable
+  private[this] val frameCache = mutable.Map.empty[SlotBasedLabel[VerbForm], Set[(Frame, ArgumentSlot)]]
+
+  // returns generic inflected forms
+  def getFramesWithAnswerSlots(questionSlots: SlotBasedLabel[VerbForm]) = {
+    frameCache.get(questionSlots).getOrElse {
+      val question = questionSlots.renderQuestionString(genericInflectedForms)
+      val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
+      val qPreps = questionTokensIsh.filter(TemplateStateMachine.allPrepositions.contains).toSet
+      val qPrepBigrams = questionTokensIsh
+        .sliding(2)
+        .filter(_.forall(TemplateStateMachine.allPrepositions.contains))
+        .map(_.mkString(" ").lowerCase)
+        .toSet
+      val stateMachine =
+        new TemplateStateMachine(Vector(), genericInflectedForms, Some(qPreps ++ qPrepBigrams))
+      val template = new QuestionProcessor(stateMachine)
+      val framesWithAnswerSlots = template.processStringFully(question) match {
+        case Left(QuestionProcessor.AggregatedInvalidState(_, _)) =>
+          println("Failed! " + question)
+            ???
+        case Right(goodStates) => goodStates.toList.collect {
+          case QuestionProcessor.CompleteState(_, frame, answerSlot) =>
+            frame -> answerSlot
+        }.toSet
+      }
+      frameCache.put(questionSlots, framesWithAnswerSlots)
+      framesWithAnswerSlots
+    }
+  }
 
   def locallyResolve(framePairSets: List[Set[(Frame, ArgumentSlot)]]) = {
     val framePseudoCounts = framePairSets.foldMap { framePairSet =>
@@ -111,11 +127,11 @@ object ClauseResolution {
     else "other"
   }
 
-  def getResolvedFramePairs(verbInflectedForms: InflectedForms, qLabels: List[QuestionLabel]) = {
-    val frameSets = qLabels.map(_.questionString)
-      .map(getFramesWithAnswerSlots(verbInflectedForms, _))
+  def getResolvedFramePairs(verbInflectedForms: InflectedForms, qSlots: List[SlotBasedLabel[VerbForm]]) = {
+    val frameSets = qSlots
+      .map(getFramesWithAnswerSlots(_))
     val locallyResolvedFramePairSets = locallyResolve(frameSets)
-    qLabels.map(_.questionSlots)
+    qSlots
       .zip(locallyResolvedFramePairSets)
       .map(Function.tupled(fallbackResolve(_, _)))
   }

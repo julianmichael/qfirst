@@ -209,7 +209,7 @@ object SandboxApp extends App {
         "questions per verb" ->> Counts(qLabels.map(_.questionSlots).toSet.size) ::
         "questions without wh per verb" ->> Counts(qLabels.map(_.questionSlots).map(_.copy(wh = "what".lowerCase)).toSet.size) ::
         "frames" ->> {
-          val frameSets = qLabels.map(_.questionString).map(getFramesWithAnswerSlots(verb.verbInflectedForms, _))
+          val frameSets = qLabels.map(_.questionSlots).map(getFramesWithAnswerSlots(_))
           val locallyResolvedFramePairSets = locallyResolve(frameSets)
           def getAmbiguities(framePairSets: List[Set[(Frame, ArgumentSlot)]]) = {
             qLabels.map(_.questionSlots).zip(framePairSets).map(Function.tupled(classifyAmbiguity(_, _))).foldMap(FewClassCount(_))

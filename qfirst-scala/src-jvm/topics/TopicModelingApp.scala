@@ -39,7 +39,7 @@ object TopicModelingApp extends IOApp {
     "verbed".lowerCase)
 
   def getUnindexedInstance(verb: VerbEntry) = {
-    getResolvedFramePairs(verb.verbInflectedForms, filterGoldNonDense(verb)._2.toList.map(_._2)).foldMap(p =>
+    getResolvedFramePairs(verb.verbInflectedForms, filterGoldNonDense(verb)._2.toList.map(_._2.questionSlots)).foldMap(p =>
       Map(getClauseTemplate(p._1) -> 1)
     )
   }
@@ -86,10 +86,12 @@ object TopicModelingApp extends IOApp {
 
       val (model, assignments, nll) = MixtureOfUnigrams.runSoftEM(
         initModel = UnigramMixtureModel.initClever(
-          instances, numFrames, vocab.size, rand
+          instances, numFrames, vocab.size, 1.0, rand
         ),
         instances = instances,
-        stoppingThreshold = 0.001
+        priorConcentrationParameter = 1.0,
+        clusterConcentrationParameter = 1.0,
+        stoppingThreshold = 0.001,
       )
       (model, verbs.zip(assignments).toVector, nll)
     }
@@ -126,7 +128,7 @@ object TopicModelingApp extends IOApp {
             .sortBy(-_._2(frameIndex)).take(5).foreach {
               case (verb, topicDist) =>
                 println(f"\t${topicDist(frameIndex)}%5.4f ${verb.verbInflectedForms.stem}")
-                val framePairs = getResolvedFramePairs(verb.verbInflectedForms, filterGoldNonDense(verb)._2.toList.map(_._2))
+                val framePairs = getResolvedFramePairs(verb.verbInflectedForms, filterGoldNonDense(verb)._2.toList.map(_._2.questionSlots))
                 val probs = framePairs.map(p =>
                   model.clusters(frameIndex)(
                     vocab.clauseToIndex(getClauseTemplate(p._1))

@@ -9,6 +9,7 @@ val thisScalaJSVersion = "0.6.23"
 val macroParadiseVersion = "2.1.0"
 val kindProjectorVersion = "0.9.4"
 val splainVersion = "0.3.4"
+val betterMonadicForVersion = "0.3.0-M4"
 
 val shapelessVersion = "2.3.3"
 
@@ -82,6 +83,7 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     // ivy"io.tryp:::splain:$splainVersion",
     ivy"org.scalamacros:::paradise:$macroParadiseVersion",
     ivy"org.spire-math::kind-projector:$kindProjectorVersion",
+    ivy"com.olegpy::better-monadic-for:$betterMonadicForVersion"
   )
 
   // add back in when necessary
