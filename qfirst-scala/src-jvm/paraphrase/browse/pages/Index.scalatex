@@ -1,5 +1,5 @@
-@package qfirst.browse.pages
-@import qfirst.browse._
+@package qfirst.paraphrase.browse.pages
+@import qfirst.paraphrase.browse._
 @param config: PageConfig
 
 @html(lang := "en")
@@ -22,6 +22,11 @@
       `type` := "hidden",
       value := config.verbApiUrl,
       id := SharedConstants.verbApiUrlElementId
+    )
+    @input(
+      `type` := "hidden",
+      value := config.dev,
+      id := SharedConstants.devFlagElementId
     )
     @config.bootstrapScripts
     @script(src := "/" + config.jsDepsPath)

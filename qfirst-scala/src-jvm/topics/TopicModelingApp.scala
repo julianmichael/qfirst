@@ -188,7 +188,7 @@ object TopicModelingApp extends IOApp {
       locationsByVerb: Map[InflectedForms, List[(String, Int)]],
       path: Path
     ) = {
-      import qfirst.browse._
+      import qfirst.paraphrase.browse._
       val allFrames: Map[InflectedForms, VerbFrameset] = model.priors.zipWithIndex
         .iterator.map { case (frameDist, verbIndex) =>
           val verbInflectedForms = verbVocab.indexToVerb(verbIndex)
@@ -210,13 +210,14 @@ object TopicModelingApp extends IOApp {
                 case (clauseProb, clauseIndex) =>
                   FrameClause(clauseVocab.indexToClause(clauseIndex), Map(), clauseProb) // TODO add argument sigils? need other output file.
               }.toList
-              VerbFrame(clauses, sentenceIds, frameProb)
+              VerbFrame(clauses, frameProb)
           }.toList
           val frameset = VerbFrameset(verbInflectedForms, frames)
           verbInflectedForms -> frameset
       }.toMap
-      val data = VerbFrameData(verbFreqs, allFrames)
-      FileUtil.writeJson(path, io.circe.Printer.noSpaces)(data).unsafeRunSync
+      // val data = VerbFrameData(verbFreqs, allFrames)
+      // FileUtil.writeJson(path, io.circe.Printer.noSpaces)(data).unsafeRunSync
+      // TODO update for new stuff
     }
 
     def saveForQA(

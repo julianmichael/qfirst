@@ -1,4 +1,4 @@
-package qfirst.browse
+package qfirst.paraphrase.browse
 import qfirst.ClauseResolution
 
 import cats.Order
@@ -21,21 +21,6 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import monocle.macros._
 
-@Lenses @JsonCodec case class QuestionId(
-  sentenceId: SentenceId,
-  verbIndex: Int,
-  questionString: String)
-object QuestionId {
-  implicit val questionIdOrder =
-    Order.whenEqual(
-      Order.by[QuestionId, SentenceId](_.sentenceId),
-      Order.whenEqual(
-        Order.by[QuestionId, Int](_.verbIndex),
-        Order.by[QuestionId, String](_.questionString)
-      )
-    )
-}
-
 @Lenses @JsonCodec case class FrameClause(
   args: ArgStructure,
   argMapping: Map[ArgumentSlot, String],
@@ -44,7 +29,6 @@ object FrameClause
 
 @Lenses @JsonCodec case class VerbFrame(
   clauseTemplates: List[FrameClause],
-  instances: List[SentenceId], // TODO remove, keep in a separate data structure
   probability: Double) {
   // TODO take probabilities as arguments and return them as results
   def getParaphrases(structure: ArgStructure, slot: ArgumentSlot): Set[(ArgStructure, ArgumentSlot)] = {
@@ -92,8 +76,3 @@ object VerbFrame
   }
 }
 object VerbFrameset
-
-trait VerbFrameService[F[_]] { self =>
-  def getVerbs: F[Map[InflectedForms, Int]]
-  def getFrame(verb: InflectedForms): F[VerbFrameset]
-}

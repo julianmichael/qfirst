@@ -1,6 +1,6 @@
 package qfirst.paraphrase
+import qfirst.paraphrase.browse._
 import qfirst._
-import qfirst.browse._
 import qfirst.metrics.HasMetrics.ops._
 import qfirst.protocols.SimpleQAs
 // import qfirst.frames._
@@ -147,7 +147,6 @@ object FrameInductionApp extends IOApp {
       clusterConcentrationParameter: Double,
       rand: Random
     ): IO[FrameInductionResults] = for {
-      // verbVocab <- logOp("Indexing verbs", makeVerbVocab(instances))
       clauseVocab <- logOp("Indexing clauses", makeClauseVocab(instances))
       (indexedInstances, instanceIds) <- logOp(
         "Indexing instances",
@@ -182,7 +181,7 @@ object FrameInductionApp extends IOApp {
         val clauseTemplates = frameClauseDist.zipWithIndex.map { case (prob, index) =>
           FrameClause(clauseVocab.getItem(index), Map(), prob)
         }.sortBy(-_.probability).takeWhile(_.probability > uniformProbability) // TODO probably want to add higher threshold as a parameter
-        VerbFrame(clauseTemplates.toList, Nil, framePriorProb)
+        VerbFrame(clauseTemplates.toList, framePriorProb)
       }
       val frameDistributionsByVerb: Map[InflectedForms, Vector[Double]] = instanceIds.zip(assignments).foldMap {
         case ((verbInflectedForms, sentenceId, verbIndex), dist) =>
@@ -197,16 +196,26 @@ object FrameInductionApp extends IOApp {
           val maxIndex = dist.zipWithIndex.maxBy(_._1)._2
           Map(verbInflectedForms -> Map(maxIndex -> 1))
       }
-      val allFramesets = frameDistributionsByVerb.map { case (verbInflectedForms, frameDist) =>
+      val allFramesetsAndIndices = frameDistributionsByVerb.map { case (verbInflectedForms, frameDist) =>
         val uniformProbability = 1.0 / frameDist.size
         val frameIndicesHavingMax = frameMaxCountsByVerb(verbInflectedForms).keySet
-        val frames = frameDist.zipWithIndex.collect {
+        val framesWithIndices = frameDist.zipWithIndex.collect {
           case (frameProb, frameIndex) if frameProb > uniformProbability || frameIndicesHavingMax.contains(frameIndex) =>
-            globalFrames(frameIndex).copy(probability = frameProb)
-        }.sortBy(-_.probability)
-        verbInflectedForms -> VerbFrameset(verbInflectedForms, frames.toList)
+            globalFrames(frameIndex).copy(probability = frameProb) -> frameIndex
+        }.sortBy(-_._1.probability)
+        val frameset = VerbFrameset(verbInflectedForms, framesWithIndices.map(_._1).toList)
+        val frameIndices = framesWithIndices.map(_._2)
+        verbInflectedForms -> (frameset -> frameIndices)
       }
-      val allAssignments: Map[InflectedForms, Map[String, Map[Int, Vector[Double]]]] = ??? // TODO
+      val allFramesets = allFramesetsAndIndices.map { case (k, (v, _)) => k -> v }
+      val allAssignments: Map[InflectedForms, Map[String, Map[Int, Vector[Double]]]] = {
+        instanceIds.zip(assignments).foldMap {
+          case ((verbInflectedForms, sentenceId, verbIndex), dist) =>
+            val selectedDist = allFramesetsAndIndices(verbInflectedForms)._2.map(dist(_))
+            Map(verbInflectedForms -> Map(sentenceId -> Map(verbIndex -> selectedDist)))
+            // shouldn't count anything twice so it should be fine
+        }
+      }
       FrameInductionResults(
         frames = allFramesets,
         assignments = allAssignments // verb type -> sentence id -> verb token -> dist. over frames for verb type
@@ -221,7 +230,8 @@ object FrameInductionApp extends IOApp {
     testOnTest: Boolean
   ): IO[ExitCode] = {
     val trainSetFilename = if(trainOnDev) "dev.jsonl.gz" else "train.jsonl.gz"
-    val evalSetFilename = if(testOnTest) "test.jsonl.gz" else "dev.jsonl.gz"
+    val evalSetName = if(testOnTest) "test" else "dev"
+    val evalSetFilename = s"$evalSetName.jsonl.gz"
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
     val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
     val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
@@ -231,9 +241,18 @@ object FrameInductionApp extends IOApp {
         .filter(p => !Files.exists(p))
         .head
     }
+    val evaluationItemsPath = predDir.resolve(s"eval-sample-$evalSetName.jsonl")
     val resultsFilename = if(testOnTest) "results-test.json" else "results.json"
     val resultsPath = outDir.resolve(resultsFilename)
     for {
+      _ <- if(Files.exists(outDir)) IO.unit else IO {
+        println(s"Creating output directory $outDir")
+        Files.createDirectories(outDir)
+      }
+      _ <- if(!trainOnDev) IO.unit else {
+        import sys.process._
+        IO(s"touch ${outDir.resolve("dev")}".!)
+      }
       trainSet <- logOp("Reading training set", qasrl.bank.Data.readDataset(qasrlBankPath.resolve("expanded").resolve(trainSetFilename)))
       trainInstances <- logOp("Constructing training instances", getGoldInstances(trainSet))
       filter <- {
@@ -252,7 +271,7 @@ object FrameInductionApp extends IOApp {
       // TODO properly pass in hyperparameters and stuff. maybe want a config file lol...
       results <- Induce.mixtureOfUnigrams(
         instances = trainInstances |+| predInstances,
-        numFrames = 100,
+        numFrames = 20,
         priorConcentrationParameter = 1.0,
         clusterConcentrationParameter = 1.0,
         rand = new scala.util.Random(3266435L)
@@ -260,8 +279,8 @@ object FrameInductionApp extends IOApp {
       _ <- logOp("Writing learned frames", FileUtil.writeJson(resultsPath, io.circe.Printer.noSpaces)(results))
       paraphraseGold <- {
         if(!Files.exists(paraphraseGoldPath)) {
-          IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations."))
-          IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
+          IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
+            IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
         } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
       }
       evalSet <- IO(qasrl.bank.Data.readDataset(evalSetPath))
@@ -270,7 +289,8 @@ object FrameInductionApp extends IOApp {
         import io.circe.generic.auto._
         FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
       }
-      _ <- EvalApp.runEvaluation(evalSet, predictionsStream, filter, results, paraphraseGold)
+      evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
+      _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, predictionsStream, filter, results, paraphraseGold)
     } yield ExitCode.Success
   }
 
@@ -293,10 +313,6 @@ object FrameInductionApp extends IOApp {
     val testOnTest = Opts.flag(
       "test", help = "Evaluate on the test set instead of dev."
     ).orFalse
-
-    // val launchBrowser = Opts.flag(
-    //   "browse", help = "Whether to launch the web server for browsing/annotating the results."
-    // ).orFalse
 
     (goldPath, predPath, outDir, trainOnDev, testOnTest).mapN(program)
   }

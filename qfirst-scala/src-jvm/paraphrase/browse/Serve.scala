@@ -1,7 +1,9 @@
-package qfirst.browse
+package qfirst.paraphrase.browse
+import qfirst.paraphrase._
 import qfirst.FileUtil
 
 import qasrl.bank.Data
+import qasrl.data.Dataset
 
 import cats.data.NonEmptySet
 import cats.effect.IO
@@ -24,21 +26,36 @@ import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.implicits._
 
+import nlpdata.datasets.wiktionary.InflectedForms
+
+import EvalApp.ParaphraseAnnotations
+
 object Serve extends IOApp {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
+  def logOp[A](msg: String, op: IO[A]): IO[A] =
+    IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
+
+  def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
+
   def _run(
     jsDepsPath: Path, jsPath: Path,
-    qasrlBankPath: Path, savePath: Path,
+    qasrlBankPath: Path,
+    predDir: Path,
+    relativeOutDir: String,
     domain: String, port: Int
   ): IO[ExitCode] = {
     IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get).flatMap { data =>
+      val outDir = predDir.resolve(relativeOutDir)
+      val dev = Files.exists(outDir.resolve("dev"))
+
       val docApiSuffix = "doc"
       val verbApiSuffix = "verb"
       val pageService = StaticPageService.makeService(
         domain,
         docApiSuffix, verbApiSuffix,
+        dev,
         jsDepsPath, jsPath, port
       )
 
@@ -47,15 +64,38 @@ object Serve extends IOApp {
       val searchIndex = Search.createSearchIndex(docs.values.toList)
       val docService = HttpDocumentService.makeService(index, docs, searchIndex)
 
-      val saveData = (data: VerbFrameData) => {
-        FileUtil.writeJson(savePath, io.circe.Printer.noSpaces)(data)
+      val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
+
+      val saveData = (data: ParaphraseAnnotations) => {
+        FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
       }
 
+      val inputSet = if(dev) data.devExpanded else data.trainExpanded
+      val inflectionCounts = Dataset.verbEntries.getAll(inputSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+
+      // TODO include test as well
+      val evaluationItemsPath = predDir.resolve("eval-sample-dev.jsonl")
+
       for {
-        frameData <- FileUtil.readJson[VerbFrameData](savePath)
-        frameDataRef <- Ref[IO].of(frameData)
+        frameInductionResults <- FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
+        goldParaphrases <- {
+          if(!Files.exists(paraphraseGoldPath)) {
+            IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
+              IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
+          } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
+        }
+        evaluationItems <- {
+          import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+          FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
+        }
+        goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
         annotationService = VerbFrameHttpService.make(
-          VerbFrameServiceIO(frameDataRef, saveData)
+          VerbFrameServiceIO(
+            inflectionCounts,
+            frameInductionResults,
+            evaluationItems.apply,
+            goldParaphraseDataRef,
+            saveData)
         )
         app = Router(
           "/" -> pageService,
@@ -81,11 +121,15 @@ object Serve extends IOApp {
     )
 
     val qasrlBankO = Opts.option[Path](
-      "qasrl-bank", metavar = "path", help = "Path to the QA-SRL Bank 2.0 data, e.g., ../qasrl-bank/data/qasrl-v2."
+      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank 2.0 data, e.g., ../qasrl-bank/data/qasrl-v2."
     )
 
-    val saveO = Opts.option[Path](
-      "load", metavar = "path", help = "Where to load the verb frames from."
+    val predO = Opts.option[Path](
+      "qasrl-pred", metavar = "path", help = "Where the predictions and saved info is."
+    )
+
+    val outO = Opts.option[String](
+      "out", metavar = "path", help = "Relative path to the model output directory."
     )
 
     val domainO = Opts.option[String](
@@ -104,7 +148,7 @@ object Serve extends IOApp {
     val command = Command(
       name = "mill -i qfirst.jvm.runVerbAnn",
       header = "Spin up the annotation server for QA-SRL Clause frames.") {
-      (jsDepsPathO, jsPathO, qasrlBankO, saveO, domainO, portO).mapN(_run(_, _, _, _, _, _))
+      (jsDepsPathO, jsPathO, qasrlBankO, predO, outO, domainO, portO).mapN(_run(_, _, _, _, _, _, _))
     }
 
     command.parse(args) match {

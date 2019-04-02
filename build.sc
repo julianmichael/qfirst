@@ -248,7 +248,7 @@ object qfirst extends Module {
       val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
       val runMain = runMainFn()
       runMain(
-        "qfirst.browse.Serve",
+        "qfirst.paraphrase.browse.Serve",
         List(
           "--jsDeps", jsDepsPath,
           "--js", jsPath

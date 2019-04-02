@@ -1,4 +1,4 @@
-package qfirst.browse
+package qfirst.paraphrase.browse
 import qfirst.Mounting
 import qfirst.ClauseResolution
 import qfirst.ClauseResolution.ArgStructure
@@ -624,59 +624,60 @@ object VerbAnnUI {
         frameset.frames.zipWithIndex.toVdomArray { case (frame, frameIndex) =>
           val frameLens = VerbFrameset.frames
             .composeLens(unsafeListAt[VerbFrame](frameIndex))
-          val matchesCurrentSentence = sentenceOpt.exists(s => frame.instances.contains(SentenceId.fromString(s.sentenceId)))
-          val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
-            (frame.instances.toSet + SentenceId.fromString(sentence.sentenceId)).toList
-              .map(sid => sid -> docIdToDocMeta(sid.documentId))
-              .sorted(
-                Order.catsKernelOrderingForOrder(
-                  Order.whenEqual[(SentenceId, DocumentMetadata)](
-                    Order.by[(SentenceId, DocumentMetadata), String](_._2.title),
-                    Order.by[(SentenceId, DocumentMetadata), SentenceId](_._1)
-                  )
-                )
-              )
-          }
-          def makeNavQueryForSentenceIndexOpt(index: Int) = {
-            frameSentenceDocPairsOpt.map { allSentencesForFrame =>
-              val sid = allSentencesForFrame(index)._1
-              val sidStr = SentenceId.toString(sid)
-              val docIdStr = sid.documentId.toString
-              NavQuery(verbInflectedForms.allForms.toSet, Set(docIdStr.lowerCase), Set(sidStr.lowerCase))
-            }
-          }
-          val curSentenceIndexOpt = (frameSentenceDocPairsOpt, sentenceIdOpt).mapN { (frameSentenceDocPairs, sentenceId) =>
-            frameSentenceDocPairs
-              .zipWithIndex
-              .find(t => t._1._1 == sentenceId)
-              .map(_._2)
-          }.flatten
-          def makePrevQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
-            makeNavQueryForSentenceIndexOpt(
-              (curSentenceIndex - 1 + frameSentenceDocPairs.size) % frameSentenceDocPairs.size
-            )
-          }.flatten
-          def makeNextQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
-            makeNavQueryForSentenceIndexOpt(
-              (curSentenceIndex + 1) % frameSentenceDocPairs.size
-            )
-          }.flatten
+          val matchesCurrentSentence = false // TODO get from other thing from server API
+          // sentenceOpt.exists(s => frame.instances.contains(SentenceId.fromString(s.sentenceId)))
+          // val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
+          //   (frame.instances.toSet + SentenceId.fromString(sentence.sentenceId)).toList
+          //     .map(sid => sid -> docIdToDocMeta(sid.documentId))
+          //     .sorted(
+          //       Order.catsKernelOrderingForOrder(
+          //         Order.whenEqual[(SentenceId, DocumentMetadata)](
+          //           Order.by[(SentenceId, DocumentMetadata), String](_._2.title),
+          //           Order.by[(SentenceId, DocumentMetadata), SentenceId](_._1)
+          //         )
+          //       )
+          //     )
+          // }
+          // def makeNavQueryForSentenceIndexOpt(index: Int) = {
+          //   frameSentenceDocPairsOpt.map { allSentencesForFrame =>
+          //     val sid = allSentencesForFrame(index)._1
+          //     val sidStr = SentenceId.toString(sid)
+          //     val docIdStr = sid.documentId.toString
+          //     NavQuery(verbInflectedForms.allForms.toSet, Set(docIdStr.lowerCase), Set(sidStr.lowerCase))
+          //   }
+          // }
+          // val curSentenceIndexOpt = (frameSentenceDocPairsOpt, sentenceIdOpt).mapN { (frameSentenceDocPairs, sentenceId) =>
+          //   frameSentenceDocPairs
+          //     .zipWithIndex
+          //     .find(t => t._1._1 == sentenceId)
+          //     .map(_._2)
+          // }.flatten
+          // def makePrevQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
+          //   makeNavQueryForSentenceIndexOpt(
+          //     (curSentenceIndex - 1 + frameSentenceDocPairs.size) % frameSentenceDocPairs.size
+          //   )
+          // }.flatten
+          // def makeNextQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
+          //   makeNavQueryForSentenceIndexOpt(
+          //     (curSentenceIndex + 1) % frameSentenceDocPairs.size
+          //   )
+          // }.flatten
           <.div(S.matchingFrame.when(matchesCurrentSentence))(
             ^.key := "clause-set-" + frameIndex.toString,
             <.div(S.frameHeading)(
               <.span(S.frameHeadingText)(
                 f"Frame $frameIndex%s (${frame.probability}%.4f)"
               ),
-              makePrevQuery.whenDefined(goToPrev =>
-                <.span(S.prevFrameInstanceText)(
-                  " (prev)",
-                  ^.onClick --> navQuery.setState(goToPrev))
-              ),
-              makeNextQuery.whenDefined(goToNext =>
-                <.span(S.prevFrameInstanceText)(
-                  " (next)",
-                  ^.onClick --> navQuery.setState(goToNext))
-              )
+              // makePrevQuery.whenDefined(goToPrev =>
+              //   <.span(S.prevFrameInstanceText)(
+              //     " (prev)",
+              //     ^.onClick --> navQuery.setState(goToPrev))
+              // ),
+              // makeNextQuery.whenDefined(goToNext =>
+              //   <.span(S.prevFrameInstanceText)(
+              //     " (next)",
+              //     ^.onClick --> navQuery.setState(goToNext))
+              // )
             ),
             <.div(S.clauseSetDisplay)(
               frame.clauseTemplates.zipWithIndex.toVdomArray { case (frameClause, clauseIndex) =>
@@ -958,7 +959,7 @@ object VerbAnnUI {
                                 case None =>
                                   Mounting.make(
                                     Callback.future(
-                                      props.verbService.getFrame(curVerb.value)
+                                      props.verbService.getFrameset(curVerb.value)
                                         .map(f => curFrameset.setState(Some(f)))))(
                                     <.div(S.loadingNotice)("Loading frame..."))
                                 case Some(frame) => frameDisplayPane(

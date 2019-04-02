@@ -1,6 +1,6 @@
 package qfirst.paraphrase
+import qfirst.paraphrase.browse._
 import qfirst._
-import qfirst.browse._
 import qfirst.protocols.SimpleQAs
 import qfirst.metrics._
 
@@ -34,21 +34,6 @@ import io.circe.generic.JsonCodec
 import HasMetrics.ops._
 
 import ClauseResolution.ArgStructure
-
-@JsonCodec case class QuestionParaphraseLabels(
-  correct: Set[String],
-  incorrect: Set[String],
-)
-object ParaphraseLabels
-
-@JsonCodec case class VerbParaphraseLabels(
-  correctClauses: Set[ArgStructure],
-  incorrectClauses: Set[ArgStructure],
-  questionParaphrases: Map[String, QuestionParaphraseLabels]
-)
-object VerbParaphraseLabels {
-  def empty = VerbParaphraseLabels(Set(), Set(), Map())
-}
 
 object EvalApp extends IOApp {
 
@@ -112,6 +97,11 @@ object EvalApp extends IOApp {
     val predictedParaphrases = verbFrameset.getParaphrases(
       frameProbabilities, questionBoundedAcc.correct.toSet
     )
+    val clauseParaphrasingBoundedAcc = verbFrameset.getParaphrasingClauses(frameProbabilities).toList.foldMap(clauseTemplate =>
+      if(goldParaphrases.correctClauses.contains(clauseTemplate)) BoundedAcc.correct(clauseTemplate)
+      else if(goldParaphrases.incorrectClauses.contains(clauseTemplate)) BoundedAcc.incorrect(clauseTemplate)
+      else BoundedAcc.uncertain(clauseTemplate)
+    )
     val paraphrasingBoundedAcc = questionBoundedAcc.correct.foldMap { predQuestion =>
       val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
       predictedParaphrases(predQuestion).toList.foldMap(predParaphrase =>
@@ -122,12 +112,8 @@ object EvalApp extends IOApp {
         )
       )
     }
-    val clauseParaphrasingBoundedAcc = verbFrameset.getParaphrasingClauses(frameProbabilities).toList.foldMap(clauseTemplate =>
-      if(goldParaphrases.correctClauses.contains(clauseTemplate)) BoundedAcc.correct(clauseTemplate)
-      else if(goldParaphrases.incorrectClauses.contains(clauseTemplate)) BoundedAcc.incorrect(clauseTemplate)
-      else BoundedAcc.uncertain(clauseTemplate)
-    )
-    "question accuracy" ->> questionBoundedAcc ::
+    "number of verbs" ->> 1 ::
+      "question accuracy" ->> questionBoundedAcc ::
       "question paraphrasing accuracy (correct questions)" ->> paraphrasingBoundedAcc ::
       "clause paraphrasing accuracy" ->> clauseParaphrasingBoundedAcc ::
       HNil
@@ -135,19 +121,24 @@ object EvalApp extends IOApp {
 
   def runEvaluation(
     evalSet: Dataset,
+    evaluationItems: Set[(InflectedForms, String, Int)],
     predictions: Stream[IO, SentencePrediction[QABeam]],
     filter: SimpleQAs.Filter,
     frameInductionResults: FrameInductionResults,
     paraphraseAnnotations: ParaphraseAnnotations
   ): IO[Unit] = for {
-    results <- predictions.map { predSentence =>
+    results <- predictions
+    .map { predSentence =>
       val goldSentence = evalSet.sentences(predSentence.sentenceId)
-      predSentence.verbs.foldMap { verb =>
+      predSentence.verbs
+        .filter(verb => evaluationItems.contains((verb.verbInflectedForms, predSentence.sentenceId, verb.verbIndex)))
+        .flatMap { verb =>
+          paraphraseAnnotations.get(predSentence.sentenceId)
+            .flatMap(_.get(verb.verbIndex))
+          .map(verb -> _)
+        }.foldMap { case (verb, goldParaphrases) =>
         val goldVerb = goldSentence.verbEntries(verb.verbIndex)
         val predictedQAs = protocol.filterBeam(filter, verb)
-        val goldParaphrases = paraphraseAnnotations.get(predSentence.sentenceId)
-          .flatMap(_.get(verb.verbIndex))
-          .getOrElse(VerbParaphraseLabels.empty)
         val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
         val frameProbabilities = frameInductionResults
           .assignments(verb.verbInflectedForms)(predSentence.sentenceId)(verb.verbIndex)
@@ -156,6 +147,24 @@ object EvalApp extends IOApp {
     }.compile.foldMonoid
     _ <- IO(println(getMetricsString(results)))
   } yield ()
+
+  def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    if(Files.exists(evaluationItemsPath)) FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
+    else logOp(
+      s"Creating new sample for evaluation at $evaluationItemsPath", {
+        val rand = new scala.util.Random(86735932569L)
+        val allItems = rand.shuffle(
+          evalSet.sentences.values.iterator.flatMap(sentence =>
+            sentence.verbEntries.values.toList.map(verb =>
+              (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
+            )
+          ).take(1000).toVector
+        )
+        FileUtil.writeJsonLines(evaluationItemsPath, io.circe.Printer.noSpaces)(allItems).as(allItems)
+      }
+    )
+  }
 
   def logOp[A](msg: String, op: IO[A]): IO[A] =
     IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
@@ -174,15 +183,18 @@ object EvalApp extends IOApp {
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
 
     val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
-    val paraphraseAnnotationsPath = predDir.resolve("gold-paraphrases.json")
+    val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
 
     val outDir = predDir.resolve(relativeFramesDir)
 
     val resultsFilename = if(testOnTest) "results-test.json" else "results.json"
     val resultsPath = outDir.resolve(resultsFilename)
 
+    val evaluationItemsPath = predDir.resolve(s"eval-sample-$evalSetName.jsonl")
+
     for {
       evalSet <- logOp(s"Reading $evalSetName set", qasrl.bank.Data.readDataset(evalSetPath))
+      evaluationItems <- getEvaluationItems(evalSet, evaluationItemsPath)
       filter <- {
         import io.circe.generic.auto._
         FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
@@ -192,18 +204,19 @@ object EvalApp extends IOApp {
         import io.circe.generic.auto._
         FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
       }
-      paraphraseAnnotations <- logOp(
-        "Reading paraphrase annotations",
-        FileUtil.readJson[ParaphraseAnnotations](paraphraseAnnotationsPath)
-      )
+      paraphraseGold <- {
+        if(!Files.exists(paraphraseGoldPath)) {
+          IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
+            IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
+        } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
+      }
       frameInductionResults <- logOp(
         "Loading frames",
         FileUtil.readJson[FrameInductionResults](resultsPath)
       )
       _ <- runEvaluation(
-        evalSet, predictions, filter, frameInductionResults, paraphraseAnnotations
+        evalSet, evaluationItems.toSet, predictions, filter, frameInductionResults, paraphraseGold
       )
-      // TODO launch browser
     } yield ExitCode.Success
   }
 
@@ -212,13 +225,13 @@ object EvalApp extends IOApp {
     header = "Induce verb frames."
   ) {
     val goldPath = Opts.option[NIOPath](
-      "gold", metavar = "path", help = "Path to the QA-SRL Bank."
+      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank."
     )
     val predPath = Opts.option[NIOPath](
-      "pred", metavar = "path", help = "Path to the directory of predictions."
+      "qasrl-pred", metavar = "path", help = "Path to the directory of predictions."
     )
     val relativeFramesDir = Opts.option[String](
-      "frames", metavar = "path", help = "Relative path to the directory with frame induction results."
+      "out", metavar = "path", help = "Relative path to the directory with frame induction results."
     )
     val testOnTest = Opts.flag(
       "test", help = "Evaluate on the test set instead of dev."
