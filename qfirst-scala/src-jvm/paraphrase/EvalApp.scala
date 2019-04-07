@@ -111,8 +111,8 @@ object EvalApp extends IOApp {
             sentence.verbEntries.values.toList.map(verb =>
               (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
             )
-          ).take(1000).toVector
-        )
+          )
+        ).take(1000).toVector
         FileUtil.writeJsonLines(evaluationItemsPath, io.circe.Printer.noSpaces)(allItems).as(allItems)
       }
     )

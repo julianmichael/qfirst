@@ -56,7 +56,7 @@ object ClauseResolution {
   private[this] val frameCache = mutable.Map.empty[SlotBasedLabel[VerbForm], Set[(Frame, ArgumentSlot)]]
 
   // returns generic inflected forms
-  def getFramesWithAnswerSlots(questionSlots: SlotBasedLabel[VerbForm]) = {
+  def getFramesWithAnswerSlots(questionSlots: SlotBasedLabel[VerbForm]): Set[(Frame, ArgumentSlot)] = {
     frameCache.get(questionSlots).getOrElse {
       val question = questionSlots.renderQuestionString(genericInflectedForms)
       val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
@@ -80,6 +80,14 @@ object ClauseResolution {
       }
       frameCache.put(questionSlots, framesWithAnswerSlots)
       framesWithAnswerSlots
+    }
+  }
+
+  def getFramesWithAnswerSlots(
+    inflectedForms: InflectedForms, questionSlots: SlotBasedLabel[VerbForm]
+  ): Set[(Frame, ArgumentSlot)] = {
+    getFramesWithAnswerSlots(questionSlots).map { case (frame, slot) =>
+      frame.copy(verbInflectedForms = inflectedForms) -> slot
     }
   }
 
@@ -129,7 +137,7 @@ object ClauseResolution {
 
   def getResolvedFramePairs(verbInflectedForms: InflectedForms, qSlots: List[SlotBasedLabel[VerbForm]]) = {
     val frameSets = qSlots
-      .map(getFramesWithAnswerSlots(_))
+      .map(getFramesWithAnswerSlots(verbInflectedForms, _))
     val locallyResolvedFramePairSets = locallyResolve(frameSets)
     qSlots
       .zip(locallyResolvedFramePairSets)

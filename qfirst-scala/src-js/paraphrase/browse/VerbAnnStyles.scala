@@ -710,11 +710,50 @@ object VerbAnnStyles extends StyleSheet.Inline {
     color(grey(128))
   )
 
-  val goldQAsIndicatorText = style()
-  val predQAsIndicatorText = goldQAsIndicatorText
+  val goldQAsIndicatorDisplay = style(
+    addClassNames("mt-2")
+  )
+  val goldQAsIndicatorText = style(
+    fontWeight.bold
+  )
+  val predQAsIndicatorDisplay = style(
+    goldQAsIndicatorDisplay
+  )
+  val predQAsIndicatorText = style(
+    goldQAsIndicatorText
+  )
 
   val predictionRoundIndicator = style(
     roundIndicator,
     backgroundColor(predictionRoundIndicatorColor)
+  )
+
+  val goldClausesDisplay = style()
+  val goldClausesHeading = style(
+    goldQAsIndicatorDisplay
+  )
+  val goldClausesHeadingText = style(
+    goldQAsIndicatorText
+  )
+  val goldClauseDisplay = style()
+  val goldClauseText = style()
+
+  val goldMatchingArgMarker = style(
+    fontWeight.bold
+  )
+  val predMatchingArgMarker = style(
+    fontStyle.italic
+  )
+  val highlightedArgPlaceholder = style(
+    backgroundColor(rgba(256, 128, 0, 0.5))
+  )
+
+  val hoveredArgMarker = hoveredQuestion
+  val hoveredArgSubstitution = hoveredQuestion
+  val argStructureChoiceIsCorrectParaphrase = style(
+    backgroundColor(c"#66FF66")
+  )
+  val argStructureChoiceIsIncorrectParaphrase = style(
+    backgroundColor(c"#FF6666")
   )
 }

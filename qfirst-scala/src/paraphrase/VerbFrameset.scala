@@ -81,10 +81,11 @@ object VerbFrame
       // TODO fix up animacy
       qSlots -> {
         val paraphrasePairs = chosenFrame.getParaphrases(ClauseResolution.getClauseTemplate(frame), slot)
-        val paraphraseQs = paraphrasePairs.map { case (structure, slot) =>
-          frame.copy(args = structure.args, isPassive = structure.isPassive).questionsForSlot(slot).head
-        }.toSet
-        paraphraseQs
+        paraphrasePairs
+        // val paraphraseQs = paraphrasePairs.map { case (structure, slot) =>
+        //   frame.copy(args = structure.args, isPassive = structure.isPassive).questionsForSlot(slot).head
+        // }.toSet
+        // paraphraseQs
       }
     }.toMap
   }
