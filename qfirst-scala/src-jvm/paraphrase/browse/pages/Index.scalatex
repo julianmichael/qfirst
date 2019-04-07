@@ -2,6 +2,15 @@
 @import qfirst.paraphrase.browse._
 @param config: PageConfig
 
+@import scalacss.internal.{Css, Renderer}
+@import scalatags.Text.TypedTag
+@def scalatagsStyleTagRenderer(implicit s: Renderer[String]): Renderer[TypedTag[String]] = {
+  // workaround to prevent the default style tag renderer from escaping quotes in the CSS
+  new Renderer[TypedTag[String]] {
+    override def apply(css: Css) = scalatags.Text.all.tag("style")(`type` := "text/css", raw(s(css)))
+  }
+}
+
 @html(lang := "en")
   @head
     @meta(charset := "utf-8")

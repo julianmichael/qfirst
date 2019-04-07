@@ -72,53 +72,6 @@ object EvalApp extends IOApp {
   def getMetricsString[M: HasMetrics](m: M) =
     m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-  // import qfirst.{Instances => I}
-  // import qfirst.metrics.{Transformers => M}
-  import qfirst.metrics._
-  import shapeless._
-  import shapeless.syntax.singleton._
-  import shapeless.record._
-  import monocle.function.{all => Optics}
-
-  def getVerbResults(
-    gold: VerbEntry,
-    predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
-    goldParaphrases: VerbParaphraseLabels,
-    verbFrameset: VerbFrameset,
-    frameProbabilities: Vector[Double],
-  ) = {
-    val (goldInvalid, goldValid) = filterGoldDense(gold)
-    val questionBoundedAcc = predictedQAs.values.toList.map(_._1).foldMap { predQuestion =>
-      val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
-      if(goldInvalid.contains(predQString)) BoundedAcc.incorrect(predQuestion)
-      else if(goldValid.contains(predQString)) BoundedAcc.correct(predQuestion)
-      else BoundedAcc.uncertain(predQuestion)
-    }
-    val predictedParaphrases = verbFrameset.getParaphrases(
-      frameProbabilities, questionBoundedAcc.correct.toSet
-    )
-    val clauseParaphrasingBoundedAcc = verbFrameset.getParaphrasingClauses(frameProbabilities).toList.foldMap(clauseTemplate =>
-      if(goldParaphrases.correctClauses.contains(clauseTemplate)) BoundedAcc.correct(clauseTemplate)
-      else if(goldParaphrases.incorrectClauses.contains(clauseTemplate)) BoundedAcc.incorrect(clauseTemplate)
-      else BoundedAcc.uncertain(clauseTemplate)
-    )
-    val paraphrasingBoundedAcc = questionBoundedAcc.correct.foldMap { predQuestion =>
-      val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
-      predictedParaphrases(predQuestion).toList.foldMap(predParaphrase =>
-        goldParaphrases.questionParaphrases.get(predQString).fold(BoundedAcc.uncertain(predQuestion -> predParaphrase))(goldParaphraseLabels =>
-          if(goldParaphraseLabels.correct.contains(predParaphrase)) BoundedAcc.correct(predQuestion -> predParaphrase)
-          else if(goldParaphraseLabels.incorrect.contains(predParaphrase)) BoundedAcc.incorrect(predQuestion -> predParaphrase)
-          else BoundedAcc.uncertain(predQuestion -> predParaphrase)
-        )
-      )
-    }
-    "number of verbs" ->> 1 ::
-      "question accuracy" ->> questionBoundedAcc ::
-      "question paraphrasing accuracy (correct questions)" ->> paraphrasingBoundedAcc ::
-      "clause paraphrasing accuracy" ->> clauseParaphrasingBoundedAcc ::
-      HNil
-  }
-
   def runEvaluation(
     evalSet: Dataset,
     evaluationItems: Set[(InflectedForms, String, Int)],
@@ -127,8 +80,7 @@ object EvalApp extends IOApp {
     frameInductionResults: FrameInductionResults,
     paraphraseAnnotations: ParaphraseAnnotations
   ): IO[Unit] = for {
-    results <- predictions
-    .map { predSentence =>
+    results <- predictions.map { predSentence =>
       val goldSentence = evalSet.sentences(predSentence.sentenceId)
       predSentence.verbs
         .filter(verb => evaluationItems.contains((verb.verbInflectedForms, predSentence.sentenceId, verb.verbIndex)))
@@ -142,7 +94,7 @@ object EvalApp extends IOApp {
         val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
         val frameProbabilities = frameInductionResults
           .assignments(verb.verbInflectedForms)(predSentence.sentenceId)(verb.verbIndex)
-        getVerbResults(goldVerb, predictedQAs, goldParaphrases, verbFrameset, frameProbabilities)
+        Evaluation.getVerbResults(goldVerb, predictedQAs, goldParaphrases, verbFrameset, frameProbabilities, 0.3, false) // TODO take thresholds as input
       }
     }.compile.foldMonoid
     _ <- IO(println(getMetricsString(results)))

@@ -1,9 +1,12 @@
 package qfirst.paraphrase.browse
+import qfirst._
 import qfirst.paraphrase._
+import qfirst.protocols.SimpleQAs
 import qfirst.FileUtil
 
 import qasrl.bank.Data
 import qasrl.data.Dataset
+import qasrl.labeling.SlotBasedLabel
 
 import cats.data.NonEmptySet
 import cats.effect.IO
@@ -27,8 +30,10 @@ import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.implicits._
 
 import nlpdata.datasets.wiktionary.InflectedForms
+import nlpdata.datasets.wiktionary.VerbForm
 
 import EvalApp.ParaphraseAnnotations
+import EvalApp.QABeam
 
 object Serve extends IOApp {
 
@@ -38,6 +43,8 @@ object Serve extends IOApp {
     IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
 
   def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
+
+  val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
@@ -76,8 +83,25 @@ object Serve extends IOApp {
       // TODO include test as well
       val evaluationItemsPath = predDir.resolve("eval-sample-dev.jsonl")
 
+      val predFilename = predDir.resolve("predictions.jsonl")
+
       for {
         frameInductionResults <- FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
+        filter <- {
+          import io.circe.generic.auto._
+          FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
+        }
+        predictions <- {
+          import qasrl.data.JsonCodecs._
+          import io.circe.generic.auto._
+          FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename).map { predSentence =>
+            val verbMap = predSentence.verbs.foldMap { verb =>
+              val predictedQAs = protocol.filterBeam(filter, verb)
+              Vector(verb.verbIndex -> predictedQAs)
+            }
+            Map(predSentence.sentenceId -> verbMap)
+          }.compile.foldMonoid.map(_.map { case (k, vs) => k -> vs.toMap })
+        }
         goldParaphrases <- {
           if(!Files.exists(paraphraseGoldPath)) {
             IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
@@ -93,6 +117,7 @@ object Serve extends IOApp {
           VerbFrameServiceIO(
             inflectionCounts,
             frameInductionResults,
+            predictions,
             evaluationItems.apply,
             goldParaphraseDataRef,
             saveData)

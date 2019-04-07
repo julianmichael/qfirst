@@ -20,6 +20,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val originalRoundIndicatorColor = grey(200)
   val expansionRoundIndicatorColor = rgba(  64, 192,   0, 1.0)
   val evalRoundIndicatorColor = orange
+  val predictionRoundIndicatorColor = red
 
   val metadataLabelBackgroundColor = grey(240)
 
@@ -52,6 +53,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   // styles
+
+  val checkboxSpan = style(
+    addClassNames("ml-3", "pl-3")
+  )
 
   val checkbox = style(
     addClassNames("form-check-input")
@@ -523,7 +528,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val verbDropdown = style()
   val frameContainer = style(
     addClassNames("p-3"),
-    width(40 rem)
+    width(45 rem)
   )
   val frameHeading = verbHeading
   val frameHeadingText = verbHeadingText
@@ -556,7 +561,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val hoveredQuestion = hoveredClause
 
   val frameSpecDisplay = style(
-    height(70 vh)
+    height(100 %%)
   )
   val frameAuditingDisplay = style(
     height(30 vh),
@@ -583,5 +588,133 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val matchingFrame = style(
     backgroundColor(labeledHighlightColor)
+  )
+  val matchingClause = style(
+    backgroundColor(labeledHighlightColor)
+  )
+
+  val invalidTextBackground = style(
+    backgroundColor(rgba(255, 0, 0, 0.3))
+  )
+
+  val verbInflectionsDisplay = style()
+
+  val frameSubheading = style(
+    color(grey(128))
+  )
+
+  val textField = style()
+
+  val clauseDecodingOptionsDisplay = style(
+    addClassNames("pb-2")
+  )
+
+  val shortTextField = style(
+    width(50 px)
+  )
+
+  // TODO
+  val goldClauseMarkerDisplay = style()
+  val goldClauseControl = style(
+    position.relative,
+    // display.block,
+    cursor.pointer,
+    unsafeChild("input")(
+      position.absolute,
+      zIndex(-1),
+      opacity(0.0)
+    ),
+    marginBottom(0 px)
+  )
+  val goldClauseControlDisplay = style(
+    position.absolute,
+    top(2 px),
+    left(0 px),
+    width(20 px),
+    height(20 px),
+    backgroundColor(rgb(230, 230, 230)),
+    borderRadius(2 px),
+    // textAlign.center,
+    &.hover(
+      backgroundColor(rgb(204, 204, 204))
+    ),
+  )
+  val goldClauseCheckmarkContainer = style(
+    &.after(
+      position.absolute,
+      content := "\"\"",
+      top(3 px),
+      left(7 px),
+      width(6 px),
+      height(11 px),
+      transform := "rotate(45deg)",
+      borderStyle.solid,
+      borderColor(c"#fff"),
+      borderWidth(0 px, 2 px, 2 px, 0 px)
+    )
+  )
+  val goldClauseXContainer = style(
+    &.after(
+      position.absolute,
+      color(white),
+      content := "\"\\00d7\"",
+      top(0 px),
+      left(0 px),
+      lineHeight(18 px),
+      width(20 px),
+      fontSize(20 px),
+      textAlign.center
+    )
+  )
+
+  val goldClauseCheckLabel = style(
+    goldClauseControl
+  )
+  val goldClauseCheck = style(
+    goldClauseControlDisplay,
+    goldClauseCheckmarkContainer
+  )
+  val goldClauseCheckCorrect = style(
+    backgroundColor(c"#66FF66"),
+    &.hover(
+      backgroundColor(c"#55EE55")
+    ),
+    &.after(
+      display.block
+    )
+  )
+  val goldClauseXLabel = style(
+    goldClauseControl,
+    marginLeft(25 px)
+  )
+  val goldClauseX = style(
+    goldClauseControlDisplay,
+    goldClauseXContainer
+  )
+  val goldClauseXIncorrect = style(
+    backgroundColor(c"#FF6666"),
+    &.hover(
+      backgroundColor(c"#EE5555")
+    ),
+    &.after(
+      display.block
+    )
+  )
+  val shiftedClauseTemplateDisplay = style(
+    marginLeft(50 px)
+  )
+
+  val clauseDecodingResultsDisplay = style()
+  val clauseDecodingResultsText = style(
+    fontSize(10 px),
+    color(grey(128))
+  )
+
+  val goldQAsIndicatorText = style()
+  val predQAsIndicatorText = goldQAsIndicatorText
+
+  val predictionRoundIndicator = style(
+    roundIndicator,
+    backgroundColor(predictionRoundIndicatorColor)
   )
 }

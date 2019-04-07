@@ -71,7 +71,8 @@ object Main {
 
     VerbAnnUI.Component(
       VerbAnnUI.Props(
-        CachedDataService, VerbFrameClient(verbApiEndpoint), query
+        CachedDataService, VerbFrameClient(verbApiEndpoint), query,
+        dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value").toBoolean
       )
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)

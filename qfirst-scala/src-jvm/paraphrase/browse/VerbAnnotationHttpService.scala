@@ -12,9 +12,12 @@ import qasrl.bank.Domain
 import qasrl.bank.SentenceId
 
 import qasrl.data.Dataset
+import qasrl.data.AnswerSpan
+import qasrl.labeling.SlotBasedLabel
 
 import nlpdata.util.LowerCaseStrings._
 import nlpdata.datasets.wiktionary.InflectedForms
+import nlpdata.datasets.wiktionary.VerbForm
 
 import cats.implicits._
 import cats.effect._
@@ -59,6 +62,7 @@ import EvalApp.ParaphraseAnnotations
 case class VerbFrameServiceIO(
   inflectionCounts: Map[InflectedForms, Int],
   frameInductionResults: FrameInductionResults,
+  sentencePredictions: Map[String, Map[Int, Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]]],
   getEvaluationItem: Int => (InflectedForms, String, Int), // sentence ID, verb index
   paraphraseStoreRef: Ref[IO, ParaphraseAnnotations],
   saveParaphrases: ParaphraseAnnotations => IO[Unit]
@@ -75,7 +79,11 @@ case class VerbFrameServiceIO(
     val verbFrameset = frameInductionResults.frames(verbInflectedForms)
     val frameDistribution = frameInductionResults.assignments(verbInflectedForms)(sentenceId)(verbIndex)
     paraphraseStoreRef.get.map(paraphrases =>
-      ParaphrasingInfo(sentenceId, verbIndex, verbFrameset, frameDistribution, paraphrases(sentenceId)(verbIndex))
+      ParaphrasingInfo(
+        sentenceId, verbIndex, verbFrameset, frameDistribution,
+        sentencePredictions(sentenceId)(verbIndex),
+        paraphrases.get(sentenceId).flatMap(_.get(verbIndex)).getOrElse(VerbParaphraseLabels.empty)
+      )
     )
   }
 

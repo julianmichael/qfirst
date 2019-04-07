@@ -4,13 +4,14 @@ import qfirst.ClauseResolution.ArgStructure
 
 import io.circe.generic.JsonCodec
 
-@JsonCodec case class QuestionParaphraseLabels(
-  correct: Set[String],
-  incorrect: Set[String],
-  )
-object ParaphraseLabels
+import monocle.macros.Lenses
 
-@JsonCodec case class VerbParaphraseLabels(
+@JsonCodec @Lenses case class QuestionParaphraseLabels(
+  correct: Set[String],
+  incorrect: Set[String])
+object QuestionParaphraseLabels
+
+@JsonCodec @Lenses case class VerbParaphraseLabels(
   correctClauses: Set[ArgStructure],
   incorrectClauses: Set[ArgStructure],
   questionParaphrases: Map[String, QuestionParaphraseLabels]

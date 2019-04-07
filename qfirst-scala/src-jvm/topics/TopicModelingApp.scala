@@ -1,6 +1,7 @@
 package qfirst.topics
 
 import qfirst._
+import qfirst.paraphrase._
 import qfirst.frames.implicits._
 
 import cats.Id
@@ -188,7 +189,6 @@ object TopicModelingApp extends IOApp {
       locationsByVerb: Map[InflectedForms, List[(String, Int)]],
       path: Path
     ) = {
-      import qfirst.paraphrase.browse._
       val allFrames: Map[InflectedForms, VerbFrameset] = model.priors.zipWithIndex
         .iterator.map { case (frameDist, verbIndex) =>
           val verbInflectedForms = verbVocab.indexToVerb(verbIndex)

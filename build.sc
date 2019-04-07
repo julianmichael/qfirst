@@ -98,6 +98,8 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     ivy"com.github.julien-truffaut::monocle-core::$monocleVersion",
     ivy"com.github.julien-truffaut::monocle-macro::$monocleVersion",
     ivy"com.github.julien-truffaut::monocle-generic::$monocleVersion",
+    ivy"com.chuusai::shapeless::$shapelessVersion",
+    ivy"org.typelevel::kittens::$kittensVersion",
     ivy"org.julianmichael::nlpdata::$nlpdataVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
     ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
@@ -165,8 +167,6 @@ object qfirst extends Module {
   }
   object jvm extends QfirstModule with JvmPlatform with ScalatexModule {
     override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"com.chuusai::shapeless::$shapelessVersion",
-      ivy"org.typelevel::kittens::$kittensVersion",
       ivy"com.monovore::decline::$declineVersion",
       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
       ivy"co.fs2::fs2-core::$fs2Version",
@@ -174,7 +174,6 @@ object qfirst extends Module {
       // webby stuff
       ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
       ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      ivy"com.monovore::decline::$declineVersion",
       ivy"org.http4s::http4s-dsl::$http4sVersion",
       ivy"org.http4s::http4s-blaze-server::$http4sVersion",
       ivy"ch.qos.logback:logback-classic:$logbackVersion",

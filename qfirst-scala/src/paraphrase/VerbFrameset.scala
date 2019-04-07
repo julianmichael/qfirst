@@ -1,4 +1,4 @@
-package qfirst.paraphrase.browse
+package qfirst.paraphrase
 import qfirst.ClauseResolution
 
 import cats.Order
@@ -52,11 +52,25 @@ object VerbFrame
   inflectedForms: InflectedForms,
   frames: List[VerbFrame]
 ) {
-  // TODO: properly marginalize instead of just taking the max; add probability threshold args
-  def getParaphrasingClauses(frameProbabilities: Vector[Double]) = {
-    val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
-    chosenFrame.clauseTemplates.map(_.args).toSet
+  def getParaphrasingClauses(
+    frameProbabilities: Vector[Double], threshold: Double, marginalize: Boolean
+  ) = {
+    if(marginalize) {
+      frames.zip(frameProbabilities).foldMap { case (frame, prob) =>
+        frame.clauseTemplates.foldMap(clause =>
+          Map(clause.args -> (clause.probability * prob))
+        )
+      }.filter(_._2 >= threshold).keySet
+    } else {
+      val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
+      chosenFrame.clauseTemplates.filter(_.probability >= threshold).map(_.args).toSet
+    }
   }
+
+  // def getParaphrasingClauses(frameProbabilities: Vector[Double]) = {
+  //   val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
+  //   chosenFrame.clauseTemplates.map(_.args).toSet
+  // }
   // TODO: properly marginalize instead of just taking the max; add probability threshold arg
   def getParaphrases(frameProbabilities: Vector[Double], questions: Set[SlotBasedLabel[VerbForm]]) = {
     val questionSlots = questions.toList
