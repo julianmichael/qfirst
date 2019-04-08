@@ -16,6 +16,7 @@ import shapeless._
 import shapeless.syntax.singleton._
 import shapeless.record._
 import monocle.function.{all => Optics}
+import qfirst.ClauseResolution
 import qfirst.ClauseResolution.ArgStructure
 
 object Evaluation {
@@ -46,6 +47,19 @@ object Evaluation {
       goldParaphrases
     )
     val (goldInvalid, goldValid) = filterGoldDense(gold)
+    val goldValidQLabels = goldValid.values.toList
+    val goldValidStructures = ClauseResolution.getResolvedStructures(goldValidQLabels.map(_.questionSlots))
+    val goldValidStructurePairs = goldValidStructures.zip(goldValidQLabels)
+      .groupBy(_._1).map { case (struct, labels) =>
+        struct -> labels.unorderedFoldMap(_._2.answerJudgments.flatMap(_.judgment.getAnswer).unorderedFoldMap(_.spans))
+    }
+    val predictedQAPairs = predictedQAs.values.toList
+    val predictedStructures = ClauseResolution.getResolvedStructures(predictedQAPairs.map(_._1))
+    val predictedStructurePairs = predictedStructures.zip(predictedQAPairs)
+      .groupBy(_._1).map { case (struct, pairs) =>
+        struct -> pairs.foldMap(_._2._2)
+    }
+
     val questionWithAnswerBoundedAcc = predictedQAs.values.toList.foldMap { case (predQuestion, predSpans) =>
       val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
       if(goldInvalid.contains(predQString)) BoundedAcc.incorrect(predQuestion)
@@ -55,23 +69,31 @@ object Evaluation {
         else BoundedAcc.incorrect(predQuestion)
       }
     }
-    val predictedParaphrases = verbFrameset.getParaphrases(
-      frameProbabilities, questionWithAnswerBoundedAcc.correct.toSet
+    val templatedQAAcc = predictedStructurePairs.toList.foldMap { case pred @ (predStruct, predSpans) =>
+      if(goldValidStructurePairs.get(predStruct).exists(_.exists(predSpans.contains))) Accuracy.correct(pred)
+      else Accuracy.incorrect(pred)
+    }
+    val templatedQuestionAcc = predictedStructurePairs.keys.toList.foldMap(struct =>
+      if(goldValidStructurePairs.contains(struct)) Accuracy.correct(struct) else Accuracy.incorrect(struct)
     )
-    val paraphrasingBoundedAcc = questionWithAnswerBoundedAcc.correct.foldMap { predQuestion =>
-      val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
-      predictedParaphrases(predQuestion).toList.foldMap(predParaphrase =>
-        goldParaphrases.questionParaphrases.get(predQString).fold(BoundedAcc.uncertain(predQuestion -> predParaphrase))(goldParaphraseLabels =>
-          if(goldParaphraseLabels.correct.contains(predParaphrase)) BoundedAcc.correct(predQuestion -> predParaphrase)
-          else if(goldParaphraseLabels.incorrect.contains(predParaphrase)) BoundedAcc.incorrect(predQuestion -> predParaphrase)
-          else BoundedAcc.uncertain(predQuestion -> predParaphrase)
-        )
+
+    // TODO perhaps do something with paraphrasing of incorrect QA pairs as well?
+    val predictedParaphrases = verbFrameset.getParaphrases(
+      frameProbabilities, templatedQuestionAcc.correct.toSet
+    )
+    val paraphrasingBoundedAcc = templatedQAAcc.correct.foldMap { case (predStruct, _) =>
+      predictedParaphrases(predStruct).toList.foldMap(predParaphrase =>
+        if(goldParaphrases.paraphrases.equal(predStruct, predParaphrase)) BoundedAcc.correct(predStruct -> predParaphrase)
+        else if(goldParaphrases.paraphrases.apart(predStruct, predParaphrase)) BoundedAcc.incorrect(predStruct -> predParaphrase)
+        else BoundedAcc.uncertain(predStruct -> predParaphrase)
       )
     }
     "number of verbs" ->> 1 ::
       "question+answer accuracy" ->> questionWithAnswerBoundedAcc ::
-      "question paraphrasing accuracy (correct questions)" ->> paraphrasingBoundedAcc ::
+      "templated qa accuracy" ->> templatedQAAcc ::
+      "templated question accuracy" ->> templatedQuestionAcc ::
       "clause paraphrasing accuracy" ->> clauseParaphrasingBoundedAcc ::
+      "question template paraphrasing accuracy (correct QAs)" ->> paraphrasingBoundedAcc ::
       HNil
   }
 }

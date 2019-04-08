@@ -108,10 +108,7 @@ object Serve extends IOApp {
               IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
           } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
         }
-        evaluationItems <- {
-          import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-          FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
-        }
+        evaluationItems <- EvalApp.getEvaluationItems(data.devDense, evaluationItemsPath)
         goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
         annotationService = VerbFrameHttpService.make(
           VerbFrameServiceIO(

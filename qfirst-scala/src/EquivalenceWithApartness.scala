@@ -7,9 +7,12 @@ import io.circe.generic.JsonCodec
 
 @JsonCodec sealed trait EquivalenceWithApartness[A] {
   def equal(x: A, y: A): Boolean
+  def equivalenceClass(x: A): Set[A]
   def apart(x: A, y: A): Boolean
   def equate(x: A, y: A): EquivalenceWithApartness[A]
+  def unequate(x: A, y: A): EquivalenceWithApartness[A]
   def separate(x: A, y: A): EquivalenceWithApartness[A]
+  def unseparate(x: A, y: A): EquivalenceWithApartness[A]
 }
 object EquivalenceWithApartness {
   // Invariants:
@@ -24,6 +27,7 @@ object EquivalenceWithApartness {
         .product(equivalenceClasses.find(y))
         .exists(Function.tupled(_ == _))
     }
+    def equivalenceClass(x: A): Set[A] = equivalenceClasses.sets.find(_.contains(x)).getOrElse(Set(x))
     def apart(x: A, y: A): Boolean = {
       !(x == y) && equivalenceClasses.find(x)
         .product(equivalenceClasses.find(y))
@@ -44,6 +48,27 @@ object EquivalenceWithApartness {
         unionedSUF,
         apartness -- oldAparts ++ newAparts
       )
+    }
+    // directional: drops y from the equivalence if necessary
+    def unequate(x: A, y: A) = {
+      if(x == y) {
+        System.err.println(s"Warning: tried to unequate equal values $x. Doing a no-op instead.")
+        this
+      } else {
+        val inclClasses = equivalenceClasses.add(x).add(y)
+        val (xRep, yRep) = (inclClasses.find(x).get, inclClasses.find(y).get)
+        if(xRep != yRep) EquivalenceWithApartnessImpl(inclClasses, apartness)
+        else if(y != yRep) EquivalenceWithApartnessImpl(inclClasses.remove(y), apartness)
+        else { // So xRep == yRep == y != x. We need to shift the apartness relation to the new representative
+          val apartFromY = apartness.image(y)
+          val relWithoutY = inclClasses.remove(y)
+          val newRep = relWithoutY.find(x).get
+          EquivalenceWithApartnessImpl(
+            relWithoutY,
+            apartness -- apartFromY.map(y -> _).toList ++ apartFromY.map(newRep -> _).toList
+          )
+        }
+      }
     }
 
     // directional: drops y (but not x) from the equivalence if necessary
@@ -70,7 +95,14 @@ object EquivalenceWithApartness {
         this
       }
     }
+    def unseparate(x: A, y: A) = {
+      val inclClasses = equivalenceClasses.add(x).add(y)
+      val (xRep, yRep) = (inclClasses.find(x).get, inclClasses.find(y).get)
+      EquivalenceWithApartnessImpl(
+        inclClasses, apartness - (xRep, yRep)
+      )
+    }
   }
-  // def empty[A]: Equivalence[A] = EquivalenceImpl[A, B](Map(), Map())
+  def empty[A]: EquivalenceWithApartness[A] = EquivalenceWithApartnessImpl[A](SetUnionFind.empty[A], FiniteSymmetricRelation.empty[A])
   // def single[A](x: A, y: A): Equivalence[A] = EquivalenceImpl[A](Map(x -> Set(y)), Map(x -> Set(y)))
 }

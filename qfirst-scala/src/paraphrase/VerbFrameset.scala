@@ -67,26 +67,11 @@ object VerbFrame
     }
   }
 
-  // def getParaphrasingClauses(frameProbabilities: Vector[Double]) = {
-  //   val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
-  //   chosenFrame.clauseTemplates.map(_.args).toSet
-  // }
   // TODO: properly marginalize instead of just taking the max; add probability threshold arg
-  def getParaphrases(frameProbabilities: Vector[Double], questions: Set[SlotBasedLabel[VerbForm]]) = {
-    val questionSlots = questions.toList
-    val questionFrameSlotPairs = ClauseResolution.getResolvedFramePairs(inflectedForms, questionSlots)
+  def getParaphrases(frameProbabilities: Vector[Double], questions: Set[(ArgStructure, ArgumentSlot)]) = {
     val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
-    questionSlots.zip(questionFrameSlotPairs).map { case (qSlots, (frame, slot)) =>
-      // TODO add adverbial case
-      // TODO fix up animacy
-      qSlots -> {
-        val paraphrasePairs = chosenFrame.getParaphrases(ClauseResolution.getClauseTemplate(frame), slot)
-        paraphrasePairs
-        // val paraphraseQs = paraphrasePairs.map { case (structure, slot) =>
-        //   frame.copy(args = structure.args, isPassive = structure.isPassive).questionsForSlot(slot).head
-        // }.toSet
-        // paraphraseQs
-      }
+    questions.map { case struct @ (clauseTemplate, slot) =>
+      struct -> chosenFrame.getParaphrases(clauseTemplate, slot)
     }.toMap
   }
 }

@@ -750,10 +750,13 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val hoveredArgMarker = hoveredQuestion
   val hoveredArgSubstitution = hoveredQuestion
+  val argStructureChoiceIsChosen = style(
+    backgroundColor(c"#AAEEFF")
+  )
   val argStructureChoiceIsCorrectParaphrase = style(
-    backgroundColor(c"#66FF66")
+    backgroundColor(c"#AAFFAA")
   )
   val argStructureChoiceIsIncorrectParaphrase = style(
-    backgroundColor(c"#FF6666")
+    backgroundColor(c"#FFAAAA")
   )
 }

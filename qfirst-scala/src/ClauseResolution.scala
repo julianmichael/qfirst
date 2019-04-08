@@ -144,6 +144,12 @@ object ClauseResolution {
       .map(Function.tupled(fallbackResolve(_, _)))
   }
 
+  def getResolvedStructures(qSlots: List[SlotBasedLabel[VerbForm]]) = {
+    getResolvedFramePairs(genericInflectedForms, qSlots).map { case (frame, slots) =>
+      getClauseTemplate(frame) -> slots
+    }
+  }
+
   def getClauseTemplate(frame: Frame) = {
     ArgStructure(frame.args, frame.isPassive).forgetAnimacy
   }
