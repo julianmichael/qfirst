@@ -21,58 +21,96 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import monocle.macros._
 
+@JsonCodec sealed trait ParaphrasingFilter {
+  def getParaphrases(
+    frameset: VerbFrameset,
+    frameDistribution: Vector[Double],
+    structure: (ArgStructure, ArgumentSlot)
+  ): Set[(ArgStructure, ArgumentSlot)] = {
+    val scoredParaphrases = frameset.frames.zip(frameDistribution).maxBy(_._2)._1.getScoredParaphrases(structure)
+    val adverbialParaphrases = structure._2 match {
+      case adv @ Adv(_) => filterScoredParaphrases(
+        scoredParaphrases.map { case ((clauseTemplate, _), (clauseProb, _)) => (clauseTemplate -> adv) -> (clauseProb -> 1.0) }
+      )
+      case _ => Set()
+    }
+    (filterScoredParaphrases(scoredParaphrases) ++ adverbialParaphrases).filter(_ != structure)
+  }
+  def filterScoredParaphrases(
+    scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+  ): Set[(ArgStructure, ArgumentSlot)]
+  def ignoreCoindexing: ParaphrasingFilter
+}
+
+object ParaphrasingFilter {
+  @Lenses @JsonCodec case class TwoThreshold(
+    clauseThreshold: Double, coindexingThreshold: Double
+  ) extends ParaphrasingFilter {
+    def filterScoredParaphrases(
+      scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+    ): Set[(ArgStructure, ArgumentSlot)] = {
+      scoredParaphrases.filter(p => p._2._1 >= clauseThreshold && p._2._2 >= coindexingThreshold).keySet
+    }
+    def ignoreCoindexing: TwoThreshold = this.copy(coindexingThreshold = 0.0)
+  }
+  object TwoThreshold
+
+  @Lenses @JsonCodec case class OneThreshold(
+    threshold: Double
+  ) extends ParaphrasingFilter {
+    def filterScoredParaphrases(
+      scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+    ): Set[(ArgStructure, ArgumentSlot)] =
+      scoredParaphrases.filter(p => (p._2._1 * p._2._2) >= threshold).keySet
+    def ignoreCoindexing: OneThreshold = this
+  }
+  object OneThreshold
+
+  val oneThreshold = GenPrism[ParaphrasingFilter, OneThreshold]
+  val twoThreshold = GenPrism[ParaphrasingFilter, TwoThreshold]
+}
+
 @Lenses @JsonCodec case class FrameClause(
   args: ArgStructure,
-  argMapping: Map[ArgumentSlot, String],
   probability: Double)
 object FrameClause
 
-@Lenses @JsonCodec case class VerbFrame(
+@Lenses case class VerbFrame(
   clauseTemplates: List[FrameClause],
+  coindexingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double],
   probability: Double) {
-  // TODO take probabilities as arguments and return them as results
-  def getParaphrases(structure: ArgStructure, slot: ArgumentSlot): Set[(ArgStructure, ArgumentSlot)] = {
-    clauseTemplates
-      .filter(_.args == structure)
-      .flatMap(_.argMapping.get(slot))
-      .toList.flatMap { sigil =>
-        clauseTemplates.flatMap { fc =>
-          fc.argMapping.toList.filter(_._2 == sigil).map(_._1).map(slot =>
-            fc.args -> slot
-          )
-        }
+
+  def getScoredParaphrases(
+    structure: (ArgStructure, ArgumentSlot)
+  ): Map[(ArgStructure, ArgumentSlot), (Double, Double)] = {
+    clauseTemplates.flatMap { frameClause =>
+      val clauseScore = frameClause.probability
+      frameClause.args.args.keys.toList.map { otherSlot =>
+        import scala.language.existentials
+        val otherStructure = frameClause.args -> otherSlot
+        val coindexingScore = coindexingScores.getOrElse(structure -> otherStructure, 0.0)
+        otherStructure -> (clauseScore -> coindexingScore)
       }
-      .filter(_ != (structure -> slot))
-      .toSet
+    }.toMap
   }
 }
-object VerbFrame
+object VerbFrame {
+  import io.circe.{Encoder, Decoder}
+  private[this] def fromListy(
+    clauseTemplates: List[FrameClause],
+    coindexingScores: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)],
+    probability: Double
+  ) = VerbFrame(clauseTemplates, coindexingScores.toMap, probability)
+  implicit val verbFrameDecoder: Decoder[VerbFrame] =
+    Decoder.forProduct3("clauseTemplates", "coindexingScores", "probability")(fromListy)
+  implicit val verbFrameEncoder: Encoder[VerbFrame] =
+    Encoder.forProduct3("clauseTemplates", "coindexingScores", "probability")(x =>
+      (x.clauseTemplates, x.coindexingScores.toList, x.probability)
+    )
+}
 
 @Lenses @JsonCodec case class VerbFrameset(
   inflectedForms: InflectedForms,
   frames: List[VerbFrame]
-) {
-  def getParaphrasingClauses(
-    frameProbabilities: Vector[Double], threshold: Double, marginalize: Boolean
-  ) = {
-    if(marginalize) {
-      frames.zip(frameProbabilities).foldMap { case (frame, prob) =>
-        frame.clauseTemplates.foldMap(clause =>
-          Map(clause.args -> (clause.probability * prob))
-        )
-      }.filter(_._2 >= threshold).keySet
-    } else {
-      val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
-      chosenFrame.clauseTemplates.filter(_.probability >= threshold).map(_.args).toSet
-    }
-  }
-
-  // TODO: properly marginalize instead of just taking the max; add probability threshold arg
-  def getParaphrases(frameProbabilities: Vector[Double], questions: Set[(ArgStructure, ArgumentSlot)]) = {
-    val chosenFrame = frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
-    questions.map { case struct @ (clauseTemplate, slot) =>
-      struct -> chosenFrame.getParaphrases(clauseTemplate, slot)
-    }.toMap
-  }
-}
+)
 object VerbFrameset

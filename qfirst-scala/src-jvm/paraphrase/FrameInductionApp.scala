@@ -179,9 +179,9 @@ object FrameInductionApp extends IOApp {
       val globalFrames = model.prior.zip(model.clusters).map { case (framePriorProb, frameClauseDist) =>
         val uniformProbability = 1.0 / frameClauseDist.size
         val clauseTemplates = frameClauseDist.zipWithIndex.map { case (prob, index) =>
-          FrameClause(clauseVocab.getItem(index), Map(), prob)
+          FrameClause(clauseVocab.getItem(index), prob)
         }.sortBy(-_.probability).takeWhile(_.probability > uniformProbability) // TODO probably want to add higher threshold as a parameter
-        VerbFrame(clauseTemplates.toList, framePriorProb)
+        VerbFrame(clauseTemplates.toList, Map(), framePriorProb)
       }
       val frameDistributionsByVerb: Map[InflectedForms, Vector[Double]] = instanceIds.zip(assignments).foldMap {
         case ((verbInflectedForms, sentenceId, verbIndex), dist) =>

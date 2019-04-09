@@ -79,7 +79,7 @@ object EvalApp extends IOApp {
     filter: SimpleQAs.Filter,
     frameInductionResults: FrameInductionResults,
     paraphraseAnnotations: ParaphraseAnnotations
-  ): IO[Unit] = for {
+  ) = for {
     results <- predictions.map { predSentence =>
       val goldSentence = evalSet.sentences(predSentence.sentenceId)
       predSentence.verbs
@@ -89,16 +89,31 @@ object EvalApp extends IOApp {
             .flatMap(_.get(verb.verbIndex))
           .map(verb -> _)
         }.foldMap { case (verb, goldParaphrases) =>
-        val goldVerb = goldSentence.verbEntries(verb.verbIndex)
-        val predictedQAs = protocol.filterBeam(filter, verb)
-        val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
-        val frameProbabilities = frameInductionResults
-          .assignments(verb.verbInflectedForms)(predSentence.sentenceId)(verb.verbIndex)
-        Evaluation.getVerbResults(goldVerb, predictedQAs, goldParaphrases, verbFrameset, frameProbabilities, 0.3, false) // TODO take thresholds as input
+            val goldVerb = goldSentence.verbEntries(verb.verbIndex)
+            val predictedQAs = protocol.filterBeam(filter, verb)
+            val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
+            val frameProbabilities = frameInductionResults
+              .assignments(verb.verbInflectedForms)(predSentence.sentenceId)(verb.verbIndex)
+            val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
+        Evaluation.getVerbResults(goldVerb, predictedQAs, goldParaphrases, verbFrameset, frameProbabilities, paraphrasingFilter)
       }
     }.compile.foldMonoid
-    _ <- IO(println(getMetricsString(results)))
-  } yield ()
+    fullResults = {
+      import shapeless._
+      import shapeless.syntax.singleton._
+      import shapeless.record._
+      val numPredictedParaphrases = results("question template paraphrasing accuracy (correct QAs)").stats.predicted
+      val numCorrectQuestions = results("templated qa accuracy").correct.size
+
+      val numPredictedClauses = results("clause paraphrasing accuracy").stats.predicted
+      val numVerbs = results("number of verbs")
+
+      results +
+        ("paraphrases per question" ->> (numPredictedParaphrases.toDouble / numCorrectQuestions)) +
+        ("paraphrase clauses per verb" ->> (numPredictedClauses.toDouble / numVerbs))
+    }
+    _ <- IO(println(getMetricsString(fullResults)))
+  } yield fullResults
 
   def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}

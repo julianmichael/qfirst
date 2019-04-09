@@ -605,7 +605,11 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val textField = style()
 
-  val clauseDecodingOptionsDisplay = style(
+  val paraphrasingFilterDisplay = style(
+    addClassNames("pb-2")
+  )
+
+  val indexUnificationThresholdDisplay = style(
     addClassNames("pb-2")
   )
 
@@ -708,6 +712,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val clauseDecodingResultsText = style(
     fontSize(10 px),
     color(grey(128))
+  )
+
+  val paraphraseDecodingResultsText = style(
+    clauseDecodingResultsText
   )
 
   val goldQAsIndicatorDisplay = style(

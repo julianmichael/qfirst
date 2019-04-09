@@ -2,6 +2,7 @@ package qfirst.paraphrase
 
 import cats.implicits._
 
+import qasrl.ArgumentSlot
 import qasrl.data.AnswerSpan
 import qasrl.data.VerbEntry
 import qasrl.labeling.SlotBasedLabel
@@ -20,6 +21,22 @@ import qfirst.ClauseResolution
 import qfirst.ClauseResolution.ArgStructure
 
 object Evaluation {
+  // def getParaphrasingClauses(
+  //   frameset: VerbFrameset,
+  //   frameProbabilities: Vector[Double], threshold: Double, marginalize: Boolean
+  // ) = {
+  //   if(marginalize) {
+  //     frameset.frames.zip(frameProbabilities).foldMap { case (frame, prob) =>
+  //       frame.clauseTemplates.foldMap(clause =>
+  //         Map(clause.args -> (clause.probability * prob))
+  //       )
+  //     }.filter(_._2 >= threshold).keySet
+  //   } else {
+  //     val chosenFrame = frameset.frames(frameProbabilities.zipWithIndex.maxBy(_._1)._2)
+  //     chosenFrame.clauseTemplates.filter(_.probability >= threshold).map(_.args).toSet
+  //   }
+  // }
+
   def getClauseParaphrasingMetric(
     verbFrameset: VerbFrameset,
     predictedParaphrasingClauses: Set[ArgStructure],
@@ -38,14 +55,8 @@ object Evaluation {
     goldParaphrases: VerbParaphraseLabels,
     verbFrameset: VerbFrameset,
     frameProbabilities: Vector[Double],
-    threshold: Double,
-    marginalize: Boolean
+    filter: ParaphrasingFilter
   ) = {
-    val clauseParaphrasingBoundedAcc = getClauseParaphrasingMetric(
-      verbFrameset,
-      verbFrameset.getParaphrasingClauses(frameProbabilities, threshold, marginalize),
-      goldParaphrases
-    )
     val (goldInvalid, goldValid) = filterGoldDense(gold)
     val goldValidQLabels = goldValid.values.toList
     val goldValidStructures = ClauseResolution.getResolvedStructures(goldValidQLabels.map(_.questionSlots))
@@ -78,9 +89,14 @@ object Evaluation {
     )
 
     // TODO perhaps do something with paraphrasing of incorrect QA pairs as well?
-    val predictedParaphrases = verbFrameset.getParaphrases(
-      frameProbabilities, templatedQuestionAcc.correct.toSet
+    val predictedParaphrases = templatedQuestionAcc.correct.toSet[(ArgStructure, ArgumentSlot)].map(struct =>
+      struct -> filter.getParaphrases(verbFrameset, frameProbabilities, struct)
+    ).toMap
+    val novelParaphrasingClauses = predictedParaphrases.unorderedFold.map(_._1) -- predictedParaphrases.keySet.map(_._1)
+    val clauseParaphrasingBoundedAcc = getClauseParaphrasingMetric(
+      verbFrameset, novelParaphrasingClauses, goldParaphrases
     )
+
     val paraphrasingBoundedAcc = templatedQAAcc.correct.foldMap { case (predStruct, _) =>
       predictedParaphrases(predStruct).toList.foldMap(predParaphrase =>
         if(goldParaphrases.paraphrases.equal(predStruct, predParaphrase)) BoundedAcc.correct(predStruct -> predParaphrase)

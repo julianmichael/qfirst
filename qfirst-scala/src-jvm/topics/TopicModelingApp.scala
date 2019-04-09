@@ -208,9 +208,9 @@ object TopicModelingApp extends IOApp {
               val numClauses = math.max(clausesByProb.takeWhile(_._1 > clauseInclusionThreshold).size, clauseInclusionMinimum)
               val clauses = clausesByProb.take(numClauses).map {
                 case (clauseProb, clauseIndex) =>
-                  FrameClause(clauseVocab.indexToClause(clauseIndex), Map(), clauseProb) // TODO add argument sigils? need other output file.
+                  FrameClause(clauseVocab.indexToClause(clauseIndex), clauseProb) // TODO add argument sigils? need other output file.
               }.toList
-              VerbFrame(clauses, frameProb)
+              VerbFrame(clauses, Map(), frameProb)
           }.toList
           val frameset = VerbFrameset(verbInflectedForms, frames)
           verbInflectedForms -> frameset
