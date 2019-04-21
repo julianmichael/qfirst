@@ -49,6 +49,8 @@ object Evaluation {
     )
   }
 
+  // TODO oracle clause paraphrasing
+
   def getVerbResults(
     gold: VerbEntry,
     predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
@@ -99,7 +101,8 @@ object Evaluation {
 
     val paraphrasingBoundedAcc = templatedQAAcc.correct.foldMap { case (predStruct, _) =>
       predictedParaphrases(predStruct).toList.foldMap(predParaphrase =>
-        if(goldParaphrases.paraphrases.equal(predStruct, predParaphrase)) BoundedAcc.correct(predStruct -> predParaphrase)
+        if(goldParaphrases.incorrectClauses.contains(predParaphrase._1)) BoundedAcc.incorrect(predStruct -> predParaphrase)
+        else if(goldParaphrases.paraphrases.equal(predStruct, predParaphrase)) BoundedAcc.correct(predStruct -> predParaphrase)
         else if(goldParaphrases.paraphrases.apart(predStruct, predParaphrase)) BoundedAcc.incorrect(predStruct -> predParaphrase)
         else BoundedAcc.uncertain(predStruct -> predParaphrase)
       )

@@ -1,11 +1,20 @@
-package qfirst
+package qfirst.paraphrase
 
 import cats.Foldable
 import cats.implicits._
 
 import scala.util.Random
 
-package object topics {
+import breeze.linalg._
+import breeze.math._
+import breeze.numerics._
+import breeze.stats.distributions.Multinomial
+import scala.collection.immutable.Vector
+
+package object models {
+
+  type DenseMultinomial = Multinomial[DenseVector[Double], Int]
+
   def mean[F[_]: Foldable](fa: F[Double]) = {
     fa.combineAll / fa.size
   }

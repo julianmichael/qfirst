@@ -83,7 +83,7 @@ object StaticPageService {
     port: Int
   )(implicit ec: ExecutionContext, s: Sync[IO], cs: ContextShift[IO]) = {
     val jsDepsSuffix = "deps.js"
-    val jsSuffix = "main.js"
+    val jsSuffix = jsPath.getFileName.toString
 
     val config = {
       import scalatags.Text.all._

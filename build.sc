@@ -33,6 +33,7 @@ val http4sVersion = "0.20.0-M6"
 // non-cats
 val upickleVersion = "0.5.1"
 val spacroVersion = "0.2.0"
+val breezeVersion = "0.13.2"
 
 // jvm webby libs
 val scalatagsVersion = "0.6.7"
@@ -94,6 +95,7 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   override def ivyDeps = Agg(
     ivy"org.typelevel::cats-core::$catsVersion",
     ivy"org.typelevel::cats-effect::$catsEffectVersion",
+    ivy"org.typelevel::alleycats-core::$catsVersion",
     ivy"com.github.mpilquist::simulacrum:$simulacrumVersion",
     ivy"com.github.julien-truffaut::monocle-core::$monocleVersion",
     ivy"com.github.julien-truffaut::monocle-macro::$monocleVersion",
@@ -171,6 +173,8 @@ object qfirst extends Module {
       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
       ivy"co.fs2::fs2-core::$fs2Version",
       ivy"co.fs2::fs2-io::$fs2Version",
+      ivy"org.scalanlp::breeze:$breezeVersion",
+      ivy"org.scalanlp::breeze-natives:$breezeVersion",
       // webby stuff
       ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
       ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",

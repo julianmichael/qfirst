@@ -84,7 +84,8 @@ object StaticPageService {
     port: Int
   )(implicit ec: ExecutionContext, s: Sync[IO], cs: ContextShift[IO]) = {
     val jsDepsSuffix = "deps.js"
-    val jsSuffix = "main.js"
+    val jsSuffix = jsPath.getFileName.toString
+    val jsMapSuffix = jsSuffix + ".map"
 
     val config = {
       import scalatags.Text.all._
@@ -109,6 +110,9 @@ object StaticPageService {
           .getOrElseF(NotFound())
       case req @ GET -> Root / `jsSuffix` =>
         StaticFile.fromString(jsPath.toString, ec, Some(req))
+          .getOrElseF(NotFound())
+      case req @ GET -> Root / `jsMapSuffix` =>
+        StaticFile.fromString(jsPath.toString + ".map", ec, Some(req))
           .getOrElseF(NotFound())
       case GET -> _ => Ok(indexStr)
           .map(_.withContentType(`Content-Type`(MediaType.text.`html`)))

@@ -41,6 +41,9 @@ object ClauseResolution {
       }
       this.copy(args = newArgs)
     }
+    override def toString = Frame(
+      genericInflectedForms, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
+    ).clauses.head
   }
 
   val genericInflectedForms = InflectedForms(

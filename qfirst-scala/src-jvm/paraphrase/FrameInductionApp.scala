@@ -1,6 +1,7 @@
 package qfirst.paraphrase
-import qfirst.paraphrase.browse._
 import qfirst._
+import qfirst.paraphrase.browse._
+import qfirst.frames.implicits._
 import qfirst.metrics.HasMetrics.ops._
 import qfirst.protocols.SimpleQAs
 // import qfirst.frames._
@@ -23,6 +24,7 @@ import nlpdata.datasets.wiktionary.VerbForm
 import nlpdata.util.Text
 import nlpdata.util.LowerCaseStrings._
 
+import qasrl.ArgumentSlot
 import qasrl.bank._
 import qasrl.data._
 import qasrl.labeling.SlotBasedLabel
@@ -138,7 +140,7 @@ object FrameInductionApp extends IOApp {
   def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
 
   object Induce {
-    import qfirst.topics.MixtureOfUnigrams
+    import qfirst.paraphrase.models._
     import MixtureOfUnigrams.UnigramMixtureModel
     def mixtureOfUnigrams(
       instances: Instances,
@@ -164,11 +166,15 @@ object FrameInductionApp extends IOApp {
           }
         }.toList.unzip
       )
+      modelInit <- logOp(
+        "Initializing model",
+        UnigramMixtureModel.initClever(
+          indexedInstances, numFrames, clauseVocab.size, clusterConcentrationParameter, rand
+        )
+      )
       (model, assignments, _) <- IO(
         MixtureOfUnigrams.runSoftEM(
-          initModel = UnigramMixtureModel.initClever(
-            indexedInstances, numFrames, clauseVocab.size, clusterConcentrationParameter, rand
-          ),
+          initModel = modelInit,
           instances = indexedInstances,
           priorConcentrationParameter = priorConcentrationParameter,
           clusterConcentrationParameter = clusterConcentrationParameter,
@@ -221,6 +227,139 @@ object FrameInductionApp extends IOApp {
         assignments = allAssignments // verb type -> sentence id -> verb token -> dist. over frames for verb type
       )
     }
+
+    import LDA.LDAModel
+    def lda(
+      instances: Instances,
+      numFrames: Int,
+      priorConcentrationParameter: Double,
+      clusterConcentrationParameter: Double,
+      rand: Random
+    ): IO[FrameInductionResults] = for {
+      verbVocab <- logOp("Indexing verbs", makeVerbVocab(instances))
+      clauseVocab <- logOp("Indexing clauses", makeClauseVocab(instances))
+      (indexedInstances, instanceIds) <- logOp(
+        "Indexing instances",
+        instances.toList.sortBy(p => verbVocab.getIndex(p._1)).map { case (verbInflectedForms, verbTypeInstances) =>
+          verbTypeInstances.iterator.flatMap { case (sentenceId, sentenceInstances) =>
+            sentenceInstances.iterator.map { case (verbIndex, verbInstances) =>
+              val questions = verbInstances.keySet.toList
+              val indexedClauseCounts = ClauseResolution
+                .getResolvedFramePairs(verbInflectedForms, questions)
+                .map(_._1).map(ClauseResolution.getClauseTemplate)
+                .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
+              val instanceId = (sentenceId, verbIndex)
+              indexedClauseCounts -> instanceId
+            }
+          }.toVector.unzip
+        }.toVector.unzip
+      )
+      modelInit <- logOp(
+        "Initializing model",
+        LDAModel.initClever(indexedInstances, numFrames, clauseVocab.size, clusterConcentrationParameter, rand)
+      )
+
+      (model, assignments, _) <- IO(
+        LDA.runSoftEM(
+          modelInit, indexedInstances, priorConcentrationParameter, clusterConcentrationParameter, stoppingThreshold = 0.001
+        )
+      )
+    } yield {
+      val allFrames = model.clusters.map { cluster =>
+
+      }
+      val globalFrames = model.clusters.map { frameClauseDist =>
+        val uniformProbability = 1.0 / frameClauseDist.size
+        val clauseTemplates = frameClauseDist.zipWithIndex.map { case (prob, index) =>
+          FrameClause(clauseVocab.getItem(index), prob)
+        }.sortBy(-_.probability).takeWhile(_.probability > uniformProbability) // TODO probably want to add higher threshold as a parameter
+        VerbFrame(clauseTemplates.toList, Map(), 0.0) // TODO set prob later
+      }
+      // val allFramesAndAssignments = model.priors.zipWithIndex.map { case (verbPrior, verbIndex) =>
+      //   val verbForms = verbVocab.getItem(verbIndex)
+      //   val frameUniformProbability = 1.0 / numFrames.toDouble
+      //   val frameset = VerbFrameset(verbForms, )
+      // }
+      val frameMaxCountsForVerbs: Vector[Map[Int, Int]] = assignments.map(
+        _.foldMap { dist =>
+          val maxIndex = dist.zipWithIndex.maxBy(_._1)._2
+          Map(maxIndex -> 1)
+        }
+      )
+      val allFramesetsAndIndices = model.priors.zipWithIndex.map { case (frameDist, verbIndex) =>
+        val verbInflectedForms = verbVocab.getItem(verbIndex)
+        val uniformProbability = 1.0 / frameDist.size
+        val frameIndicesHavingMax = frameMaxCountsForVerbs(verbIndex).keySet
+        val framesWithIndices = frameDist.zipWithIndex.collect {
+          case (frameProb, frameIndex) if frameProb > uniformProbability || frameIndicesHavingMax.contains(frameIndex) =>
+            globalFrames(frameIndex).copy(probability = frameProb) -> frameIndex
+        }.sortBy(-_._1.probability)
+        val frameset = VerbFrameset(verbInflectedForms, framesWithIndices.map(_._1).toList)
+        val frameIndices = framesWithIndices.map(_._2)
+        frameset -> frameIndices
+      }
+      val allFramesets = allFramesetsAndIndices.map { case (v, _) => v.inflectedForms -> v }.toMap
+      val allAssignments: Map[InflectedForms, Map[String, Map[Int, Vector[Double]]]] = {
+        instanceIds.zip(assignments).zipWithIndex.foldMap {
+          case ((verbInstanceIds, verbAssignments), verbTypeIndex) =>
+            val verbInflectedForms = verbVocab.getItem(verbTypeIndex)
+            verbInstanceIds.zip(verbAssignments).foldMap {
+              case ((sentenceId, verbInstanceIndex), dist) =>
+                val selectedDist = allFramesetsAndIndices(verbTypeIndex)._2.map(dist(_))
+                Map(verbInflectedForms -> Map(sentenceId -> Map(verbInstanceIndex -> selectedDist)))
+                // shouldn't count anything twice so it should be fine
+            }
+        }
+      }
+      FrameInductionResults(
+        frames = allFramesets,
+        assignments = allAssignments
+      )
+    }
+  }
+
+  def saveForQA(
+    dataset: Dataset,
+    frameInductionResults: FrameInductionResults,
+    savePath: NIOPath,
+    clauseInclusionThreshold: Double = 0.01,
+    clauseInclusionMinimum: Int = 2
+  ) = {
+    import io.circe.Json
+    import io.circe.syntax._
+    val sentenceJsons = dataset.sentences.iterator.map { case (sentenceId, sentence) =>
+      Json.obj(
+        "sentenceId" -> sentenceId.asJson,
+        "sentenceTokens" -> sentence.sentenceTokens.asJson,
+        "verbs" -> sentence.verbEntries.values.toList.flatMap { verb =>
+          val frameDist = frameInductionResults.assignments(verb.verbInflectedForms)(sentenceId)(verb.verbIndex)
+          val bestFrames = frameInductionResults
+            .frames(verb.verbInflectedForms).frames
+            .zip(frameDist).maximaBy(_._2).map(_._1)
+          bestFrames.headOption.filter(_ => bestFrames.size == 1).map { bestFrame =>
+            val sortedClauseTemplates = bestFrame.clauseTemplates.sortBy(-_.probability)
+            val numClauseTemplates = math.max(
+              sortedClauseTemplates .takeWhile(_.probability > clauseInclusionThreshold).size, clauseInclusionMinimum
+            )
+            val clauses = sortedClauseTemplates.take(numClauseTemplates).map(_.args).flatMap { clauseTemplate =>
+              val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
+              val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
+              argSlots.map(slot =>
+                Json.obj(
+                  "clause" -> clauseTemplateString.asJson,
+                  "slot" -> slot.asJson
+                )
+              )
+            }.toList
+            Json.obj(
+              "verbIndex" -> verb.verbIndex.asJson,
+              "clauses" -> clauses.asJson
+            )
+          }
+        }.asJson
+      )
+    }.toList
+    FileUtil.writeJsonLines(savePath, io.circe.Printer.noSpaces)(sentenceJsons)
   }
 
   def program(
@@ -244,6 +383,8 @@ object FrameInductionApp extends IOApp {
     val evaluationItemsPath = predDir.resolve(s"eval-sample-$evalSetName.jsonl")
     val resultsFilename = if(testOnTest) "results-test.json" else "results.json"
     val resultsPath = outDir.resolve(resultsFilename)
+    val outForQAPath = if(testOnTest) outDir.resolve("results-test-qa-input.jsonl.gz") else outDir.resolve("results-qa-input.jsonl.gz")
+    implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     for {
       _ <- if(Files.exists(outDir)) IO.unit else IO {
         println(s"Creating output directory $outDir")
@@ -269,9 +410,9 @@ object FrameInductionApp extends IOApp {
         }
       )
       // TODO properly pass in hyperparameters and stuff. maybe want a config file lol...
-      results <- Induce.mixtureOfUnigrams(
+      results <- Induce.lda(
         instances = trainInstances |+| predInstances,
-        numFrames = 20,
+        numFrames = 100,
         priorConcentrationParameter = 1.0,
         clusterConcentrationParameter = 1.0,
         rand = new scala.util.Random(3266435L)
@@ -291,6 +432,7 @@ object FrameInductionApp extends IOApp {
       }
       evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
       _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, predictionsStream, filter, results, paraphraseGold)
+      _ <- saveForQA(trainSet |+| evalSet, results, outForQAPath)
     } yield ExitCode.Success
   }
 

@@ -1,4 +1,4 @@
-package qfirst.topics
+package qfirst.paraphrase.models
 
 import cats.Foldable
 import cats.data.NonEmptyList
@@ -7,14 +7,6 @@ import cats.implicits._
 import scala.util.Random
 
 import io.circe.generic.JsonCodec
-
-// class Dist(private[this] values: Array[Double]) {
-
-// }
-// object Dist {
-//   def fromNormalized(values: Array[Double]) = new Dist(values)
-//   def fromUnnormalized
-// }
 
 object MixtureOfUnigrams {
 

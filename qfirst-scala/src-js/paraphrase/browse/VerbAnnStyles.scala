@@ -547,6 +547,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val frameDeleteText = mutedControl
   val frameLinkAllValidText = mutedControl
   val clauseDeleteText = mutedControl
+  val clauseDisplay = style()
   val candidateClauseChoice = style(
     backgroundColor(rgba(256, 128, 0, 0.5))
   )
@@ -575,10 +576,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
   val argPlaceholder = style()
   val argSigil = style(
-    fontWeight.bold
+    // fontWeight.bold
   )
   val sentenceLink = style()
-
 
   val goDisplay = style(
     addClassNames("mx-2")
@@ -632,7 +632,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
   val goldClauseControlDisplay = style(
     position.absolute,
-    top(2 px),
+    top(0 px),
     left(0 px),
     width(20 px),
     height(20 px),
@@ -707,6 +707,18 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val shiftedClauseTemplateDisplay = style(
     marginLeft(50 px)
   )
+  val extendedXLabel = style(
+    goldClauseControl
+  )
+  val extendedX = style(
+    goldClauseControlDisplay,
+    goldClauseXContainer,
+    goldClauseXIncorrect,
+    width(45 px),
+    &.after(
+      width(45 px)
+    )
+  )
 
   val clauseDecodingResultsDisplay = style()
   val clauseDecodingResultsText = style(
@@ -715,6 +727,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   val paraphraseDecodingResultsText = style(
+    addClassNames("ml-2"),
     clauseDecodingResultsText
   )
 
@@ -766,5 +779,18 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
   val argStructureChoiceIsIncorrectParaphrase = style(
     backgroundColor(c"#FFAAAA")
+  )
+
+  val predictedParaphraseRow = style(
+    addClassNames("p-1"),
+    width(100 %%)
+  )
+  val predictedParaphraseCell = style(
+    addClassNames("py-1")
+  )
+  val predictedParaphraseText = style()
+
+  val incorrectClausePredictedParaphraseRow = style(
+    backgroundColor(grey(240))
   )
 }

@@ -86,7 +86,12 @@ object Serve extends IOApp {
       val predFilename = predDir.resolve("predictions.jsonl")
 
       for {
-        frameInductionResults <- FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
+        frameInductionResults <- {
+          val coindexedFramesPath = outDir.resolve("results-coindexed.json")
+          if(Files.exists(coindexedFramesPath)) {
+            FileUtil.readJson[FrameInductionResults](coindexedFramesPath)
+          } else FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
+        }
         filter <- {
           import io.circe.generic.auto._
           FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))

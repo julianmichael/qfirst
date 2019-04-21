@@ -5,6 +5,8 @@ import cats.implicits._
 
 import io.circe.generic.JsonCodec
 
+import monocle.Lens
+
 @JsonCodec sealed trait EquivalenceWithApartness[A] {
   def equal(x: A, y: A): Boolean
   def equivalenceClass(x: A): Set[A]
@@ -37,7 +39,10 @@ object EquivalenceWithApartness {
     def equate(x: A, y: A) = {
       val inclClasses = equivalenceClasses.add(x).add(y)
       val (xRep, yRep) = (inclClasses.find(x).get, inclClasses.find(y).get)
-      val (apartFromX, apartFromY) = (apartness.image(xRep), apartness.image(yRep))
+      val (apartFromX, apartFromY) = (
+        apartness.image(xRep).filterNot(_ == yRep),
+        apartness.image(yRep).filterNot(_ == xRep)
+      )
       val oldAparts = (apartFromX.map(xRep -> _) ++ apartFromY.map(yRep -> _)).toList
       val unionedSUF = inclClasses.union(x, y)
       val newRep = unionedSUF.find(x).get // wlog, y is same now
@@ -105,4 +110,12 @@ object EquivalenceWithApartness {
   }
   def empty[A]: EquivalenceWithApartness[A] = EquivalenceWithApartnessImpl[A](SetUnionFind.empty[A], FiniteSymmetricRelation.empty[A])
   // def single[A](x: A, y: A): Equivalence[A] = EquivalenceImpl[A](Map(x -> Set(y)), Map(x -> Set(y)))
+
+  // not really a lawful lens. useful anyway
+  def equal[A](x: A, y: A) = Lens[EquivalenceWithApartness[A], Boolean](
+    e => e.equal(x, y))(b => e => if(b) e.equate(x, y) else e.unequate(x, y)
+  )
+  def apart[A](x: A, y: A) = Lens[EquivalenceWithApartness[A], Boolean](
+    e => e.apart(x, y))(b => e => if(b) e.separate(x, y) else e.unseparate(x, y)
+  )
 }
