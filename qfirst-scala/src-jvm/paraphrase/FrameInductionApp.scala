@@ -56,7 +56,7 @@ object FrameInductionResults {
     )
 }
 
-class Vocab[A](
+class Vocab[A] private (
   indexToItem: Vector[A],
   itemToIndex: Map[A, Int]
 ) {
@@ -69,6 +69,24 @@ object Vocab {
     val itemsVec = items.toVector
     new Vocab(itemsVec, itemsVec.zipWithIndex.toMap)
   }
+}
+
+// TODO applicative
+case class ClusteringInstances[A](
+  instances: Map[InflectedForms, Map[String, Map[Int, A]]]
+) {
+  def map[B](f: A => B): ClusteringInstances[B] = {
+    ClusteringInstances(
+      instances.transform { case (k, v) =>
+        v.transform { case (k, v) =>
+          v.transform { case (k, v) =>
+            f(v)
+          }
+        }
+      }
+    )
+  }
+  // TODO merge and stuff
 }
 
 object FrameInductionApp extends IOApp {
@@ -113,6 +131,44 @@ object FrameInductionApp extends IOApp {
       }
   }
 
+  import breeze.linalg.DenseVector
+
+  @JsonCodec case class VerbId(
+    sentenceId: String,
+    verbIndex: Int)
+
+  def getGoldELMoInstances(
+    dataset: Dataset,
+    filePrefix: String
+  ): IO[ClusteringInstances[DenseVector[Float]]] = {
+    val idsPath = Paths.get(filePrefix + "_ids.jsonl")
+    val embPath = Paths.get(filePrefix + "_emb.bin")
+    val embDim = 1024
+    for {
+      ids <- logOp(
+        "Reading verb IDs",
+        FileUtil.readJsonLines[VerbId](idsPath).compile.toList
+      )
+      embeddings <- logOp(
+        "Reading verb embeddings",
+        FileUtil.readDenseFloatVectors(embPath, embDim).compile.toList
+      )
+      // _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
+      _ <- IO {
+        val numToCheck = 5
+        val propSane = embeddings.take(numToCheck).foldMap(_.data.iterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
+        val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
+        println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
+        // embeddings.foreach(e => println(e.data.iterator.take(10).mkString("\t")))
+      }
+    } yield ClusteringInstances(
+      ids.zip(embeddings).foldMap { case (VerbId(sentenceId, verbIndex), embedding) =>
+        val verbForms = dataset.sentences(sentenceId).verbEntries(verbIndex).verbInflectedForms
+        Map(verbForms -> Map(sentenceId -> Map(verbIndex -> List(embedding))))
+      }
+    ).map(_.head)
+  }
+
   def getPredictedInstances(
     predictions: Stream[IO, SentencePrediction[QABeam]],
     filter: SimpleQAs.Filter
@@ -133,11 +189,6 @@ object FrameInductionApp extends IOApp {
       )
     }.compile.foldMonoid
   }
-
-  def logOp[A](msg: String, op: IO[A]): IO[A] =
-    IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
-
-  def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
 
   object Induce {
     import qfirst.paraphrase.models._
@@ -434,10 +485,15 @@ object FrameInductionApp extends IOApp {
       _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, predictionsStream, filter, results, paraphraseGold)
       _ <- saveForQA(trainSet |+| evalSet, results, outForQAPath)
     } yield ExitCode.Success
+
+    for {
+      dataset <- logOp("Reading mini dev set", qasrl.bank.Data.readDataset(Paths.get("dev-mini.jsonl.gz")))
+      elmoVecs <- getGoldELMoInstances(dataset, "dev-mini-elmo")
+    } yield ExitCode.Success
   }
 
   val runFrameInduction = Command(
-    name = "mill qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
+    name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
     header = "Induce verb frames."
   ) {
     val goldPath = Opts.option[NIOPath](

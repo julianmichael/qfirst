@@ -4,7 +4,7 @@ import FrameDataWriter.FrameInfo
 
 import cats.implicits._
 import cats.data.NonEmptyList
-import cats.effect.{ContextShift, ExitCode, IO, IOApp, Resource}
+import cats.effect.{ContextShift, ExitCode, IO, IOApp, Resource, Timer}
 
 import io.circe.jawn
 import io.circe.{Encoder, Decoder}
@@ -93,6 +93,7 @@ object FileUtil {
       }.compile.drain
   }
 
+  // XXX
   def readClauseInfo(
     path: NIOPath)(
     implicit cs: ContextShift[IO]
@@ -103,5 +104,28 @@ object FileUtil {
       // non-ideal.. would instead want a recursive combine that overrides and doesn't need the end mapping
       _.transform { case (sid, vs) => vs.transform { case (vi, qs) => qs.transform { case (q, fis) => fis.head } } }
     )
+  }
+
+  import java.nio.ByteBuffer
+  import java.nio.ByteOrder
+  import breeze.linalg._
+  import scala.concurrent.duration._
+
+  def readDenseFloatVectors(path: NIOPath, dim: Int)(
+    implicit cs: ContextShift[IO], t: Timer[IO]
+  ) = {
+    Stream.resource(blockingExecutionContext).flatMap { _ec =>
+      fs2.io.file.readAll[IO](path, _ec, 4096)
+        .groupWithin(4, 1.minute) // should always do 4 chunk
+        .map { c =>
+          val bytes = c.toBytes
+          ByteBuffer.wrap(bytes.values, bytes.offset, bytes.length).order(ByteOrder.LITTLE_ENDIAN).getFloat
+        }
+        .groupWithin(dim, 1.minute) // should always do dim chunk
+        .map { c =>
+          val floats = c.toFloats
+          DenseVector.create[Float](floats.values, floats.offset, 1, floats.length)
+        }
+    }
   }
 }
