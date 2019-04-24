@@ -1138,6 +1138,7 @@ object VerbAnnUI {
                 <.div(S.clauseSetDisplay)(
                   frame.clauseTemplates.zipWithIndex
                     .filter(p => isClauseProbabilityAcceptable(p._1.probability))
+                    .sortBy(-_._1.probability)
                     .toVdomArray { case (frameClause, clauseIndex) =>
                     val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
 

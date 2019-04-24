@@ -7,9 +7,11 @@ import qfirst.protocols.SimpleQAs
 // import qfirst.frames._
 // import qfirst.metrics._
 
+import cats.Monoid
 import cats.Show
-import cats.implicits._
 import cats.data.NonEmptyList
+import cats.implicits._
+
 import cats.effect.concurrent.Ref
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 
@@ -88,6 +90,25 @@ case class ClusteringInstances[A](
   }
   // TODO merge and stuff
 }
+object ClusteringInstances {
+  implicit def clusteringInstancesMonoid[A]: Monoid[ClusteringInstances[A]] =
+    new Monoid[ClusteringInstances[A]] {
+      def empty: ClusteringInstances[A] = ClusteringInstances(Map())
+      def combine(x: ClusteringInstances[A], y: ClusteringInstances[A]) = {
+        ClusteringInstances(
+          (x.instances.keySet ++ y.instances.keySet).iterator.map { forms =>
+            val xSents = x.instances(forms)
+            val ySents = y.instances(forms)
+            forms -> (xSents.keySet ++ ySents.keySet).iterator.map { sid =>
+              val xVerbs = xSents(sid)
+              val yVerbs = ySents(sid)
+              sid -> (xVerbs ++ yVerbs)
+            }.toMap
+          }.toMap
+        )
+      }
+    }
+}
 
 object FrameInductionApp extends IOApp {
 
@@ -126,9 +147,9 @@ object FrameInductionApp extends IOApp {
                 qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
               )
             }
-          }
-        }
-      }
+          }.filter(_._2.nonEmpty)
+        }.filter(_._2.nonEmpty)
+      }.filter(_._2.nonEmpty)
   }
 
   import breeze.linalg.DenseVector
@@ -151,15 +172,15 @@ object FrameInductionApp extends IOApp {
       )
       embeddings <- logOp(
         "Reading verb embeddings",
-        FileUtil.readDenseFloatVectors(embPath, embDim).compile.toList
+        FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
       )
       // _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
         val numToCheck = 5
-        val propSane = embeddings.take(numToCheck).foldMap(_.data.iterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
+        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
         val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
         println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
-        // embeddings.foreach(e => println(e.data.iterator.take(10).mkString("\t")))
+        // embeddings.take(numToCheck).foreach(e => println(e.activeValuesIterator.take(10).mkString("\t")))
       }
     } yield ClusteringInstances(
       ids.zip(embeddings).foldMap { case (VerbId(sentenceId, verbIndex), embedding) =>
@@ -183,12 +204,117 @@ object FrameInductionApp extends IOApp {
                 protocol.filterBeam(filter, verbPred).map {
                   case (qString, (slots, spans)) => slots -> spans
                 }
-            )
-          )
-        )
+            ).filter(_._2.nonEmpty)
+          ).filter(_._2.nonEmpty)
+        ).filter(_._2.nonEmpty)
       )
     }.compile.foldMonoid
   }
+
+  import qfirst.paraphrase.models._
+  import breeze.stats.distributions.Multinomial
+
+  def runVerbWiseSoftEMWithComposite(
+    instances: Instances,
+    elmoVecs: ClusteringInstances[DenseVector[Float]],
+    rand: Random
+  ): IO[FrameInductionResults] = {
+    val algorithm = new CompositeClusteringAlgorithm {
+      val _1 = DirichletMAPClustering
+      val _2 = VectorMeanClustering
+      val lambda = 0.8
+    }
+    val verbCounts = instances.map { case (forms, sentMap) => forms -> sentMap.iterator.map(_._2.size).sum }
+    val verbs = instances.map { case (forms, sentMap) =>
+      forms -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
+        verbIndices.keys.toVector
+          .filter(vi =>
+            instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty &&
+              elmoVecs.instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
+          )
+          .map(vi => VerbId(sid, vi))
+      }
+    }.filter(_._2.nonEmpty)
+    val clauseVocab = makeClauseVocab(instances)
+    val makeInstance = (forms: InflectedForms, verbId: VerbId) => {
+      val questions = instances(forms)(verbId.sentenceId)(verbId.verbIndex).keySet.toList
+      val clauseCounts = ClauseResolution.getResolvedFramePairs(
+        forms, questions
+      ).map(_._1).map(ClauseResolution.getClauseTemplate)
+        .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
+      val vector = elmoVecs.instances(forms)(verbId.sentenceId)(verbId.verbIndex)
+      clauseCounts -> vector
+    }
+    runVerbWiseSoftEM(algorithm)(
+      verbs = verbs,
+      makeInstance = makeInstance,
+      hyperparams = (DirichletMAPClustering.Hyperparams(clauseVocab.size, 0.1), ()),
+      numFrames = v => math.max(2, math.round(math.log(verbCounts(v).toDouble) / math.log(10)).toInt), // can change, idk
+      getFrame = {
+        case (multinomial, _) => (multinomial.params / multinomial.sum).toScalaVector.toList.zipWithIndex
+            .filter(_._1 > 0.01).map {
+              case (prob, index) => FrameClause(clauseVocab.getItem(index), prob)
+            }
+      },
+      rand = rand
+    )
+  }
+
+  def runVerbWiseSoftEM(
+    algorithm: ClusteringAlgorithm)(
+    verbs: Map[InflectedForms, Vector[VerbId]],
+    makeInstance: (InflectedForms, VerbId) => algorithm.Instance,
+    hyperparams: algorithm.Hyperparams,
+    numFrames: (InflectedForms => Int),
+    getFrame: algorithm.ClusterParam => List[FrameClause],
+    rand: Random,
+    shouldLog: Boolean = false
+  ): IO[FrameInductionResults] = for {
+    frameInfos <- verbs.toList.traverse { case (verbInflectedForms, verbIds) =>
+      val instances = verbIds.map(makeInstance(verbInflectedForms, _))
+      for {
+        modelInit <- {
+          val init = IO(algorithm.initPlusPlus(instances, hyperparams, math.min(numFrames(verbInflectedForms), instances.size)))
+          if(shouldLog) logOp("Initializing model", init)
+          else init
+        }
+        (model, assignments, _) <- IO(
+          algorithm.runSoftEM(
+            initModel = modelInit,
+            instances = instances,
+            hyperparams = hyperparams,
+            stoppingThreshold = 0.001,
+            shouldLog = shouldLog
+          )
+        )
+      } yield {
+        val prior = Multinomial(assignments.iterator.map(_.params).reduce(_ + _))
+        val frames = model.map(getFrame).zipWithIndex.map { case (frameClauses, clusterIndex) =>
+          VerbFrame(frameClauses, Map(), prior.probabilityOf(clusterIndex))
+        }
+        val frameset = VerbFrameset(verbInflectedForms, frames.toList)
+        val probabilities = verbIds.zip(assignments).foldMap { case (verbId, assignmentProbs) =>
+          Map(verbId.sentenceId -> Map(verbId.verbIndex -> assignmentProbs.params.toScalaVector))
+        }
+        (verbInflectedForms, frameset, probabilities)
+      }
+    }
+  } yield FrameInductionResults(
+    frameInfos.map { case (forms, frameset, _) => forms -> frameset }.toMap,
+    frameInfos.map { case (forms, _, assignments) => forms -> assignments }.toMap
+  )
+
+  // TODO:
+  // finish implementing example clustering
+  // change frameset to include assignments inside it
+  // change frame induction results to just be a list of framesets, written as gzipped jsonl
+  // agglomerative clustering
+  // change frameset to allow agglomerative style too
+  // change eval/browser to be over gold qa-srl
+  // run predictions over propbank
+  // convert propbank predictions to qa-srl dataset
+  // run elmo over propbank
+  // implement propbank metrics
 
   object Induce {
     import qfirst.paraphrase.models._
@@ -383,30 +509,32 @@ object FrameInductionApp extends IOApp {
         "sentenceId" -> sentenceId.asJson,
         "sentenceTokens" -> sentence.sentenceTokens.asJson,
         "verbs" -> sentence.verbEntries.values.toList.flatMap { verb =>
-          val frameDist = frameInductionResults.assignments(verb.verbInflectedForms)(sentenceId)(verb.verbIndex)
-          val bestFrames = frameInductionResults
-            .frames(verb.verbInflectedForms).frames
-            .zip(frameDist).maximaBy(_._2).map(_._1)
-          bestFrames.headOption.filter(_ => bestFrames.size == 1).map { bestFrame =>
-            val sortedClauseTemplates = bestFrame.clauseTemplates.sortBy(-_.probability)
-            val numClauseTemplates = math.max(
-              sortedClauseTemplates .takeWhile(_.probability > clauseInclusionThreshold).size, clauseInclusionMinimum
-            )
-            val clauses = sortedClauseTemplates.take(numClauseTemplates).map(_.args).flatMap { clauseTemplate =>
-              val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
-              val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
-              argSlots.map(slot =>
-                Json.obj(
-                  "clause" -> clauseTemplateString.asJson,
-                  "slot" -> slot.asJson
+          frameInductionResults.assignments.get(verb.verbInflectedForms)
+            .flatMap(_.get(sentenceId)).flatMap(_.get(verb.verbIndex)).flatMap { frameDist =>
+              val bestFrames = frameInductionResults
+                .frames(verb.verbInflectedForms).frames
+                .zip(frameDist).maximaBy(_._2).map(_._1)
+              bestFrames.headOption.filter(_ => bestFrames.size == 1).map { bestFrame =>
+                val sortedClauseTemplates = bestFrame.clauseTemplates.sortBy(-_.probability)
+                val numClauseTemplates = math.max(
+                  sortedClauseTemplates .takeWhile(_.probability > clauseInclusionThreshold).size, clauseInclusionMinimum
                 )
-              )
-            }.toList
-            Json.obj(
-              "verbIndex" -> verb.verbIndex.asJson,
-              "clauses" -> clauses.asJson
-            )
-          }
+                val clauses = sortedClauseTemplates.take(numClauseTemplates).map(_.args).flatMap { clauseTemplate =>
+                  val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
+                  val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
+                  argSlots.map(slot =>
+                    Json.obj(
+                      "clause" -> clauseTemplateString.asJson,
+                      "slot" -> slot.asJson
+                    )
+                  )
+                }.toList
+                Json.obj(
+                  "verbIndex" -> verb.verbIndex.asJson,
+                  "clauses" -> clauses.asJson
+                )
+              }
+            }
         }.asJson
       )
     }.toList
@@ -419,7 +547,8 @@ object FrameInductionApp extends IOApp {
     trainOnDev: Boolean,
     testOnTest: Boolean
   ): IO[ExitCode] = {
-    val trainSetFilename = if(trainOnDev) "dev.jsonl.gz" else "train.jsonl.gz"
+    val trainSetName = if(trainOnDev) "dev" else "train"
+    val trainSetFilename = s"$trainSetName.jsonl.gz"
     val evalSetName = if(testOnTest) "test" else "dev"
     val evalSetFilename = s"$evalSetName.jsonl.gz"
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
@@ -460,12 +589,12 @@ object FrameInductionApp extends IOApp {
           getPredictedInstances(FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename), filter)
         }
       )
-      // TODO properly pass in hyperparameters and stuff. maybe want a config file lol...
-      results <- Induce.lda(
+      fullEvalSet <- logOp("Reading full eval set", qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve(evalSetFilename)))
+      trainElmoVecs <- getGoldELMoInstances(trainSet, s"qasrl-v2-elmo/$trainSetName")
+      evalElmoVecs <- getGoldELMoInstances(fullEvalSet, s"qasrl-v2-elmo/$evalSetName")
+      results <- runVerbWiseSoftEMWithComposite(
         instances = trainInstances |+| predInstances,
-        numFrames = 100,
-        priorConcentrationParameter = 1.0,
-        clusterConcentrationParameter = 1.0,
+        elmoVecs = trainElmoVecs |+| evalElmoVecs,
         rand = new scala.util.Random(3266435L)
       )
       _ <- logOp("Writing learned frames", FileUtil.writeJson(resultsPath, io.circe.Printer.noSpaces)(results))
@@ -475,21 +604,21 @@ object FrameInductionApp extends IOApp {
             IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
         } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
       }
-      evalSet <- IO(qasrl.bank.Data.readDataset(evalSetPath))
       predictionsStream = {
         import qasrl.data.JsonCodecs._
         import io.circe.generic.auto._
         FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
       }
+      evalSet <- logOp("Reading eval set", qasrl.bank.Data.readDataset(evalSetPath))
       evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
       _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, predictionsStream, filter, results, paraphraseGold)
       _ <- saveForQA(trainSet |+| evalSet, results, outForQAPath)
     } yield ExitCode.Success
 
-    for {
-      dataset <- logOp("Reading mini dev set", qasrl.bank.Data.readDataset(Paths.get("dev-mini.jsonl.gz")))
-      elmoVecs <- getGoldELMoInstances(dataset, "dev-mini-elmo")
-    } yield ExitCode.Success
+    // for {
+    //   dataset <- logOp("Reading mini dev set", qasrl.bank.Data.readDataset(Paths.get("dev-mini.jsonl.gz")))
+    //   elmoVecs <- getGoldELMoInstances(dataset, "dev-mini-elmo")
+    // } yield ExitCode.Success
   }
 
   val runFrameInduction = Command(

@@ -54,4 +54,16 @@ package object models {
         vec.updated(idx, (priorCount + N.toDouble(count)) / normalization)
     }
   }
+
+  import breeze.linalg._
+  import breeze.stats.distributions._
+  // alpha is TOTAL of prior counts
+  def dirichletPosteriorFromSparseNew[A](pseudoCounts: Map[Int, A], supportSize: Int, alpha: Double)(implicit N: Numeric[A]) = {
+    val priorCount = alpha / supportSize
+    Multinomial(
+      DenseVector.tabulate[Double](supportSize)(i =>
+        N.toDouble(pseudoCounts.getOrElse(i, N.zero)) + priorCount
+      )
+    )
+  }
 }

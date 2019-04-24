@@ -128,4 +128,24 @@ object FileUtil {
         }
     }
   }
+
+  def readDenseFloatVectorsNIO(path: NIOPath, dim: Int) = IO {
+    import java.nio.file.Files
+    val bytes = Files.readAllBytes(path)
+    if(bytes.length % 4 != 0) println(s"[=== WARNING ===] number of bytes in embedding file (${bytes.length}) is not divisible by 4")
+    val numFloats = bytes.length / 4
+    val floats = new Array[Float](numFloats)
+    if(numFloats % dim != 0) println(s"[=== WARNING ===] number of floats in embedding file (${numFloats}) is not divisible by embedding dimension ($dim)")
+    // val numVectors = numFloats / dim
+    ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer.get(floats) // put data in float array
+    var offset = 0
+    var res = List.empty[DenseVector[Float]]
+    while(offset < numFloats) {
+      res = DenseVector.create(floats, offset, 1, dim) :: res
+      offset = offset + dim
+    }
+    val reverseRes = res.reverse
+    print(s" Read ${res.size} vectors of dimensionality $dim.")
+    reverseRes
+  }
 }

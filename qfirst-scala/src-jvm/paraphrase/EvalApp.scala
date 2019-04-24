@@ -87,16 +87,21 @@ object EvalApp extends IOApp {
         .flatMap { verb =>
           paraphraseAnnotations.get(predSentence.sentenceId)
             .flatMap(_.get(verb.verbIndex))
-          .map(verb -> _)
-        }.foldMap { case (verb, goldParaphrases) =>
+            .map(verb -> _)
+        }.flatMap { case (verb, goldParaphrases) =>
             val goldVerb = goldSentence.verbEntries(verb.verbIndex)
             val predictedQAs = protocol.filterBeam(filter, verb)
             val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
-            val frameProbabilities = frameInductionResults
-              .assignments(verb.verbInflectedForms)(predSentence.sentenceId)(verb.verbIndex)
             val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
-        Evaluation.getVerbResults(goldVerb, predictedQAs, goldParaphrases, verbFrameset, frameProbabilities, paraphrasingFilter)
-      }
+            frameInductionResults
+              .assignments.get(verb.verbInflectedForms).flatMap(_.get(predSentence.sentenceId)).flatMap(_.get(verb.verbIndex))
+              .map(frameProbabilities =>
+                Evaluation.getVerbResults(
+                  goldVerb, predictedQAs, goldParaphrases,
+                  verbFrameset, frameProbabilities, paraphrasingFilter
+                )
+              )
+        }.combineAll
     }.compile.foldMonoid
     fullResults = {
       import shapeless._
