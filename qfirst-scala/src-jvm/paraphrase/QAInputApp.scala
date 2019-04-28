@@ -3,6 +3,7 @@ package qfirst.paraphrase
 import qfirst._
 import qfirst.frames.implicits._
 
+import cats.Applicative
 import cats.Id
 import cats.effect._
 import cats.implicits._
@@ -32,26 +33,30 @@ import com.monovore.decline._
 
 import ClauseResolution.ArgStructure
 
-object CoindexingApp extends IOApp {
+object QAInputApp extends IOApp {
 
   import io.circe.Json
   import io.circe.syntax._
 
-  def getJsonInputsForQA(dataset: Dataset): List[Json] = {
+  import fs2.Stream
+
+  def getJsonInputsForQA[F[_]: Applicative](dataset: Dataset): Stream[F, Json] = {
     val verbToClauseTemplates = dataset.sentences.values.toList.foldMap { sentence =>
       sentence.verbEntries.values.toList.foldMap { verb =>
         val structures: Set[ArgStructure] = ClauseResolution.getResolvedStructures(
-          verb.questionLabels.values.toList.map(_.questionSlots)
+          filterGoldNonDense(verb)._2.values.toList.map(_.questionSlots)
         ).map(_._1).toSet
         Map(verb.verbInflectedForms -> structures)
       }
     }
-    dataset.sentences.iterator.map { case (sentenceId, sentence) =>
+    dataset.sentences.toList
+      .foldMap(x => Stream.eval(Applicative[F].pure(x)))
+      .map { case (sentenceId, sentence) =>
       Json.obj(
         "sentenceId" -> sentenceId.asJson,
         "sentenceTokens" -> sentence.sentenceTokens.asJson,
         "verbs" -> sentence.verbEntries.values.toList.map { verb =>
-          val clauses = verbToClauseTemplates(verb.verbInflectedForms).toList.map { clauseTemplate =>
+          val clauses = verbToClauseTemplates(verb.verbInflectedForms).toList.flatMap { clauseTemplate =>
             val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
             val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
             argSlots.map(slot =>
@@ -67,7 +72,7 @@ object CoindexingApp extends IOApp {
           )
         }.asJson
       )
-    }.toList
+    }
   }
 
   type ClausalQ = (ArgStructure, ArgumentSlot)
@@ -102,50 +107,116 @@ object CoindexingApp extends IOApp {
     verbs: Map[String, List[ClauseQAOutput]]
   )
 
-  def getFuzzyArgumentEquivalences(
+  import qfirst.metrics.ExpectedCount
+
+  def getUnsymmetrizedFuzzyArgumentEquivalences(
     dataset: Dataset,
-    frameset: VerbFrameset,
-    qaOutputs: Map[String, SentenceQAOutput]
-  ): List[Map[(ClausalQ, ClausalQ), Double]] = {
-    val verbForms = frameset.inflectedForms
-    frameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
-      val clauseTemplateSet = frame.clauseTemplates.map(_.args).toSet
-      val adjacencyInstances = frameset.instances.toList.foldMap {
-        case (VerbId(sentenceId, verbIndex), frameDist) =>
-          if(frameDist(frameIndex) != frameDist.max) Vector() else {
-            val verbQAs = qaOutputs(sentenceId).verbs.getOrElse(verbIndex.toString, Vector())
-            val adjacencyPcounts = verbQAs.tails.flatMap {
+    framesets: Map[InflectedForms, VerbFrameset],
+    sentenceQAs: SentenceQAOutput,
+    hardAssignments: Boolean
+  ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+    val sentence = dataset.sentences(sentenceQAs.sentenceId)
+    sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
+      val verbIndex = verbIndexStr.toInt
+      val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
+      val frameset = framesets(verbForms)
+      val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
+      val frameProbs = frameset.instances(verbId)
+      val maxFrameProb = frameProbs.max
+
+      (frameset.frames, frameset.frames.indices, frameProbs).zipped.flatMap {
+        case (frame, frameIndex, frameProb) =>
+          if(hardAssignments && frameProb < maxFrameProb) None else Some {
+            val adjacencyExpectations = verbQAs.tails.toList.flatMap {
               case Nil => Nil
               case fst :: tail => tail.map { snd =>
-                (fst.question.clausalQ -> snd.question.clausalQ, adjacencyProb(fst.spans, snd.spans))
+                val adjProb = adjacencyProb(fst.spans, snd.spans)
+                val expectedCount = if(hardAssignments) {
+                  ExpectedCount(adjProb, 1.0)
+                } else {
+                  ExpectedCount(adjProb * frameProb, frameProb)
+                }
+                val qPair = fst.question.clausalQ -> snd.question.clausalQ
+                Map(qPair -> expectedCount)
               }
-            }.toVector
-            adjacencyPcounts
+            }.combineAll
+            Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
           }
-      }
-      val instancesByQpair = adjacencyInstances.groupBy(_._1)
-      val instancesByUnorderedQpair = instancesByQpair.transform { case (qpair, instances) =>
-        (instances ++ instancesByQpair.getOrElse(qpair.swap, Vector())).map(_._2)
-      }
-      val probsByUnorderedQpair = instancesByUnorderedQpair.map { case (qpair, instances) =>
-        qpair -> (instances.sum / instances.size)
-      }
-      probsByUnorderedQpair
+      }.toList.combineAll
     }
   }
 
+  def symmetrizeArgumentEquivalences(
+    equivalences: Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]]
+  ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+    equivalences.transform { case (_, frameEqs) =>
+      frameEqs.transform { case (_, equivalence) =>
+        equivalence.transform { case (qPair, ec) =>
+          ec |+| equivalence.get(qPair.swap).combineAll
+        }
+      }
+    }
+  }
+
+  def getFuzzyArgumentEquivalences(
+    dataset: Dataset,
+    framesets: Map[InflectedForms, VerbFrameset],
+    allSentenceQAs: Stream[IO, SentenceQAOutput],
+    hardAssignments: Boolean = false
+  ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]]] = {
+    allSentenceQAs.map { sentenceQAs =>
+      getUnsymmetrizedFuzzyArgumentEquivalences(
+        dataset, framesets, sentenceQAs, hardAssignments
+      )
+    }.compile.foldMonoid.map(symmetrizeArgumentEquivalences)
+  }
+
+  // def getFuzzyArgumentEquivalences(
+  //   dataset: Dataset,
+  //   frameset: VerbFrameset,
+  //   qaOutputs: Map[String, SentenceQAOutput]
+  // ): List[Map[(ClausalQ, ClausalQ), Double]] = {
+  //   val verbForms = frameset.inflectedForms
+  //   frameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
+  //     val clauseTemplateSet = frame.clauseTemplates.map(_.args).toSet
+  //     val adjacencyInstances = frameset.instances.toList.foldMap {
+  //       case (VerbId(sentenceId, verbIndex), frameDist) =>
+  //         if(frameDist(frameIndex) != frameDist.max) Vector() else {
+  //           val verbQAs = qaOutputs(sentenceId).verbs.getOrElse(verbIndex.toString, Vector())
+  //           val adjacencyPcounts = verbQAs.tails.flatMap {
+  //             case Nil => Nil
+  //             case fst :: tail => tail.map { snd =>
+  //               (fst.question.clausalQ -> snd.question.clausalQ, adjacencyProb(fst.spans, snd.spans))
+  //             }
+  //           }.toVector
+  //           adjacencyPcounts
+  //         }
+  //     }
+  //     val instancesByQpair = adjacencyInstances.groupBy(_._1)
+  //     val instancesByUnorderedQpair = instancesByQpair.transform { case (qpair, instances) =>
+  //       (instances ++ instancesByQpair.getOrElse(qpair.swap, Vector())).map(_._2)
+  //     }
+  //     val probsByUnorderedQpair = instancesByUnorderedQpair.map { case (qpair, instances) =>
+  //       qpair -> (instances.sum / instances.size)
+  //     }
+  //     probsByUnorderedQpair
+  //   }
+  // }
+
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
-  def program(goldPath: NIOPath, outDir: NIOPath): IO[ExitCode] = for {
-    trainExpanded <- logOp("Reading QA-SRL expanded/train", readDataset(goldPath.resolve("expanded/train.jsonl.gz")))
-    devExpanded <- logOp("Reading QA-SRL expanded/dev", readDataset(goldPath.resolve("expanded/dev.jsonl.gz")))
-    testOrig <- logOp("Reading QA-SRL orig/test", readDataset(goldPath.resolve("orig/test.jsonl.gz")))
-    devDense <- logOp("Reading QA-SRL dense/dev", readDataset(goldPath.resolve("dense/dev.jsonl.gz")))
-    testDense <- logOp("Reading QA-SRL dense/test", readDataset(goldPath.resolve("dense/test.jsonl.gz")))
-    fullDataset <- logOp("Constructing full dataset", trainExpanded |+| devExpanded |+| testOrig |+| devDense |+| testDense)
+  def program(goldPath: NIOPath, outDir: NIOPath, test: Boolean): IO[ExitCode] = for {
+    inputSet <- logOp("Reading QA-SRL expanded/train", readDataset(goldPath.resolve("expanded/train.jsonl.gz")))
+    evalSet <- {
+      if(test) logOp("Reading QA-SRL orig/test", readDataset(goldPath.resolve("orig/test.jsonl.gz")))
+      else logOp("Reading QA-SRL orig/dev", readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
+    }
+    fullDataset <- logOp("Constructing full dataset", inputSet |+| evalSet)
     _ <- logOp(
       "Writing QA input file",
-      FileUtil.writeJson(outDir.resolve("qa-input.jsonl.gz"), io.circe.Printer.noSpaces)(getJsonInputsForQA(fullDataset))
+      FileUtil.writeJsonLinesStreaming(
+        outDir.resolve(if(test) "qa-input-test.jsonl.gz" else "qa-input-dev.jsonl.gz"), io.circe.Printer.noSpaces)(
+        getJsonInputsForQA[IO](fullDataset))
     )
   } yield ExitCode.Success
 
@@ -159,8 +230,11 @@ object CoindexingApp extends IOApp {
     val outDir = Opts.option[NIOPath](
       "out", metavar = "path", help = "Relative path to the output directory."
     )
+    val test = Opts.flag(
+      "test", help = "Whether to use test data for QA inputs"
+    ).orFalse
 
-    (goldPath, outDir).mapN(program)
+    (goldPath, outDir, test).mapN(program)
   }
 
   def run(args: List[String]): IO[ExitCode] = {

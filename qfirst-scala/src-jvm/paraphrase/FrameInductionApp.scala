@@ -277,15 +277,6 @@ object FrameInductionApp extends IOApp {
     }.map(_.toMap)
   }
 
-  // TODO:
-  // agglomerative clustering
-  // agglomerative clustering impl for argument positions
-  // change frameset to allow agglomerative style too
-  // run predictions over propbank
-  // convert propbank predictions to qa-srl dataset
-  // run elmo over propbank
-  // implement propbank metrics
-
   object Induce {
     // import qfirst.paraphrase.models._
     // import MixtureOfUnigrams.UnigramMixtureModel
@@ -465,83 +456,40 @@ object FrameInductionApp extends IOApp {
     // }
   }
 
-  // def saveForQA(
-  //   dataset: Dataset,
-  //   frameInductionResults: FrameInductionResults,
-  //   savePath: NIOPath,
-  //   clauseInclusionThreshold: Double = 0.01,
-  //   clauseInclusionMinimum: Int = 2
-  // ) = {
-  //   import io.circe.Json
-  //   import io.circe.syntax._
-  //   val sentenceJsons = dataset.sentences.iterator.map { case (sentenceId, sentence) =>
-  //     Json.obj(
-  //       "sentenceId" -> sentenceId.asJson,
-  //       "sentenceTokens" -> sentence.sentenceTokens.asJson,
-  //       "verbs" -> sentence.verbEntries.values.toList.flatMap { verb =>
-  //         frameInductionResults.assignments.get(verb.verbInflectedForms)
-  //           .flatMap(_.get(sentenceId)).flatMap(_.get(verb.verbIndex)).flatMap { frameDist =>
-  //             val bestFrames = frameInductionResults
-  //               .frames(verb.verbInflectedForms).frames
-  //               .zip(frameDist).maximaBy(_._2).map(_._1)
-  //             bestFrames.headOption.filter(_ => bestFrames.size == 1).map { bestFrame =>
-  //               val sortedClauseTemplates = bestFrame.clauseTemplates.sortBy(-_.probability)
-  //               val numClauseTemplates = math.max(
-  //                 sortedClauseTemplates .takeWhile(_.probability > clauseInclusionThreshold).size, clauseInclusionMinimum
-  //               )
-  //               val clauses = sortedClauseTemplates.take(numClauseTemplates).map(_.args).flatMap { clauseTemplate =>
-  //                 val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
-  //                 val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
-  //                 argSlots.map(slot =>
-  //                   Json.obj(
-  //                     "clause" -> clauseTemplateString.asJson,
-  //                     "slot" -> slot.asJson
-  //                   )
-  //                 )
-  //               }.toList
-  //               Json.obj(
-  //                 "verbIndex" -> verb.verbIndex.asJson,
-  //                 "clauses" -> clauses.asJson
-  //               )
-  //             }
-  //           }
-  //       }.asJson
-  //     )
-  //   }.toList
-  //   FileUtil.writeJsonLines(savePath, io.circe.Printer.noSpaces)(sentenceJsons)
-  // }
-
   def program(
     experimentName: String,
     trainOnDev: Boolean,
     testOnTest: Boolean
   ): IO[ExitCode] = {
-    // val outForQAPath = if(testOnTest) outDir.resolve("results-test-qa-input.jsonl.gz") else outDir.resolve("results-qa-input.jsonl.gz")
     implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
     for {
       config <- Config.make(experimentName, Some(trainOnDev), testOnTest)
       trainSet <- config.readInputSet
       trainInstances <- logOp("Constructing training instances", getGoldInstances(trainSet))
       evalSet <- config.readEvalSet
+      fullSet = trainSet |+| evalSet
       evalInstances <- logOp("Constructing eval instances", getGoldInstances(evalSet))
       trainElmoVecs <- getGoldELMoInstances(trainSet, config.inputElmoPrefix)
       evalElmoVecs <- getGoldELMoInstances(evalSet, config.evalElmoPrefix)
-      results <- runVerbWiseSoftEMWithComposite(
+      predicateSenseResults <- runVerbWiseSoftEMWithComposite(
         instances = trainInstances |+| evalInstances,
         elmoVecs = trainElmoVecs |+| evalElmoVecs,
         rand = new scala.util.Random(3266435L)
       )
-      _ <- config.writeFramesets(results)
+      fuzzyArgEquivalences <- logOp(
+        "Counting argument cooccurrences",
+        QAInputApp.getFuzzyArgumentEquivalences(
+          fullSet, predicateSenseResults,
+          FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](config.qaOutputPath),
+          hardAssignments = false // TODO this is a hyperparameter
+        )
+      )
+      coindexedResults <- IO(predicateSenseResults) // TODO
+      _ <- config.writeFramesets(coindexedResults)
       paraphraseGold <- config.readGoldParaphrases
       evaluationItems <- config.getEvaluationItems
-      _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, results, paraphraseGold)
-      // _ <- saveForQA(trainSet |+| evalSet, results, outForQAPath)
+      _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, coindexedResults, paraphraseGold)
     } yield ExitCode.Success
-
-    // for {
-    //   dataset <- logOp("Reading mini dev set", qasrl.bank.Data.readDataset(Paths.get("dev-mini.jsonl.gz")))
-    //   elmoVecs <- getGoldELMoInstances(dataset, "dev-mini-elmo")
-    // } yield ExitCode.Success
   }
 
   val runFrameInduction = Command(

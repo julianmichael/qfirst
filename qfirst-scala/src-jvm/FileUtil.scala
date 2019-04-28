@@ -76,6 +76,23 @@ object FileUtil {
       IO(java.nio.file.Files.write(path, printer.pretty(a.asJson).getBytes("UTF-8")))
   }
 
+  def writeJsonLinesStreaming[A](path: NIOPath, printer: Printer, compression: CompressionSetting = CompressionSetting.Auto)(as: Stream[IO, A])(
+    implicit cs: ContextShift[IO], encoder: Encoder[A]
+  ): IO[Unit] = {
+    import io.circe.syntax._
+    IO(Option(path.getParent).foreach(java.nio.file.Files.createDirectories(_))) >>
+      Stream.resource(blockingExecutionContext).flatMap { _ec =>
+        val textOut = as
+          .map(a => printer.pretty(a.asJson))
+          .intersperse("\n")
+          .through(fs2.text.utf8Encode)
+        val compressedTextOut = if(useCompression(path, compression)) {
+          textOut.through(fs2.compress.gzip(4096))
+        } else textOut
+        compressedTextOut.through(fs2.io.file.writeAll(path, _ec))
+      }.compile.drain
+  }
+
   def writeJsonLines[A](path: NIOPath, printer: Printer, compression: CompressionSetting = CompressionSetting.Auto)(as: Seq[A])(
     implicit cs: ContextShift[IO], encoder: Encoder[A]
   ): IO[Unit] = {
