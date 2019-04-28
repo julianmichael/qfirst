@@ -1,4 +1,5 @@
 import qasrl.data.AnswerSpan
+import qasrl.data.QuestionLabel
 import qasrl.data.VerbEntry
 
 import cats.data.NonEmptyList
@@ -26,6 +27,19 @@ package object qfirst extends PackagePlatformExtensions {
 
   val filterGoldNonDense = filterGold(3, 0)
   val filterGoldDense = filterGold(6, 1)
+
+  def questionLabelIsValid(minNumAnswers: Int, maxNumInvalid: Int) = (qLabel: QuestionLabel) => {
+    val judgments = qLabel.answerJudgments.toList.map(_.judgment)
+    val numInvalid = judgments.filter(_.isInvalid).size
+    val numAnswers = judgments.size
+    if(numAnswers >= minNumAnswers) {
+      if(numInvalid <= maxNumInvalid) true
+      else false
+    } else false
+  }
+
+  val questionLabelIsValidNonDense = questionLabelIsValid(3, 0)
+  val questionLabelIsValidDense = questionLabelIsValid(6, 1)
 
   def overlaps(x: AnswerSpan)(y: AnswerSpan): Boolean = {
     x.begin <= y.end && y.begin <= x.end

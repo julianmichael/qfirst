@@ -506,7 +506,7 @@ object VerbAnnUI {
     curSentence: Sentence,
     curFrameset: Option[VerbFrameset],
     verb: VerbEntry,
-    predictionsOpt: Option[Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]],
+    // predictionsOpt: Option[Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]],
     goldStructureRelation: FiniteRelation[QuestionId, (ArgStructure, ArgumentSlot)],
     goldParaphrasesOpt: Option[StateSnapshot[VerbParaphraseLabels]],
     predictedParaphrasesOpt: Option[Map[(ArgStructure, ArgumentSlot), Set[(ArgStructure, ArgumentSlot)]]],
@@ -541,16 +541,95 @@ object VerbAnnUI {
           val questionLabelsWithStructures = allQuestionLabels.zip(allQuestionStructures)
             .filter(p => showInvalidQuestions || isQuestionValid(p._1))
           if(questionLabelsWithStructures.isEmpty) {
-            <.tr(<.td(<.span((S.loadingNotice)("All questions have been filtered out."))))
-          } else questionLabelsWithStructures.toVdomArray { case (label, structure) =>
+            TagMod(<.tr(<.td(<.span((S.loadingNotice)("All questions have been filtered out.")))))
+          } else TagMod(
+            questionLabelsWithStructures.flatMap { case (label, structure) =>
               val qid = makeQid(label.questionString)
-              qaLabelRow(curSentence, label, color, qid)(
-                ^.key := s"short-${label.questionString}",
-                tagModForStructureLabel(structure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt)
+              val exFrame = Frame(
+                verbInflectedForms = verb.verbInflectedForms, args = structure._1.args,
+                tense = label.tense, isPerfect = label.isPerfect, isProgressive = label.isProgressive,
+                isPassive = structure._1.isPassive,
+                isNegated = label.isNegated)
+              List[TagMod](
+                qaLabelRow(curSentence, label, color, qid)(
+                  ^.key := s"short-${label.questionString}",
+                  tagModForStructureLabel(structure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt)
+                ),
+                predictedParaphrasesOpt.whenDefined(predictedParaphrases =>
+                  predictedParaphrases.getOrElse(structure, Set()).filter(_ != structure).toVdomArray { paraphraseStructure =>
+                    val clauseIncorrect = goldParaphrasesOpt.exists(_.value.incorrectClauses.contains(paraphraseStructure._1))
+                    val paraphraseQString = exFrame.copy(
+                      args = paraphraseStructure._1.args, isPassive = paraphraseStructure._1.isPassive
+                    ).questionsForSlot(paraphraseStructure._2).head
+                      <.tr(S.predictedParaphraseRow, S.incorrectClausePredictedParaphraseRow.when(clauseIncorrect))(
+                        ^.key := s"predicted-paraphrase-${label.questionString}-$paraphraseQString",
+                        <.td(), // to skip round indicator in previous row
+                        <.td(S.predictedParaphraseCell)(
+                          goldParaphrasesOpt.whenDefined { goldParaphrases =>
+                            val clauseIncorrectness = goldParaphrases.zoomStateL(
+                              VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(paraphraseStructure._1))
+                            )
+                            val paraphraseCorrectness = goldParaphrases.zoomStateL(
+                              VerbParaphraseLabels.clauseAddingParaphraseLens(structure, paraphraseStructure)
+                            )
+                            val paraphraseIncorrectness = goldParaphrases.zoomStateL(
+                              VerbParaphraseLabels.paraphrases.composeLens(EquivalenceWithApartness.apart(structure, paraphraseStructure))
+                            )
+
+                            <.div(S.goldClauseMarkerDisplay)(
+                              if(clauseIncorrectness.value) {
+                                <.label(S.extendedXLabel)(
+                                  <.input(
+                                    ^.`type` := "checkbox",
+                                    ^.value := clauseIncorrectness.value,
+                                    ^.onChange ==> ((e: ReactEventFromInput) =>
+                                      clauseIncorrectness.setState(false)
+                                    )
+                                  ),
+                                  <.div(S.extendedX)
+                                )
+                              } else {
+                                TagMod(
+                                  <.label(S.goldClauseCheckLabel)(
+                                    <.input(
+                                      ^.`type` := "checkbox",
+                                      ^.value := paraphraseCorrectness.value,
+                                      ^.onChange ==> ((e: ReactEventFromInput) =>
+                                        if(paraphraseCorrectness.value) paraphraseCorrectness.setState(false)
+                                        else paraphraseCorrectness.setState(true)
+                                      )
+                                    ),
+                                    <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(paraphraseCorrectness.value))
+                                  ),
+                                  <.label(S.goldClauseXLabel)(
+                                    <.input(
+                                      ^.`type` := "checkbox",
+                                      ^.value := paraphraseIncorrectness.value,
+                                      ^.onChange ==> ((e: ReactEventFromInput) =>
+                                        if(paraphraseIncorrectness.value) paraphraseIncorrectness.setState(false)
+                                        else paraphraseIncorrectness.setState(true)
+                                      )
+                                    ),
+                                    <.div(S.goldClauseX, S.goldClauseXIncorrect.when(paraphraseIncorrectness.value))
+                                  )
+                                )
+                              }
+                            )
+                          },
+                          <.span(S.predictedParaphraseText, S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
+                            tagModForStructureLabel(paraphraseStructure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt),
+                            paraphraseQString
+                          )
+                        )
+                      )
+                  }
+                )
               )
-          }
+            }: _*
+          )
         }
       )
+
       val goldClausesOpt = goldParaphrasesOpt.map { goldParaphrases =>
         <.div(S.goldClausesDisplay)(
           <.div(S.goldClausesHeading)(
@@ -609,108 +688,109 @@ object VerbAnnUI {
         )
       }
 
-      predictionsOpt.fold(<.div(goldTable, goldClausesOpt.whenDefined)) { predictions =>
-        <.div(
-          <.div(S.goldQAsIndicatorDisplay)(<.span(S.goldQAsIndicatorText)("Gold:")),
-          goldTable,
-          <.div(S.predQAsIndicatorDisplay)(<.span(S.predQAsIndicatorText)("Predicted:")),
-          <.table(S.verbQAsTable)(
-            <.tbody(S.verbQAsTableBody) {
-              val questions = predictions.toList.sortBy(_._1)
-              val questionStructures = ClauseResolution.getResolvedStructures(questions.map(_._2._1))
-              if(questions.isEmpty) {
-                <.tr(<.td(<.span(S.loadingNotice)("No predictions.")))
-              } else TagMod(
-                (questions.zip(questionStructures)).flatMap { case ((qString, (qSlots, spans)), structure) =>
-                  val qid = QuestionId(SentenceId.fromString(curSentence.sentenceId), verb.verbIndex, qString)
-                  val resolutions = ClauseResolution.getFramesWithAnswerSlots(verb.verbInflectedForms, qSlots)
-                  val exFrame = resolutions.head._1
-                  val questionLabel = QuestionLabel(
-                    qString, Set("afirst-model"), Set(AnswerLabel("afirst-model", qasrl.data.Answer(spans))), qSlots,
-                    exFrame.tense, exFrame.isPerfect, exFrame.isProgressive, exFrame.isNegated, exFrame.isPassive
-                  )
-                  List[TagMod](
-                    qaLabelRow(curSentence, questionLabel, color, qid)(
-                      ^.key := s"short-$qString",
-                      tagModForStructureLabel(structure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt)
-                    ),
-                    predictedParaphrasesOpt.whenDefined(predictedParaphrases =>
-                      predictedParaphrases.getOrElse(structure, Set()).filter(_ != structure).toVdomArray { paraphraseStructure =>
-                        val clauseIncorrect = goldParaphrasesOpt.exists(_.value.incorrectClauses.contains(paraphraseStructure._1))
-                        val paraphraseQString = exFrame.copy(
-                          args = paraphraseStructure._1.args, isPassive = paraphraseStructure._1.isPassive
-                        ).questionsForSlot(paraphraseStructure._2).head
-                        <.tr(S.predictedParaphraseRow, S.incorrectClausePredictedParaphraseRow.when(clauseIncorrect))(
-                          ^.key := s"predicted-paraphrase-$qString-$paraphraseQString",
-                          <.td(), // to skip round indicator in previous row
-                          <.td(S.predictedParaphraseCell)(
-                            goldParaphrasesOpt.whenDefined { goldParaphrases =>
-                              val clauseIncorrectness = goldParaphrases.zoomStateL(
-                                VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(paraphraseStructure._1))
-                              )
-                              val paraphraseCorrectness = goldParaphrases.zoomStateL(
-                                VerbParaphraseLabels.clauseAddingParaphraseLens(structure, paraphraseStructure)
-                              )
-                              val paraphraseIncorrectness = goldParaphrases.zoomStateL(
-                                VerbParaphraseLabels.paraphrases.composeLens(EquivalenceWithApartness.apart(structure, paraphraseStructure))
-                              )
+      <.div(goldTable, goldClausesOpt.whenDefined)
+      // predictionsOpt.fold(<.div(goldTable, goldClausesOpt.whenDefined)) { predictions =>
+      //   <.div(
+      //     <.div(S.goldQAsIndicatorDisplay)(<.span(S.goldQAsIndicatorText)("Gold:")),
+      //     goldTable,
+      //     <.div(S.predQAsIndicatorDisplay)(<.span(S.predQAsIndicatorText)("Predicted:")),
+      //     <.table(S.verbQAsTable)(
+      //       <.tbody(S.verbQAsTableBody) {
+      //         val questions = predictions.toList.sortBy(_._1)
+      //         val questionStructures = ClauseResolution.getResolvedStructures(questions.map(_._2._1))
+      //         if(questions.isEmpty) {
+      //           <.tr(<.td(<.span(S.loadingNotice)("No predictions.")))
+      //         } else TagMod(
+      //           (questions.zip(questionStructures)).flatMap { case ((qString, (qSlots, spans)), structure) =>
+      //             val qid = QuestionId(SentenceId.fromString(curSentence.sentenceId), verb.verbIndex, qString)
+      //             val resolutions = ClauseResolution.getFramesWithAnswerSlots(verb.verbInflectedForms, qSlots)
+      //             val exFrame = resolutions.head._1
+      //             val questionLabel = QuestionLabel(
+      //               qString, Set("afirst-model"), Set(AnswerLabel("afirst-model", qasrl.data.Answer(spans))), qSlots,
+      //               exFrame.tense, exFrame.isPerfect, exFrame.isProgressive, exFrame.isNegated, exFrame.isPassive
+      //             )
+      //             List[TagMod](
+      //               qaLabelRow(curSentence, questionLabel, color, qid)(
+      //                 ^.key := s"short-$qString",
+      //                 tagModForStructureLabel(structure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt)
+      //               ),
+      //               predictedParaphrasesOpt.whenDefined(predictedParaphrases =>
+      //                 predictedParaphrases.getOrElse(structure, Set()).filter(_ != structure).toVdomArray { paraphraseStructure =>
+      //                   val clauseIncorrect = goldParaphrasesOpt.exists(_.value.incorrectClauses.contains(paraphraseStructure._1))
+      //                   val paraphraseQString = exFrame.copy(
+      //                     args = paraphraseStructure._1.args, isPassive = paraphraseStructure._1.isPassive
+      //                   ).questionsForSlot(paraphraseStructure._2).head
+      //                   <.tr(S.predictedParaphraseRow, S.incorrectClausePredictedParaphraseRow.when(clauseIncorrect))(
+      //                     ^.key := s"predicted-paraphrase-$qString-$paraphraseQString",
+      //                     <.td(), // to skip round indicator in previous row
+      //                     <.td(S.predictedParaphraseCell)(
+      //                       goldParaphrasesOpt.whenDefined { goldParaphrases =>
+      //                         val clauseIncorrectness = goldParaphrases.zoomStateL(
+      //                           VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(paraphraseStructure._1))
+      //                         )
+      //                         val paraphraseCorrectness = goldParaphrases.zoomStateL(
+      //                           VerbParaphraseLabels.clauseAddingParaphraseLens(structure, paraphraseStructure)
+      //                         )
+      //                         val paraphraseIncorrectness = goldParaphrases.zoomStateL(
+      //                           VerbParaphraseLabels.paraphrases.composeLens(EquivalenceWithApartness.apart(structure, paraphraseStructure))
+      //                         )
 
-                              <.div(S.goldClauseMarkerDisplay)(
-                                if(clauseIncorrectness.value) {
-                                  <.label(S.extendedXLabel)(
-                                    <.input(
-                                      ^.`type` := "checkbox",
-                                      ^.value := clauseIncorrectness.value,
-                                      ^.onChange ==> ((e: ReactEventFromInput) =>
-                                        clauseIncorrectness.setState(false)
-                                      )
-                                    ),
-                                    <.div(S.extendedX)
-                                  )
-                                } else {
-                                  TagMod(
-                                    <.label(S.goldClauseCheckLabel)(
-                                      <.input(
-                                        ^.`type` := "checkbox",
-                                        ^.value := paraphraseCorrectness.value,
-                                        ^.onChange ==> ((e: ReactEventFromInput) =>
-                                          if(paraphraseCorrectness.value) paraphraseCorrectness.setState(false)
-                                          else paraphraseCorrectness.setState(true)
-                                        )
-                                      ),
-                                      <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(paraphraseCorrectness.value))
-                                    ),
-                                    <.label(S.goldClauseXLabel)(
-                                      <.input(
-                                        ^.`type` := "checkbox",
-                                        ^.value := paraphraseIncorrectness.value,
-                                        ^.onChange ==> ((e: ReactEventFromInput) =>
-                                          if(paraphraseIncorrectness.value) paraphraseIncorrectness.setState(false)
-                                          else paraphraseIncorrectness.setState(true)
-                                        )
-                                      ),
-                                      <.div(S.goldClauseX, S.goldClauseXIncorrect.when(paraphraseIncorrectness.value))
-                                    )
-                                  )
-                                }
-                              )
-                            },
-                            <.span(S.predictedParaphraseText, S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
-                              tagModForStructureLabel(paraphraseStructure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt),
-                              paraphraseQString
-                            )
-                          )
-                        )
-                      }
-                    )
-                  )
-                }: _*
-              )
-            }
-          ),
-          goldClausesOpt.whenDefined
-        )
-      }
+      //                         <.div(S.goldClauseMarkerDisplay)(
+      //                           if(clauseIncorrectness.value) {
+      //                             <.label(S.extendedXLabel)(
+      //                               <.input(
+      //                                 ^.`type` := "checkbox",
+      //                                 ^.value := clauseIncorrectness.value,
+      //                                 ^.onChange ==> ((e: ReactEventFromInput) =>
+      //                                   clauseIncorrectness.setState(false)
+      //                                 )
+      //                               ),
+      //                               <.div(S.extendedX)
+      //                             )
+      //                           } else {
+      //                             TagMod(
+      //                               <.label(S.goldClauseCheckLabel)(
+      //                                 <.input(
+      //                                   ^.`type` := "checkbox",
+      //                                   ^.value := paraphraseCorrectness.value,
+      //                                   ^.onChange ==> ((e: ReactEventFromInput) =>
+      //                                     if(paraphraseCorrectness.value) paraphraseCorrectness.setState(false)
+      //                                     else paraphraseCorrectness.setState(true)
+      //                                   )
+      //                                 ),
+      //                                 <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(paraphraseCorrectness.value))
+      //                               ),
+      //                               <.label(S.goldClauseXLabel)(
+      //                                 <.input(
+      //                                   ^.`type` := "checkbox",
+      //                                   ^.value := paraphraseIncorrectness.value,
+      //                                   ^.onChange ==> ((e: ReactEventFromInput) =>
+      //                                     if(paraphraseIncorrectness.value) paraphraseIncorrectness.setState(false)
+      //                                     else paraphraseIncorrectness.setState(true)
+      //                                   )
+      //                                 ),
+      //                                 <.div(S.goldClauseX, S.goldClauseXIncorrect.when(paraphraseIncorrectness.value))
+      //                               )
+      //                             )
+      //                           }
+      //                         )
+      //                       },
+      //                       <.span(S.predictedParaphraseText, S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
+      //                         tagModForStructureLabel(paraphraseStructure, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt),
+      //                         paraphraseQString
+      //                       )
+      //                     )
+      //                   )
+      //                 }
+      //               )
+      //             )
+      //           }: _*
+      //         )
+      //       }
+      //     ),
+      //     goldClausesOpt.whenDefined
+      //   )
+      // }
     } else None
 
     <.div(S.verbEntryDisplay)(
@@ -812,7 +892,7 @@ object VerbAnnUI {
     docMeta: DocumentMetadata,
     sentence: Sentence,
     goldStructureRelation: FiniteRelation[QuestionId, (ArgStructure, ArgumentSlot)],
-    predictionsOpt: Option[Map[Int, Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]]],
+    // predictionsOpt: Option[Map[Int, Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]]],
     verbForms: InflectedForms,
     verbIndexOpt: Option[Int],
     curFrameset: Option[VerbFrameset],
@@ -885,7 +965,7 @@ object VerbAnnUI {
         <.div(S.verbEntriesContainer)(
           sortedVerbs.toVdomArray { verb =>
             verbEntryDisplay(
-              sentence, curFrameset, verb, predictionsOpt.map(_(verb.verbIndex)),
+              sentence, curFrameset, verb, // predictionsOpt.map(_(verb.verbIndex)),
               goldStructureRelation,
               goldParaphrasesOpt, predictedParaphrasesOpt, verbColorMap(verb.verbIndex), argStructureChoiceOpt, argStructureHoverOpt,
               navQuery, displayQAs = verb.verbInflectedForms == verbForms,
@@ -934,9 +1014,9 @@ object VerbAnnUI {
     curDocMetasOpt: Option[Set[DocumentMetadata]],
     sentenceOpt: Option[Sentence],
     verbIndexOpt: Option[Int],
-    predictionsOpt: Option[Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]],
+    // predictionsOpt: Option[Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]],
     goldStructureRelationOpt: Option[FiniteRelation[QuestionId, (ArgStructure, ArgumentSlot)]],
-    predStructureRelationOpt: Option[FiniteRelation[QuestionId, (ArgStructure, ArgumentSlot)]],
+    // predStructureRelationOpt: Option[FiniteRelation[QuestionId, (ArgStructure, ArgumentSlot)]],
     frameset: VerbFrameset,
     frameDistributionOpt: Option[Vector[Double]],
     goldParaphrasesOpt: Option[StateSnapshot[VerbParaphraseLabels]],
@@ -947,7 +1027,7 @@ object VerbAnnUI {
     argStructureHoverOpt: StateSnapshot[Option[(ArgStructure, ArgumentSlot)]],
     navQuery: StateSnapshot[NavQuery]
   ) = {
-    val fullStructureRelationOpt = (goldStructureRelationOpt, predStructureRelationOpt).mapN(_ |+| _)
+    // val fullStructureRelationOpt = (goldStructureRelationOpt, predStructureRelationOpt).mapN(_ |+| _)
     val sentenceIdOpt = sentenceOpt.map(s => SentenceId.fromString(s.sentenceId))
     def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
       Frame(
@@ -1023,11 +1103,11 @@ object VerbAnnUI {
         <.div(S.indexUnificationThresholdDisplay)(
           sliderField("Index unification", 0.0, 1.0, indexUnificationThreshold)
         ),
-        (sentenceOpt, verbIndexOpt, predictionsOpt, goldParaphrasesOpt, frameDistributionOpt, paraphrasingFilterOpt).mapN {
-          (sentence, verbIndex, predictions, goldParaphrases, frameProbabilities, paraphrasingFilter) =>
+        (sentenceOpt, verbIndexOpt, goldParaphrasesOpt, frameDistributionOpt, paraphrasingFilterOpt).mapN {
+          (sentence, verbIndex, goldParaphrases, frameProbabilities, paraphrasingFilter) =>
           val goldVerb = sentence.verbEntries(verbIndex)
           val results = Evaluation.getVerbResults(
-            goldVerb, predictions, goldParaphrases.value, frameset, frameProbabilities, paraphrasingFilter.value
+            goldVerb, goldParaphrases.value, frameset, frameProbabilities, paraphrasingFilter.value
           )
           import shapeless._
           import shapeless.syntax.singleton._
@@ -1048,7 +1128,7 @@ object VerbAnnUI {
           val frameList = {
             frameDistributionOpt.fold(frameset.frames.zipWithIndex)(frameDistribution =>
               frameset.frames.zipWithIndex.sortBy(p => -frameDistribution(p._2))
-            ).filter(p => p._1.probability >= 0.01 || frameDistributionOpt.exists(_(p._2) >= 0.01))
+            )//.filter(p => p._1.probability >= 0.01 || frameDistributionOpt.exists(_(p._2) >= 0.01))
           }
           frameList.toVdomArray { case (frame, frameIndex) =>
             val frameLens = VerbFrameset.frames
@@ -1192,17 +1272,17 @@ object VerbAnnUI {
                               val goldMatchingMod = S.goldMatchingArgMarker.when(
                                 goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
                               )
-                              val predMatchingMod = S.predMatchingArgMarker.when(
-                                predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
-                              )
+                              // val predMatchingMod = S.predMatchingArgMarker.when(
+                              //   predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+                              // )
                               val selectionMod = tagModForStructureLabel(
                                 frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
                               )
 
                               argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map(s =>
-                                <.span(S.argSigil, goldMatchingMod, predMatchingMod, selectionMod)(s + sigilSuffix): VdomElement
+                                <.span(S.argSigil, goldMatchingMod, /* predMatchingMod, */selectionMod)(s + sigilSuffix): VdomElement
                               ).getOrElse(
-                                <.span(S.argPlaceholder, goldMatchingMod, predMatchingMod, selectionMod){
+                                <.span(S.argPlaceholder, goldMatchingMod, /* predMatchingMod, */ selectionMod){
                                   val prefix = surrogateFrame.args.get(argSlot) match {
                                     case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
                                     case Some(Prep(p, _)) if p.endsWith(" do".lowerCase) => "do "
@@ -1474,7 +1554,7 @@ object VerbAnnUI {
                                             <.div(S.loadingNotice)("Loading frame..."))
                                         case Some(frame) => frameDisplayPane(
                                           dataIndex, curVerb.value, curDocMetasOpt, curSentenceOpt.value,
-                                          None, None, goldStructureRelationOpt, None, frame, None, None, None, None, None, argStructureChoiceOpt, argStructureHoverOpt, navQuery
+                                          None, /* None, */ goldStructureRelationOpt, /* None, */ frame, None, None, None, None, None, argStructureChoiceOpt, argStructureHoverOpt, navQuery
                                         )
                                       },
                                       (searchCtx, zoomOpt(curDocMetaOpt)(Reusability.by_==[DocumentMetadata])) match {
@@ -1501,7 +1581,7 @@ object VerbAnnUI {
                                                     curDocMeta.value,
                                                     curSentence.value,
                                                     goldStructureRelationOpt.get, // will be present bc sentence is present
-                                                    None,
+                                                    // None,
                                                     curVerb.value,
                                                     None,
                                                     curFrameset.value,
@@ -1532,7 +1612,7 @@ object VerbAnnUI {
                   EvalItemFetch.make(request = evalItemIndex, sendRequest = i => Remote(props.verbService.getParaphrasingInfo(i))) {
                     case EvalItemFetch.Loading => <.div(S.loadingNotice)("Loading evaluation data...")
                     case EvalItemFetch.Loaded(
-                      ParaphrasingInfo(sentenceId, verbIndex, verbFrameset, frameDistribution, predictions, initGoldParaphrases)
+                      ParaphrasingInfo(sentenceId, verbIndex, goldVerb, verbFrameset, frameDistribution, initGoldParaphrases)
                     ) =>
                       val docMeta = dataIndex.allDocumentMetas.find(_.id == SentenceId.fromString(sentenceId).documentId).get
                       DocFetch.make(request = docMeta.id, sendRequest = props.docService.getDocument) {
@@ -1545,17 +1625,18 @@ object VerbAnnUI {
                           def makeQid(qString: String) = {
                             QuestionId(SentenceId.fromString(sentenceId), verbIndex, qString)
                           }
-                          val goldStructureRelation = filterGoldDense(sentence.verbEntries(verbIndex))._2.toList.foldMap {
+                          val goldValidQuestionLabels = filterGoldNonDense(sentence.verbEntries(verbIndex))._2
+                          val goldStructureRelation = goldValidQuestionLabels.toList.foldMap {
                             case (qString, qLabel) =>
                               ClauseResolution.getFramesWithAnswerSlots(verb, qLabel.questionSlots).map { case (frame, slot) =>
                                 ClauseResolution.getClauseTemplate(frame) -> slot
                               }.unorderedFoldMap(x => FiniteRelation.single(makeQid(qLabel.questionString), x))
                           }
-                          val predStructureRelation = predictions.toList.foldMap { case (qString, (qSlots, spans)) =>
-                            ClauseResolution.getFramesWithAnswerSlots(verb, qSlots).map { case (frame, slot) =>
-                              ClauseResolution.getClauseTemplate(frame) -> slot
-                            }.unorderedFoldMap(x => FiniteRelation.single(makeQid(qString), x))
-                          }
+                          // val predStructureRelation = predictions.toList.foldMap { case (qString, (qSlots, spans)) =>
+                          //   ClauseResolution.getFramesWithAnswerSlots(verb, qSlots).map { case (frame, slot) =>
+                          //     ClauseResolution.getClauseTemplate(frame) -> slot
+                          //   }.unorderedFoldMap(x => FiniteRelation.single(makeQid(qString), x))
+                          // }
                           GoldParaphrasesLocal.make(initialValue = initGoldParaphrases) { curGoldParaphrases =>
                             val syncedGoldParaphrases = StateSnapshot.withReuse.prepare[VerbParaphraseLabels](
                               (vpOpt, cb) => vpOpt.fold(cb)(vp =>
@@ -1568,8 +1649,8 @@ object VerbAnnUI {
                             )(curGoldParaphrases.value)(Reusability.by_==[VerbParaphraseLabels])
 
                             ParaphrasingFilterLocal.make(initialValue = cachedParaphrasingFilter.value) { paraphrasingFilter =>
-                              val predictedParaphrases = predStructureRelation.image(predictions.keySet.map(makeQid)).map(predStruct =>
-                                predStruct -> paraphrasingFilter.value.getParaphrases(verbFrameset, frameDistribution, predStruct)
+                              val predictedParaphrases = goldStructureRelation.image(goldValidQuestionLabels.keySet.map(makeQid)).map(struct =>
+                                struct -> paraphrasingFilter.value.getParaphrases(verbFrameset, frameDistribution, struct)
                               ).toMap
                               BoolLocal.make(initialValue = false) { showInvalidQuestions =>
                                 <.div(S.mainContainer)(
@@ -1620,9 +1701,9 @@ object VerbAnnUI {
                                           None,
                                           Some(sentence),
                                           Some(verbIndex),
-                                          Some(predictions),
+                                          // Some(predictions),
                                           Some(goldStructureRelation),
-                                          Some(predStructureRelation),
+                                          // Some(predStructureRelation),
                                           verbFrameset,
                                           Some(frameDistribution),
                                           Some(syncedGoldParaphrases),
@@ -1639,7 +1720,7 @@ object VerbAnnUI {
                                             docMeta,
                                             sentence,
                                             goldStructureRelation,
-                                            Some(Map(verbIndex -> predictions)),
+                                            // Some(Map(verbIndex -> predictions)),
                                             verbFrameset.inflectedForms,
                                             Some(verbIndex),
                                             Some(verbFrameset),

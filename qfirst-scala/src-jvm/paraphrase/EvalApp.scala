@@ -75,50 +75,51 @@ object EvalApp extends IOApp {
   def runEvaluation(
     evalSet: Dataset,
     evaluationItems: Set[(InflectedForms, String, Int)],
-    predictions: Stream[IO, SentencePrediction[QABeam]],
-    filter: SimpleQAs.Filter,
+    // predictions: Stream[IO, SentencePrediction[QABeam]],
+    // filter: SimpleQAs.Filter,
     frameInductionResults: FrameInductionResults,
     paraphraseAnnotations: ParaphraseAnnotations
-  ) = for {
-    results <- predictions.map { predSentence =>
-      val goldSentence = evalSet.sentences(predSentence.sentenceId)
-      predSentence.verbs
-        .filter(verb => evaluationItems.contains((verb.verbInflectedForms, predSentence.sentenceId, verb.verbIndex)))
+  ) = {
+    val results = evalSet.sentences.toList.foldMap { case (sentenceId, sentence) =>
+      import shapeless._
+      import shapeless.syntax.singleton._
+      import shapeless.record._
+      import qfirst.metrics._
+      sentence.verbEntries.values.toList
+        .filter(verb => evaluationItems.contains((verb.verbInflectedForms, sentenceId, verb.verbIndex)))
         .flatMap { verb =>
-          paraphraseAnnotations.get(predSentence.sentenceId)
+          paraphraseAnnotations.get(sentenceId)
             .flatMap(_.get(verb.verbIndex))
             .map(verb -> _)
         }.flatMap { case (verb, goldParaphrases) =>
-            val goldVerb = goldSentence.verbEntries(verb.verbIndex)
-            val predictedQAs = protocol.filterBeam(filter, verb)
             val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
             val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
             frameInductionResults
-              .assignments.get(verb.verbInflectedForms).flatMap(_.get(predSentence.sentenceId)).flatMap(_.get(verb.verbIndex))
+              .assignments.get(verb.verbInflectedForms).flatMap(_.get(sentenceId)).flatMap(_.get(verb.verbIndex))
               .map(frameProbabilities =>
                 Evaluation.getVerbResults(
-                  goldVerb, predictedQAs, goldParaphrases,
+                  verb, goldParaphrases,
                   verbFrameset, frameProbabilities, paraphrasingFilter
                 )
               )
         }.combineAll
-    }.compile.foldMonoid
-    fullResults = {
+    }
+    val fullResults = {
       import shapeless._
       import shapeless.syntax.singleton._
       import shapeless.record._
       val numPredictedParaphrases = results("question template paraphrasing accuracy (correct QAs)").stats.predicted
-      val numCorrectQuestions = results("templated qa accuracy").correct.size
+      val numQuestions = results("number of questions")
 
       val numPredictedClauses = results("clause paraphrasing accuracy").stats.predicted
       val numVerbs = results("number of verbs")
 
       results +
-        ("paraphrases per question" ->> (numPredictedParaphrases.toDouble / numCorrectQuestions)) +
+        ("paraphrases per question" ->> (numPredictedParaphrases.toDouble / numQuestions)) +
         ("paraphrase clauses per verb" ->> (numPredictedClauses.toDouble / numVerbs))
     }
-    _ <- IO(println(getMetricsString(fullResults)))
-  } yield fullResults
+    IO(println(getMetricsString(fullResults))).as(fullResults)
+  }
 
   def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
@@ -127,7 +128,7 @@ object EvalApp extends IOApp {
       s"Creating new sample for evaluation at $evaluationItemsPath", {
         val rand = new scala.util.Random(86735932569L)
         val allItems = rand.shuffle(
-          evalSet.sentences.values.iterator.flatMap(sentence =>
+          filterDatasetNonDense(evalSet).sentences.values.iterator.flatMap(sentence =>
             sentence.verbEntries.values.toList.map(verb =>
               (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
             )
@@ -154,7 +155,7 @@ object EvalApp extends IOApp {
     val evalSetFilename = s"$evalSetName.jsonl.gz"
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
 
-    val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
+    // val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
     val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
 
     val outDir = predDir.resolve(relativeFramesDir)
@@ -165,17 +166,17 @@ object EvalApp extends IOApp {
     val evaluationItemsPath = predDir.resolve(s"eval-sample-$evalSetName.jsonl")
 
     for {
-      evalSet <- logOp(s"Reading $evalSetName set", qasrl.bank.Data.readDataset(evalSetPath))
+      evalSet <- logOp(s"Reading $evalSetName set", readDataset(evalSetPath))
       evaluationItems <- getEvaluationItems(evalSet, evaluationItemsPath)
-      filter <- {
-        import io.circe.generic.auto._
-        FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
-      }
-      predictions = {
-        import qasrl.data.JsonCodecs._
-        import io.circe.generic.auto._
-        FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
-      }
+      // filter <- {
+      //   import io.circe.generic.auto._
+      //   FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
+      // }
+      // predictions = {
+      //   import qasrl.data.JsonCodecs._
+      //   import io.circe.generic.auto._
+      //   FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
+      // }
       paraphraseGold <- {
         if(!Files.exists(paraphraseGoldPath)) {
           IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
@@ -187,7 +188,7 @@ object EvalApp extends IOApp {
         FileUtil.readJson[FrameInductionResults](resultsPath)
       )
       _ <- runEvaluation(
-        evalSet, evaluationItems.toSet, predictions, filter, frameInductionResults, paraphraseGold
+        evalSet, evaluationItems.toSet, frameInductionResults, paraphraseGold
       )
     } yield ExitCode.Success
   }

@@ -147,9 +147,9 @@ object FrameInductionApp extends IOApp {
                 qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
               )
             }
-          }.filter(_._2.nonEmpty)
-        }.filter(_._2.nonEmpty)
-      }.filter(_._2.nonEmpty)
+          }
+        }
+      }
   }
 
   import breeze.linalg.DenseVector
@@ -190,26 +190,26 @@ object FrameInductionApp extends IOApp {
     ).map(_.head)
   }
 
-  def getPredictedInstances(
-    predictions: Stream[IO, SentencePrediction[QABeam]],
-    filter: SimpleQAs.Filter
-  ): IO[Instances] = {
-    val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
-    predictions.map { sentencePred =>
-      sentencePred.verbs.foldMap(
-        verbPred => Map(
-          verbPred.verbInflectedForms -> Map(
-            sentencePred.sentenceId -> Map(
-              verbPred.verbIndex ->
-                protocol.filterBeam(filter, verbPred).map {
-                  case (qString, (slots, spans)) => slots -> spans
-                }
-            ).filter(_._2.nonEmpty)
-          ).filter(_._2.nonEmpty)
-        ).filter(_._2.nonEmpty)
-      )
-    }.compile.foldMonoid
-  }
+  // def getPredictedInstances(
+  //   predictions: Stream[IO, SentencePrediction[QABeam]],
+  //   filter: SimpleQAs.Filter
+  // ): IO[Instances] = {
+  //   val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
+  //   predictions.map { sentencePred =>
+  //     sentencePred.verbs.foldMap(
+  //       verbPred => Map(
+  //         verbPred.verbInflectedForms -> Map(
+  //           sentencePred.sentenceId -> Map(
+  //             verbPred.verbIndex ->
+  //               protocol.filterBeam(filter, verbPred).map {
+  //                 case (qString, (slots, spans)) => slots -> spans
+  //               }
+  //           ).filter(_._2.nonEmpty)
+  //         ).filter(_._2.nonEmpty)
+  //       ).filter(_._2.nonEmpty)
+  //     )
+  //   }.compile.foldMonoid
+  // }
 
   import qfirst.paraphrase.models._
   import breeze.stats.distributions.Multinomial
@@ -222,7 +222,7 @@ object FrameInductionApp extends IOApp {
     val algorithm = new CompositeClusteringAlgorithm {
       val _1 = DirichletMAPClustering
       val _2 = VectorMeanClustering
-      val lambda = 0.8
+      val lambda = 0.0
     }
     val verbCounts = instances.map { case (forms, sentMap) => forms -> sentMap.iterator.map(_._2.size).sum }
     val verbs = instances.map { case (forms, sentMap) =>
@@ -288,7 +288,9 @@ object FrameInductionApp extends IOApp {
           )
         )
       } yield {
-        val prior = Multinomial(assignments.iterator.map(_.params).reduce(_ + _))
+        val prior = Multinomial(assignments.iterator.map(m => m.params / m.sum).reduce(_ + _))
+        println(prior)
+        println(assignments)
         val frames = model.map(getFrame).zipWithIndex.map { case (frameClauses, clusterIndex) =>
           VerbFrame(frameClauses, Map(), prior.probabilityOf(clusterIndex))
         }
@@ -553,7 +555,7 @@ object FrameInductionApp extends IOApp {
     val evalSetFilename = s"$evalSetName.jsonl.gz"
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
     val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
-    val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
+    // val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
     val outDir = relativeOutDirOpt.map(predDir.resolve).getOrElse {
       scala.collection.immutable.Stream.from(0)
         .map(i => predDir.resolve(s"trial-$i"))
@@ -574,26 +576,27 @@ object FrameInductionApp extends IOApp {
         import sys.process._
         IO(s"touch ${outDir.resolve("dev")}".!)
       }
-      trainSet <- logOp("Reading training set", qasrl.bank.Data.readDataset(qasrlBankPath.resolve("expanded").resolve(trainSetFilename)))
+      trainSet <- logOp("Reading training set", readDataset(qasrlBankPath.resolve("expanded").resolve(trainSetFilename)))
       trainInstances <- logOp("Constructing training instances", getGoldInstances(trainSet))
-      filter <- {
-        import qasrl.data.JsonCodecs._
-        import io.circe.generic.auto._
-        FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
-      }
-      predInstances <- logOp(
-        "Loading predictions",
-        {
-          import qasrl.data.JsonCodecs._
-          import io.circe.generic.auto._
-          getPredictedInstances(FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename), filter)
-        }
-      )
-      fullEvalSet <- logOp("Reading full eval set", qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve(evalSetFilename)))
+      evalSet <- logOp("Reading full eval set", readDataset(qasrlBankPath.resolve("orig").resolve(evalSetFilename)))
+      evalInstances <- logOp("Constructing eval instances", getGoldInstances(evalSet))
+      // filter <- {
+      //   import qasrl.data.JsonCodecs._
+      //   import io.circe.generic.auto._
+      //   FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
+      // }
+      // predInstances <- logOp(
+      //   "Loading predictions",
+      //   {
+      //     import qasrl.data.JsonCodecs._
+      //     import io.circe.generic.auto._
+      //     getPredictedInstances(FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename), filter)
+      //   }
+      // )
       trainElmoVecs <- getGoldELMoInstances(trainSet, s"qasrl-v2-elmo/$trainSetName")
-      evalElmoVecs <- getGoldELMoInstances(fullEvalSet, s"qasrl-v2-elmo/$evalSetName")
+      evalElmoVecs <- getGoldELMoInstances(evalSet, s"qasrl-v2-elmo/$evalSetName")
       results <- runVerbWiseSoftEMWithComposite(
-        instances = trainInstances |+| predInstances,
+        instances = trainInstances |+| evalInstances,
         elmoVecs = trainElmoVecs |+| evalElmoVecs,
         rand = new scala.util.Random(3266435L)
       )
@@ -604,14 +607,14 @@ object FrameInductionApp extends IOApp {
             IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
         } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
       }
-      predictionsStream = {
-        import qasrl.data.JsonCodecs._
-        import io.circe.generic.auto._
-        FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
-      }
-      evalSet <- logOp("Reading eval set", qasrl.bank.Data.readDataset(evalSetPath))
+      // predictionsStream = {
+      //   import qasrl.data.JsonCodecs._
+      //   import io.circe.generic.auto._
+      //   FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
+      // }
+      // evalSet <- logOp("Reading eval set", readDataset(evalSetPath))
       evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
-      _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, predictionsStream, filter, results, paraphraseGold)
+      _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, results, paraphraseGold)
       _ <- saveForQA(trainSet |+| evalSet, results, outForQAPath)
     } yield ExitCode.Success
 

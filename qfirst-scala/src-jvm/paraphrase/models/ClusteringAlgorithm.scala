@@ -119,7 +119,11 @@ trait ClusteringAlgorithm {
     model: Vector[ClusterParam]
   ): (Vector[DenseMultinomial], Vector[Double]) = {
     val allLosses = computeLosses(instances, model)
-    val assignments = allLosses.map(v => Multinomial(exp(DenseVector(v.toArray))))
+    val assignments = allLosses.map { v =>
+      val vec = DenseVector(v.toArray)
+      val probs = exp(vec - logSumExp(vec)) // normalize first to keep stable
+      Multinomial(probs)
+    }
     val instanceLosses = assignments.map(_.sum)
     (assignments, instanceLosses)
   }

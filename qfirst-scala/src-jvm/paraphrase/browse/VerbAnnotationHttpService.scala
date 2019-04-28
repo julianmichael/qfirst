@@ -62,7 +62,7 @@ import EvalApp.ParaphraseAnnotations
 case class VerbFrameServiceIO(
   inflectionCounts: Map[InflectedForms, Int],
   frameInductionResults: FrameInductionResults,
-  sentencePredictions: Map[String, Map[Int, Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]]],
+  dataset: Dataset,
   getEvaluationItem: Int => (InflectedForms, String, Int), // sentence ID, verb index
   paraphraseStoreRef: Ref[IO, ParaphraseAnnotations],
   saveParaphrases: ParaphraseAnnotations => IO[Unit]
@@ -80,8 +80,9 @@ case class VerbFrameServiceIO(
     val frameDistribution = frameInductionResults.assignments(verbInflectedForms)(sentenceId)(verbIndex)
     paraphraseStoreRef.get.map(paraphrases =>
       ParaphrasingInfo(
-        sentenceId, verbIndex, verbFrameset, frameDistribution,
-        sentencePredictions(sentenceId)(verbIndex),
+        sentenceId, verbIndex,
+        dataset.sentences(sentenceId).verbEntries(verbIndex),
+        verbFrameset, frameDistribution,
         paraphrases.get(sentenceId).flatMap(_.get(verbIndex)).getOrElse(VerbParaphraseLabels.empty)
       )
     )

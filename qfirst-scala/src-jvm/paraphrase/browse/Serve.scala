@@ -77,13 +77,17 @@ object Serve extends IOApp {
         FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
       }
 
+      implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
       val inputSet = if(dev) data.devExpanded else data.trainExpanded
-      val inflectionCounts = Dataset.verbEntries.getAll(inputSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+      val evalSet = data.devExpanded // TODO test as well
+      val fullSet = inputSet |+| evalSet
+      val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
 
       // TODO include test as well
       val evaluationItemsPath = predDir.resolve("eval-sample-dev.jsonl")
 
       val predFilename = predDir.resolve("predictions.jsonl")
+
 
       for {
         frameInductionResults <- {
@@ -92,34 +96,35 @@ object Serve extends IOApp {
             FileUtil.readJson[FrameInductionResults](coindexedFramesPath)
           } else FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
         }
-        filter <- {
-          import io.circe.generic.auto._
-          FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
-        }
-        predictions <- {
-          import qasrl.data.JsonCodecs._
-          import io.circe.generic.auto._
-          FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename).map { predSentence =>
-            val verbMap = predSentence.verbs.foldMap { verb =>
-              val predictedQAs = protocol.filterBeam(filter, verb)
-              Vector(verb.verbIndex -> predictedQAs)
-            }
-            Map(predSentence.sentenceId -> verbMap)
-          }.compile.foldMonoid.map(_.map { case (k, vs) => k -> vs.toMap })
-        }
+        // filter <- {
+        //   import io.circe.generic.auto._
+        //   FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
+        // }
+        // predictions <- {
+        //   import qasrl.data.JsonCodecs._
+        //   import io.circe.generic.auto._
+        //   FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename).map { predSentence =>
+        //     val verbMap = predSentence.verbs.foldMap { verb =>
+        //       val predictedQAs = protocol.filterBeam(filter, verb)
+        //       Vector(verb.verbIndex -> predictedQAs)
+        //     }
+        //     Map(predSentence.sentenceId -> verbMap)
+        //   }.compile.foldMonoid.map(_.map { case (k, vs) => k -> vs.toMap })
+        // }
         goldParaphrases <- {
           if(!Files.exists(paraphraseGoldPath)) {
             IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
               IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
           } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
         }
-        evaluationItems <- EvalApp.getEvaluationItems(data.devDense, evaluationItemsPath)
+        evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
         goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
         annotationService = VerbFrameHttpService.make(
           VerbFrameServiceIO(
             inflectionCounts,
             frameInductionResults,
-            predictions,
+            fullSet,
+            // predictions,
             evaluationItems.apply,
             goldParaphraseDataRef,
             saveData)

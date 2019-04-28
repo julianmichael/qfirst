@@ -484,7 +484,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val questionCell = style(
     questionCellPadding,
-    width(16 rem)
+    width(25 rem)
   )
   val questionText = style()
 

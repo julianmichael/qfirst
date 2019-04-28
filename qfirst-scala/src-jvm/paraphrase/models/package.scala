@@ -28,6 +28,12 @@ package object models {
     }.left.get // will always be present for prob dist
   }
 
+  def logSumExp(args: DenseVector[Double]): Double = {
+    val maxElement = max(args)
+    val sumExp = sum(exp(args - maxElement))
+    log(sumExp) + maxElement
+  }
+
   def logSumExp[F[_]: Foldable](args: F[Double]): Double = {
     val max = args.maximumOption.getOrElse(0.0)
     val sumExp = args.foldMap(x => math.exp(x - max))

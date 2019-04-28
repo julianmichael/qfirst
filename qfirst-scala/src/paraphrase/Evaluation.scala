@@ -53,7 +53,7 @@ object Evaluation {
 
   def getVerbResults(
     gold: VerbEntry,
-    predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
+    // predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
     goldParaphrases: VerbParaphraseLabels,
     verbFrameset: VerbFrameset,
     frameProbabilities: Vector[Double],
@@ -66,32 +66,32 @@ object Evaluation {
       .groupBy(_._1).map { case (struct, labels) =>
         struct -> labels.unorderedFoldMap(_._2.answerJudgments.flatMap(_.judgment.getAnswer).unorderedFoldMap(_.spans))
     }
-    val predictedQAPairs = predictedQAs.values.toList
-    val predictedStructures = ClauseResolution.getResolvedStructures(predictedQAPairs.map(_._1))
-    val predictedStructurePairs = predictedStructures.zip(predictedQAPairs)
-      .groupBy(_._1).map { case (struct, pairs) =>
-        struct -> pairs.foldMap(_._2._2)
-    }
+    // val predictedQAPairs = predictedQAs.values.toList
+    // val predictedStructures = ClauseResolution.getResolvedStructures(predictedQAPairs.map(_._1))
+    // val predictedStructurePairs = predictedStructures.zip(predictedQAPairs)
+    //   .groupBy(_._1).map { case (struct, pairs) =>
+    //     struct -> pairs.foldMap(_._2._2)
+    // }
 
-    val questionWithAnswerBoundedAcc = predictedQAs.values.toList.foldMap { case (predQuestion, predSpans) =>
-      val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
-      if(goldInvalid.contains(predQString)) BoundedAcc.incorrect(predQuestion)
-      else goldValid.get(predQString).fold(BoundedAcc.uncertain(predQuestion)) { goldQLabel =>
-        val goldSpans = goldQLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
-        if(goldSpans.intersect(predSpans).nonEmpty) BoundedAcc.correct(predQuestion)
-        else BoundedAcc.incorrect(predQuestion)
-      }
-    }
-    val templatedQAAcc = predictedStructurePairs.toList.foldMap { case pred @ (predStruct, predSpans) =>
-      if(goldValidStructurePairs.get(predStruct).exists(_.exists(predSpans.contains))) Accuracy.correct(pred)
-      else Accuracy.incorrect(pred)
-    }
-    val templatedQuestionAcc = predictedStructurePairs.keys.toList.foldMap(struct =>
-      if(goldValidStructurePairs.contains(struct)) Accuracy.correct(struct) else Accuracy.incorrect(struct)
-    )
+    // val questionWithAnswerBoundedAcc = predictedQAs.values.toList.foldMap { case (predQuestion, predSpans) =>
+    //   val predQString = predQuestion.renderQuestionString(gold.verbInflectedForms)
+    //   if(goldInvalid.contains(predQString)) BoundedAcc.incorrect(predQuestion)
+    //   else goldValid.get(predQString).fold(BoundedAcc.uncertain(predQuestion)) { goldQLabel =>
+    //     val goldSpans = goldQLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+    //     if(goldSpans.intersect(predSpans).nonEmpty) BoundedAcc.correct(predQuestion)
+    //     else BoundedAcc.incorrect(predQuestion)
+    //   }
+    // }
+    // val templatedQAAcc = predictedStructurePairs.toList.foldMap { case pred @ (predStruct, predSpans) =>
+    //   if(goldValidStructurePairs.get(predStruct).exists(_.exists(predSpans.contains))) Accuracy.correct(pred)
+    //   else Accuracy.incorrect(pred)
+    // }
+    // val templatedQuestionAcc = predictedStructurePairs.keys.toList.foldMap(struct =>
+    //   if(goldValidStructurePairs.contains(struct)) Accuracy.correct(struct) else Accuracy.incorrect(struct)
+    // )
 
     // TODO perhaps do something with paraphrasing of incorrect QA pairs as well?
-    val predictedParaphrases = templatedQuestionAcc.correct.toSet[(ArgStructure, ArgumentSlot)].map(struct =>
+    val predictedParaphrases = goldValidStructures.map(struct =>
       struct -> filter.getParaphrases(verbFrameset, frameProbabilities, struct)
     ).toMap
     val novelParaphrasingClauses = predictedParaphrases.unorderedFold.map(_._1) -- predictedParaphrases.keySet.map(_._1)
@@ -99,18 +99,20 @@ object Evaluation {
       verbFrameset, novelParaphrasingClauses, goldParaphrases
     )
 
-    val paraphrasingBoundedAcc = templatedQAAcc.correct.foldMap { case (predStruct, _) =>
-      predictedParaphrases(predStruct).toList.foldMap(predParaphrase =>
-        if(goldParaphrases.incorrectClauses.contains(predParaphrase._1)) BoundedAcc.incorrect(predStruct -> predParaphrase)
-        else if(goldParaphrases.paraphrases.equal(predStruct, predParaphrase)) BoundedAcc.correct(predStruct -> predParaphrase)
-        else if(goldParaphrases.paraphrases.apart(predStruct, predParaphrase)) BoundedAcc.incorrect(predStruct -> predParaphrase)
-        else BoundedAcc.uncertain(predStruct -> predParaphrase)
+    val paraphrasingBoundedAcc = goldValidStructures.foldMap { struct =>
+      predictedParaphrases(struct).toList.foldMap(predParaphrase =>
+        if(goldParaphrases.incorrectClauses.contains(predParaphrase._1)) BoundedAcc.incorrect(struct -> predParaphrase)
+        else if(goldParaphrases.paraphrases.equal(struct, predParaphrase)) BoundedAcc.correct(struct -> predParaphrase)
+        else if(goldParaphrases.paraphrases.apart(struct, predParaphrase)) BoundedAcc.incorrect(struct -> predParaphrase)
+        else BoundedAcc.uncertain(struct -> predParaphrase)
       )
     }
+    // "question+answer accuracy" ->> questionWithAnswerBoundedAcc ::
+    // "templated qa accuracy" ->> templatedQAAcc ::
+    // "templated question accuracy" ->> templatedQuestionAcc ::
+
     "number of verbs" ->> 1 ::
-      "question+answer accuracy" ->> questionWithAnswerBoundedAcc ::
-      "templated qa accuracy" ->> templatedQAAcc ::
-      "templated question accuracy" ->> templatedQuestionAcc ::
+      "number of questions" ->> goldValidStructures.size ::
       "clause paraphrasing accuracy" ->> clauseParaphrasingBoundedAcc ::
       "question template paraphrasing accuracy (correct QAs)" ->> paraphrasingBoundedAcc ::
       HNil
