@@ -1,6 +1,4 @@
-package qfirst.learn
-import qfirst.metrics.HasMetrics
-import qfirst.metrics.Metric
+package qfirst.metrics
 import qfirst.MapTree
 
 import cats.Monoid

@@ -75,8 +75,6 @@ object EvalApp extends IOApp {
   def runEvaluation(
     evalSet: Dataset,
     evaluationItems: Set[(InflectedForms, String, Int)],
-    // predictions: Stream[IO, SentencePrediction[QABeam]],
-    // filter: SimpleQAs.Filter,
     frameInductionResults: FrameInductionResults,
     paraphraseAnnotations: ParaphraseAnnotations
   ) = {
@@ -155,7 +153,6 @@ object EvalApp extends IOApp {
     val evalSetFilename = s"$evalSetName.jsonl.gz"
     val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
 
-    // val predFilename = if(testOnTest) predDir.resolve("predictions-test.jsonl") else predDir.resolve("predictions.jsonl")
     val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
 
     val outDir = predDir.resolve(relativeFramesDir)
@@ -168,15 +165,6 @@ object EvalApp extends IOApp {
     for {
       evalSet <- logOp(s"Reading $evalSetName set", readDataset(evalSetPath))
       evaluationItems <- getEvaluationItems(evalSet, evaluationItemsPath)
-      // filter <- {
-      //   import io.circe.generic.auto._
-      //   FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
-      // }
-      // predictions = {
-      //   import qasrl.data.JsonCodecs._
-      //   import io.circe.generic.auto._
-      //   FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename)
-      // }
       paraphraseGold <- {
         if(!Files.exists(paraphraseGoldPath)) {
           IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>

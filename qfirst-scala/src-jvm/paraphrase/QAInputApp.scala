@@ -102,37 +102,6 @@ object CoindexingApp extends IOApp {
     verbs: Map[String, List[ClauseQAOutput]]
   )
 
-  // def getFuzzyEquivalences(
-  //   dataset: Dataset,
-  //   qaOutputs: Map[String, SentenceQAOutput]
-  // ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]] = {
-  //   val adjacencyPcountsByVerb = dataset.sentences.values.toList.foldMap { sentence =>
-  //     val sid = sentence.sentenceId
-  //     val sentenceQAOutput = qaOutputs(sid)
-  //     val pcountListsByVerb = sentence.verbEntries.values.toList.foldMap { verb =>
-  //       val verbInflectedForms = verb.verbInflectedForms
-  //       val verbQAOutput = sentenceQAOutput.verbs(verbIndex.toString)
-  //       val adjacencyPcounts = verbQAOutput.tails.flatMap {
-  //         case Nil => Nil
-  //         case fst :: tail => tail.map { snd =>
-  //           (fst.question -> snd.question, adjacencyProb(fst.spans, snd.spans))
-  //         }
-  //       }.toVector
-  //       Map(verbInflectedForms -> adjacencyPcounts)
-  //     }
-  //     pcountListsByVerb.map { case (verbForms, pcountList) =>
-  //       val pcountsByQpair = pcountList.groupBy(_._1)
-  //       val pcountsByUnorderedQpair = pcountsByQpair.map { case (qpair, pcounts) =>
-  //         pcounts ++ pcountsByQpair.getOrElse(qpair.swap, Vector())
-  //       }
-  //       val probsByUnorderedQpair = pcountsByUnorderedQpair.map { case (qpair, pcounts) =>
-  //         qpair -> (pcounts.sum / pcounts.size)
-  //       }
-  //       verbForms -> probsByUnorderedQpair
-  //     }
-  //   }
-  // }
-
   def getPerFrameFuzzyEquivalences(
     dataset: Dataset,
     frameInductionResults: FrameInductionResults,
