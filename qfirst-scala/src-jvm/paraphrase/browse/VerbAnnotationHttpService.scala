@@ -3,7 +3,6 @@ import qfirst.paraphrase._
 
 import qfirst.frames.ArgumentSlot
 import qfirst.frames.Frame
-import qfirst.frames.SimpleFrameInduction
 
 import qasrl.bank.DataIndex
 import qasrl.bank.Document
@@ -61,7 +60,7 @@ import EvalApp.ParaphraseAnnotations
 
 case class VerbFrameServiceIO(
   inflectionCounts: Map[InflectedForms, Int],
-  frameInductionResults: FrameInductionResults,
+  verbFramesets: Map[InflectedForms, VerbFrameset],
   dataset: Dataset,
   getEvaluationItem: Int => (InflectedForms, String, Int), // sentence ID, verb index
   paraphraseStoreRef: Ref[IO, ParaphraseAnnotations],
@@ -72,12 +71,12 @@ case class VerbFrameServiceIO(
     IO.pure(inflectionCounts)
 
   def getFrameset(verb: InflectedForms): IO[VerbFrameset] =
-    IO(frameInductionResults.frames(verb))
+    IO(verbFramesets(verb))
 
   def getParaphrasingInfo(i: Int): IO[ParaphrasingInfo] = {
     val (verbInflectedForms, sentenceId, verbIndex) = getEvaluationItem(i)
-    val verbFrameset = frameInductionResults.frames(verbInflectedForms)
-    val frameDistribution = frameInductionResults.assignments(verbInflectedForms)(sentenceId)(verbIndex)
+    val verbFrameset = verbFramesets(verbInflectedForms)
+    val frameDistribution = verbFrameset.instances(VerbId(sentenceId, verbIndex))
     paraphraseStoreRef.get.map(paraphrases =>
       ParaphrasingInfo(
         sentenceId, verbIndex,

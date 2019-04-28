@@ -558,6 +558,17 @@ object MetricsApp extends IOApp {
     }
   }
 
+  def readClauseInfo(
+    path: NIOPath
+  ): IO[Map[String, Map[Int, Map[String, FrameInfo]]]] = {
+    FileUtil.readJsonLines[FrameInfo](path)
+      .map(fi => Map(fi.sentenceId -> Map(fi.verbIndex -> Map(fi.question -> List(fi)))))
+      .compile.foldMonoid.map(
+        // non-ideal.. would instead want a recursive combine that overrides and doesn't need the end mapping
+        _.transform { case (sid, vs) => vs.transform { case (vi, qs) => qs.transform { case (q, fis) => fis.head } } }
+      )
+  }
+
   sealed trait MetricsMode {
     override def toString = this match {
       case Dense => "dense"
@@ -617,7 +628,7 @@ object MetricsApp extends IOApp {
         IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       }
     )
-    clauseInfoOpt = clauseInfoPathOpt.map(FileUtil.readClauseInfo)
+    clauseInfoOpt = clauseInfoPathOpt.map(readClauseInfo)
     beamProtocol <- {
       import qfirst.protocols._
       import qasrl.data.JsonCodecs._

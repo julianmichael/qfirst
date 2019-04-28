@@ -102,40 +102,35 @@ object CoindexingApp extends IOApp {
     verbs: Map[String, List[ClauseQAOutput]]
   )
 
-  def getPerFrameFuzzyEquivalences(
+  def getFuzzyArgumentEquivalences(
     dataset: Dataset,
-    frameInductionResults: FrameInductionResults,
+    frameset: VerbFrameset,
     qaOutputs: Map[String, SentenceQAOutput]
-  ): Map[InflectedForms, List[Map[(ClausalQ, ClausalQ), Double]]] = {
-    frameInductionResults.frames.transform { case (verbForms, frameset) =>
-      val verbAssignments = frameInductionResults.assignments(verbForms)
-      frameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
-        val clauseTemplateSet = frame.clauseTemplates.map(_.args).toSet
-        val adjacencyInstances = verbAssignments.toList.foldMap { case (sentenceId, sentenceAssignments) =>
-          val sentenceQAs = qaOutputs(sentenceId)
-          sentenceAssignments.toList.foldMap { case (verbIndex, frameDist) =>
-            if(frameDist(frameIndex) != frameDist.max) Vector() else {
-              val verbQAs = sentenceQAs.verbs.getOrElse(verbIndex.toString, Vector())
-              val adjacencyPcounts = verbQAs.tails.flatMap {
-                case Nil => Nil
-                case fst :: tail => tail.map { snd =>
-                  (fst.question.clausalQ -> snd.question.clausalQ, adjacencyProb(fst.spans, snd.spans))
-                }
-              }.toVector
-              adjacencyPcounts
-            }
+  ): List[Map[(ClausalQ, ClausalQ), Double]] = {
+    val verbForms = frameset.inflectedForms
+    frameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
+      val clauseTemplateSet = frame.clauseTemplates.map(_.args).toSet
+      val adjacencyInstances = frameset.instances.toList.foldMap {
+        case (VerbId(sentenceId, verbIndex), frameDist) =>
+          if(frameDist(frameIndex) != frameDist.max) Vector() else {
+            val verbQAs = qaOutputs(sentenceId).verbs.getOrElse(verbIndex.toString, Vector())
+            val adjacencyPcounts = verbQAs.tails.flatMap {
+              case Nil => Nil
+              case fst :: tail => tail.map { snd =>
+                (fst.question.clausalQ -> snd.question.clausalQ, adjacencyProb(fst.spans, snd.spans))
+              }
+            }.toVector
+            adjacencyPcounts
           }
-        }
-
-        val instancesByQpair = adjacencyInstances.groupBy(_._1)
-        val instancesByUnorderedQpair = instancesByQpair.transform { case (qpair, instances) =>
-          (instances ++ instancesByQpair.getOrElse(qpair.swap, Vector())).map(_._2)
-        }
-        val probsByUnorderedQpair = instancesByUnorderedQpair.map { case (qpair, instances) =>
-          qpair -> (instances.sum / instances.size)
-        }
-        probsByUnorderedQpair
       }
+      val instancesByQpair = adjacencyInstances.groupBy(_._1)
+      val instancesByUnorderedQpair = instancesByQpair.transform { case (qpair, instances) =>
+        (instances ++ instancesByQpair.getOrElse(qpair.swap, Vector())).map(_._2)
+      }
+      val probsByUnorderedQpair = instancesByUnorderedQpair.map { case (qpair, instances) =>
+        qpair -> (instances.sum / instances.size)
+      }
+      probsByUnorderedQpair
     }
   }
 

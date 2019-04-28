@@ -48,97 +48,56 @@ object Serve extends IOApp {
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
-    qasrlBankPath: Path,
-    predDir: Path,
-    relativeOutDir: String,
-    domain: String, port: Int
+    experimentName: String,
+    testOnTest: Boolean,
+    domain: String,
+    port: Int
   ): IO[ExitCode] = {
-    IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get).flatMap { data =>
-      val outDir = predDir.resolve(relativeOutDir)
-      val dev = Files.exists(outDir.resolve("dev"))
-
-      val docApiSuffix = "doc"
-      val verbApiSuffix = "verb"
-      val pageService = StaticPageService.makeService(
-        domain,
-        docApiSuffix, verbApiSuffix,
-        dev,
-        jsDepsPath, jsPath, port
-      )
-
-      val index = data.index
-      val docs = data.documentsById
-      val searchIndex = Search.createSearchIndex(docs.values.toList)
-      val docService = HttpDocumentService.makeService(index, docs, searchIndex)
-
-      val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
-
-      val saveData = (data: ParaphraseAnnotations) => {
-        FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
-      }
-
-      implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
-      val inputSet = if(dev) data.devExpanded else data.trainExpanded
-      val evalSet = data.devExpanded // TODO test as well
-      val fullSet = inputSet |+| evalSet
-      val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-
-      // TODO include test as well
-      val evaluationItemsPath = predDir.resolve("eval-sample-dev.jsonl")
-
-      val predFilename = predDir.resolve("predictions.jsonl")
-
-
-      for {
-        frameInductionResults <- {
-          val coindexedFramesPath = outDir.resolve("results-coindexed.json")
-          if(Files.exists(coindexedFramesPath)) {
-            FileUtil.readJson[FrameInductionResults](coindexedFramesPath)
-          } else FileUtil.readJson[FrameInductionResults](outDir.resolve("results.json"))
-        }
-        // filter <- {
-        //   import io.circe.generic.auto._
-        //   FileUtil.readJson[SimpleQAs.Filter](predDir.resolve("filter.json"))
-        // }
-        // predictions <- {
-        //   import qasrl.data.JsonCodecs._
-        //   import io.circe.generic.auto._
-        //   FileUtil.readJsonLines[SentencePrediction[QABeam]](predFilename).map { predSentence =>
-        //     val verbMap = predSentence.verbs.foldMap { verb =>
-        //       val predictedQAs = protocol.filterBeam(filter, verb)
-        //       Vector(verb.verbIndex -> predictedQAs)
-        //     }
-        //     Map(predSentence.sentenceId -> verbMap)
-        //   }.compile.foldMonoid.map(_.map { case (k, vs) => k -> vs.toMap })
-        // }
-        goldParaphrases <- {
-          if(!Files.exists(paraphraseGoldPath)) {
-            IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
-              IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
-          } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
-        }
-        evaluationItems <- EvalApp.getEvaluationItems(evalSet, evaluationItemsPath)
-        goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
-        annotationService = VerbFrameHttpService.make(
-          VerbFrameServiceIO(
-            inflectionCounts,
-            frameInductionResults,
-            fullSet,
-            // predictions,
-            evaluationItems.apply,
-            goldParaphraseDataRef,
-            saveData)
+    Config.make(experimentName, None, testOnTest).flatMap { config =>
+      config.readWholeQasrlBank.flatMap { data =>
+        val docApiSuffix = "doc"
+        val verbApiSuffix = "verb"
+        val pageService = StaticPageService.makeService(
+          domain,
+          docApiSuffix, verbApiSuffix,
+          config.trainOnDev,
+          jsDepsPath, jsPath, port
         )
-        app = Router(
-          "/" -> pageService,
-          s"/$docApiSuffix" -> docService,
-          s"/$verbApiSuffix" -> annotationService,
-        ).orNotFound
-        _ <- BlazeServerBuilder[IO]
-        .bindHttp(port, "0.0.0.0")
-        .withHttpApp(app)
-        .serve.compile.drain
-      } yield ExitCode.Success
+
+        val index = data.index
+        val docs = data.documentsById
+        val searchIndex = Search.createSearchIndex(docs.values.toList)
+        val docService = HttpDocumentService.makeService(index, docs, searchIndex)
+
+        implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+        val fullSet = config.getInputSet(data) |+| config.getEvalSet(data)
+        val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+
+        for {
+          verbFramesets <- config.readFramesets
+          goldParaphrases <- config.readGoldParaphrases
+          evaluationItems <- config.getEvaluationItems
+          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+          annotationService = VerbFrameHttpService.make(
+            VerbFrameServiceIO(
+              inflectionCounts,
+              verbFramesets,
+              fullSet,
+              evaluationItems.apply,
+              goldParaphraseDataRef,
+              config.saveGoldParaphrases(_))
+          )
+          app = Router(
+            "/" -> pageService,
+            s"/$docApiSuffix" -> docService,
+            s"/$verbApiSuffix" -> annotationService,
+            ).orNotFound
+          _ <- BlazeServerBuilder[IO]
+          .bindHttp(port, "0.0.0.0")
+          .withHttpApp(app)
+          .serve.compile.drain
+        } yield ExitCode.Success
+      }
     }
   }
 
@@ -152,17 +111,13 @@ object Serve extends IOApp {
       "js", metavar = "path", help = "Where to get the JS main file."
     )
 
-    val qasrlBankO = Opts.option[Path](
-      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank 2.0 data, e.g., ../qasrl-bank/data/qasrl-v2."
+    val experimentNameO = Opts.option[String](
+      "name", metavar = "path", help = "Relative path to the model output directory."
     )
 
-    val predO = Opts.option[Path](
-      "qasrl-pred", metavar = "path", help = "Where the predictions and saved info is."
-    )
-
-    val outO = Opts.option[String](
-      "out", metavar = "path", help = "Relative path to the model output directory."
-    )
+    val testOnTestO = Opts.flag(
+      "test", help = "Whether to view results on the test data."
+    ).orFalse
 
     val domainO = Opts.option[String](
       "domain", metavar = "domain", help = "domain name the server is being hosted at."
@@ -180,7 +135,7 @@ object Serve extends IOApp {
     val command = Command(
       name = "mill -i qfirst.jvm.runVerbAnn",
       header = "Spin up the annotation server for QA-SRL Clause frames.") {
-      (jsDepsPathO, jsPathO, qasrlBankO, predO, outO, domainO, portO).mapN(_run(_, _, _, _, _, _, _))
+      (jsDepsPathO, jsPathO, experimentNameO, testOnTestO, domainO, portO).mapN(_run)
     }
 
     command.parse(args) match {

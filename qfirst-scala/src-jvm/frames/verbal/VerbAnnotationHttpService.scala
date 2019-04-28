@@ -2,7 +2,6 @@ package qfirst.frames.verbal
 
 import qfirst.frames.ArgumentSlot
 import qfirst.frames.Frame
-import qfirst.frames.SimpleFrameInduction
 
 import qasrl.bank.DataIndex
 import qasrl.bank.Document

@@ -75,7 +75,7 @@ object EvalApp extends IOApp {
   def runEvaluation(
     evalSet: Dataset,
     evaluationItems: Set[(InflectedForms, String, Int)],
-    frameInductionResults: FrameInductionResults,
+    verbFramesets: Map[InflectedForms, VerbFrameset],
     paraphraseAnnotations: ParaphraseAnnotations
   ) = {
     val results = evalSet.sentences.toList.foldMap { case (sentenceId, sentence) =>
@@ -90,10 +90,10 @@ object EvalApp extends IOApp {
             .flatMap(_.get(verb.verbIndex))
             .map(verb -> _)
         }.flatMap { case (verb, goldParaphrases) =>
-            val verbFrameset = frameInductionResults.frames(verb.verbInflectedForms)
+            val verbFrameset = verbFramesets(verb.verbInflectedForms)
             val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
-            frameInductionResults
-              .assignments.get(verb.verbInflectedForms).flatMap(_.get(sentenceId)).flatMap(_.get(verb.verbIndex))
+            verbFrameset.instances
+              .get(VerbId(sentenceId, verb.verbIndex))
               .map(frameProbabilities =>
                 Evaluation.getVerbResults(
                   verb, goldParaphrases,
@@ -119,64 +119,36 @@ object EvalApp extends IOApp {
     IO(println(getMetricsString(fullResults))).as(fullResults)
   }
 
-  def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-    if(Files.exists(evaluationItemsPath)) FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
-    else logOp(
-      s"Creating new sample for evaluation at $evaluationItemsPath", {
-        val rand = new scala.util.Random(86735932569L)
-        val allItems = rand.shuffle(
-          filterDatasetNonDense(evalSet).sentences.values.iterator.flatMap(sentence =>
-            sentence.verbEntries.values.toList.map(verb =>
-              (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
-            )
-          )
-        ).take(1000).toVector
-        FileUtil.writeJsonLines(evaluationItemsPath, io.circe.Printer.noSpaces)(allItems).as(allItems)
-      }
-    )
-  }
-
-  def logOp[A](msg: String, op: IO[A]): IO[A] =
-    IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
-
-  def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
+  // def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
+  //   import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+  //   if(Files.exists(evaluationItemsPath)) FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
+  //   else logOp(
+  //     s"Creating new sample for evaluation at $evaluationItemsPath", {
+  //       val rand = new scala.util.Random(86735932569L)
+  //       val allItems = rand.shuffle(
+  //         filterDatasetNonDense(evalSet).sentences.values.iterator.flatMap(sentence =>
+  //           sentence.verbEntries.values.toList.map(verb =>
+  //             (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
+  //           )
+  //         )
+  //       ).take(1000).toVector
+  //       FileUtil.writeJsonLines(evaluationItemsPath, io.circe.Printer.noSpaces)(allItems).as(allItems)
+  //     }
+  //   )
+  // }
 
   def program(
-    qasrlBankPath: NIOPath,
-    predDir: NIOPath,
-    relativeFramesDir: String,
-    testOnTest: Boolean,
-    launchBrowser: Boolean
+    experimentName: String,
+    testOnTest: Boolean
   ): IO[ExitCode] = {
-    val evalSetName = if(testOnTest) "test" else "dev"
-    val evalSetFilename = s"$evalSetName.jsonl.gz"
-    val evalSetPath = qasrlBankPath.resolve(s"dense/$evalSetFilename")
-
-    val paraphraseGoldPath = predDir.resolve("gold-paraphrases.json")
-
-    val outDir = predDir.resolve(relativeFramesDir)
-
-    val resultsFilename = if(testOnTest) "results-test.json" else "results.json"
-    val resultsPath = outDir.resolve(resultsFilename)
-
-    val evaluationItemsPath = predDir.resolve(s"eval-sample-$evalSetName.jsonl")
-
     for {
-      evalSet <- logOp(s"Reading $evalSetName set", readDataset(evalSetPath))
-      evaluationItems <- getEvaluationItems(evalSet, evaluationItemsPath)
-      paraphraseGold <- {
-        if(!Files.exists(paraphraseGoldPath)) {
-          IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
-            IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
-        } else FileUtil.readJson[EvalApp.ParaphraseAnnotations](paraphraseGoldPath)
-      }
-      frameInductionResults <- logOp(
-        "Loading frames",
-        FileUtil.readJson[FrameInductionResults](resultsPath)
-      )
+      config <- Config.make(experimentName, None, testOnTest)
+      evalSet <- config.readEvalSet
+      evaluationItems <- config.getEvaluationItems
+      paraphraseGold <- config.readGoldParaphrases
+      verbFramesets <- config.readFramesets
       _ <- runEvaluation(
-        evalSet, evaluationItems.toSet, frameInductionResults, paraphraseGold
+        evalSet, evaluationItems.toSet, verbFramesets, paraphraseGold
       )
     } yield ExitCode.Success
   }
@@ -185,24 +157,14 @@ object EvalApp extends IOApp {
     name = "mill qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
     header = "Induce verb frames."
   ) {
-    val goldPath = Opts.option[NIOPath](
-      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank."
+    val experimentNameO = Opts.option[String](
+      "name", metavar = "path", help = "Relative path to the directory with frame induction results."
     )
-    val predPath = Opts.option[NIOPath](
-      "qasrl-pred", metavar = "path", help = "Path to the directory of predictions."
-    )
-    val relativeFramesDir = Opts.option[String](
-      "out", metavar = "path", help = "Relative path to the directory with frame induction results."
-    )
-    val testOnTest = Opts.flag(
+    val testOnTestO = Opts.flag(
       "test", help = "Evaluate on the test set instead of dev."
     ).orFalse
 
-    val launchBrowser = Opts.flag(
-      "browse", help = "Whether to launch the web server for browsing/annotating the results."
-    ).orFalse
-
-    (goldPath, predPath, relativeFramesDir, testOnTest, launchBrowser).mapN(program)
+    (experimentNameO, testOnTestO).mapN(program)
   }
 
   def run(args: List[String]): IO[ExitCode] = {

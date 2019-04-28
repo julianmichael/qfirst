@@ -93,19 +93,6 @@ object FileUtil {
       }.compile.drain
   }
 
-  // XXX
-  def readClauseInfo(
-    path: NIOPath)(
-    implicit cs: ContextShift[IO]
-  ): IO[Map[String, Map[Int, Map[String, FrameInfo]]]] = {
-    readJsonLines[FrameInfo](path)
-      .map(fi => Map(fi.sentenceId -> Map(fi.verbIndex -> Map(fi.question -> List(fi)))))
-      .compile.foldMonoid.map(
-      // non-ideal.. would instead want a recursive combine that overrides and doesn't need the end mapping
-      _.transform { case (sid, vs) => vs.transform { case (vi, qs) => qs.transform { case (q, fis) => fis.head } } }
-    )
-  }
-
   import java.nio.ByteBuffer
   import java.nio.ByteOrder
   import breeze.linalg._
