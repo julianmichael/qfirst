@@ -1,4 +1,5 @@
 package qfirst.paraphrase.models
+import qfirst._
 
 import cats.Foldable
 import cats.data.NonEmptyList
@@ -14,61 +15,111 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
-sealed trait ClusteringTree[Param, Instance] {
-  import ClusteringTree._
-  def instances: Vector[Instance] = this match {
-    case Merge(_, l, r) => l.instances ++ r.instances
-    case Leaf(i) => Vector(i)
-  }
-}
-object ClusteringTree {
-  case class Merge[Param, Instance](
-    param: Param,
-    left: ClusteringTree[Param, Instance],
-    right: ClusteringTree[Param, Instance]
-  ) extends ClusteringTree[Param, Instance]
-  case class Leaf[Param, Instance](
-    value: Instance
-  ) extends ClusteringTree[Param, Instance]
-}
-
 trait ClusteringAlgorithm {
   type ClusterParam
   type Instance
   type Hyperparams
 
-  // TODO: make it a matrix
-  // for latent-variable clustering (e-step)
-  def computeLosses(
-    instances: Vector[Instance],
-    model: Vector[ClusterParam]
-  ): Vector[Vector[Double]] // each elt is the set of (nonnegative) losses for an instance
-
-  // for agglomerative clustering
-  def distance(
-    p1: ClusterParam,
-    p2: ClusterParam
+  def computeLoss(
+    instance: Instance,
+    param: ClusterParam,
+    hyperparams: Hyperparams
   ): Double
 
-  // for both latent-variable (m-step) and agglomerative clustering
   def estimateParameter(
     instances: Vector[Instance],
     assignmentProbabilities: Vector[Double],
     hyperparams: Hyperparams
   ): ClusterParam
 
-  // can be overridden for efficiency
+  // override eg for max
+  def aggregateLosses(
+    losses: Vector[Double]
+  ): Double = losses.sum
+
+  // override eg for max
+  def getLossChangePriority(
+    newLoss: Double,
+    leftLoss: Double,
+    rightLoss: Double
+  ) = newLoss - leftLoss - rightLoss
+
+  case class MergeCandidate(
+    left: MergeTree[(ClusterParam, Double), Int],
+    right: MergeTree[(ClusterParam, Double), Int],
+    param: ClusterParam,
+    loss: Double
+  ) {
+    val delta = getLossChangePriority(loss, left.param._2, right.param._2)
+    def toTree(rank: Int) = MergeTree.Merge(
+      rank, param -> loss, left, right
+    )
+  }
+  object MergeCandidate {
+    implicit val mergeCandidateOrdering = {
+      Ordering.by[MergeCandidate, Double](_.delta)
+    }
+  }
+
+  // should be overridden for efficiency, if possible
+  // TODO separate ClusterParam out of trees and just take it as arguments
+  // this way we don't keep the stale params around in the whole tree
+  // but we are free to use them to efficiently merge.
+  // also enables this to be implemented in the composite case.
+  // TODO also just return param and loss?
   def merge(
-    left: ClusteringTree[ClusterParam, Instance],
-    right: ClusteringTree[ClusterParam, Instance],
+    instances: Vector[Instance],
+    left: MergeTree[(ClusterParam, Double), Int],
+    right: MergeTree[(ClusterParam, Double), Int],
     hyperparams: Hyperparams
-  ): ClusteringTree.Merge[ClusterParam, Instance] = {
-    val instances = left.instances ++ right.instances
-    val param = estimateParameter(instances, instances.as(1.0), hyperparams)
-    ClusteringTree.Merge(param, left, right)
+  ): MergeCandidate = {
+    val indices = left.values ++ right.values
+    val theseInstances = indices.map(instances.apply)
+    val param = estimateParameter(theseInstances, indices.as(1.0), hyperparams)
+    val loss = aggregateLosses(theseInstances.map(computeLoss(_, param, hyperparams)))
+    MergeCandidate(left, right, param, loss)
+  }
+
+  def runAgglomerativeClustering(
+    instances: Vector[Instance],
+    hyperparams: Hyperparams
+  ): MergeTree[(ClusterParam, Double), Int] = {
+    val leafParams = instances.map(i => estimateParameter(Vector(i), Vector(1.0), hyperparams))
+    val leaves = leafParams.zipWithIndex.map { case (param, index) =>
+      val loss = computeLoss(instances(index), param, hyperparams)
+      MergeTree.Leaf(param -> loss, index)
+    }.toList
+    import scala.collection.mutable
+    var currentTrees: Set[MergeTree[(ClusterParam, Double), Int]] =
+      (leaves: List[MergeTree[(ClusterParam, Double), Int]]).toSet
+    val mergeHeap = mutable.PriorityQueue.empty[MergeCandidate]
+    leaves.tails.foreach {
+      case Nil => ()
+      case left :: rights =>
+        mergeHeap.enqueue(rights.map(r => merge(instances, left, r, hyperparams)): _*)
+    }
+    var nextRank = 1
+    while(mergeHeap.nonEmpty) {
+      mergeHeap.filterDequeue(mt =>
+        currentTrees.contains(mt.left) && currentTrees.contains(mt.right)
+      ).map(_.toTree(nextRank)).foreach { next =>
+        nextRank = nextRank + 1
+        currentTrees = currentTrees - next.left - next.right
+        val newMerges = currentTrees.map(left => merge(instances, left, next, hyperparams))
+        currentTrees = currentTrees + next
+        mergeHeap.enqueue(newMerges.toSeq: _*)
+      }
+    }
+    if(currentTrees.size != 1) {
+      println("WARNING: More than one tree remaining after agglomerative clustering")
+      currentTrees.foreach(println)
+      ???
+    }
+    currentTrees.head
   }
 
   // TODO: k-means|| init as well, and maybe random init?
+  // TODO: perhaps make matrices out of computeLoss for more efficiency
 
   def initPlusPlus(
     instances: Vector[Instance],
@@ -81,13 +132,7 @@ trait ClusteringAlgorithm {
       Vector(instances(rand.nextInt(instances.size))), Vector(1.0), hyperparams
     )
     val uniqueInstances = instances.groupBy(x => x).keys.toVector
-    val initMinLosses = DenseVector(computeLosses(uniqueInstances, Vector(firstCluster)).map(_.head).toArray)
-
-    // if(sum(curMinLosses) < 0.01) {
-      // println(s"Instances: ${uniqueInstances.size}")
-      // println(s"cluster: ${firstCluster.toString.take(200)}")
-      // println(s"Num clusters: $numClusters")
-    // }
+    val initMinLosses = DenseVector(uniqueInstances.map(computeLoss(_, firstCluster, hyperparams)).toArray)
 
     initPlusPlusAux(uniqueInstances, hyperparams, Set(), Vector(firstCluster), numClusters - 1, initMinLosses)
   }
@@ -108,7 +153,7 @@ trait ClusteringAlgorithm {
         newIndex
       }
       val newCluster = estimateParameter(Vector(instances(newCenterIndex)), Vector(1.0), hyperparams)
-      val clusterLosses = DenseVector(computeLosses(instances, Vector(newCluster)).map(_.head).toArray)
+      val clusterLosses = DenseVector(instances.map(computeLoss(_, newCluster, hyperparams)).toArray)
       val newMinLosses = min(curMinLosses, clusterLosses)
       initPlusPlusAux(instances, hyperparams, chosenInstances + newCenterIndex, curParams ++ Vector(newCluster), numClustersLeft - 1, newMinLosses)
     }
@@ -116,9 +161,10 @@ trait ClusteringAlgorithm {
 
   def softEStep(
     instances: Vector[Instance],
-    model: Vector[ClusterParam]
+    model: Vector[ClusterParam],
+    hyperparams: Hyperparams
   ): (Vector[DenseMultinomial], Vector[Double]) = {
-    val allLosses = computeLosses(instances, model)
+    val allLosses = instances.map(i => model.map(p => computeLoss(i, p, hyperparams)))
     val assignments = allLosses.map { v =>
       val vec = DenseVector(v.toArray)
       val probs = exp(vec - logSumExp(vec)) // normalize first to keep stable
@@ -147,14 +193,14 @@ trait ClusteringAlgorithm {
     stoppingThreshold: Double,
     shouldLog: Boolean = true
   ): (Vector[ClusterParam], Vector[DenseMultinomial], Double) = {
-    var (assignments, stepLosses) = softEStep(instances, initModel)
+    var (assignments, stepLosses) = softEStep(instances, initModel, hyperparams)
     var losses: List[Double] = List(mean(stepLosses))
     var model: Vector[ClusterParam] = initModel
     def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
     def shouldContinue = getDelta.forall(_ > stoppingThreshold)
     while(shouldContinue) {
       model = softMStep(model.size, instances, assignments, hyperparams)
-      val p = softEStep(instances, model)
+      val p = softEStep(instances, model, hyperparams)
       assignments = p._1
       stepLosses = p._2
       val loss = mean(stepLosses)
@@ -171,14 +217,6 @@ trait ClusteringAlgorithm {
     }
     (model, assignments, losses.head)
   }
-
-  def runMergeClustering(
-    instances: Vector[Instance],
-    hyperparams: Hyperparams,
-    shouldLog: Boolean = true
-  ): ClusteringTree[ClusterParam, Instance] = {
-    ??? // TODO
-  }
 }
 
 trait CompositeClusteringAlgorithm extends ClusteringAlgorithm {
@@ -188,24 +226,15 @@ trait CompositeClusteringAlgorithm extends ClusteringAlgorithm {
   type ClusterParam = (_1.ClusterParam, _2.ClusterParam)
   type Instance = (_1.Instance, _2.Instance)
   type Hyperparams = (_1.Hyperparams, _2.Hyperparams)
+  // case class Hyperparams(_1: _1.Hyperparams, _2: _2.Hyperparams, lambda: Double)
 
-  def computeLosses(
-    instances: Vector[Instance],
-    model: Vector[ClusterParam]
-  ): Vector[Vector[Double]] = { // each elt is the set of (nonnegative) losses for an instance
-    val l1 = _1.computeLosses(instances.map(_._1), model.map(_._1))
-    val l2 = _2.computeLosses(instances.map(_._2), model.map(_._2))
-    l1.zip(l2).map { case (il1, il2) =>
-      il1.zip(il2).map(Function.tupled((x: Double, y: Double) => (lambda * x) + ((1.0 - lambda) * y)))
-    }
-  }
-
-  // for agglomerative clustering
-  def distance(
-    p1: ClusterParam,
-    p2: ClusterParam
+  def computeLoss(
+    instance: Instance,
+    param: ClusterParam,
+    hyperparams: Hyperparams
   ): Double = {
-    (lambda * _1.distance(p1._1, p2._1)) + ((1.0 - lambda) * _2.distance(p1._2, p2._2))
+    (lambda * _1.computeLoss(instance._1, param._1, hyperparams._1)) +
+      ((1.0 - lambda) * _2.computeLoss(instance._2, param._2, hyperparams._2))
   }
 
   // for both latent-variable (m-step) and agglomerative clustering

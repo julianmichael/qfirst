@@ -72,4 +72,13 @@ package object models {
       )
     )
   }
+
+
+  import scala.collection.mutable
+  implicit class RichMutablePriorityQueue[A](val q: mutable.PriorityQueue[A]) extends AnyVal {
+    def dequeueOption: Option[A] = if (!q.isEmpty) Some(q.dequeue) else None
+    def filterDequeue(p: A => Boolean) = {
+      dequeueOption.filter(p).orElse(dequeueOption)
+    }
+  }
 }

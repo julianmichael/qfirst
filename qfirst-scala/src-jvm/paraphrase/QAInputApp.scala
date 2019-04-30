@@ -163,12 +163,21 @@ object QAInputApp extends IOApp {
     framesets: Map[InflectedForms, VerbFrameset],
     allSentenceQAs: Stream[IO, SentenceQAOutput],
     hardAssignments: Boolean = false
-  ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]]] = {
+  ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
     allSentenceQAs.map { sentenceQAs =>
       getUnsymmetrizedFuzzyArgumentEquivalences(
         dataset, framesets, sentenceQAs, hardAssignments
       )
     }.compile.foldMonoid.map(symmetrizeArgumentEquivalences)
+      .map(
+        _.transform { case (_, frameRels) =>
+          frameRels.transform { case (_, frameRel) =>
+            frameRel.transform { case (_, ec) =>
+              ec.expectationPerInstance
+            }
+          }
+        }
+      )
   }
 
   // def getFuzzyArgumentEquivalences(

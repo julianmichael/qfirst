@@ -22,8 +22,8 @@ case class Config(
   import Config.outputDir
   import Config.qasrlBankPath
   import Config.qasrlElmoPath
-  val qaInputPath = Config.getQAInputPath(outputDir)
-  val qaOutputPath = Config.getQAOutputPath(outputDir)
+  val qaInputPath = Config.getQAInputPath(testOnTest, outputDir)
+  val qaOutputPath = Config.getQAOutputPath(testOnTest, outputDir)
 
   def readWholeQasrlBank = logOp(
     "Reading QA-SRL Bank",
@@ -52,6 +52,10 @@ case class Config(
   def evalElmoPrefix = qasrlElmoPath.resolve(
     if(testOnTest) "test" else "dev"
   ).toString
+
+  def streamQAOutputs(implicit cs: ContextShift[IO]) = {
+    FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+  }
 
   val evaluationItemsPath = outputDir.resolve(
     if(testOnTest) "eval-sample-test.jsonl" else "eval-sample-dev.jsonl"
@@ -112,8 +116,14 @@ object Config {
   val outputDir = Paths.get("frame-induction")
   val qasrlBankPath = Paths.get("qasrl-v2_1")
   val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
-  def getQAInputPath(outputDir: Path) = outputDir.resolve("qa-input.jsonl.gz")
-  def getQAOutputPath(outputDir: Path) = outputDir.resolve("qa-output.jsonl.gz")
+  def getQAInputPath(test: Boolean, outputDir: Path) = {
+    val suff = if(test) "test" else "dev"
+    outputDir.resolve(s"qa-input-$suff.jsonl.gz")
+  }
+  def getQAOutputPath(test: Boolean, outputDir: Path) = {
+    val suff = if(test) "test" else "dev"
+    outputDir.resolve(s"qa-output-$suff.jsonl.gz")
+  }
 
   def make(
     experimentName: String,

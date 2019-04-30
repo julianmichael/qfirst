@@ -14,7 +14,6 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
-// TODO properly use the available distributions stuff in Breeze
 object DirichletMAPClustering extends ClusteringAlgorithm {
   type ClusterParam = DenseMultinomial
   type Instance = Map[Int, Int]
@@ -23,30 +22,16 @@ object DirichletMAPClustering extends ClusteringAlgorithm {
     clusterConcentrationParameter: Double
   )
 
-  // for latent-variable clustering
-  def computeLosses(
-    instances: Vector[Instance],
-    model: Vector[ClusterParam]
-  ): Vector[Vector[Double]] = {// each elt is the set of (nonnegative) losses for an instance
-    instances.map { instance =>
-      model.zipWithIndex.map { case (dist, clusterIndex) =>
-        instance.iterator.map { case (item, count) =>
-          math.log(dist.probabilityOf(item)) * count
-        }.sum * -1
-      }
-    }
-  }
-
-  // for agglomerative clustering
-  def distance(
-    p1: ClusterParam,
-    p2: ClusterParam
+  def computeLoss(
+    instance: Instance,
+    param: ClusterParam,
+    hyperparams: Hyperparams
   ): Double = {
-    // TODO jensen-shannon divergence
-    0.0
+    instance.iterator.map { case (item, count) =>
+      math.log(param.probabilityOf(item)) * count
+    }.sum * -1
   }
 
-  // for both latent-variable and agglomerative clustering
   def estimateParameter(
     instances: Vector[Instance],
     assignmentProbabilities: Vector[Double],

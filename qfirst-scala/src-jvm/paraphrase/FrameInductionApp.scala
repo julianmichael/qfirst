@@ -62,6 +62,8 @@ class Vocab[A] private (
   indexToItem: Vector[A],
   itemToIndex: Map[A, Int]
 ) {
+  def items = indexToItem
+  def indices = indexToItem.indices.toVector
   def getItem(index: Int) = indexToItem(index)
   def getIndex(item: A) = itemToIndex(item)
   def size = indexToItem.size
@@ -456,6 +458,38 @@ object FrameInductionApp extends IOApp {
     // }
   }
 
+  type ClausalQ = (ArgStructure, ArgumentSlot)
+  import breeze.linalg._
+
+  def runCoindexing(
+    predicateSenseResults: Map[InflectedForms, VerbFrameset],
+    fuzzyArgEquivalences: Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]
+  ): IO[Map[InflectedForms, VerbFrameset]] = {
+    predicateSenseResults.map { case (verbForms, verbFrameset) =>
+      val frameRels = fuzzyArgEquivalences(verbForms)
+      val coindexedFrames = verbFrameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
+        val frameRel = frameRels(frameIndex)
+        val clausalQVocab = Vocab.make(frameRel.keySet.flatMap(x => Set(x._1, x._2)))
+        val indices = clausalQVocab.indices
+        val fuzzyEquivMatrix = DenseMatrix.zeros[Double](clausalQVocab.size, clausalQVocab.size)
+        for(i <- indices; j <- indices) {
+          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
+          val score = -math.log(
+            if(i == j) 1.0 // reflexive
+            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
+            else frameRel(qi -> qj)
+          )
+          fuzzyEquivMatrix.update(i, j, score)
+        }
+        val mergeTree = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
+        // TODO TODO TODO
+        frame
+      }
+      verbFrameset.copy(frames = coindexedFrames)
+    }
+    IO(predicateSenseResults)
+  }
+
   def program(
     experimentName: String,
     trainOnDev: Boolean,
@@ -480,11 +514,14 @@ object FrameInductionApp extends IOApp {
         "Counting argument cooccurrences",
         QAInputApp.getFuzzyArgumentEquivalences(
           fullSet, predicateSenseResults,
-          FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](config.qaOutputPath),
+          config.streamQAOutputs,
           hardAssignments = false // TODO this is a hyperparameter
         )
       )
-      coindexedResults <- IO(predicateSenseResults) // TODO
+      coindexedResults <- runCoindexing(
+        predicateSenseResults,
+        fuzzyArgEquivalences
+      )
       _ <- config.writeFramesets(coindexedResults)
       paraphraseGold <- config.readGoldParaphrases
       evaluationItems <- config.getEvaluationItems
