@@ -24,6 +24,7 @@ case class Config(
   import Config.qasrlElmoPath
   val qaInputPath = Config.getQAInputPath(testOnTest, outputDir)
   val qaOutputPath = Config.getQAOutputPath(testOnTest, outputDir)
+  val preprocessedQAOutputPath = Config.getPreprocessedQAOutputPath(testOnTest, outputDir)
 
   def readWholeQasrlBank = logOp(
     "Reading QA-SRL Bank",
@@ -54,7 +55,20 @@ case class Config(
   ).toString
 
   def streamQAOutputs(implicit cs: ContextShift[IO]) = {
-    FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+    val preprocess = {
+      if(!Files.exists(preprocessedQAOutputPath)) {
+        logOp(
+          s"Preprocessing QA outputs from $qaOutputPath",
+          FileUtil.writeJsonLinesStreaming(preprocessedQAOutputPath, io.circe.Printer.noSpaces)(
+            FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+              .map(QAInputApp.preprocessSentenceQAOutput)
+          )
+        )
+      } else IO.unit
+    }
+    preprocess >> IO(
+      FileUtil.readJsonLines[QAInputApp.PreprocessedSentenceQAOutput](preprocessedQAOutputPath)
+    )
   }
 
   val evaluationItemsPath = outputDir.resolve(
@@ -124,6 +138,10 @@ object Config {
     val suff = if(test) "test" else "dev"
     outputDir.resolve(s"qa-output-$suff.jsonl.gz")
   }
+  def getPreprocessedQAOutputPath(test: Boolean, outputDir: Path) = {
+    val suff = if(test) "test" else "dev"
+    outputDir.resolve(s"qa-output-$suff-preprocessed.jsonl.gz")
+  }
 
   def make(
     experimentName: String,
@@ -148,7 +166,7 @@ object Config {
             Files.createDirectories(experimentDir)
             if(trainOnDevFlag) {
               import sys.process._
-              IO(s"touch ${experimentDir.resolve("dev")}".!)
+              s"touch ${experimentDir.resolve("dev")}".!
             }
             trainOnDevFlag
         }

@@ -45,15 +45,15 @@ trait ClusteringAlgorithm {
   ) = newLoss - leftLoss - rightLoss
 
   case class MergeCandidate(
-    left: MergeTree[(ClusterParam, Double), Int],
-    right: MergeTree[(ClusterParam, Double), Int],
+    left: MergeTree[Double, Int],
+    right: MergeTree[Double, Int],
     param: ClusterParam,
     loss: Double
   ) {
-    val delta = getLossChangePriority(loss, left.param._2, right.param._2)
-    def toTree(rank: Int) = MergeTree.Merge(
-      rank, param -> loss, left, right
-    )
+    val delta = getLossChangePriority(loss, left.param, right.param)
+    def toTreeAndParam(rank: Int) = MergeTree.Merge(
+      rank, loss, left, right
+    ) -> param
   }
   object MergeCandidate {
     implicit val mergeCandidateOrdering = {
@@ -62,15 +62,12 @@ trait ClusteringAlgorithm {
   }
 
   // should be overridden for efficiency, if possible
-  // TODO separate ClusterParam out of trees and just take it as arguments
-  // this way we don't keep the stale params around in the whole tree
-  // but we are free to use them to efficiently merge.
-  // also enables this to be implemented in the composite case.
-  // TODO also just return param and loss?
   def merge(
     instances: Vector[Instance],
-    left: MergeTree[(ClusterParam, Double), Int],
-    right: MergeTree[(ClusterParam, Double), Int],
+    left: MergeTree[Double, Int],
+    leftParam: ClusterParam,
+    right: MergeTree[Double, Int],
+    rightParam: ClusterParam,
     hyperparams: Hyperparams
   ): MergeCandidate = {
     val indices = left.values ++ right.values
@@ -83,31 +80,35 @@ trait ClusteringAlgorithm {
   def runAgglomerativeClustering(
     instances: Vector[Instance],
     hyperparams: Hyperparams
-  ): MergeTree[(ClusterParam, Double), Int] = {
+  ): (MergeTree[Double, Int], ClusterParam) = {
     val leafParams = instances.map(i => estimateParameter(Vector(i), Vector(1.0), hyperparams))
-    val leaves = leafParams.zipWithIndex.map { case (param, index) =>
+    var currentTrees = leafParams.zipWithIndex.map { case (param, index) =>
       val loss = computeLoss(instances(index), param, hyperparams)
-      MergeTree.Leaf(param -> loss, index)
-    }.toList
+      (MergeTree.Leaf(loss, index): MergeTree[Double, Int]) -> param
+    }.toMap
     import scala.collection.mutable
-    var currentTrees: Set[MergeTree[(ClusterParam, Double), Int]] =
-      (leaves: List[MergeTree[(ClusterParam, Double), Int]]).toSet
     val mergeHeap = mutable.PriorityQueue.empty[MergeCandidate]
-    leaves.tails.foreach {
+    currentTrees.toList.tails.foreach {
       case Nil => ()
-      case left :: rights =>
-        mergeHeap.enqueue(rights.map(r => merge(instances, left, r, hyperparams)): _*)
+      case (left, leftParam) :: rights =>
+        mergeHeap.enqueue(
+          rights.map { case (right, rightParam) =>
+            merge(instances, left, leftParam, right, rightParam, hyperparams)
+          }: _*
+        )
     }
     var nextRank = 1
     while(mergeHeap.nonEmpty) {
       mergeHeap.filterDequeue(mt =>
         currentTrees.contains(mt.left) && currentTrees.contains(mt.right)
-      ).map(_.toTree(nextRank)).foreach { next =>
-        nextRank = nextRank + 1
-        currentTrees = currentTrees - next.left - next.right
-        val newMerges = currentTrees.map(left => merge(instances, left, next, hyperparams))
-        currentTrees = currentTrees + next
-        mergeHeap.enqueue(newMerges.toSeq: _*)
+      ).map(_.toTreeAndParam(nextRank)).foreach { case (next, nextParam) =>
+          nextRank = nextRank + 1
+          currentTrees = currentTrees - next.left - next.right
+          val newMerges = currentTrees.toList.map { case (left, leftParam) =>
+            merge(instances, left, leftParam, next, nextParam, hyperparams)
+          }
+          currentTrees = currentTrees + (next -> nextParam)
+          mergeHeap.enqueue(newMerges: _*)
       }
     }
     if(currentTrees.size != 1) {
@@ -246,4 +247,20 @@ trait CompositeClusteringAlgorithm extends ClusteringAlgorithm {
     (_1.estimateParameter(instances.map(_._1), assignmentProbabilities, hyperparams._1),
      _2.estimateParameter(instances.map(_._2), assignmentProbabilities, hyperparams._2))
   }
+
+  // should be overridden for efficiency, if possible
+  // def merge(
+  //   instances: Vector[Instance],
+  //   left: MergeTree[Double, Int],
+  //   leftParam: ClusterParam,
+  //   right: MergeTree[Double, Int],
+  //   rightParam: ClusterParam,
+  //   hyperparams: Hyperparams
+  // ): MergeCandidate = {
+  //   val indices = left.values ++ right.values
+  //   val theseInstances = indices.map(instances.apply)
+  //   val param = estimateParameter(theseInstances, indices.as(1.0), hyperparams)
+  //   val loss = aggregateLosses(theseInstances.map(computeLoss(_, param, hyperparams)))
+  //   MergeCandidate(left, right, param, loss)
+  // }
 }

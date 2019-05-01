@@ -266,10 +266,10 @@ object FrameInductionApp extends IOApp {
         )
       } yield {
         val prior = Multinomial(assignments.iterator.map(m => m.params / m.sum).reduce(_ + _))
-        println(prior)
-        println(assignments)
+        // println(prior)
+        // println(assignments)
         val frames = model.map(getFrame).zipWithIndex.map { case (frameClauses, clusterIndex) =>
-          VerbFrame(frameClauses, Map(), prior.probabilityOf(clusterIndex))
+          VerbFrame(frameClauses, null /* TODO: replace with dummy merge tree */, prior.probabilityOf(clusterIndex))
         }
         val instanceProbs = verbIds.zip(assignments).foldMap { case (verbId, assignmentProbs) =>
           Map(verbId -> assignmentProbs.params.toScalaVector)
@@ -477,13 +477,12 @@ object FrameInductionApp extends IOApp {
           val score = -math.log(
             if(i == j) 1.0 // reflexive
             else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
-            else frameRel(qi -> qj)
+            else frameRel.getOrElse(qi -> qj, 0.5) // if they never seemed to appear together? idk
           )
           fuzzyEquivMatrix.update(i, j, score)
         }
-        val mergeTree = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
-        // TODO TODO TODO
-        frame
+        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
+        frame.copy(coindexingTree = mergeTree.mapValues(clausalQVocab.getItem))
       }
       verbFrameset.copy(frames = coindexedFrames)
     }
@@ -510,11 +509,12 @@ object FrameInductionApp extends IOApp {
         elmoVecs = trainElmoVecs |+| evalElmoVecs,
         rand = new scala.util.Random(3266435L)
       )
+      qaOutputs <- config.streamQAOutputs
       fuzzyArgEquivalences <- logOp(
         "Counting argument cooccurrences",
         QAInputApp.getFuzzyArgumentEquivalences(
           fullSet, predicateSenseResults,
-          config.streamQAOutputs,
+          qaOutputs,
           hardAssignments = false // TODO this is a hyperparameter
         )
       )

@@ -12,6 +12,13 @@ import io.circe.generic.JsonCodec
   def param: P
   def rank: Int
   def values: Vector[A]
+
+  import MergeTree._
+
+  def mapValues[B](f: A => B): MergeTree[P, B] = this match {
+    case Leaf(p, a) => Leaf(p, f(a))
+    case Merge(r, p, left, right) => Merge(r, p, left.mapValues(f), right.mapValues(f))
+  }
 }
 object MergeTree {
   @Lenses case class Leaf[P, A](

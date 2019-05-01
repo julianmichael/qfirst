@@ -109,40 +109,60 @@ object QAInputApp extends IOApp {
 
   import qfirst.metrics.ExpectedCount
 
+  @JsonCodec case class PreprocessedSentenceQAOutput(
+    sentenceId: String,
+    verbsList: Map[String, List[((ClausalQ, ClausalQ), Double)]]
+  ) {
+    def verbs = verbsList.transform { (_, adj) => adj.toMap }
+  }
+
+  def preprocessSentenceQAOutput(
+    origQAs: SentenceQAOutput
+  ): PreprocessedSentenceQAOutput = {
+    PreprocessedSentenceQAOutput(
+      origQAs.sentenceId,
+      origQAs.verbs.transform { case (_, verbQAs) =>
+        verbQAs.tails.toList.flatMap {
+          case Nil => Nil
+          case fst :: tail => tail.map { snd =>
+            val adjProb = adjacencyProb(fst.spans, snd.spans)
+            val qPair = fst.question.clausalQ -> snd.question.clausalQ
+            qPair -> adjProb
+          }
+        }
+      }
+    )
+  }
+
   def getUnsymmetrizedFuzzyArgumentEquivalences(
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
-    sentenceQAs: SentenceQAOutput,
+    sentenceQAs: PreprocessedSentenceQAOutput,
     hardAssignments: Boolean
   ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
-    val sentence = dataset.sentences(sentenceQAs.sentenceId)
-    sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
-      val verbIndex = verbIndexStr.toInt
-      val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
-      val frameset = framesets(verbForms)
-      val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
-      val frameProbs = frameset.instances(verbId)
-      val maxFrameProb = frameProbs.max
+    dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
+      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbAdjacency) =>
+        val verbIndex = verbIndexStr.toInt
+        val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
+        val frameset = framesets(verbForms)
+        val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
+        val frameProbs = frameset.instances(verbId)
+        val maxFrameProb = frameProbs.max
 
-      (frameset.frames, frameset.frames.indices, frameProbs).zipped.flatMap {
-        case (frame, frameIndex, frameProb) =>
-          if(hardAssignments && frameProb < maxFrameProb) None else Some {
-            val adjacencyExpectations = verbQAs.tails.toList.flatMap {
-              case Nil => Nil
-              case fst :: tail => tail.map { snd =>
-                val adjProb = adjacencyProb(fst.spans, snd.spans)
-                val expectedCount = if(hardAssignments) {
-                  ExpectedCount(adjProb, 1.0)
+        (frameset.frames, frameset.frames.indices, frameProbs).zipped.flatMap {
+          case (frame, frameIndex, frameProb) =>
+            if(hardAssignments && frameProb < maxFrameProb) None else Some {
+              val adjacencyExpectations = verbAdjacency.transform { case (_, prob) =>
+                if(hardAssignments) {
+                  ExpectedCount(prob, 1.0)
                 } else {
-                  ExpectedCount(adjProb * frameProb, frameProb)
+                  ExpectedCount(prob* frameProb, frameProb)
                 }
-                val qPair = fst.question.clausalQ -> snd.question.clausalQ
-                Map(qPair -> expectedCount)
               }
-            }.combineAll
-            Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
-          }
-      }.toList.combineAll
+              Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
+            }
+        }.toList.combineAll
+      }
     }
   }
 
@@ -161,7 +181,7 @@ object QAInputApp extends IOApp {
   def getFuzzyArgumentEquivalences(
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
-    allSentenceQAs: Stream[IO, SentenceQAOutput],
+    allSentenceQAs: Stream[IO, PreprocessedSentenceQAOutput],
     hardAssignments: Boolean = false
   ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
     allSentenceQAs.map { sentenceQAs =>

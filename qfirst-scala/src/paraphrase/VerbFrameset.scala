@@ -1,4 +1,5 @@
 package qfirst.paraphrase
+import qfirst.MergeTree
 import qfirst.ClauseResolution
 
 import cats.Order
@@ -75,39 +76,41 @@ object ParaphrasingFilter {
   probability: Double)
 object FrameClause
 
-@Lenses case class VerbFrame(
+@Lenses @JsonCodec case class VerbFrame(
   clauseTemplates: List[FrameClause],
-  coindexingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double],
+  coindexingTree: MergeTree[Double, (ArgStructure, ArgumentSlot)],
   probability: Double) {
 
+  // TODO shim for current functionality
+  def getParaphrasingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), (Double, Double)] = {
+    val argStructureToProb = clauseTemplates.map(ct => ct.args -> ct.probability).toMap
+    def getParaphrasingScoresForTree(
+      tree: MergeTree[Double, (ArgStructure, ArgumentSlot)]
+    ): Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), (Double, Double)] =
+      tree match {
+        case MergeTree.Leaf(loss, value) => Map((value -> value) -> (argStructureToProb(value._1) -> 1.0)) // assume 1.0 for same arg
+        case MergeTree.Merge(rank, loss, left, right) =>
+          left.values.foldMap(l => right.values.foldMap(r => Map((l -> r) -> (argStructureToProb(r._1) -> loss)))) |+|
+            getParaphrasingScoresForTree(left) |+| getParaphrasingScoresForTree(right)
+      }
+    getParaphrasingScoresForTree(coindexingTree)
+  }
   def getScoredParaphrases(
     structure: (ArgStructure, ArgumentSlot)
   ): Map[(ArgStructure, ArgumentSlot), (Double, Double)] = {
-    clauseTemplates.flatMap { frameClause =>
-      val clauseScore = frameClause.probability
-      frameClause.args.args.keys.toList.map { otherSlot =>
-        import scala.language.existentials
-        val otherStructure = frameClause.args -> otherSlot
-        val coindexingScore = coindexingScores.getOrElse(structure -> otherStructure, 0.0)
-        otherStructure -> (clauseScore -> coindexingScore)
-      }
-    }.toMap
+    getParaphrasingScores.collect { case ((`structure`, k2), v) => k2 -> v }
+    // clauseTemplates.flatMap { frameClause =>
+    //   val clauseScore = frameClause.probability
+    //   frameClause.args.args.keys.toList.map { otherSlot =>
+    //     import scala.language.existentials
+    //     val otherStructure = frameClause.args -> otherSlot
+    //     val coindexingScore = coindexingScores.getOrElse(structure -> otherStructure, 0.0)
+    //     otherStructure -> (clauseScore -> coindexingScore)
+    //   }
+    // }.toMap
   }
 }
-object VerbFrame {
-  import io.circe.{Encoder, Decoder}
-  private[this] def fromListy(
-    clauseTemplates: List[FrameClause],
-    coindexingScores: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)],
-    probability: Double
-  ) = VerbFrame(clauseTemplates, coindexingScores.toMap, probability)
-  implicit val verbFrameDecoder: Decoder[VerbFrame] =
-    Decoder.forProduct3("clauseTemplates", "coindexingScores", "probability")(fromListy)
-  implicit val verbFrameEncoder: Encoder[VerbFrame] =
-    Encoder.forProduct3("clauseTemplates", "coindexingScores", "probability")(x =>
-      (x.clauseTemplates, x.coindexingScores.toList, x.probability)
-    )
-}
+object VerbFrame
 
 @Lenses @JsonCodec case class VerbId(
   sentenceId: String, verbIndex: Int

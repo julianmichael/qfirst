@@ -51,8 +51,10 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
 
   override def merge(
     instances: Vector[Instance],
-    left: MergeTree[(ClusterParam, Double), Int],
-    right: MergeTree[(ClusterParam, Double), Int],
+    left: MergeTree[Double, Int],
+    leftParam: ClusterParam,
+    right: MergeTree[Double, Int],
+    rightParam: ClusterParam,
     hyperparams: Hyperparams
   ): MergeCandidate = {
     val leftValues = left.values
@@ -63,14 +65,14 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
         hyperparams(lv, rv)
       }
     }.max
-    if(!(newLoss > left.param._2 && newLoss > right.param._2)) {
+    if(!(newLoss > left.param && newLoss > right.param)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(left)
       println(right)
       println(newLoss)
       ???
     }
-    val loss = List(newLoss, left.param._2, right.param._2).max
+    val loss = List(newLoss, left.param, right.param).max
     MergeCandidate(left, right, param, loss)
   }
 }
