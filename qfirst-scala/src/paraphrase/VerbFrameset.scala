@@ -78,14 +78,14 @@ object FrameClause
 
 @Lenses @JsonCodec case class VerbFrame(
   clauseTemplates: List[FrameClause],
-  coindexingTree: MergeTree[Double, (ArgStructure, ArgumentSlot)],
+  coindexingTree: MergeTree[(ArgStructure, ArgumentSlot)],
   probability: Double) {
 
   // TODO shim for current functionality
   def getParaphrasingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), (Double, Double)] = {
     val argStructureToProb = clauseTemplates.map(ct => ct.args -> ct.probability).toMap
     def getParaphrasingScoresForTree(
-      tree: MergeTree[Double, (ArgStructure, ArgumentSlot)]
+      tree: MergeTree[(ArgStructure, ArgumentSlot)]
     ): Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), (Double, Double)] =
       tree match {
         case MergeTree.Leaf(loss, value) => Map((value -> value) -> (argStructureToProb(value._1) -> 1.0)) // assume 1.0 for same arg

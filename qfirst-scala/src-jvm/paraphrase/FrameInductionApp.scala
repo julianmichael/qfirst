@@ -191,6 +191,39 @@ object FrameInductionApp extends IOApp {
   import qfirst.paraphrase.models._
   import breeze.stats.distributions.Multinomial
 
+  def runVerbWiseAgglomerativeWithComposite(
+    instances: Instances,
+    elmoVecs: ClusteringInstances[DenseVector[Float]],
+    interpolation: Double = 0.5,
+    rand: Random
+  ): IO[Map[InflectedForms, MergeTree[VerbId]]] = {
+    val algorithm = new CompositeClusteringAlgorithm {
+      val _1 = MinEntropyClustering
+      val _2 = VectorMeanClustering
+      val lambda = interpolation
+    }
+    ???
+  }
+
+  def runVerbWiseAgglomerative(
+    algorithm: ClusteringAlgorithm)(
+    verbs: Map[InflectedForms, Vector[VerbId]],
+    makeInstance: (InflectedForms, VerbId) => algorithm.Instance,
+    hyperparams: algorithm.Hyperparams,
+    // numFrames: (InflectedForms => Int),
+    getFrame: algorithm.ClusterParam => List[FrameClause],
+    // rand: Random,
+    // shouldLog: Boolean = false
+  ): IO[Map[InflectedForms, MergeTree[VerbId]]] = {
+    verbs.toList.traverse { case (verbInflectedForms, verbIds) =>
+      val instances = verbIds.map(makeInstance(verbInflectedForms, _))
+      IO(println(s"Clustering verb: ${verbInflectedForms.stem}")).as(
+        verbInflectedForms -> algorithm.runAgglomerativeClustering(instances, hyperparams)._1
+          .map(verbs(verbInflectedForms))
+      )
+    }.map(_.toMap)
+  }
+
   def runVerbWiseSoftEMWithComposite(
     instances: Instances,
     elmoVecs: ClusteringInstances[DenseVector[Float]],
@@ -279,185 +312,6 @@ object FrameInductionApp extends IOApp {
     }.map(_.toMap)
   }
 
-  object Induce {
-    // import qfirst.paraphrase.models._
-    // import MixtureOfUnigrams.UnigramMixtureModel
-    // def mixtureOfUnigrams(
-    //   instances: Instances,
-    //   numFrames: Int,
-    //   priorConcentrationParameter: Double,
-    //   clusterConcentrationParameter: Double,
-    //   rand: Random
-    // ): IO[FrameInductionResults] = for {
-    //   clauseVocab <- logOp("Indexing clauses", makeClauseVocab(instances))
-    //   (indexedInstances, instanceIds) <- logOp(
-    //     "Indexing instances",
-    //     instances.iterator.flatMap { case (verbInflectedForms, verbTypeInstances) =>
-    //       verbTypeInstances.iterator.flatMap { case (sentenceId, sentenceInstances) =>
-    //         sentenceInstances.iterator.map { case (verbIndex, verbInstances) =>
-    //           val questions = verbInstances.keySet.toList
-    //           val indexedClauseCounts = ClauseResolution.getResolvedFramePairs(
-    //             verbInflectedForms, questions
-    //           ).map(_._1).map(ClauseResolution.getClauseTemplate)
-    //             .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
-    //           val instanceId = (verbInflectedForms, sentenceId, verbIndex)
-    //           indexedClauseCounts -> instanceId
-    //         }
-    //       }
-    //     }.toList.unzip
-    //   )
-    //   modelInit <- logOp(
-    //     "Initializing model",
-    //     UnigramMixtureModel.initClever(
-    //       indexedInstances, numFrames, clauseVocab.size, clusterConcentrationParameter, rand
-    //     )
-    //   )
-    //   (model, assignments, _) <- IO(
-    //     MixtureOfUnigrams.runSoftEM(
-    //       initModel = modelInit,
-    //       instances = indexedInstances,
-    //       priorConcentrationParameter = priorConcentrationParameter,
-    //       clusterConcentrationParameter = clusterConcentrationParameter,
-    //       stoppingThreshold = 0.001
-    //     )
-    //   )
-    // } yield {
-    //   val globalFrames = model.prior.zip(model.clusters).map { case (framePriorProb, frameClauseDist) =>
-    //     val uniformProbability = 1.0 / frameClauseDist.size
-    //     val clauseTemplates = frameClauseDist.zipWithIndex.map { case (prob, index) =>
-    //       FrameClause(clauseVocab.getItem(index), prob)
-    //     }.sortBy(-_.probability).takeWhile(_.probability > uniformProbability) // TODO probably want to add higher threshold as a parameter
-    //     VerbFrame(clauseTemplates.toList, Map(), framePriorProb)
-    //   }
-    //   val frameDistributionsByVerb: Map[InflectedForms, Vector[Double]] = instanceIds.zip(assignments).foldMap {
-    //     case ((verbInflectedForms, sentenceId, verbIndex), dist) =>
-    //       Map(verbInflectedForms -> Vector(dist))
-    //   }.map { case (inflectedForms, dists) =>
-    //       val pcounts = dists.transpose.map(_.sum)
-    //       val total = pcounts.sum
-    //       inflectedForms -> pcounts.map(_ / total)
-    //   }
-    //   val frameMaxCountsByVerb: Map[InflectedForms, Map[Int, Int]] = instanceIds.zip(assignments).foldMap {
-    //     case ((verbInflectedForms, sentenceId, verbIndex), dist) =>
-    //       val maxIndex = dist.zipWithIndex.maxBy(_._1)._2
-    //       Map(verbInflectedForms -> Map(maxIndex -> 1))
-    //   }
-    //   val allFramesetsAndIndices = frameDistributionsByVerb.map { case (verbInflectedForms, frameDist) =>
-    //     val uniformProbability = 1.0 / frameDist.size
-    //     val frameIndicesHavingMax = frameMaxCountsByVerb(verbInflectedForms).keySet
-    //     val framesWithIndices = frameDist.zipWithIndex.collect {
-    //       case (frameProb, frameIndex) if frameProb > uniformProbability || frameIndicesHavingMax.contains(frameIndex) =>
-    //         globalFrames(frameIndex).copy(probability = frameProb) -> frameIndex
-    //     }.sortBy(-_._1.probability)
-    //     val frameset = VerbFrameset(verbInflectedForms, framesWithIndices.map(_._1).toList)
-    //     val frameIndices = framesWithIndices.map(_._2)
-    //     verbInflectedForms -> (frameset -> frameIndices)
-    //   }
-    //   val allFramesets = allFramesetsAndIndices.map { case (k, (v, _)) => k -> v }
-    //   val allAssignments: Map[InflectedForms, Map[String, Map[Int, Vector[Double]]]] = {
-    //     instanceIds.zip(assignments).foldMap {
-    //       case ((verbInflectedForms, sentenceId, verbIndex), dist) =>
-    //         val selectedDist = allFramesetsAndIndices(verbInflectedForms)._2.map(dist(_))
-    //         Map(verbInflectedForms -> Map(sentenceId -> Map(verbIndex -> selectedDist)))
-    //         // shouldn't count anything twice so it should be fine
-    //     }
-    //   }
-    //   FrameInductionResults(
-    //     frames = allFramesets,
-    //     assignments = allAssignments // verb type -> sentence id -> verb token -> dist. over frames for verb type
-    //   )
-    // }
-
-    // import LDA.LDAModel
-    // def lda(
-    //   instances: Instances,
-    //   numFrames: Int,
-    //   priorConcentrationParameter: Double,
-    //   clusterConcentrationParameter: Double,
-    //   rand: Random
-    // ): IO[FrameInductionResults] = for {
-    //   verbVocab <- logOp("Indexing verbs", makeVerbVocab(instances))
-    //   clauseVocab <- logOp("Indexing clauses", makeClauseVocab(instances))
-    //   (indexedInstances, instanceIds) <- logOp(
-    //     "Indexing instances",
-    //     instances.toList.sortBy(p => verbVocab.getIndex(p._1)).map { case (verbInflectedForms, verbTypeInstances) =>
-    //       verbTypeInstances.iterator.flatMap { case (sentenceId, sentenceInstances) =>
-    //         sentenceInstances.iterator.map { case (verbIndex, verbInstances) =>
-    //           val questions = verbInstances.keySet.toList
-    //           val indexedClauseCounts = ClauseResolution
-    //             .getResolvedFramePairs(verbInflectedForms, questions)
-    //             .map(_._1).map(ClauseResolution.getClauseTemplate)
-    //             .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
-    //           val instanceId = (sentenceId, verbIndex)
-    //           indexedClauseCounts -> instanceId
-    //         }
-    //       }.toVector.unzip
-    //     }.toVector.unzip
-    //   )
-    //   modelInit <- logOp(
-    //     "Initializing model",
-    //     LDAModel.initClever(indexedInstances, numFrames, clauseVocab.size, clusterConcentrationParameter, rand)
-    //   )
-
-    //   (model, assignments, _) <- IO(
-    //     LDA.runSoftEM(
-    //       modelInit, indexedInstances, priorConcentrationParameter, clusterConcentrationParameter, stoppingThreshold = 0.001
-    //     )
-    //   )
-    // } yield {
-    //   val allFrames = model.clusters.map { cluster =>
-
-    //   }
-    //   val globalFrames = model.clusters.map { frameClauseDist =>
-    //     val uniformProbability = 1.0 / frameClauseDist.size
-    //     val clauseTemplates = frameClauseDist.zipWithIndex.map { case (prob, index) =>
-    //       FrameClause(clauseVocab.getItem(index), prob)
-    //     }.sortBy(-_.probability).takeWhile(_.probability > uniformProbability) // TODO probably want to add higher threshold as a parameter
-    //     VerbFrame(clauseTemplates.toList, Map(), 0.0) // TODO set prob later
-    //   }
-    //   // val allFramesAndAssignments = model.priors.zipWithIndex.map { case (verbPrior, verbIndex) =>
-    //   //   val verbForms = verbVocab.getItem(verbIndex)
-    //   //   val frameUniformProbability = 1.0 / numFrames.toDouble
-    //   //   val frameset = VerbFrameset(verbForms, )
-    //   // }
-    //   val frameMaxCountsForVerbs: Vector[Map[Int, Int]] = assignments.map(
-    //     _.foldMap { dist =>
-    //       val maxIndex = dist.zipWithIndex.maxBy(_._1)._2
-    //       Map(maxIndex -> 1)
-    //     }
-    //   )
-    //   val allFramesetsAndIndices = model.priors.zipWithIndex.map { case (frameDist, verbIndex) =>
-    //     val verbInflectedForms = verbVocab.getItem(verbIndex)
-    //     val uniformProbability = 1.0 / frameDist.size
-    //     val frameIndicesHavingMax = frameMaxCountsForVerbs(verbIndex).keySet
-    //     val framesWithIndices = frameDist.zipWithIndex.collect {
-    //       case (frameProb, frameIndex) if frameProb > uniformProbability || frameIndicesHavingMax.contains(frameIndex) =>
-    //         globalFrames(frameIndex).copy(probability = frameProb) -> frameIndex
-    //     }.sortBy(-_._1.probability)
-    //     val frameset = VerbFrameset(verbInflectedForms, framesWithIndices.map(_._1).toList)
-    //     val frameIndices = framesWithIndices.map(_._2)
-    //     frameset -> frameIndices
-    //   }
-    //   val allFramesets = allFramesetsAndIndices.map { case (v, _) => v.inflectedForms -> v }.toMap
-    //   val allAssignments: Map[InflectedForms, Map[String, Map[Int, Vector[Double]]]] = {
-    //     instanceIds.zip(assignments).zipWithIndex.foldMap {
-    //       case ((verbInstanceIds, verbAssignments), verbTypeIndex) =>
-    //         val verbInflectedForms = verbVocab.getItem(verbTypeIndex)
-    //         verbInstanceIds.zip(verbAssignments).foldMap {
-    //           case ((sentenceId, verbInstanceIndex), dist) =>
-    //             val selectedDist = allFramesetsAndIndices(verbTypeIndex)._2.map(dist(_))
-    //             Map(verbInflectedForms -> Map(sentenceId -> Map(verbInstanceIndex -> selectedDist)))
-    //             // shouldn't count anything twice so it should be fine
-    //         }
-    //     }
-    //   }
-    //   FrameInductionResults(
-    //     frames = allFramesets,
-    //     assignments = allAssignments
-    //   )
-    // }
-  }
-
   type ClausalQ = (ArgStructure, ArgumentSlot)
   import breeze.linalg._
 
@@ -477,12 +331,51 @@ object FrameInductionApp extends IOApp {
           val score = -math.log(
             if(i == j) 1.0 // reflexive
             else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
-            else frameRel.getOrElse(qi -> qj, 0.5) // if they never seemed to appear together? idk
+            else {
+              print(".")
+              frameRel.getOrElse(qi -> qj, 0.5) // if they never seemed to appear together? idk
+            }
           )
           fuzzyEquivMatrix.update(i, j, score)
         }
         val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
-        frame.copy(coindexingTree = mergeTree.mapValues(clausalQVocab.getItem))
+        frame.copy(coindexingTree = mergeTree.map(clausalQVocab.getItem))
+      }
+      verbFrameset.copy(frames = coindexedFrames)
+    }
+    IO(predicateSenseResults)
+  }
+
+  def runCollapsedCoindexing(
+    predicateSenseResults: Map[InflectedForms, VerbFrameset],
+    fuzzyArgEquivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
+  ): IO[Map[InflectedForms, VerbFrameset]] = {
+    predicateSenseResults.map { case (verbForms, verbFrameset) =>
+      val verbRel = fuzzyArgEquivalences(verbForms)
+      val coindexedFrames = verbFrameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
+        val clausalQVocab = Vocab.make(
+          frame.clauseTemplates.map(_.args).flatMap(clauseTemplate =>
+            (clauseTemplate.args.keys.toList: List[ArgumentSlot]).map(slot =>
+              clauseTemplate -> slot
+            )
+          ).toSet
+        )
+        val indices = clausalQVocab.indices
+        val fuzzyEquivMatrix = DenseMatrix.zeros[Double](clausalQVocab.size, clausalQVocab.size)
+        for(i <- indices; j <- indices) {
+          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
+          val score = -math.log(
+            if(i == j) 1.0 // reflexive
+            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
+            else {
+              print(".")
+              verbRel.getOrElse(qi -> qj, 0.5) // if they never seemed to appear together? idk. shouldn't happen
+            }
+          )
+          fuzzyEquivMatrix.update(i, j, score)
+        }
+        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
+        frame.copy(coindexingTree = mergeTree.map(clausalQVocab.getItem))
       }
       verbFrameset.copy(frames = coindexedFrames)
     }
@@ -509,19 +402,18 @@ object FrameInductionApp extends IOApp {
         elmoVecs = trainElmoVecs |+| evalElmoVecs,
         rand = new scala.util.Random(3266435L)
       )
-      qaOutputs <- config.streamQAOutputs
-      fuzzyArgEquivalences <- logOp(
-        "Counting argument cooccurrences",
-        QAInputApp.getFuzzyArgumentEquivalences(
-          fullSet, predicateSenseResults,
-          qaOutputs,
-          hardAssignments = false // TODO this is a hyperparameter
-        )
+      collapsedQAOutputs <- config.readCollapsedQAOutputs
+      coindexedResults <- runCollapsedCoindexing(
+        predicateSenseResults, collapsedQAOutputs
       )
-      coindexedResults <- runCoindexing(
-        predicateSenseResults,
-        fuzzyArgEquivalences
-      )
+      // fuzzyArgEquivalences <- logOp(
+      //   "Counting argument cooccurrences",
+      //   QAInputApp.getFuzzyArgumentEquivalences(
+      //     fullSet, predicateSenseResults,
+      //     config.streamQAOutputs,
+      //     hardAssignments = false // TODO this is a hyperparameter
+      //   )
+      // )
       _ <- config.writeFramesets(coindexedResults)
       paraphraseGold <- config.readGoldParaphrases
       evaluationItems <- config.getEvaluationItems

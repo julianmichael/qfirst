@@ -109,39 +109,14 @@ object QAInputApp extends IOApp {
 
   import qfirst.metrics.ExpectedCount
 
-  @JsonCodec case class PreprocessedSentenceQAOutput(
-    sentenceId: String,
-    verbsList: Map[String, List[((ClausalQ, ClausalQ), Double)]]
-  ) {
-    def verbs = verbsList.transform { (_, adj) => adj.toMap }
-  }
-
-  def preprocessSentenceQAOutput(
-    origQAs: SentenceQAOutput
-  ): PreprocessedSentenceQAOutput = {
-    PreprocessedSentenceQAOutput(
-      origQAs.sentenceId,
-      origQAs.verbs.transform { case (_, verbQAs) =>
-        verbQAs.tails.toList.flatMap {
-          case Nil => Nil
-          case fst :: tail => tail.map { snd =>
-            val adjProb = adjacencyProb(fst.spans, snd.spans)
-            val qPair = fst.question.clausalQ -> snd.question.clausalQ
-            qPair -> adjProb
-          }
-        }
-      }
-    )
-  }
-
   def getUnsymmetrizedFuzzyArgumentEquivalences(
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
-    sentenceQAs: PreprocessedSentenceQAOutput,
+    sentenceQAs: SentenceQAOutput,
     hardAssignments: Boolean
   ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
     dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
-      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbAdjacency) =>
+      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
         val verbIndex = verbIndexStr.toInt
         val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
         val frameset = framesets(verbForms)
@@ -149,19 +124,25 @@ object QAInputApp extends IOApp {
         val frameProbs = frameset.instances(verbId)
         val maxFrameProb = frameProbs.max
 
-        (frameset.frames, frameset.frames.indices, frameProbs).zipped.flatMap {
+        (frameset.frames, frameset.frames.indices, frameProbs).zipped.toList.flatMap {
           case (frame, frameIndex, frameProb) =>
             if(hardAssignments && frameProb < maxFrameProb) None else Some {
-              val adjacencyExpectations = verbAdjacency.transform { case (_, prob) =>
-                if(hardAssignments) {
-                  ExpectedCount(prob, 1.0)
-                } else {
-                  ExpectedCount(prob* frameProb, frameProb)
+              val adjacencyExpectations = verbQAs.tails.toList.flatMap {
+                case Nil => Nil
+                case fst :: tail => tail.map { snd =>
+                  val adjProb = adjacencyProb(fst.spans, snd.spans)
+                  val qPair = fst.question.clausalQ -> snd.question.clausalQ
+                  val expectedCount = if(hardAssignments) {
+                    ExpectedCount(adjProb, 1.0)
+                  } else {
+                    ExpectedCount(adjProb * frameProb, frameProb)
+                  }
+                  Map(qPair -> expectedCount)
                 }
-              }
+              }.combineAll
               Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
             }
-        }.toList.combineAll
+        }.combineAll
       }
     }
   }
@@ -181,7 +162,7 @@ object QAInputApp extends IOApp {
   def getFuzzyArgumentEquivalences(
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
-    allSentenceQAs: Stream[IO, PreprocessedSentenceQAOutput],
+    allSentenceQAs: Stream[IO, SentenceQAOutput],
     hardAssignments: Boolean = false
   ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
     allSentenceQAs.map { sentenceQAs =>
@@ -195,6 +176,54 @@ object QAInputApp extends IOApp {
             frameRel.transform { case (_, ec) =>
               ec.expectationPerInstance
             }
+          }
+        }
+      )
+  }
+
+  def getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
+    dataset: Dataset,
+    sentenceQAs: SentenceQAOutput
+  ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]] = {
+    dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
+      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
+        val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
+        val adjacencyExpectations = verbQAs.tails.toList.flatMap {
+          case Nil => Nil
+          case fst :: tail => tail.map { snd =>
+            val adjProb = adjacencyProb(fst.spans, snd.spans)
+            val qPair = fst.question.clausalQ -> snd.question.clausalQ
+            Map(qPair -> ExpectedCount(adjProb, 1.0))
+          }
+        }.combineAll
+        Map(verbForms -> adjacencyExpectations)
+      }
+    }
+  }
+
+  def symmetrizeCollapsedArgumentEquivalences(
+    equivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]
+  ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]] = {
+    equivalences.transform { case (_, equivalence) =>
+      equivalence.transform { case (qPair, ec) =>
+        ec |+| equivalence.get(qPair.swap).combineAll
+      }
+    }
+  }
+
+  def getCollapsedFuzzyArgumentEquivalences(
+    dataset: Dataset,
+    allSentenceQAs: Stream[IO, SentenceQAOutput]
+  ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]] = {
+    allSentenceQAs.map { sentenceQAs =>
+      getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
+        dataset, sentenceQAs
+      )
+    }.compile.foldMonoid.map(symmetrizeCollapsedArgumentEquivalences)
+      .map(
+        _.transform { case (_, verbRel) =>
+          verbRel.transform { case (_, ec) =>
+            ec.expectationPerInstance
           }
         }
       )

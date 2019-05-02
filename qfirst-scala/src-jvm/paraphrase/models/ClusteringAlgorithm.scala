@@ -45,12 +45,12 @@ trait ClusteringAlgorithm {
   ) = newLoss - leftLoss - rightLoss
 
   case class MergeCandidate(
-    left: MergeTree[Double, Int],
-    right: MergeTree[Double, Int],
+    left: MergeTree[Int],
+    right: MergeTree[Int],
     param: ClusterParam,
     loss: Double
   ) {
-    val delta = getLossChangePriority(loss, left.param, right.param)
+    val delta = getLossChangePriority(loss, left.loss, right.loss)
     def toTreeAndParam(rank: Int) = MergeTree.Merge(
       rank, loss, left, right
     ) -> param
@@ -64,9 +64,9 @@ trait ClusteringAlgorithm {
   // should be overridden for efficiency, if possible
   def merge(
     instances: Vector[Instance],
-    left: MergeTree[Double, Int],
+    left: MergeTree[Int],
     leftParam: ClusterParam,
-    right: MergeTree[Double, Int],
+    right: MergeTree[Int],
     rightParam: ClusterParam,
     hyperparams: Hyperparams
   ): MergeCandidate = {
@@ -80,11 +80,11 @@ trait ClusteringAlgorithm {
   def runAgglomerativeClustering(
     instances: Vector[Instance],
     hyperparams: Hyperparams
-  ): (MergeTree[Double, Int], ClusterParam) = {
+  ): (MergeTree[Int], ClusterParam) = {
     val leafParams = instances.map(i => estimateParameter(Vector(i), Vector(1.0), hyperparams))
     var currentTrees = leafParams.zipWithIndex.map { case (param, index) =>
       val loss = computeLoss(instances(index), param, hyperparams)
-      (MergeTree.Leaf(loss, index): MergeTree[Double, Int]) -> param
+      (MergeTree.Leaf(loss, index): MergeTree[Int]) -> param
     }.toMap
     import scala.collection.mutable
     val mergeHeap = mutable.PriorityQueue.empty[MergeCandidate]
@@ -167,9 +167,9 @@ trait ClusteringAlgorithm {
   ): (Vector[DenseMultinomial], Vector[Double]) = {
     val allLosses = instances.map(i => model.map(p => computeLoss(i, p, hyperparams)))
     val assignments = allLosses.map { v =>
-      val vec = DenseVector(v.toArray)
-      val probs = exp(vec - logSumExp(vec)) // normalize first to keep stable
-      Multinomial(probs)
+      val vec = DenseVector(v.toArray) *:* -1.0 // from unnormalized neg log likelihoods to unnorm log likelihoods
+      val probs = exp(vec - logSumExp(vec)) // normalized likelihoods
+      Multinomial(probs) // assume uniform prior -> likelihoods are assignment probabilities
     }
     val instanceLosses = assignments.map(_.sum)
     (assignments, instanceLosses)
@@ -251,9 +251,9 @@ trait CompositeClusteringAlgorithm extends ClusteringAlgorithm {
   // should be overridden for efficiency, if possible
   // def merge(
   //   instances: Vector[Instance],
-  //   left: MergeTree[Double, Int],
+  //   left: MergeTree[Int],
   //   leftParam: ClusterParam,
-  //   right: MergeTree[Double, Int],
+  //   right: MergeTree[Int],
   //   rightParam: ClusterParam,
   //   hyperparams: Hyperparams
   // ): MergeCandidate = {

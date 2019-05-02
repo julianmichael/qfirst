@@ -3,6 +3,9 @@ import qfirst.FileUtil
 
 import java.nio.file._
 
+import qasrl.data.Dataset
+import qasrl.ArgumentSlot
+
 import qasrl.bank.Data
 import qasrl.bank.FullData
 
@@ -14,6 +17,8 @@ import cats.implicits._
 
 import EvalApp.ParaphraseAnnotations
 
+import qfirst.ClauseResolution.ArgStructure
+
 case class Config(
   experimentName: String,
   trainOnDev: Boolean,
@@ -24,7 +29,7 @@ case class Config(
   import Config.qasrlElmoPath
   val qaInputPath = Config.getQAInputPath(testOnTest, outputDir)
   val qaOutputPath = Config.getQAOutputPath(testOnTest, outputDir)
-  val preprocessedQAOutputPath = Config.getPreprocessedQAOutputPath(testOnTest, outputDir)
+  val collapsedQAOutputPath = Config.getCollapsedQAOutputPath(testOnTest, outputDir)
 
   def readWholeQasrlBank = logOp(
     "Reading QA-SRL Bank",
@@ -55,20 +60,34 @@ case class Config(
   ).toString
 
   def streamQAOutputs(implicit cs: ContextShift[IO]) = {
-    val preprocess = {
-      if(!Files.exists(preprocessedQAOutputPath)) {
-        logOp(
-          s"Preprocessing QA outputs from $qaOutputPath",
-          FileUtil.writeJsonLinesStreaming(preprocessedQAOutputPath, io.circe.Printer.noSpaces)(
-            FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-              .map(QAInputApp.preprocessSentenceQAOutput)
+    FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+  }
+  def readCollapsedQAOutputs(implicit cs: ContextShift[IO]) = {
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    if(!Files.exists(collapsedQAOutputPath)) {
+      val evalString = if(testOnTest) "test" else "dev"
+      implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+      for {
+        trainSet <- logOp("Reading expanded/train for preprocessing", readQasrlDataset("expanded/train"))
+        evalSet <- logOp(s"Reading eval set ($evalString) for preprocessing", readEvalSet)
+        collapsedQAOutputs <- logOp(
+          "Reading and collapsing QA outputs",
+          QAInputApp.getCollapsedFuzzyArgumentEquivalences(
+            trainSet |+| evalSet, streamQAOutputs
           )
         )
-      } else IO.unit
+        _ <- logOp(
+          "Writing collapsed QA outputs",
+          FileUtil.writeJsonLines(collapsedQAOutputPath, io.circe.Printer.noSpaces)(collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
+        )
+      } yield collapsedQAOutputs
+    } else {
+      logOp(
+        "Reading collapsed QA outputs",
+        FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](collapsedQAOutputPath)
+          .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
+      )
     }
-    preprocess >> IO(
-      FileUtil.readJsonLines[QAInputApp.PreprocessedSentenceQAOutput](preprocessedQAOutputPath)
-    )
   }
 
   val evaluationItemsPath = outputDir.resolve(
@@ -138,9 +157,9 @@ object Config {
     val suff = if(test) "test" else "dev"
     outputDir.resolve(s"qa-output-$suff.jsonl.gz")
   }
-  def getPreprocessedQAOutputPath(test: Boolean, outputDir: Path) = {
+  def getCollapsedQAOutputPath(test: Boolean, outputDir: Path) = {
     val suff = if(test) "test" else "dev"
-    outputDir.resolve(s"qa-output-$suff-preprocessed.jsonl.gz")
+    outputDir.resolve(s"qa-output-$suff-collapsed.jsonl.gz")
   }
 
   def make(
