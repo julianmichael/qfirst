@@ -76,12 +76,11 @@ case class VerbFrameServiceIO(
   def getParaphrasingInfo(i: Int): IO[ParaphrasingInfo] = {
     val (verbInflectedForms, sentenceId, verbIndex) = getEvaluationItem(i)
     val verbFrameset = verbFramesets(verbInflectedForms)
-    val frameDistribution = verbFrameset.instances(VerbId(sentenceId, verbIndex))
     paraphraseStoreRef.get.map(paraphrases =>
       ParaphrasingInfo(
         sentenceId, verbIndex,
         dataset.sentences(sentenceId).verbEntries(verbIndex),
-        verbFrameset, frameDistribution,
+        verbFrameset,
         paraphrases.get(sentenceId).flatMap(_.get(verbIndex)).getOrElse(VerbParaphraseLabels.empty)
       )
     )

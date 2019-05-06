@@ -124,20 +124,6 @@ object FrameInductionApp extends IOApp {
   def makeVerbVocab(instances: Instances): Vocab[InflectedForms] = {
     Vocab.make(instances.keySet)
   }
-  // def makeClauseVocab(instances: Instances): Vocab[ArgStructure] = {
-  //   val qSlotsSet = instances.values.iterator.flatMap(sentMap =>
-  //     sentMap.values.iterator.flatMap(verbMap =>
-  //       verbMap.values.iterator.flatMap(qMap =>
-  //         qMap.keySet.iterator
-  //       )
-  //     )
-  //   ).toSet
-  //   val clauseTemplateSet = qSlotsSet.flatMap(slots =>
-  //     ClauseResolution.getFramesWithAnswerSlots(slots)
-  //       .map(_._1).map(ClauseResolution.getClauseTemplate)
-  //   )
-  //   Vocab.make(clauseTemplateSet)
-  // }
 
   def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]): Vocab[ArgStructure] = {
     Vocab.make(
@@ -148,22 +134,6 @@ object FrameInductionApp extends IOApp {
       )
     )
   }
-
-  // def getGoldInstances(dataset: Dataset): Instances = {
-  //   dataset.sentences
-  //     .iterator.flatMap { case (sid, sentence) => sentence.verbEntries.values.map(sid -> _) }.toList
-  //     .groupBy(_._2.verbInflectedForms).map { case (verbInflectedForms, pairs) =>
-  //       verbInflectedForms -> pairs.groupBy(_._1).map { case (sid, pairs) =>
-  //         sid -> pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
-  //           verbIndex -> filterGoldNonDense(verb)._2.map { case (qString, qLabel) =>
-  //             qLabel.questionSlots -> (
-  //               qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
-  //             )
-  //           }
-  //         }
-  //       }
-  //     }
-  // }
 
   import breeze.linalg.DenseVector
 
@@ -206,193 +176,9 @@ object FrameInductionApp extends IOApp {
   import qfirst.paraphrase.models._
   import breeze.stats.distributions.Multinomial
 
-  // def runVerbWiseSoftEMWithComposite(
-  //   instances: Instances,
-  //   elmoVecs: ClusteringInstances[DenseVector[Float]],
-  //   rand: Random
-  // ): IO[Map[InflectedForms, VerbFrameset]] = {
-  //   val algorithm = new CompositeClusteringAlgorithm {
-  //     val _1 = DirichletMAPClustering
-  //     val _2 = VectorMeanClustering
-  //     val lambda = 0.0
-  //   }
-  //   val verbCounts = instances.map { case (forms, sentMap) => forms -> sentMap.iterator.map(_._2.size).sum }
-  //   val verbs = instances.map { case (forms, sentMap) =>
-  //     forms -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
-  //       verbIndices.keys.toVector
-  //         .filter(vi =>
-  //           instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).exists(_.nonEmpty) &&
-  //             elmoVecs.instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
-  //         ).map(vi => VerbId(sid, vi))
-  //     }
-  //   }.filter(_._2.nonEmpty)
-
-  //   verbs.toList.traverse { case (verbInflectedForms, verbIds) =>
-  //     val verbInstances = instances(verbInflectedForms)
-  //     val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
-  //     if(clauseVocab.size == 0) {
-  //       println(verbInflectedForms)
-  //       println(verbIds)
-  //       println(verbInstances)
-  //       println(verbCounts(verbInflectedForms))
-  //     }
-
-  //     runVerbWiseSoftEM(algorithm)(
-  //       verbInflectedForms = verbInflectedForms,
-  //       verbIds = verbIds,
-  //       makeInstance = (verbId: VerbId) => {
-  //         val clauseCounts = ClauseResolution.getResolvedStructures(
-  //           verbInstances(verbId.sentenceId)(verbId.verbIndex).keys.toList
-  //         ).foldMap(ct => Map(clauseVocab.getIndex(ct._1) -> 1))
-  //         val vector = elmoVecs.instances(verbInflectedForms)(verbId.sentenceId)(verbId.verbIndex)
-  //         clauseCounts -> vector
-  //       },
-  //       hyperparams = (DirichletMAPClustering.Hyperparams(clauseVocab.size, 0.1), ()),
-  //       numFrames = math.max(2, math.round(math.log(verbCounts(verbInflectedForms).toDouble) / math.log(10)).toInt), // can change, idk
-  //       getFrame = {
-  //         case (multinomial, _) => (multinomial.params / multinomial.sum).toScalaVector.toList.zipWithIndex
-  //             .filter(_._1 > 0.01).map {
-  //               case (prob, index) => FrameClause(clauseVocab.getItem(index), prob)
-  //             }
-  //       },
-  //       rand = rand
-  //     ).map(verbInflectedForms -> _)
-  //   }.map(_.toMap)
-  // }
-
-  // def runVerbWiseSoftEM(
-  //   algorithm: ClusteringAlgorithm)(
-  //   verbInflectedForms: InflectedForms,
-  //   verbIds: Vector[VerbId],
-  //   makeInstance: VerbId => algorithm.Instance,
-  //   hyperparams: algorithm.Hyperparams,
-  //   numFrames: Int,
-  //   getFrame: algorithm.ClusterParam => List[FrameClause],
-  //   rand: Random,
-  //   shouldLog: Boolean = false
-  // ): IO[VerbFrameset] = {
-  //   val instances = verbIds.map(makeInstance)
-  //   for {
-  //     modelInit <- {
-  //       val init = IO(algorithm.initPlusPlus(instances, hyperparams, math.min(numFrames, instances.size)))
-  //       if(shouldLog) logOp("Initializing model", init)
-  //       else init
-  //     }
-  //     (model, assignments, _) <- IO(
-  //       algorithm.runSoftEM(
-  //         initModel = modelInit,
-  //         instances = instances,
-  //         hyperparams = hyperparams,
-  //         stoppingThreshold = 0.001,
-  //         shouldLog = shouldLog
-  //       )
-  //     )
-  //   } yield {
-  //     val prior = Multinomial(assignments.iterator.map(m => m.params / m.sum).reduce(_ + _))
-  //     val frames = model.map(getFrame).zipWithIndex.map { case (frameClauses, clusterIndex) =>
-  //       VerbFrame(frameClauses, null /* TODO: replace with dummy merge tree */, prior.probabilityOf(clusterIndex))
-  //     }
-  //     val instanceProbs = verbIds.zip(assignments).foldMap { case (verbId, assignmentProbs) =>
-  //       Map(verbId -> assignmentProbs.params.toScalaVector)
-  //     }
-  //     VerbFrameset(verbInflectedForms, frames.toList, instanceProbs)
-  //   }
-  // }
-
   type ClausalQ = (ArgStructure, ArgumentSlot)
   import breeze.linalg._
   import scala.collection.immutable.Vector
-
-  def runCoindexing(
-    predicateSenseResults: Map[InflectedForms, VerbFrameset],
-    fuzzyArgEquivalences: Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]
-  ): IO[Map[InflectedForms, VerbFrameset]] = {
-    predicateSenseResults.map { case (verbForms, verbFrameset) =>
-      val frameRels = fuzzyArgEquivalences(verbForms)
-      val coindexedFrames = verbFrameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
-        val frameRel = frameRels(frameIndex)
-        val clausalQVocab = Vocab.make(frameRel.keySet.flatMap(x => Set(x._1, x._2)))
-        val indices = clausalQVocab.indices
-        val fuzzyEquivMatrix = DenseMatrix.zeros[Double](clausalQVocab.size, clausalQVocab.size)
-        for(i <- indices; j <- indices) {
-          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
-          val score = -math.log(
-            if(i == j) 1.0 // reflexive
-            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
-            else {
-              print(".")
-              frameRel.getOrElse(qi -> qj, 0.5) // if they never seemed to appear together? idk
-            }
-          )
-          fuzzyEquivMatrix.update(i, j, score)
-        }
-        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
-        frame.copy(coindexingTree = mergeTree.map(clausalQVocab.getItem))
-      }
-      verbFrameset.copy(frames = coindexedFrames)
-    }
-    IO(predicateSenseResults)
-  }
-
-  def runCollapsedCoindexing(
-    // verbSenseModel: CalibratedVerbSenseModel,
-    predicateSenseResults: Map[InflectedForms, VerbFrameset],
-    fuzzyArgEquivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
-  ): IO[Map[InflectedForms, VerbFrameset]] = IO {
-    // verbSenseModel.clustersByVerb.transform { case (verbForms, tree) =>
-    //   val clusterTrees = tree.splitByPredicate(_.loss > verbSenseModel.maxLoss)
-    //   val verbRel = fuzzyArgEquivalences(verbForms)
-    //   val verbFrames = clusterTrees.map { tree =>
-    //     val verbIds = tree.values
-    //   }
-    // }
-
-    // model: VerbSenseConfig,
-    // clustersByVerb: Map[InflectedForms, MergeTree[VerbId]],
-    // maxLoss: Double,
-    // minClauseProb: Double
-
-    predicateSenseResults.transform { case (verbForms, verbFrameset) =>
-      val verbRel = fuzzyArgEquivalences(verbForms)
-      val coindexedFrames = verbFrameset.frames.zipWithIndex.map { case (frame, frameIndex) =>
-        val clausalQVocab = Vocab.make(
-          frame.clauseTemplates.map(_.args).flatMap(clauseTemplate =>
-            (clauseTemplate.args.keys.toList: List[ArgumentSlot]).map(slot =>
-              clauseTemplate -> slot
-            )
-          ).toSet
-        )
-        val indices = clausalQVocab.indices
-        val fuzzyEquivMatrix = DenseMatrix.zeros[Double](clausalQVocab.size, clausalQVocab.size)
-        for(i <- indices; j <- indices) {
-          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
-          val score = -math.log(
-            if(i == j) 1.0 // reflexive
-            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
-            else {
-              val resOpt = verbRel.get(qi -> qj).orElse(verbRel.get(qj -> qi))
-              resOpt.getOrElse {
-                println(s"XXX: $qi \t $qj")
-                0.5 // shouldn't happen
-              }
-            }
-          )
-          fuzzyEquivMatrix.update(i, j, score)
-        }
-        // clausalQVocab.items.zipWithIndex.foreach(println)
-        // for(i <- (0 until clausalQVocab.size)) {
-        //   print(f"$i%9d ")
-        //   for(j <- (0 to i)) { print(f"${fuzzyEquivMatrix(i, j)}%9.2f") }
-        //   println
-        // }
-        // println("          " + (0 until clausalQVocab.size).map(x => f"$x%9d").mkString)
-        // println(fuzzyEquivMatrix)
-        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
-        frame.copy(coindexingTree = mergeTree.map(clausalQVocab.getItem))
-      }
-      verbFrameset.copy(frames = coindexedFrames)
-    }
-  }
 
   def runVerbWiseAgglomerative(
     algorithm: ClusteringAlgorithm)(
@@ -402,47 +188,12 @@ object FrameInductionApp extends IOApp {
     hyperparams: algorithm.Hyperparams,
   ): IO[MergeTree[VerbId]] = {
     val instances = verbIds.map(makeInstance)
-    IO(println(s"Clustering verb: ${verbInflectedForms.stem}")) >> IO(
-        algorithm.runAgglomerativeClustering(instances, hyperparams)._1
-          .map(verbIds)
+    // IO(println(s"Clustering verb: ${verbInflectedForms.stem}")) >>
+    IO(
+      algorithm.runAgglomerativeClustering(instances, hyperparams)._1
+        .map(verbIds)
     )
   }
-
-  // def runVerbWiseAgglomerativeWithComposite(
-  //   instances: Instances,
-  //   elmoVecs: ClusteringInstances[DenseVector[Float]],
-  //   interpolation: Double = 0.5,
-  //   rand: Random
-  // ): IO[Map[InflectedForms, MergeTree[VerbId]]] = {
-  //   val algorithm = new CompositeClusteringAlgorithm {
-  //     val _1 = MinEntropyClustering
-  //     val _2 = VectorMeanClustering
-  //     val lambda = interpolation
-  //   }
-  //   val verbs = instances.map { case (forms, sentMap) =>
-  //     forms -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
-  //       verbIndices.keys.toVector
-  //         .filter(vi =>
-  //           instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty &&
-  //             elmoVecs.instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
-  //         )
-  //         .map(vi => VerbId(sid, vi))
-  //     }
-  //   }.filter(_._2.nonEmpty)
-  //   val clauseVocab = makeClauseVocab(instances)
-  //   val makeInstancePair = (forms: InflectedForms, verbId: VerbId) => {
-  //     val questions = instances(forms)(verbId.sentenceId)(verbId.verbIndex).keySet.toList
-  //     val clauseCounts = ClauseResolution.getResolvedFramePairs(
-  //       forms, questions
-  //     ).map(_._1).map(ClauseResolution.getClauseTemplate)
-  //       .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
-  //     val vector = elmoVecs.instances(forms)(verbId.sentenceId)(verbId.verbIndex)
-  //     clauseCounts -> vector
-  //   }
-  //   runVerbWiseAgglomerative(algorithm)(
-  //     verbs, makeInstance, (algorithm._1.Hyperparams(clauseVocab.size), ())
-  //   )
-  // }
 
   def runVerbSenseAgglomerativeClustering(
     verbSenseConfig: VerbSenseConfig,
@@ -492,7 +243,6 @@ object FrameInductionApp extends IOApp {
       clustering.map(verbInflectedForms -> _)
     }.map(_.toMap)
   }
-
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
@@ -652,6 +402,78 @@ object FrameInductionApp extends IOApp {
     }
   }
 
+  // TODO restrict coindexing to clauses above minimum probability threshold?
+  def runCollapsedCoindexing(
+    instances: Instances,
+    verbSenseModel: CalibratedVerbSenseModel,
+    fuzzyArgEquivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
+  ): Map[InflectedForms, VerbFrameset] = {
+    verbSenseModel.clustersByVerb.transform { case (verbInflectedForms, tree) =>
+      val numInstancesForVerb = tree.size
+      val verbClauseSets = instances(verbInflectedForms).flatMap { case (sid, verbMap) =>
+        verbMap.map { case (vi, qMap) =>
+          val questions = qMap.keySet.toList
+          val clauses = ClauseResolution.getResolvedFramePairs(
+            verbInflectedForms, questions
+          ).map(_._1).map(ClauseResolution.getClauseTemplate).toSet
+          VerbId(sid, vi) -> clauses
+        }
+      }
+      val clusterTrees = tree.splitByPredicate(_.loss > verbSenseModel.maxLoss)
+      val verbRel = fuzzyArgEquivalences(verbInflectedForms)
+      val verbFrames = clusterTrees.map { frameTree =>
+        val verbIds = frameTree.values
+        val clauseTemplates = verbIds.foldMap { vid =>
+          verbClauseSets(vid).toList.foldMap(c => Map(c -> 1))
+        }.toList.map { case (c, count) => FrameClause(c, (count.toDouble / verbIds.size)) }
+        val frameProb = verbIds.size.toDouble / numInstancesForVerb
+        val clausalQVocab = Vocab.make(
+          clauseTemplates.map(_.args).flatMap(clauseTemplate =>
+            (clauseTemplate.args.keys.toList: List[ArgumentSlot]).map(slot =>
+              clauseTemplate -> slot
+            )
+          ).toSet
+        )
+        val indices = clausalQVocab.indices
+        val fuzzyEquivMatrix = DenseMatrix.zeros[Double](clausalQVocab.size, clausalQVocab.size)
+        for(i <- indices; j <- indices) {
+          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
+          val score = -math.log(
+            if(i == j) 1.0 // reflexive
+            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
+            else {
+              val resOpt = verbRel.get(qi -> qj).orElse(verbRel.get(qj -> qi))
+              resOpt.getOrElse {
+                println(s"XXX: $qi \t $qj")
+                0.5 // shouldn't happen
+              }
+            }
+          )
+          fuzzyEquivMatrix.update(i, j, score)
+        }
+        // clausalQVocab.items.zipWithIndex.foreach(println)
+        // for(i <- (0 until clausalQVocab.size)) {
+        //   print(f"$i%9d ")
+        //   for(j <- (0 to i)) { print(f"${fuzzyEquivMatrix(i, j)}%9.2f") }
+        //   println
+        // }
+        // println("          " + (0 until clausalQVocab.size).map(x => f"$x%9d").mkString)
+        // println(fuzzyEquivMatrix)
+        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
+        val coindexingTree = mergeTree.map(clausalQVocab.getItem)
+        VerbFrame(verbIds.toSet, clauseTemplates, coindexingTree, frameProb)
+      }.toList
+      VerbFrameset(verbInflectedForms, verbFrames)
+    }
+  }
+
+  def evaluateParaphrasing(
+    config: Config,
+    verbFramesets: Map[VerbSenseConfig, Map[InflectedForms, VerbFrameset]],
+    goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
+    evaluationItems: Vector[(InflectedForms, String, Int)]
+  ): IO[Map[VerbSenseConfig, CalibratedVerbSenseModel]] = {
+
   // TODO: elmo loss is ~175x greater; tune around this number
   // _ <- {
   //   import qfirst.metrics._
@@ -664,6 +486,8 @@ object FrameInductionApp extends IOApp {
       List(VerbSenseConfig.EntropyOnly, VerbSenseConfig.ELMoOnly) ++
         (1 to 9).map(_.toDouble / 10.0).toList.map(VerbSenseConfig.Interpolated(_))
     )
+    // TODO read in tuned thresholds (in case of test)
+    // TODO add in single-cluster baseline
     for {
       verbClustersByConfig <- verbSenseConfigs.traverse(vsConfig =>
         getVerbSenseClusters(config, vsConfig).map(vsConfig -> _)
@@ -671,10 +495,22 @@ object FrameInductionApp extends IOApp {
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
       bestModels <- evaluateVerbClusters(config, verbClustersByConfig, goldParaphrases, evaluationItems)
-      // bestVerbClustering <- evaluateAndOptimizeVerbClusters(config, verbClusters)
-      // collapsedQAOutputs <- config.readCollapsedQAOutputs
-      // coindexedResults <- runCollapsedCoindexing(bestVerbClustering, collapsedQAOutputs)
-      // _ <- config.writeFramesets(coindexedResults)
+      collapsedQAOutputs <- config.collapsedQAOutputs.get
+      inputInstances <- config.inputInstances.get
+      coindexedModels <- logOp(
+        "Running coindexing",
+        bestModels.transform { case (_, model) =>
+          runCollapsedCoindexing(inputInstances, model, collapsedQAOutputs)
+        }
+      )
+      _ <- logOp(
+        "Writing framesets",
+        coindexedModels.toList.traverse { case (vsConfig, framesets) =>
+          config.writeFramesets(vsConfig, framesets)
+        }
+      )
+      // TODO evaluate full paraphrasing (produce graphs, calibrate to maximize F1, write final metrics to text file)
+      // TODO save calibrated thresholds somewhere where the test models can access them (in case of dev)
       // _ <- EvalApp.runEvaluation(evalSet, evaluationItems.toSet, coindexedResults, paraphraseGold)
     } yield ExitCode.Success
   }

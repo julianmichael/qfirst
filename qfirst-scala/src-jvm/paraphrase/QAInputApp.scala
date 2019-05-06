@@ -113,7 +113,6 @@ object QAInputApp extends IOApp {
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
     sentenceQAs: SentenceQAOutput,
-    hardAssignments: Boolean
   ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
     dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
       sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
@@ -121,28 +120,20 @@ object QAInputApp extends IOApp {
         val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
         val frameset = framesets(verbForms)
         val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
-        val frameProbs = frameset.instances(verbId)
-        val maxFrameProb = frameProbs.max
-
-        (frameset.frames, frameset.frames.indices, frameProbs).zipped.toList.flatMap {
-          case (frame, frameIndex, frameProb) =>
-            if(hardAssignments && frameProb < maxFrameProb) None else Some {
+        frameset.frames.zip(frameset.frames.indices).toList
+          .filter(_._1.verbIds.contains(verbId))
+          .foldMap { case (frame, frameIndex) =>
               val adjacencyExpectations = verbQAs.tails.toList.flatMap {
                 case Nil => Nil
                 case fst :: tail => tail.map { snd =>
                   val adjProb = adjacencyProb(fst.spans, snd.spans)
                   val qPair = fst.question.clausalQ -> snd.question.clausalQ
-                  val expectedCount = if(hardAssignments) {
-                    ExpectedCount(adjProb, 1.0)
-                  } else {
-                    ExpectedCount(adjProb * frameProb, frameProb)
-                  }
+                  val expectedCount = ExpectedCount(adjProb, 1.0)
                   Map(qPair -> expectedCount)
                 }
               }.combineAll
               Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
-            }
-        }.combineAll
+          }
       }
     }
   }
@@ -162,12 +153,11 @@ object QAInputApp extends IOApp {
   def getFuzzyArgumentEquivalences(
     dataset: Dataset,
     framesets: Map[InflectedForms, VerbFrameset],
-    allSentenceQAs: Stream[IO, SentenceQAOutput],
-    hardAssignments: Boolean = false
+    allSentenceQAs: Stream[IO, SentenceQAOutput]
   ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
     allSentenceQAs.map { sentenceQAs =>
       getUnsymmetrizedFuzzyArgumentEquivalences(
-        dataset, framesets, sentenceQAs, hardAssignments
+        dataset, framesets, sentenceQAs
       )
     }.compile.foldMonoid.map(symmetrizeArgumentEquivalences)
       .map(

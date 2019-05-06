@@ -76,7 +76,21 @@ object ParaphrasingFilter {
   probability: Double)
 object FrameClause
 
+@Lenses @JsonCodec case class VerbId(
+  sentenceId: String, verbIndex: Int
+)
+object VerbId {
+  import io.circe._
+  implicit val verbIdKeyEncoder = KeyEncoder.instance[VerbId](vid =>
+    s"${vid.sentenceId}:${vid.verbIndex}"
+  )
+  implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
+    scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
+  )
+}
+
 @Lenses @JsonCodec case class VerbFrame(
+  verbIds: Set[VerbId],
   clauseTemplates: List[FrameClause],
   coindexingTree: MergeTree[(ArgStructure, ArgumentSlot)],
   probability: Double) {
@@ -112,22 +126,8 @@ object FrameClause
 }
 object VerbFrame
 
-@Lenses @JsonCodec case class VerbId(
-  sentenceId: String, verbIndex: Int
-)
-object VerbId {
-  import io.circe._
-  implicit val verbIdKeyEncoder = KeyEncoder.instance[VerbId](vid =>
-    s"${vid.sentenceId}:${vid.verbIndex}"
-  )
-  implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
-    scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
-  )
-}
-
 @Lenses @JsonCodec case class VerbFrameset(
   inflectedForms: InflectedForms,
-  frames: List[VerbFrame],
-  instances: Map[VerbId, Vector[Double]]
+  frames: List[VerbFrame]
 )
 object VerbFrameset

@@ -18,7 +18,7 @@ import scala.collection.immutable.Vector
 // same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
 // can also be regarded as "MLE clustering"
 object MinEntropyClustering extends ClusteringAlgorithm {
-  case class ClusterParam(counts: DenseVector[Double], total: Double, numInstances: Double)
+  case class ClusterParam(counts: DenseVector[Double], total: Double)
   type Instance = Map[Int, Int] // sparse counts
   case class Hyperparams(vocabSize: Int)
 
@@ -53,7 +53,7 @@ object MinEntropyClustering extends ClusteringAlgorithm {
           total = total + pcount
         }
       }
-    ClusterParam(DenseVector(arr), total, numInstances)
+    ClusterParam(DenseVector(arr), total)
   }
 
   // can do efficient merge by summing counts
@@ -67,12 +67,10 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   ): MergeCandidate = {
     val counts = leftParam.counts + rightParam.counts
     val total = leftParam.total + rightParam.total
-    val numInstances = leftParam.numInstances + rightParam.numInstances
-    // val probs = counts / total
     val newLoss = counts.activeValuesIterator
       .filter(_ > 0.0) // prevent log of 0
       .map(c => c * log(c / total)) // count * log probability = log likelihood
-      .sum * -1.0 / numInstances
+      .sum * -1.0
     if(!(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(instances)
@@ -85,7 +83,7 @@ object MinEntropyClustering extends ClusteringAlgorithm {
       println(newLoss)
       ???
     }
-    MergeCandidate(left, right, ClusterParam(counts, total, numInstances), newLoss)
+    MergeCandidate(left, right, ClusterParam(counts, total), newLoss)
   }
 
 }

@@ -19,7 +19,6 @@ import qasrl.data.JsonCodecs.{spanEncoder, spanDecoder}
   verbIndex: Int,
   verbEntry: VerbEntry,
   verbFrameset: VerbFrameset,
-  frameDistribution: Vector[Double],
   goldParaphrases: VerbParaphraseLabels
 )
 

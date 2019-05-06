@@ -113,8 +113,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val configDir = IO.pure(
     outputDir.resolve(mode.toString)
   ).flatTap(createDir)
-  val modelsDir = configDir.map(_.resolve("models")).flatTap(createDir)
-  val resultsDir = configDir.map(_.resolve("results")).flatTap(createDir)
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
@@ -244,8 +242,17 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   }
 
 
+  def modelDir(verbSenseConfig: VerbSenseConfig) = {
+    configDir.map(_.resolve(s"${verbSenseConfig.modelName}"))
+  }
   def verbClustersPath(verbSenseConfig: VerbSenseConfig) = {
-    modelsDir.map(_.resolve(s"${verbSenseConfig.modelName}.jsonl.gz"))
+    modelDir(verbSenseConfig).map(_.resolve(s"clusters.jsonl.gz"))
+  }
+  def framesetsPath(verbSenseConfig: VerbSenseConfig) = {
+    modelDir(verbSenseConfig).map(_.resolve(s"framesets.jsonl.gz"))
+  }
+  def resultsPath(verbSenseConfig: VerbSenseConfig) = {
+    modelDir(verbSenseConfig).map(_.resolve(s"results"))
   }
 
   def getCachedVerbClusters(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, MergeTree[VerbId]]]] = {
@@ -270,25 +277,20 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     )
   }
 
-
-  // TODO below
-
-  // val inducedFramesetsPath = experimentDir.resolve(
-  //   if(testOnTest) "results-test.jsonl.gz" else "results-dev.jsonl.gz"
-  // )
-  // def readFramesets(implicit cs: ContextShift[IO]) = logOp(
-  //   "Reading framesets",
-  //   FileUtil.readJsonLines[VerbFrameset](inducedFramesetsPath)
-  //     .compile.toList
-  //     .map(_.map(f => f.inflectedForms -> f).toMap)
-  // )
-  // def writeFramesets(
-  //   framesets: Map[InflectedForms, VerbFrameset])(
-  //   implicit cs: ContextShift[IO]
-  // ) = logOp(
-  //   "Writing framesets",
-  //   FileUtil.writeJsonLines(inducedFramesetsPath, io.circe.Printer.noSpaces)(
-  //     framesets.values.toList
-  //   )
-  // )
+  def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {
+    framesetsPath(vsConfig).flatMap(path =>
+      FileUtil.readJsonLines[VerbFrameset](path)
+        .compile.toList
+        .map(_.map(f => f.inflectedForms -> f).toMap)
+    )
+  }
+  def writeFramesets(
+    vsConfig: VerbSenseConfig,
+    framesets: Map[InflectedForms, VerbFrameset])(
+    implicit cs: ContextShift[IO]
+  ): IO[Unit] = framesetsPath(vsConfig).flatMap(path =>
+    FileUtil.writeJsonLines(path)(
+      framesets.values.toList
+    )
+  )
 }

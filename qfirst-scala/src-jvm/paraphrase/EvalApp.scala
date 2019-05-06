@@ -72,52 +72,52 @@ object EvalApp extends IOApp {
   def getMetricsString[M: HasMetrics](m: M) =
     m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-  def runEvaluation(
-    evalSet: Dataset,
-    evaluationItems: Set[(InflectedForms, String, Int)],
-    verbFramesets: Map[InflectedForms, VerbFrameset],
-    paraphraseAnnotations: ParaphraseAnnotations
-  ) = {
-    val results = evalSet.sentences.toList.foldMap { case (sentenceId, sentence) =>
-      import shapeless._
-      import shapeless.syntax.singleton._
-      import shapeless.record._
-      import qfirst.metrics._
-      sentence.verbEntries.values.toList
-        .filter(verb => evaluationItems.contains((verb.verbInflectedForms, sentenceId, verb.verbIndex)))
-        .flatMap { verb =>
-          paraphraseAnnotations.get(sentenceId)
-            .flatMap(_.get(verb.verbIndex))
-            .map(verb -> _)
-        }.flatMap { case (verb, goldParaphrases) =>
-            val verbFrameset = verbFramesets(verb.verbInflectedForms)
-            val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
-            verbFrameset.instances
-              .get(VerbId(sentenceId, verb.verbIndex))
-              .map(frameProbabilities =>
-                Evaluation.getVerbResults(
-                  verb, goldParaphrases,
-                  verbFrameset, frameProbabilities, paraphrasingFilter
-                )
-              )
-        }.combineAll
-    }
-    val fullResults = {
-      import shapeless._
-      import shapeless.syntax.singleton._
-      import shapeless.record._
-      val numPredictedParaphrases = results("question template paraphrasing accuracy (correct QAs)").stats.predicted
-      val numQuestions = results("number of questions")
+  // def runEvaluation(
+  //   evalSet: Dataset,
+  //   evaluationItems: Set[(InflectedForms, String, Int)],
+  //   verbFramesets: Map[InflectedForms, VerbFrameset],
+  //   paraphraseAnnotations: ParaphraseAnnotations
+  // ) = {
+  //   val results = evalSet.sentences.toList.foldMap { case (sentenceId, sentence) =>
+  //     import shapeless._
+  //     import shapeless.syntax.singleton._
+  //     import shapeless.record._
+  //     import qfirst.metrics._
+  //     sentence.verbEntries.values.toList
+  //       .filter(verb => evaluationItems.contains((verb.verbInflectedForms, sentenceId, verb.verbIndex)))
+  //       .flatMap { verb =>
+  //         paraphraseAnnotations.get(sentenceId)
+  //           .flatMap(_.get(verb.verbIndex))
+  //           .map(verb -> _)
+  //       }.flatMap { case (verb, goldParaphrases) =>
+  //           val verbFrameset = verbFramesets(verb.verbInflectedForms)
+  //           val paraphrasingFilter = ParaphrasingFilter.TwoThreshold(0.3, 0.4) // TODO optimize over multiple filters
+  //           verbFrameset.instances
+  //             .get(VerbId(sentenceId, verb.verbIndex))
+  //             .map(frameProbabilities =>
+  //               Evaluation.getVerbResults(
+  //                 verb, goldParaphrases,
+  //                 verbFrameset, frameProbabilities, paraphrasingFilter
+  //               )
+  //             )
+  //       }.combineAll
+  //   }
+  //   val fullResults = {
+  //     import shapeless._
+  //     import shapeless.syntax.singleton._
+  //     import shapeless.record._
+  //     val numPredictedParaphrases = results("question template paraphrasing accuracy (correct QAs)").stats.predicted
+  //     val numQuestions = results("number of questions")
 
-      val numPredictedClauses = results("clause paraphrasing accuracy").stats.predicted
-      val numVerbs = results("number of verbs")
+  //     val numPredictedClauses = results("clause paraphrasing accuracy").stats.predicted
+  //     val numVerbs = results("number of verbs")
 
-      results +
-        ("paraphrases per question" ->> (numPredictedParaphrases.toDouble / numQuestions)) +
-        ("paraphrase clauses per verb" ->> (numPredictedClauses.toDouble / numVerbs))
-    }
-    IO(println(getMetricsString(fullResults))).as(fullResults)
-  }
+  //     results +
+  //       ("paraphrases per question" ->> (numPredictedParaphrases.toDouble / numQuestions)) +
+  //       ("paraphrase clauses per verb" ->> (numPredictedClauses.toDouble / numVerbs))
+  //   }
+  //   IO(println(getMetricsString(fullResults))).as(fullResults)
+  // }
 
   // def getEvaluationItems(evalSet: Dataset, evaluationItemsPath: NIOPath) = {
   //   import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
