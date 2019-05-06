@@ -219,7 +219,8 @@ object QAInputApp extends IOApp {
       getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
         dataset, sentenceQAs
       )
-    }.compile.foldMonoid.map(symmetrizeCollapsedArgumentEquivalences)
+    }.compile.foldMonoid
+      .map(symmetrizeCollapsedArgumentEquivalences)
       .map(
         _.transform { case (_, verbRel) =>
           verbRel.transform { case (_, ec) =>

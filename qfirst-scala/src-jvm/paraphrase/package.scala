@@ -23,5 +23,28 @@ package object paraphrase {
   def readDataset(path: Path): IO[Dataset] = IO(
     qasrl.bank.Data.readDataset(path)
   )
+
+  import java.nio.file._
+
+  def fileCached[A](
+    path: Path,
+    read: Path => IO[A],
+    write: (Path, A) => IO[Unit])(
+    compute: IO[A]
+  ): IO[A] = {
+    IO(Files.exists(path)).ifM(
+      logOp(s"Reading data from $path", read(path)),
+      compute.flatTap(write(path, _))
+    )
+  }
+
+  // def optionFromFile[A](
+  //   path: Path,
+  //   read: Path => IO[A]
+  // ): IO[Option[A]] = fileCached[Option[A]](
+  //   path,
+  //   read = path => read(path).map(Some(_)),
+  //   write = (_, _) => IO.unit
+  // )(compute = None)
 }
 

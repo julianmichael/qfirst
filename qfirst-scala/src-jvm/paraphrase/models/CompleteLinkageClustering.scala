@@ -21,7 +21,7 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
   type Hyperparams = DenseMatrix[Double] // fuzzy eq neg log probs
   // case class Hyperparams(vocabSize: Int)
 
-  // dummy impl, though actually kinda works I guess?
+  // loss of a cluster is max distance between any two elements
   def computeLoss(
     instance: Instance,
     param: ClusterParam,
@@ -30,7 +30,8 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     param.map(i => hyperparams(i, instance)).max
   }
 
-  // to make agglom work. assumes all instances included in cluster
+  // to make agglom work. assumes all instances included in cluster.
+  // TODO we should really just separate agglom. clustering into a different trait
   def estimateParameter(
     instances: Vector[Instance],
     assignmentProbabilities: Vector[Double],
@@ -49,6 +50,7 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     rightLoss: Double
   ) = List(newLoss, leftLoss, rightLoss).max // though newLoss should always be biggest
 
+  // only need to consider pairs that cross between clusters to find the new max pairwise distance
   override def merge(
     instances: Vector[Instance],
     left: MergeTree[Int],
@@ -65,14 +67,14 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
         hyperparams(lv, rv)
       }
     }.max
-    if(!(newLoss > left.loss && newLoss > right.loss)) {
+    val loss = List(newLoss, left.loss, right.loss).max
+    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(left)
       println(right)
       println(newLoss)
       ???
     }
-    val loss = List(newLoss, left.loss, right.loss).max
     MergeCandidate(left, right, param, loss)
   }
 }

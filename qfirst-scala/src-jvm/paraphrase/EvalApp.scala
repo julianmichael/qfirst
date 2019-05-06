@@ -137,40 +137,41 @@ object EvalApp extends IOApp {
   //   )
   // }
 
-  def program(
-    experimentName: String,
-    testOnTest: Boolean
-  ): IO[ExitCode] = {
-    for {
-      config <- Config.make(experimentName, None, testOnTest)
-      evalSet <- config.readEvalSet
-      evaluationItems <- config.getEvaluationItems
-      paraphraseGold <- config.readGoldParaphrases
-      verbFramesets <- config.readFramesets
-      _ <- runEvaluation(
-        evalSet, evaluationItems.toSet, verbFramesets, paraphraseGold
-      )
-    } yield ExitCode.Success
-  }
+  // def program(
+  //   experimentName: String,
+  //   testOnTest: Boolean
+  // ): IO[ExitCode] = {
+  //   for {
+  //     config <- Config(RunMode.Sanity, VerbSenseConfig.EntropyOnly)
+  //     evalSet <- config.readEvalSet
+  //     evaluationItems <- config.getEvaluationItems
+  //     paraphraseGold <- config.readGoldParaphrases
+  //     verbFramesets <- config.readFramesets
+  //     _ <- runEvaluation(
+  //       evalSet, evaluationItems.toSet, verbFramesets, paraphraseGold
+  //     )
+  //   } yield ExitCode.Success
+  // }
 
-  val runFrameInduction = Command(
-    name = "mill qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
-    header = "Induce verb frames."
-  ) {
-    val experimentNameO = Opts.option[String](
-      "name", metavar = "path", help = "Relative path to the directory with frame induction results."
-    )
-    val testOnTestO = Opts.flag(
-      "test", help = "Evaluate on the test set instead of dev."
-    ).orFalse
+  // val runFrameInduction = Command(
+  //   name = "mill qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
+  //   header = "Induce verb frames."
+  // ) {
+  //   val experimentNameO = Opts.option[String](
+  //     "name", metavar = "path", help = "Relative path to the directory with frame induction results."
+  //   )
+  //   val testOnTestO = Opts.flag(
+  //     "test", help = "Evaluate on the test set instead of dev."
+  //   ).orFalse
 
-    (experimentNameO, testOnTestO).mapN(program)
-  }
+  //   (experimentNameO, testOnTestO).mapN(program)
+  // }
 
   def run(args: List[String]): IO[ExitCode] = {
-    runFrameInduction.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
+    // runFrameInduction.parse(args) match {
+    //   case Left(help) => IO { System.err.println(help); ExitCode.Error }
+    //   case Right(main) => main
+    // }
+    IO.pure(ExitCode.Success)
   }
 }

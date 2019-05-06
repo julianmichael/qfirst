@@ -93,7 +93,7 @@ object FileUtil {
       }.compile.drain
   }
 
-  def writeJsonLines[A](path: NIOPath, printer: Printer, compression: CompressionSetting = CompressionSetting.Auto)(as: Seq[A])(
+  def writeJsonLines[A](path: NIOPath, printer: Printer = io.circe.Printer.noSpaces, compression: CompressionSetting = CompressionSetting.Auto)(as: Seq[A])(
     implicit cs: ContextShift[IO], encoder: Encoder[A]
   ): IO[Unit] = {
     import io.circe.syntax._

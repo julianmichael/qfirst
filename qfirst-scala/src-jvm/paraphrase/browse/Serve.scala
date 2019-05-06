@@ -46,60 +46,60 @@ object Serve extends IOApp {
 
   val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
 
-  def _run(
-    jsDepsPath: Path, jsPath: Path,
-    experimentName: String,
-    testOnTest: Boolean,
-    domain: String,
-    port: Int
-  ): IO[ExitCode] = {
-    Config.make(experimentName, None, testOnTest).flatMap { config =>
-      config.readWholeQasrlBank.flatMap { data =>
-        val docApiSuffix = "doc"
-        val verbApiSuffix = "verb"
-        val pageService = StaticPageService.makeService(
-          domain,
-          docApiSuffix, verbApiSuffix,
-          config.trainOnDev,
-          jsDepsPath, jsPath, port
-        )
+  // def _run(
+  //   jsDepsPath: Path, jsPath: Path,
+  //   experimentName: String,
+  //   testOnTest: Boolean,
+  //   domain: String,
+  //   port: Int
+  // ): IO[ExitCode] = {
+  //   Config.make(experimentName, None, testOnTest).flatMap { config =>
+  //     config.readWholeQasrlBank.flatMap { data =>
+  //       val docApiSuffix = "doc"
+  //       val verbApiSuffix = "verb"
+  //       val pageService = StaticPageService.makeService(
+  //         domain,
+  //         docApiSuffix, verbApiSuffix,
+  //         config.trainOnDev,
+  //         jsDepsPath, jsPath, port
+  //       )
 
-        val index = data.index
-        val docs = data.documentsById
-        val searchIndex = Search.createSearchIndex(docs.values.toList)
-        val docService = HttpDocumentService.makeService(index, docs, searchIndex)
+  //       val index = data.index
+  //       val docs = data.documentsById
+  //       val searchIndex = Search.createSearchIndex(docs.values.toList)
+  //       val docService = HttpDocumentService.makeService(index, docs, searchIndex)
 
-        implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
-        val fullSet = config.getInputSet(data) |+| config.getEvalSet(data)
-        val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+  //       implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+  //       val fullSet = config.getInputSet(data) |+| config.getEvalSet(data)
+  //       val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
 
-        for {
-          verbFramesets <- config.readFramesets
-          goldParaphrases <- config.readGoldParaphrases
-          evaluationItems <- config.getEvaluationItems
-          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
-          annotationService = VerbFrameHttpService.make(
-            VerbFrameServiceIO(
-              inflectionCounts,
-              verbFramesets,
-              fullSet,
-              evaluationItems.apply,
-              goldParaphraseDataRef,
-              config.saveGoldParaphrases(_))
-          )
-          app = Router(
-            "/" -> pageService,
-            s"/$docApiSuffix" -> docService,
-            s"/$verbApiSuffix" -> annotationService,
-            ).orNotFound
-          _ <- BlazeServerBuilder[IO]
-          .bindHttp(port, "0.0.0.0")
-          .withHttpApp(app)
-          .serve.compile.drain
-        } yield ExitCode.Success
-      }
-    }
-  }
+  //       for {
+  //         verbFramesets <- config.readFramesets
+  //         goldParaphrases <- config.readGoldParaphrases
+  //         evaluationItems <- config.getEvaluationItems
+  //         goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+  //         annotationService = VerbFrameHttpService.make(
+  //           VerbFrameServiceIO(
+  //             inflectionCounts,
+  //             verbFramesets,
+  //             fullSet,
+  //             evaluationItems.apply,
+  //             goldParaphraseDataRef,
+  //             config.saveGoldParaphrases(_))
+  //         )
+  //         app = Router(
+  //           "/" -> pageService,
+  //           s"/$docApiSuffix" -> docService,
+  //           s"/$verbApiSuffix" -> annotationService,
+  //           ).orNotFound
+  //         _ <- BlazeServerBuilder[IO]
+  //         .bindHttp(port, "0.0.0.0")
+  //         .withHttpApp(app)
+  //         .serve.compile.drain
+  //       } yield ExitCode.Success
+  //     }
+  //   }
+  // }
 
   override def run(args: List[String]): IO[ExitCode] = {
 
@@ -132,15 +132,16 @@ object Serve extends IOApp {
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    val command = Command(
-      name = "mill -i qfirst.jvm.runVerbAnn",
-      header = "Spin up the annotation server for QA-SRL Clause frames.") {
-      (jsDepsPathO, jsPathO, experimentNameO, testOnTestO, domainO, portO).mapN(_run)
-    }
+    // val command = Command(
+    //   name = "mill -i qfirst.jvm.runVerbAnn",
+    //   header = "Spin up the annotation server for QA-SRL Clause frames.") {
+    //   (jsDepsPathO, jsPathO, experimentNameO, testOnTestO, domainO, portO).mapN(_run)
+    // }
 
-    command.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
+    // command.parse(args) match {
+    //   case Left(help) => IO { System.err.println(help); ExitCode.Error }
+    //   case Right(main) => main
+    // }
+    IO.pure(ExitCode.Success)
   }
 }

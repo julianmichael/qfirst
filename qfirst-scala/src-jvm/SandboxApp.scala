@@ -59,7 +59,7 @@ object SandboxApp extends App {
   lazy val denseDev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz"))
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
-  val sortSpec = {
+  lazy val sortSpec = {
     import Metric._
     import MapTree.SortQuery._
     val double = (mv: Metric) => mv match {

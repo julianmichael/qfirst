@@ -18,10 +18,11 @@ import scala.collection.immutable.Vector
 // same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
 // can also be regarded as "MLE clustering"
 object MinEntropyClustering extends ClusteringAlgorithm {
-  case class ClusterParam(counts: DenseVector[Double], total: Double)
+  case class ClusterParam(counts: DenseVector[Double], total: Double, numInstances: Double)
   type Instance = Map[Int, Int] // sparse counts
   case class Hyperparams(vocabSize: Int)
 
+  // loss is entropy * num elements (same as likelihood under MLE in our case)
   def computeLoss(
     instance: Instance,
     param: ClusterParam,
@@ -29,9 +30,10 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   ): Double = {
     instance.iterator.map { case (item, count) =>
       math.log(param.counts(item) / param.total) * count
-    }.sum * -1
+    }.sum * -1.0
   }
 
+  // just get MLE by counting
   def estimateParameter(
     instances: Vector[Instance],
     assignmentProbabilities: Vector[Double],
@@ -39,19 +41,22 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   ): ClusterParam = {
     val arr = new Array[Double](hyperparams.vocabSize)
     var total = 0.0
+    var numInstances = 0.0
     instances.iterator
       .zip(assignmentProbabilities.iterator)
       .filter(_._2 > 0.0) // ignore zero weights
       .foreach { case (instance, prob) =>
+        numInstances = numInstances + prob
         instance.foreach { case (index, count) =>
           val pcount = prob * count
           arr(index) += pcount
           total = total + pcount
         }
       }
-    ClusterParam(DenseVector(arr), total)
+    ClusterParam(DenseVector(arr), total, numInstances)
   }
 
+  // can do efficient merge by summing counts
   override def merge(
     instances: Vector[Instance],
     left: MergeTree[Int],
@@ -62,16 +67,25 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   ): MergeCandidate = {
     val counts = leftParam.counts + rightParam.counts
     val total = leftParam.total + rightParam.total
-    val probs = counts / total
-    val newLoss = sum(log(probs) *:* probs)
-    if(!(newLoss > left.loss && newLoss > right.loss)) {
+    val numInstances = leftParam.numInstances + rightParam.numInstances
+    // val probs = counts / total
+    val newLoss = counts.activeValuesIterator
+      .filter(_ > 0.0) // prevent log of 0
+      .map(c => c * log(c / total)) // count * log probability = log likelihood
+      .sum * -1.0 / numInstances
+    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
+      println(instances)
       println(left)
+      println(leftParam)
       println(right)
+      println(rightParam)
+      println(counts)
+      println(total)
       println(newLoss)
       ???
     }
-    MergeCandidate(left, right, ClusterParam(counts, total), newLoss)
+    MergeCandidate(left, right, ClusterParam(counts, total, numInstances), newLoss)
   }
 
 }

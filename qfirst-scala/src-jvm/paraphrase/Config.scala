@@ -1,4 +1,5 @@
 package qfirst.paraphrase
+import qfirst.MergeTree
 import qfirst.FileUtil
 
 import java.nio.file._
@@ -8,6 +9,7 @@ import qasrl.ArgumentSlot
 
 import qasrl.bank.Data
 import qasrl.bank.FullData
+
 
 import nlpdata.datasets.wiktionary.InflectedForms
 
@@ -19,99 +21,218 @@ import EvalApp.ParaphraseAnnotations
 
 import qfirst.ClauseResolution.ArgStructure
 
-case class Config(
-  experimentName: String,
-  trainOnDev: Boolean,
-  testOnTest: Boolean
-) {
-  import Config.outputDir
-  import Config.qasrlBankPath
-  import Config.qasrlElmoPath
-  val qaInputPath = Config.getQAInputPath(testOnTest, outputDir)
-  val qaOutputPath = Config.getQAOutputPath(testOnTest, outputDir)
-  val collapsedQAOutputPath = Config.getCollapsedQAOutputPath(testOnTest, outputDir)
+sealed trait RunMode {
+  import RunMode._
+  override def toString = this match {
+    case Sanity => "sanity"
+    case Dev => "dev"
+    case Test => "test"
+  }
+  def devOrTest: String = this match {
+    case Sanity => "dev"
+    case Dev => "dev"
+    case Test => "test"
+  }
+  def sanity = this match {
+    case Sanity => true
+    case _ => false
+  }
+  def test = this match {
+    case Test => true
+    case _ => false
+  }
+}
+object RunMode {
+  case object Sanity extends RunMode
+  case object Dev extends RunMode
+  case object Test extends RunMode
 
-  def readWholeQasrlBank = logOp(
-    "Reading QA-SRL Bank",
-    Data.readFromQasrlBank(qasrlBankPath).toEither.right.get
+  def fromString(s: String) = s match {
+    case "sanity" => Some(Sanity)
+    case "dev" => Some(Dev)
+    case "test" => Some(Test)
+    case _ => None
+   }
+}
+
+sealed trait VerbSenseConfig {
+  import VerbSenseConfig._
+  def modelName = this match {
+    case EntropyOnly => "entropy"
+    case ELMoOnly => "elmo"
+    case i @ Interpolated(entropyLambda) =>
+      f"entropy$entropyLambda%.2f-elmo${i.elmoLambda}%.2f"
+  }
+}
+object VerbSenseConfig {
+  case object EntropyOnly extends VerbSenseConfig
+  case object ELMoOnly extends VerbSenseConfig
+  // case object SetOnly extends VerbSenseConfig
+  case class Interpolated(
+    entropyLambda: Double
+  ) extends VerbSenseConfig {
+    val elmoLambda: Double = 1.0 - entropyLambda
+    def lambdas = List(entropyLambda, elmoLambda)
+    assert(lambdas.forall(l => 0.0 < l && l < 1.0))
+  }
+  object DoubleMatch {
+    def unapply(s: String) = scala.util.Try(s.toDouble).toOption
+  }
+  def fromString(s: String) = s match {
+    case "entropy" => Some(EntropyOnly)
+    case "elmo" => Some(ELMoOnly)
+    case DoubleMatch(d) => Some(Interpolated(d))
+    case _ => None
+  }
+}
+
+// circumvent side-effect of ref creation
+class Cell[A](create: IO[A]) {
+  private[this] var value: Option[A] = None
+  def get: IO[A] = value
+    .map(IO.pure)
+    .getOrElse(create.flatTap(a => IO { value = Some(a) }))
+  def isPresent = IO(value.nonEmpty)
+}
+
+case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
+  val outputDir = Paths.get("frame-induction")
+  val qasrlBankPath = Paths.get("qasrl-v2_1")
+  val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
+  val inputElmoPrefix = qasrlElmoPath.resolve(if(mode.sanity) "dev" else "train").toString
+  val evalElmoPrefix = qasrlElmoPath.resolve(if(mode.test) "test" else "dev").toString
+  val qaInputPath = outputDir.resolve(s"qa-input-${mode.devOrTest}.jsonl.gz")
+  val qaOutputPath = outputDir.resolve(s"qa-output-${mode.devOrTest}.jsonl.gz")
+  val collapsedQAOutputPath = outputDir.resolve(s"qa-output-${mode.devOrTest}-collapsed.jsonl.gz")
+  val evaluationItemsPath = outputDir.resolve(s"eval-sample-${mode.devOrTest}.jsonl")
+  val paraphraseGoldPath = outputDir.resolve("gold-paraphrases.json")
+
+  private[this] val createDir = (path: Path) => IO(!Files.exists(path))
+    .ifM(IO(Files.createDirectories(path)), IO.unit)
+
+  val configDir = IO.pure(
+    outputDir.resolve(mode.toString)
+  ).flatTap(createDir)
+  val modelsDir = configDir.map(_.resolve("models")).flatTap(createDir)
+  val resultsDir = configDir.map(_.resolve("results")).flatTap(createDir)
+
+  implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+
+  val qasrlBank = new Cell(
+    logOp(
+      "Reading QA-SRL Bank",
+      Data.readFromQasrlBank(qasrlBankPath).toEither.right.get
+    )
   )
-  def readQasrlDataset(name: String) = logOp(
+
+  private[this] def readQasrlDataset(name: String) = logOp(
     s"Reading QA-SRL dataset $name",
     readDataset(qasrlBankPath.resolve(name + ".jsonl.gz"))
   )
-  def getInputSet(data: FullData) = {
-    if(trainOnDev) data.devExpanded else data.trainExpanded
+
+  def getGoldInstances(dataset: Dataset): FrameInductionApp.Instances = {
+    dataset.sentences
+      .iterator.flatMap { case (sid, sentence) => sentence.verbEntries.values.map(sid -> _) }.toList
+      .groupBy(_._2.verbInflectedForms).map { case (verbInflectedForms, pairs) =>
+        verbInflectedForms -> pairs.groupBy(_._1).map { case (sid, pairs) =>
+          sid -> pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
+            verbIndex -> verb.questionLabels.map { case (qString, qLabel) =>
+              qLabel.questionSlots -> (
+                qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+              )
+            }
+          }
+        }
+      }
   }
-  def readInputSet = readQasrlDataset(
-    if(trainOnDev) "expanded/dev" else "expanded/train"
+
+  val train = new Cell(
+    qasrlBank.isPresent.ifM(
+      qasrlBank.get.map(_.trainExpanded),
+      readQasrlDataset("expanded/train")
+    ).map(filterDatasetNonDense)
   )
-  def getEvalSet(data: FullData) = {
-    if(testOnTest) data.testOrig else data.devExpanded
-  }
-  def readEvalSet = readQasrlDataset(
-    if(testOnTest) "orig/test" else "expanded/dev"
+  val trainInstances = new Cell(
+    train.get.map(getGoldInstances)
   )
 
-  def inputElmoPrefix = qasrlElmoPath.resolve(
-    if(trainOnDev) "dev" else "train"
-  ).toString
-  def evalElmoPrefix = qasrlElmoPath.resolve(
-    if(testOnTest) "test" else "dev"
-  ).toString
+  val dev = new Cell(
+    qasrlBank.isPresent.ifM(
+      qasrlBank.get.map(_.devOrig),
+      readQasrlDataset("orig/dev")
+    ).map(filterDatasetNonDense)
+  )
+  val devInstances = new Cell(
+    dev.get.map(getGoldInstances)
+  )
 
-  def streamQAOutputs(implicit cs: ContextShift[IO]) = {
-    FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-  }
-  def readCollapsedQAOutputs(implicit cs: ContextShift[IO]) = {
+  val test = new Cell(
+    qasrlBank.isPresent.ifM(
+      qasrlBank.get.map(_.testOrig),
+      readQasrlDataset("orig/test")
+    ).map(filterDatasetNonDense)
+  )
+  val testInstances = new Cell(
+    test.get.map(getGoldInstances)
+  )
+
+  val input = if(mode.sanity) dev else train
+  val inputInstances = if(mode.sanity) devInstances else trainInstances
+
+  val eval = if(mode.test) test else dev
+  val evalInstances = if(mode.test) testInstances else devInstances
+
+  val full = new Cell(for(i <- input.get; e <- eval.get) yield i |+| e)
+  val fullInstances = new Cell(for(i <- inputInstances.get; e <- evalInstances.get) yield i |+| e)
+
+  val collapsedQAOutputs = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-    if(!Files.exists(collapsedQAOutputPath)) {
-      val evalString = if(testOnTest) "test" else "dev"
-      implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
-      for {
-        trainSet <- logOp("Reading expanded/train for preprocessing", readQasrlDataset("expanded/train"))
-        evalSet <- logOp(s"Reading eval set ($evalString) for preprocessing", readEvalSet)
-        collapsedQAOutputs <- logOp(
-          "Reading and collapsing QA outputs",
-          QAInputApp.getCollapsedFuzzyArgumentEquivalences(
-            trainSet |+| evalSet, streamQAOutputs
-          )
-        )
-        _ <- logOp(
+    new Cell(
+      fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
+        path = collapsedQAOutputPath,
+        read = path => (
+          FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
+            .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
+        ),
+        write = (path, collapsedQAOutputs) => logOp(
           "Writing collapsed QA outputs",
           FileUtil.writeJsonLines(collapsedQAOutputPath, io.circe.Printer.noSpaces)(collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
         )
-      } yield collapsedQAOutputs
-    } else {
-      logOp(
-        "Reading collapsed QA outputs",
-        FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](collapsedQAOutputPath)
-          .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
-      )
-    }
-  }
-
-  val evaluationItemsPath = outputDir.resolve(
-    if(testOnTest) "eval-sample-test.jsonl" else "eval-sample-dev.jsonl"
-  )
-  def getEvaluationItems(implicit cs: ContextShift[IO]) = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-    if(Files.exists(evaluationItemsPath)) FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toList
-    else logOp(
-      s"Creating new sample for evaluation at $evaluationItemsPath", readEvalSet.flatMap { evalSet =>
-        val rand = new scala.util.Random(86735932569L)
-        val allItems = rand.shuffle(
-          filterDatasetNonDense(evalSet).sentences.values.iterator.flatMap(sentence =>
-            sentence.verbEntries.values.toList.map(verb =>
-              (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
-            )
+      )( // compute
+        for {
+          trainSet <- train.get
+          evalSet <- eval.get
+          collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
+            trainSet |+| evalSet,
+            FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
           )
-        ).take(1000).toVector
-        FileUtil.writeJsonLines(evaluationItemsPath, io.circe.Printer.noSpaces)(allItems).as(allItems)
-      }
+        } yield collapsedQAOutputs
+      )
     )
   }
 
-  val paraphraseGoldPath = outputDir.resolve("gold-paraphrases.json")
+  val evaluationItems = {
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    new Cell(
+      fileCached[Vector[(InflectedForms, String, Int)]](
+        path = evaluationItemsPath,
+        read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toVector,
+        write = (path, items) => FileUtil.writeJsonLines(path)(items))(
+        logOp(
+          s"Creating new sample for evaluation at $evaluationItemsPath", eval.get.map { evalSet =>
+            (new scala.util.Random(86735932569L)).shuffle(
+              evalSet.sentences.values.iterator.flatMap(sentence =>
+                sentence.verbEntries.values.toList.map(verb =>
+                  (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
+                )
+              )
+            ).take(1000).toVector
+          }
+        )
+      )
+    )
+  }
+
   def readGoldParaphrases(implicit cs: ContextShift[IO]) = {
     if(!Files.exists(paraphraseGoldPath)) {
       IO(println("No gold paraphrase annotations found at the given path. Initializing to empty annotations.")) >>
@@ -122,79 +243,52 @@ case class Config(
     FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
   }
 
-  val experimentDir = outputDir.resolve(experimentName)
 
-  val inducedFramesetsPath = experimentDir.resolve(
-    if(testOnTest) "results-test.jsonl.gz" else "results-dev.jsonl.gz"
-  )
-  def readFramesets(implicit cs: ContextShift[IO]) = logOp(
-    "Reading framesets",
-    FileUtil.readJsonLines[VerbFrameset](inducedFramesetsPath)
-      .compile.toList
-      .map(_.map(f => f.inflectedForms -> f).toMap)
-  )
-  def writeFramesets(
-    framesets: Map[InflectedForms, VerbFrameset])(
-    implicit cs: ContextShift[IO]
-  ) = logOp(
-    "Writing framesets",
-    FileUtil.writeJsonLines(inducedFramesetsPath, io.circe.Printer.noSpaces)(
-      framesets.values.toList
+  def verbClustersPath(verbSenseConfig: VerbSenseConfig) = {
+    modelsDir.map(_.resolve(s"${verbSenseConfig.modelName}.jsonl.gz"))
+  }
+
+  def getCachedVerbClusters(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, MergeTree[VerbId]]]] = {
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    // optionFromFile[Map[InflectedForms, MergeTree[VerbId]]](
+    //   verbClustersPath,
+    //   path => FileUtil.readJsonLines[(InflectedForms, MergeTree[VerbId])](path)
+    //     .compile.toList.map(l => Some(l.toMap)),
+    // )
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      fileCached[Option[Map[InflectedForms, MergeTree[VerbId]]]](
+        path, read = path => FileUtil.readJsonLines[(InflectedForms, MergeTree[VerbId])](path)
+          .compile.toList.map(l => Some(l.toMap)),
+        write = (_, _) => IO.unit
+      )(compute = IO(None))
     )
-  )
-
-
-}
-object Config {
-  val outputDir = Paths.get("frame-induction")
-  val qasrlBankPath = Paths.get("qasrl-v2_1")
-  val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
-  def getQAInputPath(test: Boolean, outputDir: Path) = {
-    val suff = if(test) "test" else "dev"
-    outputDir.resolve(s"qa-input-$suff.jsonl.gz")
   }
-  def getQAOutputPath(test: Boolean, outputDir: Path) = {
-    val suff = if(test) "test" else "dev"
-    outputDir.resolve(s"qa-output-$suff.jsonl.gz")
-  }
-  def getCollapsedQAOutputPath(test: Boolean, outputDir: Path) = {
-    val suff = if(test) "test" else "dev"
-    outputDir.resolve(s"qa-output-$suff-collapsed.jsonl.gz")
+  def cacheVerbClusters(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, MergeTree[VerbId]]): IO[Unit] = {
+    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      FileUtil.writeJsonLines(path)(clusters.toList)
+    )
   }
 
-  def make(
-    experimentName: String,
-    trainOnDevOpt: Option[Boolean],
-    testOnTest: Boolean)(
-    implicit cs: ContextShift[IO]
-  ): IO[Config] = {
-    val experimentDir = outputDir.resolve(experimentName)
-    for {
-      trainOnDev <- IO {
-        trainOnDevOpt match {
-          case None if !Files.exists(experimentDir) =>
-            throw new RuntimeException(s"Experiment directory not found: $experimentDir")
-          case Some(trainOnDevFlag) if Files.exists(experimentDir) =>
-            val trainOnDevSource = Files.exists(experimentDir.resolve("dev"))
-            if(trainOnDevFlag != trainOnDevSource) {
-              val modeString = if(trainOnDevSource) "dev" else "train"
-              throw new RuntimeException(s"Must use $modeString configuration for experiment: $experimentDir")
-            } else trainOnDevFlag // doesn't matter which bc equal
-          case Some(trainOnDevFlag) if !Files.exists(experimentDir) =>
-            println(s"Creating experiment directory $experimentDir")
-            Files.createDirectories(experimentDir)
-            if(trainOnDevFlag) {
-              import sys.process._
-              s"touch ${experimentDir.resolve("dev")}".!
-            }
-            trainOnDevFlag
-        }
-      }
-      _ <- {
-        if(trainOnDev && testOnTest) {
-          throw new RuntimeException("Cannot train on dev and test on test")
-        } else IO.unit
-      }
-    } yield Config(experimentName, trainOnDev, testOnTest)
-  }
+
+  // TODO below
+
+  // val inducedFramesetsPath = experimentDir.resolve(
+  //   if(testOnTest) "results-test.jsonl.gz" else "results-dev.jsonl.gz"
+  // )
+  // def readFramesets(implicit cs: ContextShift[IO]) = logOp(
+  //   "Reading framesets",
+  //   FileUtil.readJsonLines[VerbFrameset](inducedFramesetsPath)
+  //     .compile.toList
+  //     .map(_.map(f => f.inflectedForms -> f).toMap)
+  // )
+  // def writeFramesets(
+  //   framesets: Map[InflectedForms, VerbFrameset])(
+  //   implicit cs: ContextShift[IO]
+  // ) = logOp(
+  //   "Writing framesets",
+  //   FileUtil.writeJsonLines(inducedFramesetsPath, io.circe.Printer.noSpaces)(
+  //     framesets.values.toList
+  //   )
+  // )
 }
