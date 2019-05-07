@@ -31,7 +31,7 @@ from allennlp.modules.elmo import _ElmoBiLm, batch_to_ids
 from allennlp.commands.subcommand import Subcommand
 
 from qfirst.data.util import read_lines, get_verb_fields
-
+import pdb
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 DEFAULT_OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json" # pylint: disable=line-too-long
@@ -106,7 +106,39 @@ class ElmoEmbedder():
             yield (sentence_json["sentenceTokens"], { "sentence_id": sentence_json["sentenceId"], "verb_indices": verb_indices })
 
     def get_propbank_sentences(self, file_path: str):
-        raise NotImplementedError
+        """
+        Extract sentences from a propbank input file
+        in a similar format to the `get_qasrl_sentences` function.
+        """
+        sent_counter = 0
+        cur_verb_indices = []
+        cur_sent_tokens = []
+        for line in read_lines(cached_path(file_path)):
+            line = line.strip()
+            if line.startswith("#begin"):
+                # Create uid from comment + sentence counter
+                doc_id = "__".join(line.split(" ")[1:])
+                continue
+            if line.startswith("#"):
+                # Ignore other comments
+                continue
+            if line:
+                # New token
+                cur_data = line.split()
+                cur_sent_tokens.append(cur_data[3])
+                if "(V*)" in line:
+                    # This is a predicate
+                    cur_verb_indices.append(int(cur_data[2]))
+            else:
+                # End of sentence
+                if cur_verb_indices:
+                    sent_id = f"{doc_id}_{sent_counter}"
+                    yield (cur_sent_tokens,
+                           { "sentence_id": sent_id,
+                             "verb_indices": cur_verb_indices })
+                    cur_verb_indices = []
+                    cur_sent_tokens = []
+                    sent_counter += 1
 
     def embed_file(self,
                    input_path: str,
@@ -122,7 +154,7 @@ class ElmoEmbedder():
 
         with open(output_file_prefix + "_ids.jsonl", "w") as f_ids:
             with open(output_file_prefix + "_emb.bin", "wb") as f_emb:
-                for sentence_batch in lazy_groups_of(Tqdm.tqdm(self.get_qasrl_sentences(input_path)), batch_size):
+                for sentence_batch in lazy_groups_of(Tqdm.tqdm(get_sentences()), batch_size):
                     batch_sentences, batch_metas = map(list, zip(*sentence_batch))
                     for verb_id, emb in self.embed_batch(batch_sentences, batch_metas):
                         f_ids.write(json.dumps(verb_id) + "\n")
@@ -131,6 +163,7 @@ class ElmoEmbedder():
 
 def elmo_command(args):
     elmo_embedder = ElmoEmbedder(args.options_file, args.weight_file, args.cuda_device)
+
     # prepare_global_logging(os.path.realpath(os.path.dirname(args.output_file)), args.file_friendly_logging)
 
     with torch.no_grad():
