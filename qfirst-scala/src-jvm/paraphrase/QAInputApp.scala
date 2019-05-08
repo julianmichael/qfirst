@@ -58,7 +58,7 @@ object QAInputApp extends IOApp {
         "verbs" -> sentence.verbEntries.values.toList.map { verb =>
           val clauses = verbToClauseTemplates(verb.verbInflectedForms).toList.flatMap { clauseTemplate =>
             val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
-            val argSlots = clauseTemplate.args.keys.toList.map(ArgumentSlot.toString)
+            val argSlots = getArgumentSlotsForClauseTemplate(clauseTemplate).map(ArgumentSlot.toString)
             argSlots.map(slot =>
               Json.obj(
                 "clause" -> clauseTemplateString.asJson,

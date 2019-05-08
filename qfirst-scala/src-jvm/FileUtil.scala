@@ -34,6 +34,8 @@ object FileUtil {
     case CompressionSetting.Auto => path.toString.endsWith(".gz")
   }
 
+  val bufferNumBytes = 4 * 4096
+
   val blockingExecutionContext =
     Resource.make(IO(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(2))))(ec => IO(ec.shutdown()))
 
@@ -41,9 +43,9 @@ object FileUtil {
     path: NIOPath, ec: ExecutionContext, compression: CompressionSetting = CompressionSetting.Auto)(
     implicit cs: ContextShift[IO], decoder: Decoder[A]
   ): Stream[IO, A] = {
-    val fileBytes = fs2.io.file.readAll[IO](path, ec, 4096)
+    val fileBytes = fs2.io.file.readAll[IO](path, ec, bufferNumBytes)
     val textBytes = if(useCompression(path, compression)) {
-      fileBytes.through(fs2.compress.gunzip(4096))
+      fileBytes.through(fs2.compress.gunzip(bufferNumBytes))
     } else fileBytes
     textBytes
       .through(fs2.text.utf8Decode)
@@ -70,6 +72,10 @@ object FileUtil {
     )
   }
 
+  def writeString(path: NIOPath)(a: String): IO[Unit] = {
+    IO(java.nio.file.Files.write(path, a.getBytes("UTF-8")))
+  }
+
   def writeJson[A: Encoder](path: NIOPath, printer: Printer)(a: A): IO[Unit] = {
     import io.circe.syntax._
     IO(Option(path.getParent).foreach(java.nio.file.Files.createDirectories(_))) >>
@@ -87,7 +93,7 @@ object FileUtil {
           .intersperse("\n")
           .through(fs2.text.utf8Encode)
         val compressedTextOut = if(useCompression(path, compression)) {
-          textOut.through(fs2.compress.gzip(4096))
+          textOut.through(fs2.compress.gzip(bufferNumBytes))
         } else textOut
         compressedTextOut.through(fs2.io.file.writeAll(path, _ec))
       }.compile.drain
@@ -104,7 +110,7 @@ object FileUtil {
           .intersperse("\n")
           .through(fs2.text.utf8Encode)
         val compressedTextOut = if(useCompression(path, compression)) {
-          textOut.through(fs2.compress.gzip(4096))
+          textOut.through(fs2.compress.gzip(bufferNumBytes))
         } else textOut
         compressedTextOut.through(fs2.io.file.writeAll(path, _ec))
       }.compile.drain
@@ -119,7 +125,7 @@ object FileUtil {
     implicit cs: ContextShift[IO], t: Timer[IO]
   ) = {
     Stream.resource(blockingExecutionContext).flatMap { _ec =>
-      fs2.io.file.readAll[IO](path, _ec, 4096)
+      fs2.io.file.readAll[IO](path, _ec, bufferNumBytes)
         .groupWithin(4, 1.minute) // should always do 4 chunk
         .map { c =>
           val bytes = c.toBytes

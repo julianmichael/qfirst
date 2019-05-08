@@ -22,54 +22,80 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import monocle.macros._
 
-@JsonCodec sealed trait ParaphrasingFilter {
+// @JsonCodec case class VerbClusterModel(
+//   clusterTree: MergeTree[VerbId],
+//   clauseSets: Map[VerbId, Set[ArgStructure]],
+//   coindexingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]
+// ) {
+//   lazy val framesets = 
+// }
+
+@Lenses @JsonCodec case class ParaphrasingFilter(
+  minClauseProb: Double,
+  minCoindexingProb: Double
+) {
   def getParaphrases(
-    frameset: VerbFrameset,
-    frameDistribution: Vector[Double],
+    frame: VerbFrame,
     structure: (ArgStructure, ArgumentSlot)
   ): Set[(ArgStructure, ArgumentSlot)] = {
-    val scoredParaphrases = frameset.frames.zip(frameDistribution).maxBy(_._2)._1.getScoredParaphrases(structure)
-    val adverbialParaphrases = structure._2 match {
-      case adv @ Adv(_) => filterScoredParaphrases(
-        scoredParaphrases.map { case ((clauseTemplate, _), (clauseProb, _)) => (clauseTemplate -> adv) -> (clauseProb -> 1.0) }
-      )
-      case _ => Set()
-    }
-    (filterScoredParaphrases(scoredParaphrases) ++ adverbialParaphrases).filter(_ != structure)
+    val goodClauses = frame.clauseTemplates.collect {
+      case FrameClause(clauseTemplate, prob) if prob >= minClauseProb => clauseTemplate
+    }.toSet
+
+    frame.coindexingTree.clustersForValue(structure)
+      .flatMap(_.find(_.loss <= (1.0 - minCoindexingProb)))
+      .foldMap(_.values.filter(p => goodClauses.contains(p._1)).toSet)
   }
-  def filterScoredParaphrases(
-    scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
-  ): Set[(ArgStructure, ArgumentSlot)]
-  def ignoreCoindexing: ParaphrasingFilter
 }
+object ParaphrasingFilter
 
-object ParaphrasingFilter {
-  @Lenses @JsonCodec case class TwoThreshold(
-    clauseThreshold: Double, coindexingThreshold: Double
-  ) extends ParaphrasingFilter {
-    def filterScoredParaphrases(
-      scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
-    ): Set[(ArgStructure, ArgumentSlot)] = {
-      scoredParaphrases.filter(p => p._2._1 >= clauseThreshold && p._2._2 >= coindexingThreshold).keySet
-    }
-    def ignoreCoindexing: TwoThreshold = this.copy(coindexingThreshold = 0.0)
-  }
-  object TwoThreshold
+// @JsonCodec sealed trait ParaphrasingFilter {
+//   def getParaphrases(
+//     frame: VerbFrame,
+//     structure: (ArgStructure, ArgumentSlot)
+//   ): Set[(ArgStructure, ArgumentSlot)] = {
+//     val scoredParaphrases = frame.getScoredParaphrases(structure)
+//     val adverbialParaphrases = structure._2 match {
+//       case adv @ Adv(_) => filterScoredParaphrases(
+//         scoredParaphrases.map { case ((clauseTemplate, _), (clauseProb, _)) => (clauseTemplate -> adv) -> (clauseProb -> 1.0) }
+//       )
+//       case _ => Set()
+//     }
+//     (filterScoredParaphrases(scoredParaphrases) ++ adverbialParaphrases).filter(_ != structure)
+//   }
+//   def filterScoredParaphrases(
+//     scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+//   ): Set[(ArgStructure, ArgumentSlot)]
+//   def ignoreCoindexing: ParaphrasingFilter
+// }
 
-  @Lenses @JsonCodec case class OneThreshold(
-    threshold: Double
-  ) extends ParaphrasingFilter {
-    def filterScoredParaphrases(
-      scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
-    ): Set[(ArgStructure, ArgumentSlot)] =
-      scoredParaphrases.filter(p => (p._2._1 * p._2._2) >= threshold).keySet
-    def ignoreCoindexing: OneThreshold = this
-  }
-  object OneThreshold
+// object ParaphrasingFilter {
+//   @Lenses @JsonCodec case class TwoThreshold(
+//     clauseThreshold: Double, coindexingThreshold: Double
+//   ) extends ParaphrasingFilter {
+//     def filterScoredParaphrases(
+//       scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+//     ): Set[(ArgStructure, ArgumentSlot)] = {
+//       scoredParaphrases.filter(p => p._2._1 >= clauseThreshold && p._2._2 >= coindexingThreshold).keySet
+//     }
+//     def ignoreCoindexing: TwoThreshold = this.copy(coindexingThreshold = 0.0)
+//   }
+//   object TwoThreshold
 
-  val oneThreshold = GenPrism[ParaphrasingFilter, OneThreshold]
-  val twoThreshold = GenPrism[ParaphrasingFilter, TwoThreshold]
-}
+//   @Lenses @JsonCodec case class OneThreshold(
+//     threshold: Double
+//   ) extends ParaphrasingFilter {
+//     def filterScoredParaphrases(
+//       scoredParaphrases: Map[(ArgStructure, ArgumentSlot), (Double, Double)]
+//     ): Set[(ArgStructure, ArgumentSlot)] =
+//       scoredParaphrases.filter(p => (p._2._1 * p._2._2) >= threshold).keySet
+//     def ignoreCoindexing: OneThreshold = this
+//   }
+//   object OneThreshold
+
+//   val oneThreshold = GenPrism[ParaphrasingFilter, OneThreshold]
+//   val twoThreshold = GenPrism[ParaphrasingFilter, TwoThreshold]
+// }
 
 @Lenses @JsonCodec case class FrameClause(
   args: ArgStructure,

@@ -53,7 +53,8 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     leftParam: ClusterParam,
     right: MergeTree[Int],
     rightParam: ClusterParam,
-    hyperparams: Hyperparams
+    hyperparams: Hyperparams,
+    sanityCheck: Boolean = true
   ): MergeCandidate = {
     val size = leftParam.size + rightParam.size
     val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
@@ -61,7 +62,7 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     val param = ClusterParam(mean, size)
     val newLoss = (left.values ++ right.values)
       .foldMap(i => computeLoss(instances(i), param, hyperparams))
-    if(!(newLoss > left.loss && newLoss > right.loss)) {
+    if(sanityCheck && !(newLoss > left.loss && newLoss > right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println("===== LEFT ===== : " + left)
       println("== LEFT PARAM == : " + leftParam)

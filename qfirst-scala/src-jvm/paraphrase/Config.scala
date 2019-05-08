@@ -19,6 +19,8 @@ import cats.implicits._
 
 import EvalApp.ParaphraseAnnotations
 
+import io.circe.generic.JsonCodec
+
 import qfirst.ClauseResolution.ArgStructure
 
 sealed trait RunMode {
@@ -55,9 +57,10 @@ object RunMode {
    }
 }
 
-sealed trait VerbSenseConfig {
+@JsonCodec sealed trait VerbSenseConfig {
   import VerbSenseConfig._
   def modelName = this match {
+    case SingleCluster => "single"
     case EntropyOnly => "entropy"
     case ELMoOnly => "elmo"
     case i @ Interpolated(entropyLambda) =>
@@ -65,6 +68,7 @@ sealed trait VerbSenseConfig {
   }
 }
 object VerbSenseConfig {
+  case object SingleCluster extends VerbSenseConfig
   case object EntropyOnly extends VerbSenseConfig
   case object ELMoOnly extends VerbSenseConfig
   // case object SetOnly extends VerbSenseConfig
@@ -79,6 +83,7 @@ object VerbSenseConfig {
     def unapply(s: String) = scala.util.Try(s.toDouble).toOption
   }
   def fromString(s: String) = s match {
+    case "single" => Some(SingleCluster)
     case "entropy" => Some(EntropyOnly)
     case "elmo" => Some(ELMoOnly)
     case DoubleMatch(d) => Some(Interpolated(d))
@@ -113,6 +118,10 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val configDir = IO.pure(
     outputDir.resolve(mode.toString)
   ).flatTap(createDir)
+
+  val globalResultsDir = configDir
+    .map(_.resolve("all-results"))
+    .flatTap(createDir)
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
@@ -214,7 +223,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     new Cell(
       fileCached[Vector[(InflectedForms, String, Int)]](
         path = evaluationItemsPath,
-        read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](evaluationItemsPath).compile.toVector,
+        read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
         write = (path, items) => FileUtil.writeJsonLines(path)(items))(
         logOp(
           s"Creating new sample for evaluation at $evaluationItemsPath", eval.get.map { evalSet =>
@@ -243,7 +252,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
 
 
   def modelDir(verbSenseConfig: VerbSenseConfig) = {
-    configDir.map(_.resolve(s"${verbSenseConfig.modelName}"))
+    configDir.map(_.resolve(s"${verbSenseConfig.modelName}")).flatTap(createDir)
   }
   def verbClustersPath(verbSenseConfig: VerbSenseConfig) = {
     modelDir(verbSenseConfig).map(_.resolve(s"clusters.jsonl.gz"))
@@ -252,7 +261,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     modelDir(verbSenseConfig).map(_.resolve(s"framesets.jsonl.gz"))
   }
   def resultsPath(verbSenseConfig: VerbSenseConfig) = {
-    modelDir(verbSenseConfig).map(_.resolve(s"results"))
+    modelDir(verbSenseConfig).map(_.resolve(s"results")).flatTap(createDir)
   }
 
   def getCachedVerbClusters(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, MergeTree[VerbId]]]] = {

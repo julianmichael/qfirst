@@ -11,6 +11,7 @@ import monocle.Lens
   def equal(x: A, y: A): Boolean
   def equivalenceClass(x: A): Set[A]
   def apart(x: A, y: A): Boolean
+  def apartSet(x: A): Set[A]
   def equate(x: A, y: A): EquivalenceWithApartness[A]
   def unequate(x: A, y: A): EquivalenceWithApartness[A]
   def separate(x: A, y: A): EquivalenceWithApartness[A]
@@ -34,6 +35,11 @@ object EquivalenceWithApartness {
       !(x == y) && equivalenceClasses.find(x)
         .product(equivalenceClasses.find(y))
         .exists(Function.tupled(apartness.contains(_, _)))
+    }
+    def apartSet(x: A): Set[A] = {
+      equivalenceClasses.find(x).foldMap(xRep =>
+        apartness.image(xRep).toList.foldMap(equivalenceClass(_))
+      )
     }
 
     def equate(x: A, y: A) = {

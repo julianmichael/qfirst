@@ -7,6 +7,9 @@ import java.nio.file.Path
 
 import qasrl.data.Dataset
 
+import qfirst.ClauseResolution.ArgStructure
+import qasrl.ArgumentSlot
+
 package object paraphrase {
   def logOp[A](msg: String, op: IO[A]): IO[A] =
     IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
@@ -46,5 +49,15 @@ package object paraphrase {
   //   read = path => read(path).map(Some(_)),
   //   write = (_, _) => IO.unit
   // )(compute = None)
+
+  def getArgumentSlotsForClauseTemplate(clauseTemplate: ArgStructure): Set[ArgumentSlot] = {
+    (clauseTemplate.args.keys.toList: List[ArgumentSlot]).filter {
+      case qasrl.Obj2 => clauseTemplate.args.get(qasrl.Obj2) match {
+        case Some(qasrl.Prep(_, None)) => false
+        case _ => true
+      }
+      case _ => true
+    }.toSet
+  }
 }
 

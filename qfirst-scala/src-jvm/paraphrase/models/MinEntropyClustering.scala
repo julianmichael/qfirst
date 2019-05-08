@@ -63,7 +63,8 @@ object MinEntropyClustering extends ClusteringAlgorithm {
     leftParam: ClusterParam,
     right: MergeTree[Int],
     rightParam: ClusterParam,
-    hyperparams: Hyperparams
+    hyperparams: Hyperparams,
+    sanityCheck: Boolean = true
   ): MergeCandidate = {
     val counts = leftParam.counts + rightParam.counts
     val total = leftParam.total + rightParam.total
@@ -71,7 +72,7 @@ object MinEntropyClustering extends ClusteringAlgorithm {
       .filter(_ > 0.0) // prevent log of 0
       .map(c => c * log(c / total)) // count * log probability = log likelihood
       .sum * -1.0
-    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
+    if(sanityCheck && !(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(instances)
       println(left)

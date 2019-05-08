@@ -92,4 +92,19 @@ package object qfirst extends PackagePlatformExtensions {
       NonEmptyList.of(0, 10, 50, 150, 250, 500, 750, 1000))
   )
 
+  def filterOrigAnnotationRound(verb: VerbEntry): VerbEntry = {
+    val newQuestionLabels = scala.collection.immutable.SortedMap(
+      verb.questionLabels.values.toList
+        .filter(_.questionSources.exists(_.startsWith("turk-qasrl2.0-")))
+        .map { qLabel =>
+          val ajs = qLabel.answerJudgments.filter(aj =>
+            !(aj.sourceId.endsWith("-expansion")) && !(aj.sourceId.endsWith("-eval"))
+          )
+          qLabel.copy(answerJudgments = ajs)
+        }
+        .filter(_.answerJudgments.nonEmpty)
+        .map(qLabel => qLabel.questionString -> qLabel): _*
+    )
+    verb.copy(questionLabels = newQuestionLabels)
+  }
 }

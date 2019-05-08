@@ -1,6 +1,8 @@
 package qfirst.metrics
 import qfirst._
 
+import io.circe.generic.JsonCodec
+
 import cats.Monoid
 import cats.MonoidK
 import cats.implicits._
@@ -18,7 +20,7 @@ case class BinaryConf[A](
 }
 object BinaryConf {
 
-  case class Stats(
+  @JsonCodec case class Stats(
     tp: Int = 0,
     tn: Int = 0,
     fp: Int = 0,

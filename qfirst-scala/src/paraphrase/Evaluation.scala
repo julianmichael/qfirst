@@ -38,7 +38,6 @@ object Evaluation {
   // }
 
   def getClauseParaphrasingMetric(
-    verbFrameset: VerbFrameset,
     predictedParaphrasingClauses: Set[ArgStructure],
     goldParaphrases: VerbParaphraseLabels
   ) = {
@@ -55,8 +54,7 @@ object Evaluation {
     gold: VerbEntry,
     // predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
     goldParaphrases: VerbParaphraseLabels,
-    verbFrameset: VerbFrameset,
-    frameProbabilities: Vector[Double],
+    verbFrame: VerbFrame,
     filter: ParaphrasingFilter
   ) = {
     val (goldInvalid, goldValid) = filterGoldDense(gold)
@@ -92,11 +90,11 @@ object Evaluation {
 
     // TODO perhaps do something with paraphrasing of incorrect QA pairs as well?
     val predictedParaphrases = goldValidStructures.map(struct =>
-      struct -> filter.getParaphrases(verbFrameset, frameProbabilities, struct)
+      struct -> filter.getParaphrases(verbFrame, struct)
     ).toMap
     val novelParaphrasingClauses = predictedParaphrases.unorderedFold.map(_._1) -- predictedParaphrases.keySet.map(_._1)
     val clauseParaphrasingBoundedAcc = getClauseParaphrasingMetric(
-      verbFrameset, novelParaphrasingClauses, goldParaphrases
+      novelParaphrasingClauses, goldParaphrases
     )
 
     val paraphrasingBoundedAcc = goldValidStructures.foldMap { struct =>

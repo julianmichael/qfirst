@@ -9,6 +9,7 @@ import qasrl.data.Dataset
 import qasrl.labeling.SlotBasedLabel
 
 import cats.data.NonEmptySet
+import cats.data.Validated
 import cats.effect.IO
 import cats.effect.{IOApp, ExitCode}
 import cats.effect.concurrent.Ref
@@ -44,62 +45,56 @@ object Serve extends IOApp {
 
   def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
 
-  val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
+  // val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
 
-  // def _run(
-  //   jsDepsPath: Path, jsPath: Path,
-  //   experimentName: String,
-  //   testOnTest: Boolean,
-  //   domain: String,
-  //   port: Int
-  // ): IO[ExitCode] = {
-  //   Config.make(experimentName, None, testOnTest).flatMap { config =>
-  //     config.readWholeQasrlBank.flatMap { data =>
-  //       val docApiSuffix = "doc"
-  //       val verbApiSuffix = "verb"
-  //       val pageService = StaticPageService.makeService(
-  //         domain,
-  //         docApiSuffix, verbApiSuffix,
-  //         config.trainOnDev,
-  //         jsDepsPath, jsPath, port
-  //       )
+  def _run(
+    jsDepsPath: Path, jsPath: Path,
+    config: Config,
+    verbSenseConfig: VerbSenseConfig,
+    domain: String,
+    port: Int
+  ): IO[ExitCode] = config.qasrlBank.get.flatMap { data =>
+    val docApiSuffix = "doc"
+    val verbApiSuffix = "verb"
+    val pageService = StaticPageService.makeService(
+      domain,
+      docApiSuffix, verbApiSuffix,
+      config.mode.devOrTest == "dev",
+      jsDepsPath, jsPath, port
+    )
 
-  //       val index = data.index
-  //       val docs = data.documentsById
-  //       val searchIndex = Search.createSearchIndex(docs.values.toList)
-  //       val docService = HttpDocumentService.makeService(index, docs, searchIndex)
+    val index = data.index
+    val docs = data.documentsById
+    val searchIndex = Search.createSearchIndex(docs.values.toList)
+    val docService = HttpDocumentService.makeService(index, docs, searchIndex)
 
-  //       implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
-  //       val fullSet = config.getInputSet(data) |+| config.getEvalSet(data)
-  //       val inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-
-  //       for {
-  //         verbFramesets <- config.readFramesets
-  //         goldParaphrases <- config.readGoldParaphrases
-  //         evaluationItems <- config.getEvaluationItems
-  //         goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
-  //         annotationService = VerbFrameHttpService.make(
-  //           VerbFrameServiceIO(
-  //             inflectionCounts,
-  //             verbFramesets,
-  //             fullSet,
-  //             evaluationItems.apply,
-  //             goldParaphraseDataRef,
-  //             config.saveGoldParaphrases(_))
-  //         )
-  //         app = Router(
-  //           "/" -> pageService,
-  //           s"/$docApiSuffix" -> docService,
-  //           s"/$verbApiSuffix" -> annotationService,
-  //           ).orNotFound
-  //         _ <- BlazeServerBuilder[IO]
-  //         .bindHttp(port, "0.0.0.0")
-  //         .withHttpApp(app)
-  //         .serve.compile.drain
-  //       } yield ExitCode.Success
-  //     }
-  //   }
-  // }
+    for {
+      fullSet <- config.full.get
+      inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+      verbFramesets <- config.readFramesets(verbSenseConfig)
+      goldParaphrases <- config.readGoldParaphrases
+      evaluationItems <- config.evaluationItems.get
+      goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+      annotationService = VerbFrameHttpService.make(
+        VerbFrameServiceIO(
+          inflectionCounts,
+          verbFramesets,
+          fullSet,
+          evaluationItems.apply,
+          goldParaphraseDataRef,
+          config.saveGoldParaphrases(_))
+      )
+      app = Router(
+        "/" -> pageService,
+        s"/$docApiSuffix" -> docService,
+        s"/$verbApiSuffix" -> annotationService,
+        ).orNotFound
+      _ <- BlazeServerBuilder[IO]
+      .bindHttp(port, "0.0.0.0")
+      .withHttpApp(app)
+      .serve.compile.drain
+    } yield ExitCode.Success
+  }
 
   override def run(args: List[String]): IO[ExitCode] = {
 
@@ -111,13 +106,21 @@ object Serve extends IOApp {
       "js", metavar = "path", help = "Where to get the JS main file."
     )
 
-    val experimentNameO = Opts.option[String](
-      "name", metavar = "path", help = "Relative path to the model output directory."
-    )
-
-    val testOnTestO = Opts.flag(
-      "test", help = "Whether to view results on the test data."
-    ).orFalse
+    val configO = Opts.option[String](
+      "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
+    ).mapValidated { string =>
+      RunMode.fromString(string)
+        .map(Validated.valid)
+        .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test."))
+        .map(Config(_))
+    }
+    val verbSenseConfigO = Opts.option[String](
+      "model", metavar = "entropy|elmo|<float>", help = "Verb sense model configuration."
+    ).mapValidated { string =>
+      VerbSenseConfig.fromString(string)
+        .map(Validated.valid)
+        .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
+    }
 
     val domainO = Opts.option[String](
       "domain", metavar = "domain", help = "domain name the server is being hosted at."
@@ -132,16 +135,15 @@ object Serve extends IOApp {
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    // val command = Command(
-    //   name = "mill -i qfirst.jvm.runVerbAnn",
-    //   header = "Spin up the annotation server for QA-SRL Clause frames.") {
-    //   (jsDepsPathO, jsPathO, experimentNameO, testOnTestO, domainO, portO).mapN(_run)
-    // }
+    val command = Command(
+      name = "mill -i qfirst.jvm.runVerbAnn",
+      header = "Spin up the annotation server for QA-SRL Clause frames.") {
+      (jsDepsPathO, jsPathO, configO, verbSenseConfigO, domainO, portO).mapN(_run)
+    }
 
-    // command.parse(args) match {
-    //   case Left(help) => IO { System.err.println(help); ExitCode.Error }
-    //   case Right(main) => main
-    // }
-    IO.pure(ExitCode.Success)
+    command.parse(args) match {
+      case Left(help) => IO { System.err.println(help); ExitCode.Error }
+      case Right(main) => main
+    }
   }
 }

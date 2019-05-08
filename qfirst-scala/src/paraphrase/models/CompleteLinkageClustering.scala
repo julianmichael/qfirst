@@ -9,16 +9,12 @@ import scala.util.Random
 
 import io.circe.generic.JsonCodec
 
-import breeze.linalg._
-import breeze.numerics._
-import breeze.stats.distributions.Multinomial
-
 import scala.collection.immutable.Vector
 
 object CompleteLinkageClustering extends ClusteringAlgorithm {
   type ClusterParam = Set[Int] // DenseVector[Double] // boolean sets
   type Instance = Int // DenseVector[Double] // fuzzy eq neg log probs
-  type Hyperparams = DenseMatrix[Double] // fuzzy eq neg log probs
+  type Hyperparams = Array[Array[Double]] // fuzzy eq neg log probs
   // case class Hyperparams(vocabSize: Int)
 
   // loss of a cluster is max distance between any two elements
@@ -27,7 +23,7 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     param: ClusterParam,
     hyperparams: Hyperparams
   ): Double = {
-    param.map(i => hyperparams(i, instance)).max
+    param.map(i => hyperparams(i)(instance)).max
   }
 
   // to make agglom work. assumes all instances included in cluster.
@@ -57,18 +53,19 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     leftParam: ClusterParam,
     right: MergeTree[Int],
     rightParam: ClusterParam,
-    hyperparams: Hyperparams
+    hyperparams: Hyperparams,
+    sanityCheck: Boolean = true
   ): MergeCandidate = {
     val leftValues = left.values
     val rightValues = right.values
     val param = (leftValues ++ rightValues).toSet
     val newLoss = leftValues.flatMap { lv =>
       rightValues.map { rv =>
-        hyperparams(lv, rv)
+        hyperparams(lv)(rv)
       }
     }.max
     val loss = List(newLoss, left.loss, right.loss).max
-    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
+    if(sanityCheck && !(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(left)
       println(right)
