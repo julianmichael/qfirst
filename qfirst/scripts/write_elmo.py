@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 DEFAULT_OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json" # pylint: disable=line-too-long
 DEFAULT_WEIGHT_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5" # pylint: disable=line-too-long
 DEFAULT_BATCH_SIZE = 64
+MAX_TOKENS_PER_SENTENCE = 100
+
 
 def empty_embedding() -> numpy.ndarray:
     return numpy.zeros((3, 0, 1024))
@@ -133,9 +135,12 @@ class ElmoEmbedder():
                 # End of sentence
                 if cur_verb_indices:
                     sent_id = f"{doc_id}_{sent_counter}"
-                    yield (cur_sent_tokens,
-                           { "sentence_id": sent_id,
-                             "verb_indices": cur_verb_indices })
+                    if len(cur_sent_tokens) < MAX_TOKENS_PER_SENTENCE:
+                        yield (cur_sent_tokens,
+                               { "sentence_id": sent_id,
+                                 "verb_indices": cur_verb_indices })
+                    else:
+                        print(f"filtered sentence:{sent_id}")
                     cur_verb_indices = []
                     cur_sent_tokens = []
                     sent_counter += 1
@@ -158,7 +163,7 @@ class ElmoEmbedder():
                     batch_sentences, batch_metas = map(list, zip(*sentence_batch))
                     for verb_id, emb in self.embed_batch(batch_sentences, batch_metas):
                         f_ids.write(json.dumps(verb_id) + "\n")
-                        bs = emb.numpy().tobytes()
+                        bs = emb.cpu().numpy().tobytes()
                         f_emb.write(bs)
 
 def elmo_command(args):
