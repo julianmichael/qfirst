@@ -16,6 +16,7 @@ import scala.annotation.tailrec
   def rank: Int
   def loss: Double
   def values: Vector[A]
+  def valuesWithLosses: Vector[(Double, A)]
 
   import MergeTree._
 
@@ -23,6 +24,25 @@ import scala.annotation.tailrec
     case Leaf(l, a) => Leaf(l, f(a))
     case Merge(r, l, left, right) => Merge(r, l, left.map(f), right.map(f))
   }
+
+  // TODO fix ranks
+  def cutMap[B](
+    shouldKeep: Merge[A] => Boolean,
+    f: MergeTree[A] => B
+  ): MergeTree[B] = this match {
+    case l @ Leaf(loss, _) => Leaf(loss, f(l))
+    case m @ Merge(rank, loss, left, right) =>
+      if(shouldKeep(m)) {
+        Merge(rank, loss, left.cutMap(shouldKeep, f), right.cutMap(shouldKeep, f))
+      } else Leaf(loss, f(m))
+  }
+
+  def cut(shouldKeep: Merge[A] => Boolean): MergeTree[MergeTree[A]] =
+    cutMap(shouldKeep, identity)
+
+  def cutMapAtN[B](n: Int, f: MergeTree[A] => B) = cutMap(
+    _.rank > (rank + 1 - n), f
+  )
 
   def splitByPredicate(shouldSplit: Merge[A] => Boolean): Vector[MergeTree[A]] = this match {
     case l @ Leaf(_, _) => Vector(l)
@@ -62,74 +82,6 @@ import scala.annotation.tailrec
     leaf: (Double, A) => B,
     merge: (Int, Double, B, B) => B
   ): B = MergeTree.cata(MergeTree.makeAlgebra(leaf, merge))(this)
-
-  // stack-safe catamorphism
-  // def cata[B](
-  //   leaf: (Double, A) => B,
-  //   merge: (Int, Double, B, B) => B
-  // ): B = {
-  //   @tailrec
-  //   def loop(
-  //     toVisit: List[MergeTree[A]],
-  //     toCollect: List[Either[(Int, Double), B]]
-  //   ): B = toVisit match {
-  //     case Merge(rank, loss, left, right) :: next =>
-  //       loop(left :: right :: next, Left(rank -> loss) :: toCollect)
-  //     case Leaf(loss, value) :: next =>
-  //       loop(next, Right(leaf(loss, value)) :: toCollect)
-  //     case Nil =>
-  //       toCollect.foldLeft(Nil: List[B]) {
-  //         case (left :: right :: tail, Left((rank, loss))) =>
-  //           merge(rank, loss, left, right) :: tail
-  //         case (acc, Right(b)) => b :: acc
-  //         case _ => ??? // should never happen
-  //       }.head
-  //   }
-  //   loop(List(this), Nil)
-  // }
-
-  // def ana[A, B](
-  //   coalgebra: A => Either[(Double, B), (Int, Double, A, A)]
-  // )(a: A): MergeTree[B] = {
-  //   @tailrec
-  //   def loop(
-  //     toVisit: List[A],
-  //     toCollect: List[MergeTree[B]]
-  //   ) = toVisit match {
-  //     case a :: tail => coalgebra(a) match {
-  //       case Left((loss, value)) =>
-  //         loop(tail, Leaf(loss, value) :: )
-  //     }
-
-  //   }
-  //   loop(List(a))
-  // }
-
-  // def tailRecM[B](arg: A)(func: A => Tree[Either[A, B]]): Tree[B] = {
-  //   @tailrec
-  //   def loop(toVisit: List[Tree[Either[A, B]]],
-  //            toCollect: List[Option[Tree[B]]]): List[Tree[B]] =
-  //     toVisit match {
-  //       case Branch(l, r) :: next =>
-  //         loop(l :: r :: next, None :: toCollect)
-
-  //       case Leaf(Left(value)) :: next =>
-  //         loop(func(value) :: next, toCollect)
-
-  //       case Leaf(Right(value)) :: next =>
-  //         loop(next, Some(pure(value)) :: toCollect)
-
-  //       case Nil =>
-  //         toCollect.foldLeft(Nil: List[Tree[B]]) { (acc, maybeTree) =>
-  //           maybeTree.map(_ :: acc).getOrElse {
-  //             val left :: right :: tail = acc
-  //             branch(left, right) :: tail
-  //           }
-  //         }
-  //     }
-
-  //   loop(List(func(arg)), Nil).head
-  // }
 }
 object MergeTree {
   // def reduceLossThreshold[A](trees: Vector[MergeTree[A]]): Vector[MergeTree[A]] = {
@@ -284,10 +236,37 @@ object MergeTree {
     hyloEither(projectM[Either[E, ?], A], construct)
   }
 
+  // def tailRecM[B](arg: A)(func: A => Tree[Either[A, B]]): Tree[B] = {
+  //   @tailrec
+  //   def loop(toVisit: List[Tree[Either[A, B]]],
+  //            toCollect: List[Option[Tree[B]]]): List[Tree[B]] =
+  //     toVisit match {
+  //       case Branch(l, r) :: next =>
+  //         loop(l :: r :: next, None :: toCollect)
+
+  //       case Leaf(Left(value)) :: next =>
+  //         loop(func(value) :: next, toCollect)
+
+  //       case Leaf(Right(value)) :: next =>
+  //         loop(next, Some(pure(value)) :: toCollect)
+
+  //       case Nil =>
+  //         toCollect.foldLeft(Nil: List[Tree[B]]) { (acc, maybeTree) =>
+  //           maybeTree.map(_ :: acc).getOrElse {
+  //             val left :: right :: tail = acc
+  //             branch(left, right) :: tail
+  //           }
+  //         }
+  //     }
+
+  //   loop(List(func(arg)), Nil).head
+  // }
+
   @Lenses @JsonCodec case class Leaf[A](
     loss: Double, value: A) extends MergeTree[A] {
     def rank: Int = 0
     def values: Vector[A] = Vector(value)
+    def valuesWithLosses: Vector[(Double, A)] = Vector(loss -> value)
   }
   object Leaf
   @Lenses case class Merge[A](
@@ -297,6 +276,7 @@ object MergeTree {
     right: MergeTree[A]
   ) extends MergeTree[A] {
     def values: Vector[A] = left.values ++ right.values
+    def valuesWithLosses: Vector[(Double, A)] = left.valuesWithLosses ++ right.valuesWithLosses
   }
   object Merge
 

@@ -42,23 +42,6 @@ import scala.collection.immutable.Map
 
 import scala.util.Random
 
-class Vocab[A] private (
-  indexToItem: Vector[A],
-  itemToIndex: Map[A, Int]
-) {
-  def items = indexToItem
-  def indices = indexToItem.indices.toVector
-  def getItem(index: Int) = indexToItem(index)
-  def getIndex(item: A) = itemToIndex(item)
-  def size = indexToItem.size
-}
-object Vocab {
-  def make[A](items: Set[A]): Vocab[A] = {
-    val itemsVec = items.toVector
-    new Vocab(itemsVec, itemsVec.zipWithIndex.toMap)
-  }
-}
-
 // TODO applicative
 case class ClusteringInstances[A](
   instances: Map[InflectedForms, Map[String, Map[Int, A]]]
@@ -462,31 +445,7 @@ object FrameInductionApp extends IOApp {
           verbClauseSets(vid).toList.foldMap(c => Map(c -> 1))
         }.toList.map { case (c, count) => FrameClause(c, (count.toDouble / verbIds.size)) }
         val frameProb = verbIds.size.toDouble / numInstancesForVerb
-        val clausalQVocab = Vocab.make(
-          clauseTemplates.map(_.args).flatMap { clauseTemplate =>
-            getArgumentSlotsForClauseTemplate(clauseTemplate).toList
-              .map(slot => clauseTemplate -> slot)
-          }.toSet
-        )
-        val indices = clausalQVocab.indices
-        val fuzzyEquivMatrix = Array.ofDim[Double](clausalQVocab.size, clausalQVocab.size)
-        for(i <- indices; j <- indices) {
-          val (qi, qj) = clausalQVocab.getItem(i) -> clausalQVocab.getItem(j)
-          val score = 1.0 - (
-            if(i == j) 1.0 // reflexive
-            else if(qi._1 == qj._1) 0.0 // prohibit coindexing within a clause
-            else {
-              val resOpt = verbRel.get(qi -> qj).orElse(verbRel.get(qj -> qi))
-              resOpt.getOrElse {
-                println(s"XXX: $qi \t $qj")
-                0.5 // shouldn't happen
-              }
-            }
-          )
-          fuzzyEquivMatrix(i)(j) = score
-        }
-        val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
-        val coindexingTree = mergeTree.map(clausalQVocab.getItem)
+        val coindexingTree = Coindexing.getCoindexingTree(clauseTemplates.map(_.args).toSet, verbRel)
         VerbFrame(verbIds.toSet, clauseTemplates, coindexingTree, frameProb)
       }.toList
       VerbFrameset(verbInflectedForms, verbFrames)

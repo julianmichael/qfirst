@@ -2,6 +2,7 @@ package qfirst.paraphrase
 import qfirst.MergeTree
 import qfirst.ClauseResolution
 
+import cats.Monoid
 import cats.Order
 import cats.data.NonEmptySet
 import cats.implicits._
@@ -22,13 +23,87 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import monocle.macros._
 
-// @JsonCodec case class VerbClusterModel(
-//   clusterTree: MergeTree[VerbId],
-//   clauseSets: Map[VerbId, Set[ArgStructure]],
-//   coindexingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]
-// ) {
-//   lazy val framesets = 
-// }
+@JsonCodec case class VerbClusterModel(
+  verbInflectedForms: InflectedForms,
+  clusterTree: MergeTree[VerbId],
+  clauseSets: Map[VerbId, Set[ArgStructure]],
+  coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
+) {
+  val coindexingScores = coindexingScoresList.toMap
+  val numInstances = clusterTree.size
+
+  case class FrameInputInfo(
+    verbIds: Set[VerbId],
+    clauseCounts: Map[ArgStructure, Int]
+  ) {
+    def getFrame = {
+      val numInstancesInFrame = verbIds.size
+      val frameClauses = clauseCounts.iterator.map { case (clauseTemplate, count) =>
+        FrameClause(clauseTemplate, count.toDouble / numInstancesInFrame)
+      }.toList
+      val coindexingTree = Coindexing.getCoindexingTree(frameClauses.map(_.args).toSet, coindexingScores)
+      VerbFrame(
+        verbIds = verbIds,
+        clauseTemplates = frameClauses,
+        coindexingTree = coindexingTree,
+        probability = numInstancesInFrame.toDouble / numInstances
+      )
+    }
+  }
+  object FrameInputInfo {
+    implicit val verbIdStuffMonoid: Monoid[FrameInputInfo] = {
+      cats.derived.semi.monoid[FrameInputInfo]
+    }
+  }
+
+  private[this] def makeFramesets(criterion: Either[Int, Double]) = {
+    val aggFrameInfo = (childTree: MergeTree[VerbId]) => {
+      val verbIds = childTree.values
+      FrameInputInfo(
+        verbIds.toSet,
+        verbIds.foldMap(vid =>
+          clauseSets(vid).iterator.map(_ -> 1).toMap
+        )
+      )
+    }
+    var aggTree = criterion match {
+      case Left(numClusters) => clusterTree.cutMapAtN(numClusters, aggFrameInfo)
+      case Right(maxLoss) => clusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
+    }
+    var resList = List.empty[(Double, VerbFrameset)]
+    var nextSize = aggTree.size.toInt - 1
+    while(nextSize > 0) {
+      val (losses, frameInfos) = aggTree.valuesWithLosses.unzip
+      val maxLoss = losses.max
+      val frames = frameInfos.map(_.getFrame).toList
+      val frameset = VerbFrameset(verbInflectedForms, frames)
+      resList = (maxLoss -> frameset) :: resList
+      aggTree = aggTree.cutMapAtN(nextSize, _.combineAll) // should do exactly one merge
+      nextSize = nextSize - 1
+    }
+    resList
+  }
+
+  private[this] def refreshClusters(criterion: Either[Int, Double]) = {
+    framesetResolutions = makeFramesets(criterion)
+  }
+
+  private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(Left(5))
+
+  def getFramesetWithNFrames(n: Int) = {
+    val numFramesetsLoaded = framesetResolutions.size
+    if(numFramesetsLoaded < n) {
+      refreshClusters(Left(math.max(n, numFramesetsLoaded) * 2))
+    }
+    framesetResolutions(n - 1)
+  }
+  def getFramesetWithMaxLoss(maxLoss: Double): (Double, VerbFrameset) = {
+    framesetResolutions.find(_._1 <= maxLoss).getOrElse {
+      refreshClusters(Right(maxLoss))
+      getFramesetWithMaxLoss(maxLoss)
+    }
+  }
+}
 
 @Lenses @JsonCodec case class ParaphrasingFilter(
   minClauseProb: Double,
