@@ -1,0 +1,3 @@
+package qfirst.paraphrase
+
+trait PackagePlatformExtensions

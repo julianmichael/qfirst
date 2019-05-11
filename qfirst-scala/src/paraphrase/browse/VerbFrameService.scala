@@ -18,13 +18,13 @@ import qasrl.data.JsonCodecs.{spanEncoder, spanDecoder}
   sentenceId: String,
   verbIndex: Int,
   verbEntry: VerbEntry,
-  verbFrameset: VerbFrameset,
+  verbModel: VerbClusterModel,
   goldParaphrases: VerbParaphraseLabels
 )
 
 trait VerbFrameService[F[_]] { self =>
   def getVerbs: F[Map[InflectedForms, Int]]
-  def getFrameset(verb: InflectedForms): F[VerbFrameset]
+  def getModel(verb: InflectedForms): F[VerbClusterModel]
   def getParaphrasingInfo(i: Int): F[ParaphrasingInfo]
   def saveParaphraseAnnotations(
     sentenceId: String, verbIndex: Int, paraphrases: VerbParaphraseLabels

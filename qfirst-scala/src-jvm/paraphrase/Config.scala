@@ -257,49 +257,44 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   def verbClustersPath(verbSenseConfig: VerbSenseConfig) = {
     modelDir(verbSenseConfig).map(_.resolve(s"clusters.jsonl.gz"))
   }
-  def framesetsPath(verbSenseConfig: VerbSenseConfig) = {
-    modelDir(verbSenseConfig).map(_.resolve(s"framesets.jsonl.gz"))
-  }
+  // def framesetsPath(verbSenseConfig: VerbSenseConfig) = {
+  //   modelDir(verbSenseConfig).map(_.resolve(s"framesets.jsonl.gz"))
+  // }
   def resultsPath(verbSenseConfig: VerbSenseConfig) = {
     modelDir(verbSenseConfig).map(_.resolve(s"results")).flatTap(createDir)
   }
 
-  def getCachedVerbClusters(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, MergeTree[VerbId]]]] = {
+  def getCachedVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, VerbClusterModel]]] = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
-    // optionFromFile[Map[InflectedForms, MergeTree[VerbId]]](
-    //   verbClustersPath,
-    //   path => FileUtil.readJsonLines[(InflectedForms, MergeTree[VerbId])](path)
-    //     .compile.toList.map(l => Some(l.toMap)),
-    // )
     verbClustersPath(verbSenseConfig).flatMap(path =>
-      fileCached[Option[Map[InflectedForms, MergeTree[VerbId]]]](
-        path, read = path => FileUtil.readJsonLines[(InflectedForms, MergeTree[VerbId])](path)
+      fileCached[Option[Map[InflectedForms, VerbClusterModel]]](
+        path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
           .compile.toList.map(l => Some(l.toMap)),
         write = (_, _) => IO.unit
       )(compute = IO(None))
     )
   }
-  def cacheVerbClusters(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, MergeTree[VerbId]]): IO[Unit] = {
+  def cacheVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, VerbClusterModel]): IO[Unit] = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     verbClustersPath(verbSenseConfig).flatMap(path =>
       FileUtil.writeJsonLines(path)(clusters.toList)
     )
   }
 
-  def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {
-    framesetsPath(vsConfig).flatMap(path =>
-      FileUtil.readJsonLines[VerbFrameset](path)
-        .compile.toList
-        .map(_.map(f => f.inflectedForms -> f).toMap)
-    )
-  }
-  def writeFramesets(
-    vsConfig: VerbSenseConfig,
-    framesets: Map[InflectedForms, VerbFrameset])(
-    implicit cs: ContextShift[IO]
-  ): IO[Unit] = framesetsPath(vsConfig).flatMap(path =>
-    FileUtil.writeJsonLines(path)(
-      framesets.values.toList
-    )
-  )
+  // def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {
+  //   framesetsPath(vsConfig).flatMap(path =>
+  //     FileUtil.readJsonLines[VerbFrameset](path)
+  //       .compile.toList
+  //       .map(_.map(f => f.inflectedForms -> f).toMap)
+  //   )
+  // }
+  // def writeFramesets(
+  //   vsConfig: VerbSenseConfig,
+  //   framesets: Map[InflectedForms, VerbFrameset])(
+  //   implicit cs: ContextShift[IO]
+  // ): IO[Unit] = framesetsPath(vsConfig).flatMap(path =>
+  //   FileUtil.writeJsonLines(path)(
+  //     framesets.values.toList
+  //   )
+  // )
 }

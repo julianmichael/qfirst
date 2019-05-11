@@ -2,6 +2,7 @@ package qfirst.paraphrase
 import qfirst._
 import qfirst.paraphrase.browse._
 import qfirst.frames.implicits._
+import qfirst.metrics.HasMetrics
 import qfirst.metrics.HasMetrics.ops._
 import qfirst.protocols.SimpleQAs
 // import qfirst.frames._
@@ -119,7 +120,7 @@ object FrameInductionApp extends IOApp {
         "Reading verb embeddings",
         FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
       )
-      // _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
+      _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
         val numToCheck = 5
         val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
@@ -173,8 +174,8 @@ object FrameInductionApp extends IOApp {
           .map(vi => VerbId(sid, vi))
       }
     }.filter(_._2.nonEmpty)
-    IO(println("Clustering verbs:")) >>
-      verbs.toList.traverse { case (verbInflectedForms, verbIds) =>
+    IO(print("Clustering verbs: ")) >> // sort decreasing by size to front-load memory usage
+      verbs.toList.sortBy(-_._2.size).traverse { case (verbInflectedForms, verbIds) =>
         val verbInstances = instances(verbInflectedForms)
         val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
         val makeInstance = (verbId: VerbId) => {
@@ -217,8 +218,8 @@ object FrameInductionApp extends IOApp {
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
-  def getVerbSenseClusters(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[InflectedForms, MergeTree[VerbId]]] = {
-    config.getCachedVerbClusters(verbSenseConfig).flatMap {
+  def getVerbClusterModels(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[InflectedForms, VerbClusterModel]] = {
+    config.getCachedVerbModels(verbSenseConfig).flatMap {
       case Some(verbClusters) => IO.pure(verbClusters)
       case None => for {
         fullInstances <- config.fullInstances.get
@@ -231,8 +232,26 @@ object FrameInductionApp extends IOApp {
           instances = fullInstances,
           elmoVecs = trainElmoVecs |+| evalElmoVecs
         )
-        _ <- config.cacheVerbClusters(verbSenseConfig, verbClusters)
-      } yield verbClusters
+        collapsedQAOutputs <- config.collapsedQAOutputs.get
+        verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
+          val clauseSets = fullInstances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
+            verbMap.iterator.map { case (vi, qas) =>
+              val questions = qas.keySet.toList
+              val clauseSet = ClauseResolution.getResolvedFramePairs(
+                verbInflectedForms, questions
+              ).map(_._1).map(ClauseResolution.getClauseTemplate).toSet
+              VerbId(sid, vi) -> clauseSet
+            }
+          }.toMap
+          verbInflectedForms -> VerbClusterModel(
+            verbInflectedForms,
+            clusterTree,
+            clauseSets,
+            collapsedQAOutputs(verbInflectedForms).toList
+          )
+        }
+        _ <- config.cacheVerbModels(verbSenseConfig, verbClusterModels)
+      } yield verbClusterModels
     }
   }
 
@@ -262,37 +281,10 @@ object FrameInductionApp extends IOApp {
     } else {
       for {
         instances <- config.fullInstances.get
-        _ <- {
-          import com.cibo.evilplot._
-          import com.cibo.evilplot.numeric._
-          import com.cibo.evilplot.plot._
-          import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-          import com.cibo.evilplot.plot.renderers.PointRenderer
-
-          case class LossDatum(
-            model: VerbSenseConfig,
-            verb: InflectedForms,
-            numInstances: Long,
-            maxLoss: Double,
-            val x: Double,
-            val y: Double
-          ) extends Datum2d[LossDatum] {
-            def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
-          }
-          val lossData = verbClustersByConfig.toList.flatMap { case (vsConfig, clustersByVerb) =>
-            clustersByVerb.toList.map { case (verbInflectedForms, clusterTree) =>
-              val numInstances = clusterTree.size
-              LossDatum(vsConfig, verbInflectedForms, numInstances, clusterTree.loss, numInstances.toDouble, clusterTree.loss)
-            }
-          }
-          val plot = ScatterPlot(
-		        lossData,
-		        pointRenderer = Some(PointRenderer.colorByCategory(lossData, ((x: LossDatum) => x.model.modelName), size = Some(2.0)))
-	        ).xAxis().yAxis().frame().rightLegend()
-          config.globalResultsDir.flatMap(path =>
-            IO(plot.render().write(new java.io.File(path.resolve("loss-trends.png").toString)))
-          )
-        }
+        _ <- writeLossGraph(
+          verbClustersByConfig,
+          config.globalResultsDir.map(_.resolve("loss-trends.png"))
+        )
         fullEvaluationResultsByConfig = verbClustersByConfig.transform { case (vsConfig, clustersByVerb) =>
           presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
             val verbClauseSets = instances(verbInflectedForms).flatMap { case (sid, verbMap) =>
@@ -635,6 +627,330 @@ object FrameInductionApp extends IOApp {
     }
   }
 
+  @JsonCodec case class ModelMetrics(
+    clauseLBConf: BinaryConf.Stats,
+    clauseUBConf: BinaryConf.Stats,
+    questionLBConf: BinaryConf.Stats,
+    questionUBConf: BinaryConf.Stats)
+  object ModelMetrics {
+    implicit val modelMetricsHasMetrics: HasMetrics[ModelMetrics] = {
+      new HasMetrics[ModelMetrics] {
+        def getMetrics(mm: ModelMetrics) = MapTree.fork(
+          "clause lb" -> mm.clauseLBConf.getMetrics,
+          "clause ub" -> mm.clauseUBConf.getMetrics,
+          "question lb" -> mm.questionLBConf.getMetrics,
+          "question ub" -> mm.questionUBConf.getMetrics
+        )
+      }
+    }
+  }
+
+  def writeLossGraph(
+    verbClustersByConfig: Map[VerbSenseConfig, Map[InflectedForms, MergeTree[VerbId]]],
+    getPath: IO[NIOPath]
+  ): IO[Unit] = {
+    import com.cibo.evilplot._
+    import com.cibo.evilplot.numeric._
+    import com.cibo.evilplot.plot._
+    import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+    import com.cibo.evilplot.plot.renderers.PointRenderer
+
+    case class LossDatum(
+      model: VerbSenseConfig,
+      verb: InflectedForms,
+      numInstances: Long,
+      maxLoss: Double,
+      val x: Double,
+      val y: Double
+    ) extends Datum2d[LossDatum] {
+      def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
+    }
+    val lossData = verbClustersByConfig.toList.flatMap { case (vsConfig, clustersByVerb) =>
+      clustersByVerb.toList.map { case (verbInflectedForms, clusterTree) =>
+        val numInstances = clusterTree.size
+        LossDatum(vsConfig, verbInflectedForms, numInstances, clusterTree.loss, numInstances.toDouble, clusterTree.loss)
+      }
+    }
+    val plot = ScatterPlot(
+		  lossData,
+		  pointRenderer = Some(PointRenderer.colorByCategory(lossData, ((x: LossDatum) => x.model.modelName), size = Some(2.0)))
+	  ).xAxis().yAxis().frame().rightLegend()
+    getPath.flatMap(path =>
+      IO(plot.render().write(new java.io.File(path.toString)))
+    )
+  }
+
+  def writeDepthGraph(
+    verbClustersByConfig: Map[VerbSenseConfig, Map[InflectedForms, MergeTree[VerbId]]],
+    getPath: IO[NIOPath]
+  ): IO[Unit] = {
+    import com.cibo.evilplot._
+    import com.cibo.evilplot.numeric._
+    import com.cibo.evilplot.plot._
+    import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+    import com.cibo.evilplot.plot.renderers.PointRenderer
+
+    case class DepthDatum(
+      model: VerbSenseConfig,
+      verb: InflectedForms,
+      numInstances: Long,
+      avgDepth: Double,
+      val x: Double,
+      val y: Double
+    ) extends Datum2d[DepthDatum] {
+      def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
+    }
+    val depthData = verbClustersByConfig.toList.flatMap { case (vsConfig, clustersByVerb) =>
+      clustersByVerb.toList.map { case (verbInflectedForms, clusterTree) =>
+        val numInstances = clusterTree.size
+        case class DepthAcc(depthSum: Int, numLeaves: Int) {
+          def merge(that: DepthAcc) = {
+            val totalLeaves = this.numLeaves + that.numLeaves
+            val totalDepth = this.depthSum + that.depthSum + totalLeaves
+            DepthAcc(totalDepth, totalLeaves)
+          }
+          def avgDepth = depthSum.toDouble / numLeaves
+        }
+        val avgDepth = clusterTree.cata[DepthAcc](
+          leaf = (_, _) => DepthAcc(0, 1),
+          merge = (_, _, l, r) => l.merge(r)
+        ).avgDepth
+        DepthDatum(vsConfig, verbInflectedForms, numInstances, avgDepth, numInstances.toDouble, avgDepth)
+      }
+    }
+    val plot = ScatterPlot(
+		  depthData,
+		  pointRenderer = Some(PointRenderer.colorByCategory(depthData, ((x: DepthDatum) => x.model.modelName), size = Some(2.0)))
+	  ).xAxis().yAxis().frame().rightLegend()
+    getPath.flatMap(path =>
+      IO(plot.render().write(new java.io.File(path.toString)))
+    )
+  }
+
+  @JsonCodec case class FullTuningPoint(
+    verbSenseConfig: VerbSenseConfig,
+    maxVerbClusterLoss: Double,
+    minClauseProb: Double,
+    minCoindexingProb: Double,
+    lbConf: BinaryConf.Stats,
+    ubConf: BinaryConf.Stats
+  )
+
+  def tuningFullEvaluation(
+    config: Config,
+    verbModelsByConfig: Map[VerbSenseConfig, Map[InflectedForms, VerbClusterModel]],
+    goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
+    evaluationItems: Vector[(InflectedForms, String, Int)]
+  ): IO[Map[VerbSenseConfig, FullTuningPoint]] = {
+    // @JsonCodec case class VerbClusterModel(
+    //   verbInflectedForms: InflectedForms,
+    //   clusterTree: MergeTree[VerbId],
+    //   clauseSets: Map[VerbId, Set[ArgStructure]],
+    //   coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
+    // ) {
+    val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
+      goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
+    }
+    if(presentEvaluationItems.isEmpty) IO.pure {
+      verbModelsByConfig.transform { case (vsConfig, _) =>
+        FullTuningPoint(vsConfig, 0.0, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
+      }
+    } else {
+      for {
+        instances <- config.fullInstances.get
+        _ <- writeLossGraph(
+          verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+          config.globalResultsDir.map(_.resolve("loss-trends.png"))
+        )
+        _ <- writeDepthGraph(
+          verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+          config.globalResultsDir.map(_.resolve("depth-trends.png"))
+        )
+        fullEvaluationResultsByConfig = verbModelsByConfig.transform { case (vsConfig, verbModels) =>
+          presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
+            val verbId = VerbId(sentenceId, verbIndex)
+            val goldQs = instances(verbInflectedForms)(sentenceId)(verbIndex).keySet
+            val goldClausalQs = ClauseResolution.getResolvedStructures(goldQs.toList).toSet
+              .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
+            val goldClauseSet = goldClausalQs.map(_._1)
+            val verbModel = verbModels(verbInflectedForms)
+            val instanceClusters = verbModel.clusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).get // verb id must be present
+
+            // max verb cluster loss/elt (dec) -> min clause prob (inc) -> min coindexing prob (inc) -> stats
+            instanceClusters.map { tree =>
+              val clusterSize = tree.size
+              val lossThreshold = if(tree.isLeaf) 0.0 else tree.loss / clusterSize
+              val clauseCounts: Map[ArgStructure, Int] = tree.values.foldMap { vid =>
+                verbModel.clauseSets(vid).toList.foldMap(c => Map(c -> 1))
+              }
+              val predictedClausesWithProbsIncreasing = clauseCounts
+                // .filter(p => !inputClauseSet.contains(p._1)) // remove clauses already present in gold
+                .toList.map { case (clause, count) => clause -> (count.toDouble / clusterSize)} // prob of clause appearing for a verb
+                .sortBy(_._2)
+              lossThreshold -> predictedClausesWithProbsIncreasing.tails.map { clausesWithProbs =>
+                val clauseThreshold = clausesWithProbs.headOption.fold(1.0)(_._2) // predict nothing
+                val frameClauses = clausesWithProbs.map(_._1).toList.toSet
+                val coindexingTreeOpt = if(frameClauses.isEmpty) None else Some(
+                  Coindexing.getCoindexingTree(frameClauses, verbModel.coindexingScores)
+                )
+                val confPairLists = goldClausalQs.toList.map { cq =>
+                  val correctParaphrases = instanceParaphrases.paraphrases.equivalenceClass(cq) - cq
+                  val incorrectParaphrases = instanceParaphrases.paraphrases.apartSet(cq) ++
+                    instanceParaphrases.incorrectClauses.flatMap(ct =>
+                      getArgumentSlotsForClauseTemplate(ct).map(ct -> _)
+                    )
+                  coindexingTreeOpt.flatMap(_.clustersForValue(cq)) match {
+                    case None =>
+                      val lbConf = BinaryConf.Stats(fn = correctParaphrases.size)
+                      val ubConf = lbConf
+                      List(1.0 -> (lbConf -> ubConf))
+                    case Some(clustersForQuestion) => clustersForQuestion.map { tree =>
+                      val clusterSize = tree.size
+                      val maxLoss = if(tree.isLeaf) 0.0 else tree.loss
+                      val minCoindexingProb = 1.0 - maxLoss
+                      val predictedParaphrases = tree.values.toSet - cq
+                      val lbConf = BinaryConf.Stats(
+                        tp = (predictedParaphrases intersect correctParaphrases).size,
+                        tn = 0, // we don't need this for p/r/f
+                        fp = (predictedParaphrases -- correctParaphrases).size,
+                        fn = (correctParaphrases -- predictedParaphrases).size
+                      )
+                      val ubConf = BinaryConf.Stats(
+                        tp = (predictedParaphrases -- incorrectParaphrases).size,
+                        tn = 0, // we don't need this for p/r/f
+                        fp = (predictedParaphrases intersect incorrectParaphrases).size,
+                        fn = (correctParaphrases -- predictedParaphrases).size
+                      )
+                      minCoindexingProb -> (lbConf -> ubConf)
+                    }
+                  }
+                }
+                val allMinCoindexingProbs = confPairLists.foldMap(_.map(_._1).toSet).toList.sorted
+                clauseThreshold -> allMinCoindexingProbs.map { minCoindexingProb =>
+                  val lbConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._1)
+                  val ubConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._2)
+                  minCoindexingProb -> (lbConf -> ubConf)
+                }
+              }.toList
+            }
+            // clause stats
+            // val correctClauses = instanceParaphrases.correctClauses.filter(c => !inputClauseSet.contains(c))
+            // val incorrectClauses = instanceParaphrases.incorrectClauses.filter(c => !inputClauseSet.contains(c))
+            // val lbConf = BinaryConf.Stats(
+            //   tp = (predictedClauses intersect correctClauses).size,
+            //   tn = 0, // we don't need this for p/r/f
+            //   fp = (predictedClauses -- correctClauses).size,
+            //   fn = (correctClauses -- predictedClauses).size
+            // )
+            // val ubConf = BinaryConf.Stats(
+            //   tp = (predictedClauses -- incorrectClauses).size,
+            //   tn = 0, // we don't need this for p/r/f
+            //   fp = (predictedClauses intersect incorrectClauses).size,
+            //   fn = (correctClauses -- predictedClauses).size
+            // )
+            // clauseThreshold -> (lbConf -> ubConf)
+          }
+        }
+        allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
+          val maxLosses = evaluationItemResults.foldMap(_.map(_._1).toSet).toList.sortBy(-_)
+          maxLosses.flatMap { maxLoss =>
+            val chosenClusters = evaluationItemResults.map(
+              _.find(_._1 <= maxLoss).get._2
+            )
+            val minClauseProbs = chosenClusters.foldMap(_.map(_._1).toSet).toList.sorted
+            minClauseProbs.flatMap { minClauseProb =>
+              val chosenClauseSets = chosenClusters.map(_.find(_._1 >= minClauseProb).get._2)
+              val minCoindexingProbs = chosenClauseSets.flatMap(_.map(_._1)).toSet.toList.sorted
+              minCoindexingProbs.map { minCoindexingProb =>
+                val confPairs = chosenClauseSets.map(_.find(_._1 >= minCoindexingProb).get._2)
+                val lbConf = confPairs.foldMap(_._1)
+                val ubConf = confPairs.foldMap(_._2)
+                FullTuningPoint(vsConfig, maxLoss, minClauseProb, minCoindexingProb, lbConf, ubConf)
+              }
+            }
+          }
+        }
+        bestTuningPoints <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
+          val lbBest = allPoints.maxBy(_.lbConf.f1)
+          val ubBest = allPoints.maxBy(_.ubConf.f1)
+          val lbResString = SandboxApp.getMetricsString(lbBest.lbConf)
+          val ubResString = SandboxApp.getMetricsString(ubBest.ubConf)
+          println(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson))
+          println(s"${vsConfig.modelName} question lb metrics: " + lbResString)
+          println(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson))
+          println(s"${vsConfig.modelName} question ub metrics: " + ubResString)
+
+          config.resultsPath(vsConfig).flatMap(path =>
+            FileUtil.writeString(path.resolve("full-lb-results.txt"))(lbResString) >>
+              FileUtil.writeString(path.resolve("full-ub-results.txt"))(ubResString) >>
+              FileUtil.writeJson(path.resolve("full-lb-model.json"), io.circe.Printer.spaces2)(lbBest) >>
+              FileUtil.writeJson(path.resolve("full-ub-model.json"), io.circe.Printer.spaces2)(ubBest)
+          ).as(vsConfig -> ubBest)
+        }.map(_.toMap)
+        _ <- {
+          import com.cibo.evilplot._
+          import com.cibo.evilplot.numeric._
+          import com.cibo.evilplot.plot._
+          import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+          import com.cibo.evilplot.plot.renderers.PointRenderer
+
+          case class PRPoint(
+            model: VerbSenseConfig,
+            recall: Double,
+            precision: Double) extends Datum2d[PRPoint] {
+            val x = recall
+            val y = precision
+            def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
+          }
+
+          val rand = new scala.util.Random(2643642L)
+          def noise = math.abs(rand.nextGaussian / 200.0)
+
+          val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+            PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
+          }
+          val ubData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+            PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.ubConf.recall + noise, vsTuningPoint.ubConf.precision + noise)
+          }
+
+          val lbPlot = ScatterPlot(
+		        lbData,
+		        pointRenderer = Some(PointRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	        ).xAxis().yAxis().frame().rightLegend()
+          val ubPlot = ScatterPlot(
+		        ubData,
+		        pointRenderer = Some(PointRenderer.colorByCategory(ubData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	        ).xAxis().yAxis().frame().rightLegend()
+
+          // val linePointsByModel = allPointsByModel.transform { case (model, vsTuningPoints) =>
+          //   NonEmptyList.fromList(vsTuningPoints.sortBy(-_.lbConf.recall)).get
+          //     .reduceLeftTo(NonEmptyList.of(_)) { (best, next) =>
+          //       if(next.lbConf.precision > best.head.lbConf.precision) {
+          //         if(next.lbConf.recall == best.head.lbConf.recall) best
+          //         else NonEmptyList(next, best.toList)
+          //       } else best
+          //     }.toList
+          // }
+          // val lbLineData = linePointsByModel.values.toList.flatten.map { vsTuningPoint =>
+          //   PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall, vsTuningPoint.lbConf.precision)
+          // }
+          // val lbLinePlot = LinePlot(
+		      //   lbData,
+		      //   pathRenderer = Some(PathRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	        // ).xAxis().yAxis().frame().rightLegend()
+
+          // IO(lbLinePlot.render().write(new java.io.File(path.resolve("question-lb-line.png").toString))) >>
+          config.globalResultsDir.flatMap(path =>
+            IO(lbPlot.render().write(new java.io.File(path.resolve("full-question-lb.png").toString))) >>
+              IO(ubPlot.render().write(new java.io.File(path.resolve("full-question-ub.png").toString)))
+          )
+        }
+
+
+      } yield bestTuningPoints
+    }
+  }
+
   // TODO: elmo loss is ~175x greater; tune around this number
   // _ <- {
   //   import qfirst.metrics._
@@ -656,30 +972,34 @@ object FrameInductionApp extends IOApp {
     )
     // TODO read in tuned thresholds (in case of test)
     for {
-      verbClustersByConfig <- verbSenseConfigs.traverse(vsConfig =>
-        getVerbSenseClusters(config, vsConfig).map(vsConfig -> _)
+      verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
+        getVerbClusterModels(config, vsConfig).map(vsConfig -> _)
       ).map(_.toMap)
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
-      bestModels <- evaluateVerbClusters(config, verbClustersByConfig, goldParaphrases, evaluationItems)
-      collapsedQAOutputs <- config.collapsedQAOutputs.get
-      fullInstances <- config.fullInstances.get
-      coindexedModels <- logOp(
-        "Running coindexing",
-        bestModels.transform { case (vsConfig, model) =>
-          runCollapsedCoindexing(fullInstances, model, verbClustersByConfig(vsConfig), collapsedQAOutputs)
-        }
+      tunedThresholds <- logOp(
+        "Evaluating and tuning thresholds",
+        tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
       )
-      _ <- logOp(
-        "Writing framesets",
-        coindexedModels.toList.traverse { case (vsConfig, framesets) =>
-          config.writeFramesets(vsConfig, framesets)
-        }
-      )
-      modelThresholds <- logOp(
-        "Tuning paraphrasing thresholds",
-        tuningParaphraseEvaluation(config, coindexedModels, goldParaphrases, evaluationItems)
-      )
+      // bestModels <- evaluateVerbClusters(config, verbClustersByConfig, goldParaphrases, evaluationItems)
+      // collapsedQAOutputs <- config.collapsedQAOutputs.get
+      // fullInstances <- config.fullInstances.get
+      // coindexedModels <- logOp(
+      //   "Running coindexing",
+      //   bestModels.transform { case (vsConfig, model) =>
+      //     runCollapsedCoindexing(fullInstances, model, verbClustersByConfig(vsConfig), collapsedQAOutputs)
+      //   }
+      // )
+      // _ <- logOp(
+      //   "Writing framesets",
+      //   coindexedModels.toList.traverse { case (vsConfig, framesets) =>
+      //     config.writeFramesets(vsConfig, framesets)
+      //   }
+      // )
+      // modelThresholds <- logOp(
+      //   "Tuning paraphrasing thresholds",
+      //   tuningParaphraseEvaluation(config, coindexedModels, goldParaphrases, evaluationItems)
+      // )
     } yield ExitCode.Success
   }
 

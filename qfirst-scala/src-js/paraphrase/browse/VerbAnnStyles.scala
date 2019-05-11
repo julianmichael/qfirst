@@ -526,7 +526,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   val verbDropdown = style()
-  val frameContainer = style(
+  val framesetContainer = style(
     addClassNames("p-3"),
     width(45 rem)
   )
@@ -562,8 +562,19 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val hoveredQuestion = hoveredClause
 
   val frameSpecDisplay = style(
-    height(100 %%)
+    height(80 %%)
   )
+
+  val frameContainer = style()
+  val chosenFrameContainer = style(
+    borderStyle.solid,
+    borderColor(c"#000"),
+    borderWidth(1 px)
+  )
+  val chosenFrameHeading = style(
+    fontStyle.italic
+  )
+
   val frameAuditingDisplay = style(
     height(30 vh),
     auditingPaneBorder
@@ -792,5 +803,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val incorrectClausePredictedParaphraseRow = style(
     backgroundColor(grey(240))
+  )
+
+  val intArrowFieldInput = style(
+    width(4 em)
   )
 }

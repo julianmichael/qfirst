@@ -24,10 +24,10 @@ case class VerbFrameClient(apiUrl: String) extends VerbFrameService[Future] {
     }
   }
 
-  def getFrameset(inflectedForms: InflectedForms): Future[VerbFrameset] = {
-    org.scalajs.dom.ext.Ajax.post(url = apiUrl + "/getFrameset", data = printer.pretty(inflectedForms.asJson)).map(_.responseText).flatMap { jsonStr =>
-      decode[VerbFrameset](jsonStr) match {
-        case Left(err)  => Future.failed[VerbFrameset](new RuntimeException(err))
+  def getModel(inflectedForms: InflectedForms): Future[VerbClusterModel] = {
+    org.scalajs.dom.ext.Ajax.post(url = apiUrl + "/getModel", data = printer.pretty(inflectedForms.asJson)).map(_.responseText).flatMap { jsonStr =>
+      decode[VerbClusterModel](jsonStr) match {
+        case Left(err)  => Future.failed[VerbClusterModel](new RuntimeException(err))
         case Right(res) => Future.successful(res)
       }
     }

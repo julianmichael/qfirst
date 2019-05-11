@@ -23,6 +23,19 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import monocle.macros._
 
+@Lenses @JsonCodec case class VerbId(
+  sentenceId: String, verbIndex: Int
+)
+object VerbId {
+  import io.circe._
+  implicit val verbIdKeyEncoder = KeyEncoder.instance[VerbId](vid =>
+    s"${vid.sentenceId}:${vid.verbIndex}"
+  )
+  implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
+    scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
+  )
+}
+
 @JsonCodec case class VerbClusterModel(
   verbInflectedForms: InflectedForms,
   clusterTree: MergeTree[VerbId],
@@ -31,7 +44,10 @@ import monocle.macros._
 ) {
   val coindexingScores = coindexingScoresList.toMap
   val numInstances = clusterTree.size
+}
+object VerbClusterModel
 
+class LazyFramesets(model: VerbClusterModel, initialCriterion: Either[Int, Double] = Left(5)) {
   case class FrameInputInfo(
     verbIds: Set[VerbId],
     clauseCounts: Map[ArgStructure, Int]
@@ -41,12 +57,12 @@ import monocle.macros._
       val frameClauses = clauseCounts.iterator.map { case (clauseTemplate, count) =>
         FrameClause(clauseTemplate, count.toDouble / numInstancesInFrame)
       }.toList
-      val coindexingTree = Coindexing.getCoindexingTree(frameClauses.map(_.args).toSet, coindexingScores)
+      val coindexingTree = Coindexing.getCoindexingTree(frameClauses.map(_.args).toSet, model.coindexingScores)
       VerbFrame(
         verbIds = verbIds,
         clauseTemplates = frameClauses,
         coindexingTree = coindexingTree,
-        probability = numInstancesInFrame.toDouble / numInstances
+        probability = numInstancesInFrame.toDouble / model.numInstances
       )
     }
   }
@@ -62,21 +78,24 @@ import monocle.macros._
       FrameInputInfo(
         verbIds.toSet,
         verbIds.foldMap(vid =>
-          clauseSets(vid).iterator.map(_ -> 1).toMap
+          model.clauseSets(vid).iterator.map(_ -> 1).toMap
         )
       )
     }
     var aggTree = criterion match {
-      case Left(numClusters) => clusterTree.cutMapAtN(numClusters, aggFrameInfo)
-      case Right(maxLoss) => clusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
+      case Left(numClusters) => model.clusterTree.cutMapAtN(numClusters, aggFrameInfo)
+      case Right(maxLoss) => model.clusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
     }
     var resList = List.empty[(Double, VerbFrameset)]
     var nextSize = aggTree.size.toInt - 1
-    while(nextSize > 0) {
+    if(nextSize == model.numInstances - 1) {
+      allFramesetsLoaded = true
+    }
+    while(nextSize >= 0) {
       val (losses, frameInfos) = aggTree.valuesWithLosses.unzip
       val maxLoss = losses.max
       val frames = frameInfos.map(_.getFrame).toList
-      val frameset = VerbFrameset(verbInflectedForms, frames)
+      val frameset = VerbFrameset(model.verbInflectedForms, frames)
       resList = (maxLoss -> frameset) :: resList
       aggTree = aggTree.cutMapAtN(nextSize, _.combineAll) // should do exactly one merge
       nextSize = nextSize - 1
@@ -88,14 +107,15 @@ import monocle.macros._
     framesetResolutions = makeFramesets(criterion)
   }
 
-  private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(Left(5))
+  private[this] var allFramesetsLoaded: Boolean = false
+  private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(initialCriterion)
 
   def getFramesetWithNFrames(n: Int) = {
     val numFramesetsLoaded = framesetResolutions.size
-    if(numFramesetsLoaded < n) {
+    if(numFramesetsLoaded < n && !allFramesetsLoaded) {
       refreshClusters(Left(math.max(n, numFramesetsLoaded) * 2))
     }
-    framesetResolutions(n - 1)
+    framesetResolutions.lift(n - 1).getOrElse(framesetResolutions.last)
   }
   def getFramesetWithMaxLoss(maxLoss: Double): (Double, VerbFrameset) = {
     framesetResolutions.find(_._1 <= maxLoss).getOrElse {
@@ -176,19 +196,6 @@ object ParaphrasingFilter
   args: ArgStructure,
   probability: Double)
 object FrameClause
-
-@Lenses @JsonCodec case class VerbId(
-  sentenceId: String, verbIndex: Int
-)
-object VerbId {
-  import io.circe._
-  implicit val verbIdKeyEncoder = KeyEncoder.instance[VerbId](vid =>
-    s"${vid.sentenceId}:${vid.verbIndex}"
-  )
-  implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
-    scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
-  )
-}
 
 @Lenses @JsonCodec case class VerbFrame(
   verbIds: Set[VerbId],

@@ -39,28 +39,11 @@ import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 import io.circe.syntax._
 
-// @Lenses case class VerbFrameData(
-//   inflectionCounts: Map[InflectedForms, Int],
-//   allFrames: Map[InflectedForms, VerbFrameset])
-// object VerbFrameData {
-//   import io.circe.{Encoder, Decoder}
-//   def fromLists(
-//     inflectionCountsList: List[(InflectedForms, Int)],
-//     framesList: List[(InflectedForms, VerbFrameset)],
-//   ) = VerbFrameData(inflectionCountsList.toMap, framesList.toMap)
-//   implicit val verbFrameDataDecoder: Decoder[VerbFrameData] =
-//     Decoder.forProduct2("inflectionCounts", "allFrames")(fromLists)
-//   implicit val verbFrameDataEncoder: Encoder[VerbFrameData] =
-//     Encoder.forProduct2("inflectionCounts", "allFrames")(d =>
-//       (d.inflectionCounts.toList, d.allFrames.toList)
-//     )
-// }
-
 import EvalApp.ParaphraseAnnotations
 
 case class VerbFrameServiceIO(
   inflectionCounts: Map[InflectedForms, Int],
-  verbFramesets: Map[InflectedForms, VerbFrameset],
+  verbModels: Map[InflectedForms, VerbClusterModel],
   dataset: Dataset,
   getEvaluationItem: Int => (InflectedForms, String, Int), // sentence ID, verb index
   paraphraseStoreRef: Ref[IO, ParaphraseAnnotations],
@@ -70,17 +53,16 @@ case class VerbFrameServiceIO(
   def getVerbs: IO[Map[InflectedForms, Int]] =
     IO.pure(inflectionCounts)
 
-  def getFrameset(verb: InflectedForms): IO[VerbFrameset] =
-    IO(verbFramesets(verb))
+  def getModel(verb: InflectedForms): IO[VerbClusterModel] =
+    IO(verbModels(verb))
 
   def getParaphrasingInfo(i: Int): IO[ParaphrasingInfo] = {
     val (verbInflectedForms, sentenceId, verbIndex) = getEvaluationItem(i)
-    val verbFrameset = verbFramesets(verbInflectedForms)
     paraphraseStoreRef.get.map(paraphrases =>
       ParaphrasingInfo(
         sentenceId, verbIndex,
         dataset.sentences(sentenceId).verbEntries(verbIndex),
-        verbFrameset,
+        verbModels(verbInflectedForms),
         paraphrases.get(sentenceId).flatMap(_.get(verbIndex)).getOrElse(VerbParaphraseLabels.empty)
       )
     )
@@ -117,7 +99,7 @@ object VerbFrameHttpService {
     implicit val tupleEntityDecoder = jsonOf[IO, (String, Int, VerbParaphraseLabels)]
 
     implicit val verbCountsEntityEncoder = jsonEncoderOf[IO, Map[InflectedForms, Int]]
-    implicit val verbFramesetEntityEncoder = jsonEncoderOf[IO, VerbFrameset]
+    implicit val verbModelEntityEncoder = jsonEncoderOf[IO, VerbClusterModel]
     implicit val paraphrasingInfoEntityEncoder = jsonEncoderOf[IO, ParaphrasingInfo]
     implicit val verbParaphraseLabelsEntityEncoder = jsonEncoderOf[IO, VerbParaphraseLabels]
 
@@ -128,8 +110,8 @@ object VerbFrameHttpService {
     HttpRoutes.of[IO] {
       case POST -> Root / "getVerbs" =>
         service.getVerbs.flatMap(Ok(_))
-      case req @ POST -> Root / "getFrameset" =>
-        req.as[InflectedForms].flatMap(service.getFrameset).flatMap(Ok(_))
+      case req @ POST -> Root / "getModel" =>
+        req.as[InflectedForms].flatMap(service.getModel).flatMap(Ok(_))
       case req @ POST -> Root / "getParaphrasingInfo" =>
         req.as[Int].flatMap(service.getParaphrasingInfo).flatMap(Ok(_))
       case req @ POST -> Root / "saveParaphraseAnnotations" =>

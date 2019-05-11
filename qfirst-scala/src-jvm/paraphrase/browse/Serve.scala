@@ -71,14 +71,14 @@ object Serve extends IOApp {
     for {
       fullSet <- config.full.get
       inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-      verbFramesets <- config.readFramesets(verbSenseConfig)
+      verbModels <- config.getCachedVerbModels(verbSenseConfig).map(_.get)
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
       goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
       annotationService = VerbFrameHttpService.make(
         VerbFrameServiceIO(
           inflectionCounts,
-          verbFramesets,
+          verbModels,
           fullSet,
           evaluationItems.apply,
           goldParaphraseDataRef,

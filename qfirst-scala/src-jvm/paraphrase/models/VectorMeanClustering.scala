@@ -37,14 +37,34 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     assignmentProbabilities: Vector[Double],
     hyperparams: Hyperparams
   ): ClusterParam = {
-    val mean = instances.iterator
-      .zip(assignmentProbabilities.iterator)
-      .map { case (instance, prob) =>
-        instance *:* prob.toFloat
-      }.reduce(_ + _)
     val size = assignmentProbabilities.sum
+    val mean = DenseVector.zeros[Float](instances.head.length)
+    instances.iterator.zip(assignmentProbabilities.iterator)
+      .foreach { case (instance, prob) =>
+        mean :+= (instance *:* prob.toFloat)
+      }
+    mean :/= size.toFloat
     ClusterParam(mean, size)
   }
+
+  override def getSingleInstanceParameter(
+    instance: Instance,
+    hyperparams: Hyperparams
+  ): ClusterParam = ClusterParam(instance, 1)
+
+  override def estimateParameterHard(
+    instances: Vector[Instance],
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    val size = instances.size
+    val mean = DenseVector.zeros[Float](instances.head.length)
+    instances.iterator.foreach { instance =>
+        mean :+= instance
+      }
+    mean :/= size.toFloat
+    ClusterParam(mean, size)
+  }
+
 
   // can efficiently merge by weighing each mean by its cluster size
   override def merge(

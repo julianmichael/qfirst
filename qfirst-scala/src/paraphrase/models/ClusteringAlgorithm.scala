@@ -28,6 +28,22 @@ trait ClusteringAlgorithm {
     hyperparams: Hyperparams
   ): ClusterParam
 
+  // override for efficiency
+  def getSingleInstanceParameter(
+    instances: Instance,
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    estimateParameter(Vector(instances), Vector(1.0), hyperparams)
+  }
+
+  // override for efficiency
+  def estimateParameterHard(
+    instances: Vector[Instance],
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    estimateParameter(instances, instances.as(1.0), hyperparams)
+  }
+
   // override eg for max
   def aggregateLosses(
     losses: Vector[Double]
@@ -69,7 +85,7 @@ trait ClusteringAlgorithm {
   ): MergeCandidate = {
     val indices = left.values ++ right.values
     val theseInstances = indices.map(instances.apply)
-    val param = estimateParameter(theseInstances, indices.as(1.0), hyperparams)
+    val param = estimateParameterHard(theseInstances, hyperparams)
     val loss = aggregateLosses(theseInstances.map(computeLoss(_, param, hyperparams)))
     if(sanityCheck && !(loss >= left.loss && loss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
@@ -85,7 +101,8 @@ trait ClusteringAlgorithm {
     instances: Vector[Instance],
     hyperparams: Hyperparams
   ): (MergeTree[Int], ClusterParam) = {
-    val leafParams = instances.map(i => estimateParameter(Vector(i), Vector(1.0), hyperparams))
+    require(instances.size > 0)
+    val leafParams = instances.map(i => getSingleInstanceParameter(i, hyperparams))
     val distances = Array.ofDim[Double](instances.size, instances.size)
 
     var currentTrees = leafParams.zipWithIndex.map { case (param, index) =>
@@ -138,7 +155,7 @@ trait ClusteringAlgorithm {
       nextRank = nextRank + 1
     }
 
-    if(currentTrees.size != 1) {
+    if(currentTrees.size > 1) {
       println("WARNING: More than one tree remaining after agglomerative clustering")
       currentTrees.foreach(println)
       ???
@@ -271,6 +288,22 @@ trait CompositeClusteringAlgorithm extends ClusteringAlgorithm {
   ): ClusterParam = {
     (_1.estimateParameter(instances.map(_._1), assignmentProbabilities, hyperparams.__1),
      _2.estimateParameter(instances.map(_._2), assignmentProbabilities, hyperparams.__2))
+  }
+
+  override def getSingleInstanceParameter(
+    instance: Instance,
+    hyperparams: Hyperparams
+  ): ClusterParam = (
+    _1.getSingleInstanceParameter(instance._1, hyperparams.__1),
+    _2.getSingleInstanceParameter(instance._2, hyperparams.__2),
+  )
+
+  override def estimateParameterHard(
+    instances: Vector[Instance],
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    (_1.estimateParameterHard(instances.map(_._1), hyperparams.__1),
+     _2.estimateParameterHard(instances.map(_._2), hyperparams.__2))
   }
 
   // should be overridden for efficiency, if possible
