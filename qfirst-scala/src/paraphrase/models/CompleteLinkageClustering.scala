@@ -47,7 +47,19 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
   ) = List(newLoss, leftLoss, rightLoss).max // though newLoss should always be biggest
 
   // only need to consider pairs that cross between clusters to find the new max pairwise distance
-  override def merge(
+  override def mergeParams(
+    instances: Vector[Instance],
+    left: MergeTree[Int],
+    leftParam: ClusterParam,
+    right: MergeTree[Int],
+    rightParam: ClusterParam,
+    hyperparams: Hyperparams
+  ): Set[Int] = {
+    (left.values ++ right.values).toSet
+  }
+
+  // only need to consider pairs that cross between clusters to find the new max pairwise distance
+  override def mergeLoss(
     instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
@@ -55,7 +67,7 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     rightParam: ClusterParam,
     hyperparams: Hyperparams,
     sanityCheck: Boolean = true
-  ): MergeCandidate = {
+  ): Double = {
     val leftValues = left.values
     val rightValues = right.values
     val param = (leftValues ++ rightValues).toSet
@@ -70,8 +82,8 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
       println(left)
       println(right)
       println(newLoss)
-      ???
+        ???
     }
-    MergeCandidate(left, right, param, loss)
+    loss
   }
 }

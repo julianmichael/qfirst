@@ -65,9 +65,23 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     ClusterParam(mean, size)
   }
 
+  // can efficiently merge by weighing each mean by its cluster size
+  override def mergeParams(
+    instances: Vector[Instance],
+    left: MergeTree[Int],
+    leftParam: ClusterParam,
+    right: MergeTree[Int],
+    rightParam: ClusterParam,
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    val size = leftParam.size + rightParam.size
+    val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
+      (rightParam.mean *:* (rightParam.size / size).toFloat)
+    ClusterParam(mean, size)
+  }
 
   // can efficiently merge by weighing each mean by its cluster size
-  override def merge(
+  override def mergeLoss(
     instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
@@ -75,11 +89,8 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     rightParam: ClusterParam,
     hyperparams: Hyperparams,
     sanityCheck: Boolean = true
-  ): MergeCandidate = {
-    val size = leftParam.size + rightParam.size
-    val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
-      (rightParam.mean *:* (rightParam.size / size).toFloat)
-    val param = ClusterParam(mean, size)
+  ): Double = {
+    val param = mergeParams(instances, left, leftParam, right, rightParam, hyperparams)
     val newLoss = (left.values ++ right.values)
       .foldMap(i => computeLoss(instances(i), param, hyperparams))
     if(sanityCheck && !(newLoss > left.loss && newLoss > right.loss)) {
@@ -92,6 +103,6 @@ object VectorMeanClustering extends ClusteringAlgorithm {
       println("===== LOSS ===== : " + newLoss)
       ???
     }
-    MergeCandidate(left, right, param, newLoss)
+    newLoss
   }
 }

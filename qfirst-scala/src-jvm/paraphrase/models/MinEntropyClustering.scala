@@ -57,7 +57,21 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   }
 
   // can do efficient merge by summing counts
-  override def merge(
+  override def mergeParams(
+    instances: Vector[Instance],
+    left: MergeTree[Int],
+    leftParam: ClusterParam,
+    right: MergeTree[Int],
+    rightParam: ClusterParam,
+    hyperparams: Hyperparams
+  ): ClusterParam = {
+    val counts = leftParam.counts + rightParam.counts
+    val total = leftParam.total + rightParam.total
+    ClusterParam(counts, total)
+  }
+
+  // can do efficient merge by summing counts
+  override def mergeLoss(
     instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
@@ -65,12 +79,11 @@ object MinEntropyClustering extends ClusteringAlgorithm {
     rightParam: ClusterParam,
     hyperparams: Hyperparams,
     sanityCheck: Boolean = true
-  ): MergeCandidate = {
-    val counts = leftParam.counts + rightParam.counts
-    val total = leftParam.total + rightParam.total
-    val newLoss = counts.activeValuesIterator
+  ): Double = {
+    val param = mergeParams(instances, left, leftParam, right, rightParam, hyperparams)
+    val newLoss = param.counts.activeValuesIterator
       .filter(_ > 0.0) // prevent log of 0
-      .map(c => c * log(c / total)) // count * log probability = log likelihood
+      .map(c => c * log(c / param.total)) // count * log probability = log likelihood
       .sum * -1.0
     if(sanityCheck && !(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
@@ -79,12 +92,12 @@ object MinEntropyClustering extends ClusteringAlgorithm {
       println(leftParam)
       println(right)
       println(rightParam)
-      println(counts)
-      println(total)
+      println(param.counts)
+      println(param.total)
       println(newLoss)
       ???
     }
-    MergeCandidate(left, right, ClusterParam(counts, total), newLoss)
+    newLoss
   }
 
 }
