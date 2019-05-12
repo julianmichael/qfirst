@@ -4,10 +4,14 @@ from allennlp.data.fields import Field, IndexField, TextField, SequenceLabelFiel
 from allennlp.data.tokenizers import Token
 import codecs
 import gzip
+from allennlp.common.file_utils import cached_path
 
 from collections import Counter
 
 from qfirst.common.span import Span
+MAX_TOKENS_PER_SENTENCE = 100
+
+
 
 def cleanse_sentence_text(sent_text):
     sent_text = ["?" if w == "/?" else w for w in sent_text]
@@ -170,3 +174,48 @@ def get_tan_string(question_label):
     negation_string = "+neg" if question_label["isNegated"] else "-neg"
     tan_string = " ".join([tense_string, perfect_string, progressive_string, negation_string])
     return tan_string
+
+def get_propbank_sentences(file_path: str):
+    """
+    Extract sentences from a propbank input file
+    in a similar format to the `get_qasrl_sentences` function.
+    """
+    sent_counter = 0
+    cur_verb_indices = []
+    cur_lemmas = []
+    cur_senses = []
+    cur_sent_tokens = []
+    for line in read_lines(cached_path(file_path)):
+        line = line.strip()
+        if line.startswith("#begin"):
+            # Create uid from comment + sentence counter
+            doc_id = "__".join(line.split(" ")[1:])
+            continue
+        if line.startswith("#"):
+            # Ignore other comments
+            continue
+        if line:
+            # New token
+            cur_data = line.split()
+            cur_sent_tokens.append(cur_data[3])
+            if "(V*)" in line:
+                # This is a predicate
+                cur_verb_indices.append(int(cur_data[2]))
+                cur_lemmas.append(cur_data[6])
+                cur_senses.append(cur_data[7])
+        else:
+            # End of sentence
+            if cur_verb_indices:
+                sent_id = f"{doc_id}_{sent_counter}"
+                if len(cur_sent_tokens) < MAX_TOKENS_PER_SENTENCE:
+                    yield (cur_sent_tokens,
+                           { "sentence_id": sent_id,
+                             "verb_indices": cur_verb_indices,
+                             "verb_lemmas": cur_lemmas,
+                             "verb_senses": cur_senses})
+                cur_verb_indices = []
+                cur_sent_tokens = []
+                cur_lemmas = []
+                cur_senses = []
+
+                sent_counter += 1

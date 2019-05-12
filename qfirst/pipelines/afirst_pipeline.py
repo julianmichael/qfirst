@@ -10,6 +10,8 @@ from typing import List, Iterator, Optional
 
 import torch, os, json, tarfile, argparse, uuid, shutil
 import sys
+import pdb
+
 
 from overrides import overrides
 
@@ -91,9 +93,12 @@ class AFirstPipeline():
                             "span": [span.start(), span.end() + 1],
                             "spanProb": span_prob
                         })
+
             verb_dicts.append({
                 "verbIndex": verb_instance["metadata"]["verb_index"],
-                "verbInflectedForms": verb_instance["metadata"]["verb_inflected_forms"],
+#                "verbInflectedForms": verb_instance["metadata"]["verb_inflected_forms"],
+                "verbLemma": verb_instance["metadata"]["verb_inflected_forms"]["verbLemma"],
+                "verbSense":verb_instance["metadata"]["verb_inflected_forms"]["verbSense"],
                 "beam": beam
             })
         return {

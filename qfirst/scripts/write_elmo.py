@@ -30,7 +30,7 @@ from allennlp.nn.util import remove_sentence_boundaries
 from allennlp.modules.elmo import _ElmoBiLm, batch_to_ids
 from allennlp.commands.subcommand import Subcommand
 
-from qfirst.data.util import read_lines, get_verb_fields
+from qfirst.data.util import read_lines, get_verb_fields, get_propbank_sentences
 import pdb
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -107,44 +107,6 @@ class ElmoEmbedder():
             verb_indices = [int(k) for k, _ in sentence_json["verbEntries"].items()]
             yield (sentence_json["sentenceTokens"], { "sentence_id": sentence_json["sentenceId"], "verb_indices": verb_indices })
 
-    def get_propbank_sentences(self, file_path: str):
-        """
-        Extract sentences from a propbank input file
-        in a similar format to the `get_qasrl_sentences` function.
-        """
-        sent_counter = 0
-        cur_verb_indices = []
-        cur_sent_tokens = []
-        for line in read_lines(cached_path(file_path)):
-            line = line.strip()
-            if line.startswith("#begin"):
-                # Create uid from comment + sentence counter
-                doc_id = "__".join(line.split(" ")[1:])
-                continue
-            if line.startswith("#"):
-                # Ignore other comments
-                continue
-            if line:
-                # New token
-                cur_data = line.split()
-                cur_sent_tokens.append(cur_data[3])
-                if "(V*)" in line:
-                    # This is a predicate
-                    cur_verb_indices.append(int(cur_data[2]))
-            else:
-                # End of sentence
-                if cur_verb_indices:
-                    sent_id = f"{doc_id}_{sent_counter}"
-                    if len(cur_sent_tokens) < MAX_TOKENS_PER_SENTENCE:
-                        yield (cur_sent_tokens,
-                               { "sentence_id": sent_id,
-                                 "verb_indices": cur_verb_indices })
-                    else:
-                        print(f"filtered sentence:{sent_id}")
-                    cur_verb_indices = []
-                    cur_sent_tokens = []
-                    sent_counter += 1
-
     def embed_file(self,
                    input_path: str,
                    output_file_prefix: str,
@@ -155,7 +117,7 @@ class ElmoEmbedder():
             if not is_propbank:
                 return self.get_qasrl_sentences(input_path)
             else:
-                return self.get_propbank_sentences(input_path)
+                return get_propbank_sentences(input_path)
 
         with open(output_file_prefix + "_ids.jsonl", "w") as f_ids:
             with open(output_file_prefix + "_emb.bin", "wb") as f_emb:
