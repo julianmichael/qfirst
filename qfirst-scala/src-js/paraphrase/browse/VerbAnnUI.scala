@@ -139,7 +139,7 @@ object VerbAnnUI {
     docService: DocumentService[CacheCall],
     verbService: VerbFrameService[Future],
     urlNavQuery: NavQuery,
-    dev: Boolean
+    mode: RunMode
   )
 
   case class State()
@@ -1367,10 +1367,19 @@ object VerbAnnUI {
 
   val NavQueryLocal = new LocalState[NavQuery]
 
+  val allPartitions = List[DatasetPartition](
+    DatasetPartition.Train,
+    DatasetPartition.Dev,
+    DatasetPartition.Test)
+
   class Backend(scope: BackendScope[Props, State]) {
 
     def render(props: Props, state: State) = {
-      val partition = if(props.dev) DatasetPartition.Dev else DatasetPartition.Train
+      def isPartitionIncluded(partition: DatasetPartition) = partition match {
+        case DatasetPartition.Dev => props.mode != RunMode.Test
+        case DatasetPartition.Train => props.mode != RunMode.Sanity
+        case DatasetPartition.Test => props.mode == RunMode.Test
+      }
       DataFetch.make(request = (), sendRequest = _ => props.docService.getDataIndex.product(Remote(props.verbService.getVerbs))) {
         case DataFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
         case DataFetch.Loaded((dataIndex, verbCounts)) =>
@@ -1406,7 +1415,7 @@ object VerbAnnUI {
                         val searchCtx = searchFetchCtx match {
                           case SearchFetch.Loading => None
                           case SearchFetch.Loaded(docIds) =>
-                            val curDocMetas = dataIndex.allDocumentMetas.filter(meta => docIds.contains(meta.id) && meta.part == partition)
+                            val curDocMetas = dataIndex.allDocumentMetas.filter(meta => docIds.contains(meta.id) && isPartitionIncluded(meta.part))
                             val initDocMeta = curDocMetas
                               .find(query.matchesDoc)
                               .getOrElse(curDocMetas.head)
@@ -1546,7 +1555,7 @@ object VerbAnnUI {
                                           case (Some((_, docMetas, _)), Some(curDocMeta)) =>
                                             <.div(S.dataContainer)(
                                               docSelectionPane(
-                                                dataIndex.documents(partition).size,
+                                                allPartitions.filter(isPartitionIncluded).foldMap(p => dataIndex.documents(p).size),
                                                 docMetas,
                                                 curDocMeta
                                               ),

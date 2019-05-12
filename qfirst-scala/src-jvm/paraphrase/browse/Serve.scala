@@ -59,7 +59,7 @@ object Serve extends IOApp {
     val pageService = StaticPageService.makeService(
       domain,
       docApiSuffix, verbApiSuffix,
-      config.mode.devOrTest == "dev",
+      config.mode,
       jsDepsPath, jsPath, port
     )
 

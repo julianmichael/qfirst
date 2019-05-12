@@ -84,9 +84,10 @@ object FrameInductionApp extends IOApp {
 
   import ClauseResolution.ArgStructure
 
-  // type QABeam = List[SimpleQAs.BeamItem[SlotBasedLabel[VerbForm]]]
-  type Instances = Map[InflectedForms, Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
   // type ResolvedInstances = Map[InflectedForms, Map[SentenceId, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
+  type Instances = Map[InflectedForms, Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
+  type PropBankInstances = Map[String, Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
+  type PropBankLabels = Map[String, Map[String, Map[Int, String]]] // verb lemma, sentence id, verb index, verb sense
 
   def makeVerbVocab(instances: Instances): Vocab[InflectedForms] = {
     Vocab.make(instances.keySet)
@@ -742,12 +743,6 @@ object FrameInductionApp extends IOApp {
     goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
     evaluationItems: Vector[(InflectedForms, String, Int)]
   ): IO[Map[VerbSenseConfig, FullTuningPoint]] = {
-    // @JsonCodec case class VerbClusterModel(
-    //   verbInflectedForms: InflectedForms,
-    //   clusterTree: MergeTree[VerbId],
-    //   clauseSets: Map[VerbId, Set[ArgStructure]],
-    //   coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
-    // ) {
     val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
       goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
     }
@@ -964,12 +959,14 @@ object FrameInductionApp extends IOApp {
     minClauseThreshold: Double,
     minCoindexingThreshold: Double)
 
-  def program(config: Config, modelOpt: Option[VerbSenseConfig]): IO[ExitCode] = {
-    val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(
-      List(VerbSenseConfig.SingleCluster, VerbSenseConfig.EntropyOnly, VerbSenseConfig.ELMoOnly) ++
-        List(VerbSenseConfig.Interpolated(0.5))
-        // (1 to 9).map(_.toDouble / 10.0).toList.map(VerbSenseConfig.Interpolated(_))
-    )
+  val allVerbSenseConfigs = {
+    List(VerbSenseConfig.SingleCluster, VerbSenseConfig.EntropyOnly, VerbSenseConfig.ELMoOnly) ++
+      List(VerbSenseConfig.Interpolated(0.5))
+    // (1 to 9).map(_.toDouble / 10.0).toList.map(VerbSenseConfig.Interpolated(_))
+  }
+
+  def runQasrlFrameInduction(config: Config, modelOpt: Option[VerbSenseConfig]): IO[ExitCode] = {
+    val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(allVerbSenseConfigs)
     // TODO read in tuned thresholds (in case of test)
     for {
       verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
@@ -981,24 +978,22 @@ object FrameInductionApp extends IOApp {
         "Evaluating and tuning thresholds",
         tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
       )
-      // bestModels <- evaluateVerbClusters(config, verbClustersByConfig, goldParaphrases, evaluationItems)
-      // collapsedQAOutputs <- config.collapsedQAOutputs.get
-      // fullInstances <- config.fullInstances.get
-      // coindexedModels <- logOp(
-      //   "Running coindexing",
-      //   bestModels.transform { case (vsConfig, model) =>
-      //     runCollapsedCoindexing(fullInstances, model, verbClustersByConfig(vsConfig), collapsedQAOutputs)
-      //   }
-      // )
-      // _ <- logOp(
-      //   "Writing framesets",
-      //   coindexedModels.toList.traverse { case (vsConfig, framesets) =>
-      //     config.writeFramesets(vsConfig, framesets)
-      //   }
-      // )
-      // modelThresholds <- logOp(
-      //   "Tuning paraphrasing thresholds",
-      //   tuningParaphraseEvaluation(config, coindexedModels, goldParaphrases, evaluationItems)
+    } yield ExitCode.Success
+  }
+
+  def runPropBankFrameInduction(config: Config, modelOpt: Option[VerbSenseConfig]): IO[ExitCode] = {
+    val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(allVerbSenseConfigs)
+    // TODO read in tuned threshold (in case of test)
+    for {
+      _ <- IO.unit
+      // verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
+      //   getVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+      // ).map(_.toMap)
+      // goldParaphrases <- config.readGoldParaphrases
+      // evaluationItems <- config.evaluationItems.get
+      // tunedThresholds <- logOp(
+      //   "Evaluating and tuning thresholds",
+      //   tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
       // )
     } yield ExitCode.Success
   }
@@ -1022,8 +1017,13 @@ object FrameInductionApp extends IOApp {
         .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
     }.orNone
 
-    (modeO, verbSenseConfigOptO).mapN { (mode, verbSenseConfigOpt) =>
-      program(Config(mode), verbSenseConfigOpt)
+    val isPropbankO = Opts.flag(
+      "propbank", help = "run the PropBank verb sense evaluation."
+    ).orFalse
+
+    (modeO, verbSenseConfigOptO, isPropbankO).mapN { (mode, verbSenseConfigOpt, isPropbank) =>
+      if(isPropbank) runPropBankFrameInduction(Config(mode), verbSenseConfigOpt)
+      else runQasrlFrameInduction(Config(mode), verbSenseConfigOpt)
     }
   }
 

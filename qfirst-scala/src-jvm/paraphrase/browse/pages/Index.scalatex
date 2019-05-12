@@ -11,6 +11,8 @@
   }
 }
 
+@import io.circe.syntax._
+
 @html(lang := "en")
   @head
     @meta(charset := "utf-8")
@@ -34,7 +36,7 @@
     )
     @input(
       `type` := "hidden",
-      value := config.dev,
+      value := io.circe.Printer.noSpaces.pretty(config.mode.asJson),
       id := SharedConstants.devFlagElementId
     )
     @config.bootstrapScripts

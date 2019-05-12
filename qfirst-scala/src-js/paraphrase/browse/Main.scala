@@ -1,4 +1,5 @@
 package qfirst.paraphrase.browse
+import qfirst.paraphrase.RunMode
 
 import cats.implicits._
 
@@ -72,7 +73,9 @@ object Main {
     VerbAnnUI.Component(
       VerbAnnUI.Props(
         CachedDataService, VerbFrameClient(verbApiEndpoint), query,
-        dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value").toBoolean
+        io.circe.parser.decode[RunMode](
+          dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
+        ).right.get
       )
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)

@@ -1,61 +1,31 @@
 package qfirst.paraphrase
-import qfirst.MergeTree
-import qfirst.FileUtil
+import qfirst._
+import qfirst.protocols.SimpleQAs
 
 import java.nio.file._
 
 import qasrl.data.Dataset
 import qasrl.ArgumentSlot
+import qasrl.labeling.SlotBasedLabel
 
 import qasrl.bank.Data
 import qasrl.bank.FullData
 
 
 import nlpdata.datasets.wiktionary.InflectedForms
+import nlpdata.datasets.wiktionary.VerbForm
 
 import cats.effect.ContextShift
 import cats.effect.IO
 import cats.implicits._
+
+import fs2.Stream
 
 import EvalApp.ParaphraseAnnotations
 
 import io.circe.generic.JsonCodec
 
 import qfirst.ClauseResolution.ArgStructure
-
-sealed trait RunMode {
-  import RunMode._
-  override def toString = this match {
-    case Sanity => "sanity"
-    case Dev => "dev"
-    case Test => "test"
-  }
-  def devOrTest: String = this match {
-    case Sanity => "dev"
-    case Dev => "dev"
-    case Test => "test"
-  }
-  def sanity = this match {
-    case Sanity => true
-    case _ => false
-  }
-  def test = this match {
-    case Test => true
-    case _ => false
-  }
-}
-object RunMode {
-  case object Sanity extends RunMode
-  case object Dev extends RunMode
-  case object Test extends RunMode
-
-  def fromString(s: String) = s match {
-    case "sanity" => Some(Sanity)
-    case "dev" => Some(Dev)
-    case "test" => Some(Test)
-    case _ => None
-   }
-}
 
 @JsonCodec sealed trait VerbSenseConfig {
   import VerbSenseConfig._
@@ -104,6 +74,8 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val outputDir = Paths.get("frame-induction")
   val qasrlBankPath = Paths.get("qasrl-v2_1")
   val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
+  val propBankPredictionsPath = Paths.get("propbank-data/predictions")
+  val propBankElmoPath = Paths.get("propbank-data/elmo")
   val inputElmoPrefix = qasrlElmoPath.resolve(if(mode.sanity) "dev" else "train").toString
   val evalElmoPrefix = qasrlElmoPath.resolve(if(mode.test) "test" else "dev").toString
   val qaInputPath = outputDir.resolve(s"qa-input-${mode.devOrTest}.jsonl.gz")
@@ -192,6 +164,121 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val full = new Cell(for(i <- input.get; e <- eval.get) yield i |+| e)
   val fullInstances = new Cell(for(i <- inputInstances.get; e <- evalInstances.get) yield i |+| e)
 
+  // def getPredictedInstances(
+  //   predictions: Stream[IO, SentencePrediction[QABeam]],
+  //   filter: SimpleQAs.Filter
+  // ): IO[Instances] = {
+  //   val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
+  //   predictions.map { sentencePred =>
+  //     sentencePred.verbs.foldMap(
+  //       verbPred => Map(
+  //         verbPred.verbInflectedForms -> Map(
+  //           sentencePred.sentenceId -> Map(
+  //             verbPred.verbIndex ->
+  //               protocol.filterBeam(filter, verbPred).map {
+  //                 case (qString, (slots, spans)) => slots -> spans
+  //               }
+  //           )
+  //         )
+  //       )
+  //     )
+  //   }.compile.foldMonoid
+  // }
+
+  type QABeam = List[SimpleQAs.BeamItem[SlotBasedLabel[VerbForm]]]
+
+  def getPropBankPredictedInstances(
+    predictions: Stream[IO, PropBankSentencePrediction[QABeam]],
+    filter: SimpleQAs.Filter
+  ): IO[FrameInductionApp.PropBankInstances] = {
+    val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
+    predictions.map { sentencePred =>
+      sentencePred.verbs.filter(_.beam.nonEmpty).foldMap(
+        verbPred => Map(
+          verbPred.verbLemma -> Map(
+            sentencePred.sentenceId -> Map(
+              verbPred.verbIndex ->
+                protocol.filterBeam(filter, verbPred.toGenericVerbPrediction).map {
+                  case (qString, (slots, spans)) => slots -> spans
+                }
+            ).filter(_._2.nonEmpty)
+          ).filter(_._2.nonEmpty)
+        ).filter(_._2.nonEmpty)
+      )
+    }.compile.foldMonoid
+  }
+
+  def getPropBankSenseLabels(
+    predictions: Stream[IO, PropBankSentencePrediction[QABeam]]
+  ): IO[FrameInductionApp.PropBankLabels] = {
+    val resIO = predictions.map { sentencePred =>
+      sentencePred.verbs.filter(_.beam.nonEmpty).foldMap(
+        verbPred => Map(
+          verbPred.verbLemma -> Map(
+            sentencePred.sentenceId -> Map(
+              verbPred.verbIndex -> Vector(verbPred.verbSense)
+            )
+          )
+        )
+      )
+    }.compile.foldMonoid
+    resIO.map(
+      _.transform { case (_, verbTypeMap) =>
+        verbTypeMap.transform { case (_, sentenceMap) =>
+          sentenceMap.transform { case (_, verbSenseVec) =>
+            assert(verbSenseVec.size == 1)
+            verbSenseVec.head
+          }
+        }
+      }
+    )
+  }
+
+  val propBankQasrlFilter = {
+    import io.circe.generic.auto._
+    new Cell(
+      FileUtil.readJson[SimpleQAs.Filter](
+        propBankPredictionsPath.resolve(s"filter.json")
+      )
+    )
+  }
+
+  def readPropBankInstances(name: String) = {
+    import io.circe.generic.auto._
+    import qasrl.data.JsonCodecs._
+    logOp(
+      s"Reading QA-SRL on PropBank $name set",
+      propBankQasrlFilter.get.flatMap(filter =>
+        getPropBankPredictedInstances(
+          FileUtil.readJsonLines[PropBankSentencePrediction[QABeam]](
+            propBankPredictionsPath.resolve(s"propbank-$name-qasrl.jsonl.gz")
+          ), filter
+        )
+      )
+    )
+  }
+
+  val propBankTrainInstances = new Cell(readPropBankInstances("train"))
+  val propBankDevInstances = new Cell(readPropBankInstances("dev"))
+  val propBankTestInstances = new Cell(readPropBankInstances("test"))
+
+  def readPropBankLabels(name: String) = {
+    import io.circe.generic.auto._
+    import qasrl.data.JsonCodecs._
+    logOp(
+      s"Reading verb sense labels on PropBank $name set",
+      getPropBankSenseLabels(
+        FileUtil.readJsonLines[PropBankSentencePrediction[QABeam]](
+          propBankPredictionsPath.resolve(s"propbank-$name-qasrl.jsonl.gz")
+        )
+      )
+    )
+  }
+
+  val propBankTrainLabels = new Cell(readPropBankLabels("train"))
+  val propBankDevLabels = new Cell(readPropBankLabels("dev"))
+  val propBankTestLabels = new Cell(readPropBankLabels("test"))
+
   val collapsedQAOutputs = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     new Cell(
@@ -249,6 +336,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   def saveGoldParaphrases(data: ParaphraseAnnotations)(implicit cs: ContextShift[IO]) = {
     FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
   }
+
 
 
   def modelDir(verbSenseConfig: VerbSenseConfig) = {

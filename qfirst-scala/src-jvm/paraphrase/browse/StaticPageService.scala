@@ -1,4 +1,5 @@
 package qfirst.paraphrase.browse
+import qfirst.paraphrase.RunMode
 
 import cats.effect.IO
 import cats.effect.Sync
@@ -78,7 +79,7 @@ object StaticPageService {
     domain: String,
     docApiSuffix: String,
     verbApiSuffix: String,
-    dev: Boolean,
+    mode: RunMode,
     jsDepsPath: Path,
     jsPath: Path,
     port: Int
@@ -94,7 +95,7 @@ object StaticPageService {
         verbApiUrl = s"http://$domain:$port/$verbApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
-        dev = dev,
+        mode = mode,
         jsDepsPath = jsDepsSuffix,
         jsPath = jsSuffix
       )
