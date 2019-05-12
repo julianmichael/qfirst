@@ -205,7 +205,7 @@ def get_propbank_sentences(file_path: str):
                 cur_senses.append(cur_data[7])
         else:
             # End of sentence
-            if cur_verb_indices:
+            if cur_sent_tokens:
                 sent_id = f"{doc_id}_{sent_counter}"
                 if len(cur_sent_tokens) < MAX_TOKENS_PER_SENTENCE:
                     yield (cur_sent_tokens,
