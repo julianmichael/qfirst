@@ -76,8 +76,11 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
   val propBankPredictionsPath = Paths.get("propbank-data/predictions")
   val propBankElmoPath = Paths.get("propbank-data/elmo")
-  val inputElmoPrefix = qasrlElmoPath.resolve(if(mode.sanity) "dev" else "train").toString
-  val evalElmoPrefix = qasrlElmoPath.resolve(if(mode.test) "test" else "dev").toString
+  val trainElmoPrefix = qasrlElmoPath.resolve("train").toString
+  val devElmoPrefix = qasrlElmoPath.resolve("dev").toString
+  val testElmoPrefix = qasrlElmoPath.resolve("test").toString
+  val inputElmoPrefix = if(mode.sanity) devElmoPrefix else trainElmoPrefix
+  val evalElmoPrefix = if(mode.test) testElmoPrefix else devElmoPrefix
   val qaInputPath = outputDir.resolve(s"qa-input-${mode.devOrTest}.jsonl.gz")
   val qaOutputPath = outputDir.resolve(s"qa-output-${mode.devOrTest}.jsonl.gz")
   val collapsedQAOutputPath = outputDir.resolve(s"qa-output-${mode.devOrTest}-collapsed.jsonl.gz")
@@ -262,6 +265,10 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val propBankDevInstances = new Cell(readPropBankInstances("dev"))
   val propBankTestInstances = new Cell(readPropBankInstances("test"))
 
+  val propBankInputInstances = if(mode.sanity) propBankDevInstances else propBankTrainInstances
+  val propBankEvalInstances = if(mode.test) propBankTestInstances else propBankDevInstances
+  val propBankFullInstances = new Cell(for(i <- propBankInputInstances.get; e <- propBankEvalInstances.get) yield i |+| e)
+
   def readPropBankLabels(name: String) = {
     import io.circe.generic.auto._
     import qasrl.data.JsonCodecs._
@@ -278,6 +285,51 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val propBankTrainLabels = new Cell(readPropBankLabels("train"))
   val propBankDevLabels = new Cell(readPropBankLabels("dev"))
   val propBankTestLabels = new Cell(readPropBankLabels("test"))
+
+  import breeze.linalg.DenseVector
+
+  def getGoldELMoInstances(
+    dataset: Dataset,
+    filePrefix: String
+  ): IO[ClusteringInstances[DenseVector[Float]]] = {
+    val idsPath = Paths.get(filePrefix + "_ids.jsonl")
+    val embPath = Paths.get(filePrefix + "_emb.bin")
+    val embDim = 1024
+    for {
+      ids <- logOp(
+        "Reading verb IDs",
+        FileUtil.readJsonLines[VerbId](idsPath).compile.toList
+      )
+      embeddings <- logOp(
+        "Reading verb embeddings",
+        FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
+      )
+      _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
+      _ <- IO {
+        val numToCheck = 5
+        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
+        val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
+        println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
+        // embeddings.take(numToCheck).foreach(e => println(e.activeValuesIterator.take(10).mkString("\t")))
+      }
+    } yield ClusteringInstances(
+      ids.zip(embeddings).foldMap { case (VerbId(sentenceId, verbIndex), embedding) =>
+        // omit elmo vectors for verbs filtered out of the dataset
+        dataset.sentences.get(sentenceId)
+          .flatMap(_.verbEntries.get(verbIndex))
+          .map(_.verbInflectedForms).foldMap(verbForms =>
+            Map(verbForms -> Map(sentenceId -> Map(verbIndex -> List(embedding))))
+          )
+      }
+    ).map(_.head)
+  }
+
+  val trainElmo = new Cell(train.get.flatMap(dataset => getGoldELMoInstances(dataset, trainElmoPrefix)))
+  val devElmo = new Cell(dev.get.flatMap(dataset => getGoldELMoInstances(dataset, devElmoPrefix)))
+  val testElmo = new Cell(test.get.flatMap(dataset => getGoldELMoInstances(dataset, testElmoPrefix)))
+  val inputElmo = if(mode.sanity) devElmo else trainElmo
+  val evalElmo = if(mode.test) testElmo else devElmo
+  val fullElmo = new Cell(for(input <- inputElmo.get; eval <- evalElmo.get) yield input |+| eval)
 
   val collapsedQAOutputs = {
     import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
@@ -337,8 +389,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
   }
 
-
-
   def modelDir(verbSenseConfig: VerbSenseConfig) = {
     configDir.map(_.resolve(s"${verbSenseConfig.modelName}")).flatTap(createDir)
   }
@@ -367,6 +417,45 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     verbClustersPath(verbSenseConfig).flatMap(path =>
       FileUtil.writeJsonLines(path)(clusters.toList)
     )
+  }
+  def cacheVerbModelComputation(
+    verbSenseConfig: VerbSenseConfig)(
+    computeVerbModels: IO[Map[InflectedForms, VerbClusterModel]]
+  ): IO[Map[InflectedForms, VerbClusterModel]] = {
+    getCachedVerbModels(verbSenseConfig).flatMap {
+      case Some(verbModels) => IO.pure(verbModels)
+      case None => for {
+        models <- computeVerbModels
+        _ <- cacheVerbModels(verbSenseConfig, models)
+      } yield models
+    }
+  }
+
+  def getCachedPropBankVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[String, PropBankVerbClusterModel]]] = {
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      fileCached[Option[Map[String, PropBankVerbClusterModel]]](
+        path, read = path => FileUtil.readJsonLines[(String, PropBankVerbClusterModel)](path)
+          .compile.toList.map(l => Some(l.toMap)),
+        write = (_, _) => IO.unit
+      )(compute = IO(None))
+    )
+  }
+  def cachePropBankVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[String, PropBankVerbClusterModel]): IO[Unit] = {
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      FileUtil.writeJsonLines(path)(clusters.toList)
+    )
+  }
+  def cachePropBankVerbModelComputation(
+    verbSenseConfig: VerbSenseConfig)(
+    computeVerbModels: IO[Map[String, PropBankVerbClusterModel]]
+  ): IO[Map[String, PropBankVerbClusterModel]] = {
+    getCachedPropBankVerbModels(verbSenseConfig).flatMap {
+      case Some(verbModels) => IO.pure(verbModels)
+      case None => for {
+        models <- computeVerbModels
+        _ <- cachePropBankVerbModels(verbSenseConfig, models)
+      } yield models
+    }
   }
 
   // def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {

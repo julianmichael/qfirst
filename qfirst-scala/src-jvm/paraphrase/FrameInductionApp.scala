@@ -105,42 +105,6 @@ object FrameInductionApp extends IOApp {
 
   import breeze.linalg.DenseVector
 
-  def getGoldELMoInstances(
-    dataset: Dataset,
-    filePrefix: String
-  ): IO[ClusteringInstances[DenseVector[Float]]] = {
-    val idsPath = Paths.get(filePrefix + "_ids.jsonl")
-    val embPath = Paths.get(filePrefix + "_emb.bin")
-    val embDim = 1024
-    for {
-      ids <- logOp(
-        "Reading verb IDs",
-        FileUtil.readJsonLines[VerbId](idsPath).compile.toList
-      )
-      embeddings <- logOp(
-        "Reading verb embeddings",
-        FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
-      )
-      _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
-      _ <- IO {
-        val numToCheck = 5
-        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
-        val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
-        println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
-        // embeddings.take(numToCheck).foreach(e => println(e.activeValuesIterator.take(10).mkString("\t")))
-      }
-    } yield ClusteringInstances(
-      ids.zip(embeddings).foldMap { case (VerbId(sentenceId, verbIndex), embedding) =>
-        // omit elmo vectors for verbs filtered out of the dataset
-        dataset.sentences.get(sentenceId)
-          .flatMap(_.verbEntries.get(verbIndex))
-          .map(_.verbInflectedForms).foldMap(verbForms =>
-            Map(verbForms -> Map(sentenceId -> Map(verbIndex -> List(embedding))))
-          )
-      }
-    ).map(_.head)
-  }
-
   import qfirst.paraphrase.models._
   import breeze.stats.distributions.Multinomial
 
@@ -219,23 +183,19 @@ object FrameInductionApp extends IOApp {
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
-  def getVerbClusterModels(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[InflectedForms, VerbClusterModel]] = {
-    config.getCachedVerbModels(verbSenseConfig).flatMap {
-      case Some(verbClusters) => IO.pure(verbClusters)
-      case None => for {
-        fullInstances <- config.fullInstances.get
-        trainSet <- config.input.get
-        evalSet <- config.eval.get
-        trainElmoVecs <- getGoldELMoInstances(trainSet, config.inputElmoPrefix)
-        evalElmoVecs <- getGoldELMoInstances(evalSet, config.evalElmoPrefix)
+  def getQasrlVerbClusterModels(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[InflectedForms, VerbClusterModel]] = {
+    config.cacheVerbModelComputation(verbSenseConfig) {
+      for {
+        instances <- config.fullInstances.get
+        elmoVecs <- config.fullElmo.get
         verbClusters <- runVerbSenseAgglomerativeClustering(
           verbSenseConfig = verbSenseConfig,
-          instances = fullInstances,
-          elmoVecs = trainElmoVecs |+| evalElmoVecs
+          instances = instances,
+          elmoVecs = elmoVecs
         )
         collapsedQAOutputs <- config.collapsedQAOutputs.get
         verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
-          val clauseSets = fullInstances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
+          val clauseSets = instances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
             verbMap.iterator.map { case (vi, qas) =>
               val questions = qas.keySet.toList
               val clauseSet = ClauseResolution.getResolvedFramePairs(
@@ -251,8 +211,42 @@ object FrameInductionApp extends IOApp {
             collapsedQAOutputs(verbInflectedForms).toList
           )
         }
-        _ <- config.cacheVerbModels(verbSenseConfig, verbClusterModels)
       } yield verbClusterModels
+    }
+  }
+
+  def getPropBankVerbClusterModels(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[String, PropBankVerbClusterModel]] = {
+    config.cachePropBankVerbModelComputation(verbSenseConfig) {
+      for {
+        fullInstances <- config.propBankFullInstances.get
+        // trainSet <- config.input.get
+        // evalSet <- config.eval.get
+        // trainElmoVecs <- getGoldELMoInstances(trainSet, config.inputElmoPrefix)
+        // evalElmoVecs <- getGoldELMoInstances(evalSet, config.evalElmoPrefix)
+        // verbClusters <- runVerbSenseAgglomerativeClustering(
+        //   verbSenseConfig = verbSenseConfig,
+        //   instances = fullInstances,
+        //   elmoVecs = trainElmoVecs |+| evalElmoVecs
+        // )
+        // collapsedQAOutputs <- config.collapsedQAOutputs.get
+        // verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
+        //   val clauseSets = fullInstances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
+        //     verbMap.iterator.map { case (vi, qas) =>
+        //       val questions = qas.keySet.toList
+        //       val clauseSet = ClauseResolution.getResolvedFramePairs(
+        //         verbInflectedForms, questions
+        //       ).map(_._1).map(ClauseResolution.getClauseTemplate).toSet
+        //       VerbId(sid, vi) -> clauseSet
+        //     }
+        //   }.toMap
+        //   verbInflectedForms -> VerbClusterModel(
+        //     verbInflectedForms,
+        //     clusterTree,
+        //     clauseSets,
+        //     collapsedQAOutputs(verbInflectedForms).toList
+        //   )
+        // }
+      } yield ??? //verbClusterModels
     }
   }
 
@@ -970,7 +964,7 @@ object FrameInductionApp extends IOApp {
     // TODO read in tuned thresholds (in case of test)
     for {
       verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
-        getVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+        getQasrlVerbClusterModels(config, vsConfig).map(vsConfig -> _)
       ).map(_.toMap)
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
@@ -987,7 +981,7 @@ object FrameInductionApp extends IOApp {
     for {
       _ <- IO.unit
       // verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
-      //   getVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+      //   getPropBankVerbClusterModels(config, vsConfig).map(vsConfig -> _)
       // ).map(_.toMap)
       // goldParaphrases <- config.readGoldParaphrases
       // evaluationItems <- config.evaluationItems.get

@@ -36,6 +36,18 @@ object VerbId {
   )
 }
 
+@JsonCodec case class PropBankVerbClusterModel(
+  verbLemma: String,
+  clusterTree: MergeTree[VerbId],
+  clauseSets: Map[VerbId, Set[ArgStructure]]
+  // TODO add coindexing scores after sentence indexing issue has been fixed
+  // coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
+) {
+  // val coindexingScores = coindexingScoresList.toMap
+  val numInstances = clusterTree.size
+}
+object PropBankVerbClusterModel
+
 @JsonCodec case class VerbClusterModel(
   verbInflectedForms: InflectedForms,
   clusterTree: MergeTree[VerbId],
