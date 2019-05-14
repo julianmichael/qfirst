@@ -1,5 +1,6 @@
 package qfirst.paraphrase
 import qfirst._
+import qfirst.paraphrase.models._
 import qfirst.paraphrase.browse._
 import qfirst.frames.implicits._
 import qfirst.metrics.HasMetrics
@@ -43,13 +44,16 @@ import scala.collection.immutable.Map
 
 import scala.util.Random
 
+import breeze.linalg._
+import scala.collection.immutable.Vector
+
 // TODO applicative
-case class ClusteringInstances[A](
-  instances: Map[InflectedForms, Map[String, Map[Int, A]]]
+case class Instances[VerbType, A](
+  values: Map[VerbType, Map[String, Map[Int, A]]]
 ) {
-  def map[B](f: A => B): ClusteringInstances[B] = {
-    ClusteringInstances(
-      instances.transform { case (k, v) =>
+  def map[B](f: A => B): Instances[VerbType, B] = {
+    Instances(
+      values.transform { case (k, v) =>
         v.transform { case (k, v) =>
           v.transform { case (k, v) =>
             f(v)
@@ -60,16 +64,16 @@ case class ClusteringInstances[A](
   }
   // TODO merge and stuff
 }
-object ClusteringInstances {
-  implicit def clusteringInstancesMonoid[A]: Monoid[ClusteringInstances[A]] =
-    new Monoid[ClusteringInstances[A]] {
-      def empty: ClusteringInstances[A] = ClusteringInstances(Map())
-      def combine(x: ClusteringInstances[A], y: ClusteringInstances[A]) = {
-        ClusteringInstances(
-          (x.instances.keySet ++ y.instances.keySet).iterator.map { forms =>
-            val xSents = x.instances.getOrElse(forms, Map())
-            val ySents = y.instances.getOrElse(forms, Map())
-            forms -> (xSents.keySet ++ ySents.keySet).iterator.map { sid =>
+object Instances {
+  implicit def instancesMonoid[VT, A]: Monoid[Instances[VT, A]] =
+    new Monoid[Instances[VT, A]] {
+      def empty: Instances[VT, A] = Instances(Map())
+      def combine(x: Instances[VT, A], y: Instances[VT, A]) = {
+        Instances(
+          (x.values.keySet ++ y.values.keySet).iterator.map { verbType =>
+            val xSents = x.values.getOrElse(verbType, Map())
+            val ySents = y.values.getOrElse(verbType, Map())
+            verbType -> (xSents.keySet ++ ySents.keySet).iterator.map { sid =>
               val xVerbs = xSents.getOrElse(sid, Map())
               val yVerbs = ySents.getOrElse(sid, Map())
               sid -> (xVerbs ++ yVerbs)
@@ -78,22 +82,20 @@ object ClusteringInstances {
         )
       }
     }
+  type PropBank = Instances[String, FrameInductionApp.QAPairs]
+  type PropBankElmo = Instances[String, DenseVector[Float]]
+  type PropBankLabels = Instances[String, String]
+  type Qasrl = Instances[InflectedForms, FrameInductionApp.QAPairs]
+  type QasrlElmo = Instances[InflectedForms, DenseVector[Float]]
 }
 
 object FrameInductionApp extends IOApp {
 
   import ClauseResolution.ArgStructure
+  type QAPairs = Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]
+  type ClausalQ = (ArgStructure, ArgumentSlot)
 
-  // type ResolvedInstances = Map[InflectedForms, Map[SentenceId, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
-  type Instances = Map[InflectedForms, Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
-  type PropBankInstances = Map[String, Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]]
-  type PropBankLabels = Map[String, Map[String, Map[Int, String]]] // verb lemma, sentence id, verb index, verb sense
-
-  def makeVerbVocab(instances: Instances): Vocab[InflectedForms] = {
-    Vocab.make(instances.keySet)
-  }
-
-  def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]]]): Vocab[ArgStructure] = {
+  def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, QAPairs]]): Vocab[ArgStructure] = {
     Vocab.make(
       instances.values.toList.foldMap(verbMap =>
         verbMap.values.toList.foldMap(qMap =>
@@ -103,55 +105,46 @@ object FrameInductionApp extends IOApp {
     )
   }
 
-  import breeze.linalg.DenseVector
-
-  import qfirst.paraphrase.models._
-  import breeze.stats.distributions.Multinomial
-
-  type ClausalQ = (ArgStructure, ArgumentSlot)
-  import breeze.linalg._
-  import scala.collection.immutable.Vector
-
   def runVerbWiseAgglomerative(
     algorithm: ClusteringAlgorithm)(
-    verbInflectedForms: InflectedForms,
+    verbLabel: String,
     verbIds: Vector[VerbId],
     makeInstance: VerbId => algorithm.Instance,
     hyperparams: algorithm.Hyperparams,
   ): IO[MergeTree[VerbId]] = {
     val instances = verbIds.map(makeInstance)
-    IO(print(" " + verbInflectedForms.stem)) >>
+    IO(print(" " + verbLabel)) >>
       IO(algorithm.runAgglomerativeClustering(instances, hyperparams)._1.map(verbIds))
   }
 
-  def runVerbSenseAgglomerativeClustering(
+  def runVerbSenseAgglomerativeClustering[VerbType](
     verbSenseConfig: VerbSenseConfig,
-    instances: Instances,
-    elmoVecs: ClusteringInstances[DenseVector[Float]]
-  ): IO[Map[InflectedForms, MergeTree[VerbId]]] = {
-    val verbs = instances.map { case (forms, sentMap) =>
-      forms -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
-        verbIndices.keys.toVector
-          .filter(vi =>
-            instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty &&
-              elmoVecs.instances.get(forms).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
-          )
-          .map(vi => VerbId(sid, vi))
+    instances: Instances[VerbType, QAPairs],
+    elmoVecs: Instances[VerbType, DenseVector[Float]],
+    renderVerbType: VerbType => String
+  ): IO[Map[VerbType, MergeTree[VerbId]]] = {
+    val verbs = instances.values.map { case (verbType, sentMap) =>
+      verbType -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
+        verbIndices.keys.toVector.filter(vi =>
+          instances.values.get(verbType).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty &&
+            elmoVecs.values.get(verbType).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
+        ).map(vi => VerbId(sid, vi))
       }
     }.filter(_._2.nonEmpty)
-    IO(print("Clustering verbs: ")) >> // sort decreasing by size to front-load memory usage
-      verbs.toList.sortBy(-_._2.size).traverse { case (verbInflectedForms, verbIds) =>
-        val verbInstances = instances(verbInflectedForms)
+    IO(print("Clustering verbs:")) >> // sort decreasing by size to front-load memory usage
+      verbs.toList.sortBy(-_._2.size).traverse { case (verbType, _verbIds) =>
+        val verbIds = _verbIds.take(1000) // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        val verbInstances = instances.values(verbType)
         val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
         val makeInstance = (verbId: VerbId) => {
           val questions = verbInstances(verbId.sentenceId)(verbId.verbIndex).keySet.toList
-          val clauseCounts = ClauseResolution.getResolvedFramePairs(
-            verbInflectedForms, questions
-          ).map(_._1).map(ClauseResolution.getClauseTemplate)
+          val clauseCounts = ClauseResolution
+            .getResolvedStructures(questions).map(_._1)
             .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
-          val vector = elmoVecs.instances(verbInflectedForms)(verbId.sentenceId)(verbId.verbIndex)
+          val vector = elmoVecs.values(verbType)(verbId.sentenceId)(verbId.verbIndex)
           clauseCounts -> vector
         }
+        val verbLabel = renderVerbType(verbType)
         val clustering = verbSenseConfig match {
           case VerbSenseConfig.SingleCluster =>
             IO.pure(
@@ -162,22 +155,22 @@ object FrameInductionApp extends IOApp {
             )
           case VerbSenseConfig.EntropyOnly =>
             runVerbWiseAgglomerative(MinEntropyClustering)(
-              verbInflectedForms, verbIds, (v => makeInstance(v)._1), MinEntropyClustering.Hyperparams(clauseVocab.size)
+              verbLabel, verbIds, (v => makeInstance(v)._1), MinEntropyClustering.Hyperparams(clauseVocab.size)
             )
           case VerbSenseConfig.ELMoOnly =>
             runVerbWiseAgglomerative(VectorMeanClustering)(
-              verbInflectedForms, verbIds, (v => makeInstance(v)._2), ()
+              verbLabel, verbIds, (v => makeInstance(v)._2), ()
             )
           case VerbSenseConfig.Interpolated(lambda) =>
             val algorithm = new CompositeClusteringAlgorithm {
               val _1 = MinEntropyClustering; val _2 = VectorMeanClustering
             }
             runVerbWiseAgglomerative(algorithm)(
-              verbInflectedForms, verbIds, makeInstance,
+              verbLabel, verbIds, makeInstance,
               algorithm.Hyperparams(MinEntropyClustering.Hyperparams(clauseVocab.size), (), lambda)
             )
         }
-        clustering.map(verbInflectedForms -> _)
+        clustering.map(verbType -> _)
       }.map(_.toMap).flatTap(_ => IO(println))
   }
 
@@ -191,16 +184,17 @@ object FrameInductionApp extends IOApp {
         verbClusters <- runVerbSenseAgglomerativeClustering(
           verbSenseConfig = verbSenseConfig,
           instances = instances,
-          elmoVecs = elmoVecs
+          elmoVecs = elmoVecs,
+          renderVerbType = (forms: InflectedForms) => forms.stem
         )
         collapsedQAOutputs <- config.collapsedQAOutputs.get
         verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
-          val clauseSets = instances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
+          val clauseSets = instances.values(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
             verbMap.iterator.map { case (vi, qas) =>
               val questions = qas.keySet.toList
-              val clauseSet = ClauseResolution.getResolvedFramePairs(
-                verbInflectedForms, questions
-              ).map(_._1).map(ClauseResolution.getClauseTemplate).toSet
+              val clauseSet = ClauseResolution
+                .getResolvedStructures(questions)
+                .map(_._1).toSet
               VerbId(sid, vi) -> clauseSet
             }
           }.toMap
@@ -218,36 +212,154 @@ object FrameInductionApp extends IOApp {
   def getPropBankVerbClusterModels(config: Config, verbSenseConfig: VerbSenseConfig): IO[Map[String, PropBankVerbClusterModel]] = {
     config.cachePropBankVerbModelComputation(verbSenseConfig) {
       for {
-        fullInstances <- config.propBankFullInstances.get
-        // trainSet <- config.input.get
-        // evalSet <- config.eval.get
-        // trainElmoVecs <- getGoldELMoInstances(trainSet, config.inputElmoPrefix)
-        // evalElmoVecs <- getGoldELMoInstances(evalSet, config.evalElmoPrefix)
-        // verbClusters <- runVerbSenseAgglomerativeClustering(
-        //   verbSenseConfig = verbSenseConfig,
-        //   instances = fullInstances,
-        //   elmoVecs = trainElmoVecs |+| evalElmoVecs
-        // )
-        // collapsedQAOutputs <- config.collapsedQAOutputs.get
-        // verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
-        //   val clauseSets = fullInstances(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
-        //     verbMap.iterator.map { case (vi, qas) =>
-        //       val questions = qas.keySet.toList
-        //       val clauseSet = ClauseResolution.getResolvedFramePairs(
-        //         verbInflectedForms, questions
-        //       ).map(_._1).map(ClauseResolution.getClauseTemplate).toSet
-        //       VerbId(sid, vi) -> clauseSet
-        //     }
-        //   }.toMap
-        //   verbInflectedForms -> VerbClusterModel(
-        //     verbInflectedForms,
-        //     clusterTree,
-        //     clauseSets,
-        //     collapsedQAOutputs(verbInflectedForms).toList
-        //   )
-        // }
-      } yield ??? //verbClusterModels
+        instances <- config.propBankFullInstances.get
+        elmoVecs <- config.propBankFullElmo.get
+        verbClusters <- runVerbSenseAgglomerativeClustering(
+          verbSenseConfig = verbSenseConfig,
+          instances = instances,
+          elmoVecs = elmoVecs,
+          renderVerbType = identity[String]
+        )
+        // TODO include QA outputs after indexing stuff has been fixed
+        // collapsedQAOutputs <- config.propBankCollapsedQAOutputs.get
+        verbClusterModels = verbClusters.map { case (verbLemma, clusterTree) =>
+          val clauseSets = instances.values(verbLemma).iterator.flatMap { case (sid, verbMap) =>
+            verbMap.iterator.map { case (vi, qas) =>
+              val questions = qas.keySet.toList
+              val clauseSet = ClauseResolution
+                .getResolvedStructures(questions)
+                .map(_._1).toSet
+              VerbId(sid, vi) -> clauseSet
+            }
+          }.toMap
+          verbLemma -> PropBankVerbClusterModel(
+            verbLemma,
+            clusterTree,
+            clauseSets
+            // collapsedQAOutputs(verbInflectedForms).toList
+          )
+        }
+      } yield verbClusterModels
     }
+  }
+
+  case class PropBankEvaluationPoint(
+    model: VerbSenseConfig,
+    maxLoss: Double,
+    precision: Double,
+    recall: Double
+  ) {
+    val f1 = 2 * precision * recall / (precision + recall)
+  }
+  object PropBankEvaluationPoint {
+    import qfirst.metrics.Metric
+    implicit val propBankEvaluationPointHasMetrics: HasMetrics[PropBankEvaluationPoint] = {
+      new HasMetrics[PropBankEvaluationPoint] {
+        def getMetrics(p: PropBankEvaluationPoint) = MapTree.fromPairs(
+          "max loss" -> Metric.double(p.maxLoss),
+          "precision" -> Metric.double(p.precision),
+          "recall" -> Metric.double(p.recall),
+          "f1" -> Metric.double(p.f1)
+        )
+      }
+    }
+  }
+
+  def evaluatePropBankVerbClusters(
+    config: Config,
+    verbModelsByConfig: Map[VerbSenseConfig, Map[String, PropBankVerbClusterModel]],
+    propBankSenseLabels: Instances.PropBankLabels
+  ): IO[Map[VerbSenseConfig, PropBankEvaluationPoint]] = {
+    for {
+      instances <- config.propBankFullInstances.get
+      fullEvaluationResultsByConfig <- verbModelsByConfig.toList.traverse { case (vsConfig, modelsByVerb) =>
+        IO(print(s"\n${vsConfig.modelName}:")) >> modelsByVerb.toList.sortBy(-_._2.clauseSets.size).flatTraverse { case (verbLemma, verbModel) =>
+          propBankSenseLabels.values.get(verbLemma).foldMapM { verbSenseLabels =>
+            IO(print(" " + verbLemma)) >> IO {
+              val predictedVerbIds = verbModel.clusterTree.unorderedFoldMap(Set(_))
+              // only includes IDs that were covered in the predictions as well
+              val verbSenseToIds = verbSenseLabels.toList.foldMap { case (sentenceId, verbMap) =>
+                verbMap.toList.foldMap { case (verbIndex, verbSense) =>
+                  Option(VerbId(sentenceId, verbIndex))
+                    .filter(predictedVerbIds.contains)
+                    .foldMap(vid => Map(verbSense -> Set(vid)))
+                }
+              }
+              verbSenseLabels.iterator.flatMap { case (sentenceId, verbMap) =>
+                verbMap.iterator.flatMap { case (verbIndex, verbSense) =>
+                  verbModel.clusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).iterator.map { clusters =>
+                    val goldIds = verbSenseToIds(verbSense)
+                    clusters.map { cluster =>
+                      val predictedIds = cluster.values.toSet
+                      val maxLoss = if(cluster.isLeaf) 0.0 else (cluster.loss / predictedIds.size)
+                      val tp = (predictedIds intersect goldIds).size
+                      val precision = tp / predictedIds.size
+                      val recall = tp / goldIds.size
+                      PropBankEvaluationPoint(vsConfig, maxLoss, precision, recall)
+                    }
+                  }
+                }
+              }.toList
+            }
+          }
+        }.map(vsConfig -> _)
+      }.map(_.toMap)
+      allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
+        val lossThresholds = evaluationItemResults.foldMap(_.map(_.maxLoss).toSet).toList.sortBy(-_)
+        lossThresholds.map { maxLoss =>
+          val chosenResults = evaluationItemResults.map(
+            _.find(_.maxLoss <= maxLoss).get
+          )
+          PropBankEvaluationPoint(
+            vsConfig,
+            maxLoss,
+            chosenResults.map(_.precision).sum / chosenResults.size,
+            chosenResults.map(_.recall).sum / chosenResults.size
+          )
+        }
+      }
+      bestModels <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
+        val best = allPoints.maxBy(_.f1)
+        val resString = SandboxApp.getMetricsString(best)
+        println(s"${vsConfig.modelName} propbank metrics: " + resString)
+
+        config.propBankResultsPath(vsConfig).flatMap(path =>
+          FileUtil.writeString(path.resolve("propbank-results.txt"))(resString)
+        ).as(vsConfig -> best)
+      }.map(_.toMap)
+      _ <- {
+        import com.cibo.evilplot._
+        import com.cibo.evilplot.numeric._
+        import com.cibo.evilplot.plot._
+        import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+        import com.cibo.evilplot.plot.renderers.PointRenderer
+
+        case class PRPoint(
+          model: VerbSenseConfig,
+          recall: Double,
+          precision: Double) extends Datum2d[PRPoint] {
+          val x = recall
+          val y = precision
+          def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
+        }
+
+        val rand = new scala.util.Random(2643642L)
+        def noise = math.abs(rand.nextGaussian / 200.0)
+
+        val data = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+          PRPoint(vsTuningPoint.model, vsTuningPoint.recall + noise, vsTuningPoint.precision + noise)
+        }
+
+        val plot = ScatterPlot(
+		      data,
+		      pointRenderer = Some(PointRenderer.colorByCategory(data, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	      ).xAxis().yAxis().frame().rightLegend()
+
+        config.globalPropBankResultsDir.flatMap(path =>
+          IO(plot.render().write(new java.io.File(path.resolve("propbank-sense.png").toString)))
+        )
+      }
+    } yield bestModels
   }
 
   import qfirst.metrics.BinaryConf
@@ -282,7 +394,7 @@ object FrameInductionApp extends IOApp {
         )
         fullEvaluationResultsByConfig = verbClustersByConfig.transform { case (vsConfig, clustersByVerb) =>
           presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
-            val verbClauseSets = instances(verbInflectedForms).flatMap { case (sid, verbMap) =>
+            val verbClauseSets = instances.values(verbInflectedForms).flatMap { case (sid, verbMap) =>
               verbMap.map { case (vi, qMap) =>
                 val questions = qMap.keySet.toList
                 val clauses = ClauseResolution.getResolvedFramePairs(
@@ -408,14 +520,14 @@ object FrameInductionApp extends IOApp {
 
   // TODO restrict coindexing to clauses above minimum probability threshold?
   def runCollapsedCoindexing(
-    instances: Instances,
+    instances: Instances.Qasrl,
     verbSenseModel: VerbSenseTuningPoint,
     verbClusters: Map[InflectedForms, MergeTree[VerbId]],
     fuzzyArgEquivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
   ): Map[InflectedForms, VerbFrameset] = {
     verbClusters.transform { case (verbInflectedForms, tree) =>
       val numInstancesForVerb = tree.size
-      val verbClauseSets = instances(verbInflectedForms).flatMap { case (sid, verbMap) =>
+      val verbClauseSets = instances.values(verbInflectedForms).flatMap { case (sid, verbMap) =>
         verbMap.map { case (vi, qMap) =>
           val questions = qMap.keySet.toList
           val clauses = ClauseResolution.getResolvedFramePairs(
@@ -465,7 +577,7 @@ object FrameInductionApp extends IOApp {
         instances <- config.fullInstances.get
         fullEvaluationResultsByConfig = verbFramesetsByConfig.transform { case (vsConfig, framesets) =>
           presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
-            val verbClausalQs = instances(verbInflectedForms).flatMap { case (sid, verbMap) =>
+            val verbClausalQs = instances.values(verbInflectedForms).flatMap { case (sid, verbMap) =>
               verbMap.map { case (vi, qMap) =>
                 val questions = qMap.keySet.toList
                 val clausalQs = ClauseResolution.getResolvedStructures(questions).toSet
@@ -640,8 +752,8 @@ object FrameInductionApp extends IOApp {
     }
   }
 
-  def writeLossGraph(
-    verbClustersByConfig: Map[VerbSenseConfig, Map[InflectedForms, MergeTree[VerbId]]],
+  def writeLossGraph[VerbType](
+    verbClustersByConfig: Map[VerbSenseConfig, Map[VerbType, MergeTree[VerbId]]],
     getPath: IO[NIOPath]
   ): IO[Unit] = {
     import com.cibo.evilplot._
@@ -652,7 +764,6 @@ object FrameInductionApp extends IOApp {
 
     case class LossDatum(
       model: VerbSenseConfig,
-      verb: InflectedForms,
       numInstances: Long,
       maxLoss: Double,
       val x: Double,
@@ -661,9 +772,9 @@ object FrameInductionApp extends IOApp {
       def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
     }
     val lossData = verbClustersByConfig.toList.flatMap { case (vsConfig, clustersByVerb) =>
-      clustersByVerb.toList.map { case (verbInflectedForms, clusterTree) =>
+      clustersByVerb.toList.map { case (_, clusterTree) =>
         val numInstances = clusterTree.size
-        LossDatum(vsConfig, verbInflectedForms, numInstances, clusterTree.loss, numInstances.toDouble, clusterTree.loss)
+        LossDatum(vsConfig, numInstances, clusterTree.loss, numInstances.toDouble, clusterTree.loss)
       }
     }
     val plot = ScatterPlot(
@@ -675,8 +786,8 @@ object FrameInductionApp extends IOApp {
     )
   }
 
-  def writeDepthGraph(
-    verbClustersByConfig: Map[VerbSenseConfig, Map[InflectedForms, MergeTree[VerbId]]],
+  def writeDepthGraph[VerbType](
+    verbClustersByConfig: Map[VerbSenseConfig, Map[VerbType, MergeTree[VerbId]]],
     getPath: IO[NIOPath]
   ): IO[Unit] = {
     import com.cibo.evilplot._
@@ -687,7 +798,6 @@ object FrameInductionApp extends IOApp {
 
     case class DepthDatum(
       model: VerbSenseConfig,
-      verb: InflectedForms,
       numInstances: Long,
       avgDepth: Double,
       val x: Double,
@@ -696,7 +806,7 @@ object FrameInductionApp extends IOApp {
       def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
     }
     val depthData = verbClustersByConfig.toList.flatMap { case (vsConfig, clustersByVerb) =>
-      clustersByVerb.toList.map { case (verbInflectedForms, clusterTree) =>
+      clustersByVerb.toList.map { case (_, clusterTree) =>
         val numInstances = clusterTree.size
         case class DepthAcc(depthSum: Int, numLeaves: Int) {
           def merge(that: DepthAcc) = {
@@ -710,7 +820,7 @@ object FrameInductionApp extends IOApp {
           leaf = (_, _) => DepthAcc(0, 1),
           merge = (_, _, l, r) => l.merge(r)
         ).avgDepth
-        DepthDatum(vsConfig, verbInflectedForms, numInstances, avgDepth, numInstances.toDouble, avgDepth)
+        DepthDatum(vsConfig, numInstances, avgDepth, numInstances.toDouble, avgDepth)
       }
     }
     val plot = ScatterPlot(
@@ -746,19 +856,25 @@ object FrameInductionApp extends IOApp {
       }
     } else {
       for {
+        _ <- logOp(
+          "Writing loss graph",
+          writeLossGraph(
+            verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+            config.globalResultsDir.map(_.resolve("loss-trends.png"))
+          )
+        )
+        _ <- logOp(
+          "Writing depth graph",
+          writeDepthGraph(
+            verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+            config.globalResultsDir.map(_.resolve("depth-trends.png"))
+          )
+        )
         instances <- config.fullInstances.get
-        _ <- writeLossGraph(
-          verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
-          config.globalResultsDir.map(_.resolve("loss-trends.png"))
-        )
-        _ <- writeDepthGraph(
-          verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
-          config.globalResultsDir.map(_.resolve("depth-trends.png"))
-        )
         fullEvaluationResultsByConfig = verbModelsByConfig.transform { case (vsConfig, verbModels) =>
           presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
             val verbId = VerbId(sentenceId, verbIndex)
-            val goldQs = instances(verbInflectedForms)(sentenceId)(verbIndex).keySet
+            val goldQs = instances.values(verbInflectedForms)(sentenceId)(verbIndex).keySet
             val goldClausalQs = ClauseResolution.getResolvedStructures(goldQs.toList).toSet
               .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
             val goldClauseSet = goldClausalQs.map(_._1)
@@ -940,6 +1056,164 @@ object FrameInductionApp extends IOApp {
     }
   }
 
+  def doPropBankClusterDebugging(
+    config: Config,
+    senseLabels: Instances.PropBankLabels,
+    verbModelsByConfig: Map[VerbSenseConfig, Map[String, PropBankVerbClusterModel]],
+    chosenThresholds: Map[VerbSenseConfig, Double]
+  ): IO[Unit] = for {
+    _ <- logOp(
+      "Writing loss graph",
+      writeLossGraph(
+        verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+        config.globalResultsDir.map(_.resolve("loss-trends.png"))
+      )
+    )
+    _ <- logOp(
+      "Writing depth graph",
+      writeDepthGraph(
+        verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
+        config.globalResultsDir.map(_.resolve("depth-trends.png"))
+      )
+    )
+    _ <- logOp(
+      "Writing PropBank gold sense graph", {
+        import com.cibo.evilplot._
+        import com.cibo.evilplot.numeric._
+        import com.cibo.evilplot.plot._
+        import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+        import com.cibo.evilplot.plot.renderers.PointRenderer
+
+        case class ThisPoint(
+          lemma: String,
+          numOccurrences: Int,
+          numSenses: Int,
+          val x: Double,
+          val y: Double) extends Datum2d[ThisPoint] {
+          def withXY(x: Double = this.x, y: Double = this.x) = this.copy(x = x, y = y)
+        }
+
+        val rand = new scala.util.Random(2643642L)
+        def noise = math.abs(rand.nextGaussian / 40.0)
+
+        val data = senseLabels.values.iterator.map { case (lemma, sentenceMap) =>
+          val instances = sentenceMap.iterator.flatMap(_._2.values.iterator).toList
+          val senses = instances.toSet
+          ThisPoint(lemma, instances.size, senses.size, math.min(1000, instances.size + noise), senses.size + (noise * 10))
+        }.toList
+
+        val plot = ScatterPlot(
+		      data,
+		      pointRenderer = Some(PointRenderer.colorByCategory(data, ((x: ThisPoint) => "gold"), size = Some(2.0)))
+	      ).xAxis().yAxis().frame().rightLegend()
+
+        config.globalPropBankResultsDir.flatMap(path =>
+          IO(plot.render().write(new java.io.File(path.resolve("propbank-sense-counts.png").toString)))
+        )
+      }
+    )
+    _ <- logOp(
+      "Writing partition sizes graph", {
+        import com.cibo.evilplot._
+        import com.cibo.evilplot.numeric._
+        import com.cibo.evilplot.plot._
+        import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+        import com.cibo.evilplot.plot.renderers.PointRenderer
+
+        case class ThisPoint(
+          model: VerbSenseConfig,
+          numInstances: Int,
+          numClusters: Int,
+          x: Double, y: Double
+        ) extends Datum2d[ThisPoint] {
+          def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
+        }
+
+        val rand = new scala.util.Random(2643642L)
+        def noise = math.abs(rand.nextGaussian / 40.0)
+
+        val data = verbModelsByConfig.toList.flatMap { case (vsConfig, verbModels) =>
+          val maxLossPerInstance = chosenThresholds(vsConfig)
+          verbModels.values.toList.map { model =>
+            val numInstances = model.clusterTree.size.toInt
+            val clusters = model.clusterTree.splitByPredicate(_.loss > (maxLossPerInstance * numInstances))
+            val numClusters = clusters.size
+            ThisPoint(vsConfig, numInstances, numClusters, math.min(1000, numInstances.toDouble + noise), numClusters.toDouble + (noise * 10))
+          }
+        }
+
+        val plot = ScatterPlot(
+		      data,
+		      pointRenderer = Some(PointRenderer.colorByCategory(data, ((x: ThisPoint) => x.model.modelName), size = Some(1.0)))
+	      ).xAxis().yAxis().frame().rightLegend()
+
+        config.globalPropBankResultsDir.flatMap(path =>
+          IO(plot.render().write(new java.io.File(path.resolve("predicted-cluster-counts.png").toString)))
+        )
+      }
+    )
+    _ <- logOp(
+      "Writing partition size comparison graph", {
+        import com.cibo.evilplot._
+        import com.cibo.evilplot.numeric._
+        import com.cibo.evilplot.plot._
+        import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+        import com.cibo.evilplot.plot.renderers.PointRenderer
+
+        case class ThisPoint(
+          model: VerbSenseConfig,
+          numGoldClusters: Int,
+          numPredictedClusters: Int,
+          x: Double, y: Double
+        ) extends Datum2d[ThisPoint] {
+          def withXY(x: Double = this.x, y: Double = this.y) = this.copy(x = x, y = y)
+        }
+
+        val rand = new scala.util.Random(2643642L)
+        def noise = math.abs(rand.nextGaussian / 4.0)
+
+        val data = verbModelsByConfig.toList.flatMap { case (vsConfig, verbModels) =>
+          val maxLossPerInstance = chosenThresholds(vsConfig)
+          verbModels.toList.flatMap { case (verbLemma, model) =>
+            senseLabels.values.get(verbLemma).map { verbSenseLabels =>
+              val numGoldClusters = verbSenseLabels.values.iterator.flatMap(_.values.iterator).toSet.size
+              val numInstances = model.clusterTree.size
+              val clusters = model.clusterTree.splitByPredicate(_.loss > (maxLossPerInstance * numInstances))
+              val numPredictedClusters = clusters.size
+              ThisPoint(vsConfig, numGoldClusters, numPredictedClusters, numGoldClusters.toDouble + noise, numPredictedClusters.toDouble + noise)
+            }
+          }
+        }
+
+        val pearsonR = {
+          val num = data.map(d => d.numGoldClusters * d.numPredictedClusters).sum
+          val denomGold = data.map(d => d.numGoldClusters * d.numGoldClusters).sum
+          val denomPredicted = data.map(d => d.numPredictedClusters * d.numPredictedClusters).sum
+          num.toDouble / math.exp((math.log(denomGold) + math.log(denomPredicted)) / 2)
+        }
+
+        println("Pearson's R between gold and predicted number of senses: " + pearsonR)
+
+
+        val plot = ScatterPlot(
+		      data,
+		      pointRenderer = Some(PointRenderer.colorByCategory(data, ((x: ThisPoint) => x.model.modelName), size = Some(1.0)))
+	      ).xAxis().yAxis().frame().rightLegend()
+
+        config.globalPropBankResultsDir.flatMap(path =>
+          IO(plot.render().write(new java.io.File(path.resolve("cluster-num-correlation.png").toString)))
+        )
+      }
+    )
+    // _ <- verbModelsByConfig.toList.traverse { case (vsConfig, verbModels) =>
+    //   val maxLoss = chosenThresholds(vsConfig)
+    //   verbModels.toList.traverse { case (verbLemma, verbModel) =>
+    //     val clusters = verbModel.clusterTree.splitByPredicate(_.loss > maxLoss)
+    //     IO.unit // TODO
+    //   }
+    // }
+  } yield ()
+
   // TODO: elmo loss is ~175x greater; tune around this number
   // _ <- {
   //   import qfirst.metrics._
@@ -978,17 +1252,30 @@ object FrameInductionApp extends IOApp {
   def runPropBankFrameInduction(config: Config, modelOpt: Option[VerbSenseConfig]): IO[ExitCode] = {
     val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(allVerbSenseConfigs)
     // TODO read in tuned threshold (in case of test)
+    val chosenThresholds = Option(
+      Map[VerbSenseConfig, Double](
+        VerbSenseConfig.SingleCluster -> 0.0,
+        VerbSenseConfig.EntropyOnly -> 1.115,
+        VerbSenseConfig.ELMoOnly -> 0.718,
+        VerbSenseConfig.Interpolated(0.5) -> 1.105
+      )
+    )
     for {
-      _ <- IO.unit
-      // verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
-      //   getPropBankVerbClusterModels(config, vsConfig).map(vsConfig -> _)
-      // ).map(_.toMap)
-      // goldParaphrases <- config.readGoldParaphrases
-      // evaluationItems <- config.evaluationItems.get
-      // tunedThresholds <- logOp(
-      //   "Evaluating and tuning thresholds",
-      //   tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
-      // )
+      verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
+        getPropBankVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+      ).map(_.toMap)
+      evalSenseLabels <- config.propBankEvalLabels.get
+      tunedThresholds <- logOp(
+        "Evaluating and tuning on PropBank",
+        evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
+      )
+      fullSenseLabels <- config.propBankFullLabels.get
+      _ <- chosenThresholds.foldMapM(thresholds =>
+        logOp(
+          "Printing debuggy stuff",
+          doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
+        )
+      )
     } yield ExitCode.Success
   }
 

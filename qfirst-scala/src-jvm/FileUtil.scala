@@ -116,6 +116,22 @@ object FileUtil {
       }.compile.drain
   }
 
+  def writeLines[A](path: NIOPath, getString: A => String, compression: CompressionSetting = CompressionSetting.Auto)(as: Seq[A])(
+    implicit cs: ContextShift[IO], encoder: Encoder[A]
+  ): IO[Unit] = {
+    IO(Option(path.getParent).foreach(java.nio.file.Files.createDirectories(_))) >>
+      Stream.resource(blockingExecutionContext).flatMap { _ec =>
+        val textOut = Stream.emits[IO, A](as)
+          .map(getString)
+          .intersperse("\n")
+          .through(fs2.text.utf8Encode)
+        val compressedTextOut = if(useCompression(path, compression)) {
+          textOut.through(fs2.compress.gzip(bufferNumBytes))
+        } else textOut
+        compressedTextOut.through(fs2.io.file.writeAll(path, _ec))
+      }.compile.drain
+  }
+
   import java.nio.ByteBuffer
   import java.nio.ByteOrder
   import breeze.linalg._

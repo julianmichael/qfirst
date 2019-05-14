@@ -1,9 +1,12 @@
 package qfirst
 
 import cats.Applicative
+import cats.kernel.CommutativeMonoid
 import cats.Monad
 import cats.Eval
+import cats.Foldable
 import cats.Reducible
+import cats.UnorderedFoldable
 import cats.implicits._
 
 import monocle.macros._
@@ -66,7 +69,7 @@ import scala.annotation.tailrec
     case _ => false
   }
 
-  // assumption: value appears at most once in the merge tree
+  // returns Some if value appears at most once in the merge tree
   def clustersForValue(value: A): Option[List[MergeTree[A]]] = this match {
     case Leaf(_, `value`) => Some(List(this)) // 0 because thresholding doesn't affect leaves
     case Merge(_, loss, left, right) =>
@@ -82,6 +85,25 @@ import scala.annotation.tailrec
     leaf: (Double, A) => B,
     merge: (Int, Double, B, B) => B
   ): B = MergeTree.cata(MergeTree.makeAlgebra(leaf, merge))(this)
+
+  def depth = cata[Int](
+    leaf = (_, _) => 0,
+    merge = (_, _, l, r) => math.max(l, r) + 1
+  )
+
+  def toJsonStringSafe(implicit e: io.circe.Encoder[A]) = {
+    import io.circe.syntax._
+    cata[Vector[String]](
+      leaf = (loss, value) => Vector(Leaf(loss, value).asJson.noSpaces),
+      merge = (rank, loss, left, right) => Vector(
+        Vector("{\"rank\": " + rank.asJson.noSpaces + ", \"loss\": " + loss.asJson.noSpaces + ", \"left\": "),
+        left,
+        Vector(", \"right\": "),
+        right,
+        Vector("}")
+      ).flatten
+    ).mkString
+  }
 }
 object MergeTree {
   // def reduceLossThreshold[A](trees: Vector[MergeTree[A]]): Vector[MergeTree[A]] = {
@@ -322,40 +344,46 @@ object MergeTree {
   //   }
   // )
 
-  implicit val mergeTreeReducible: Reducible[MergeTree] = {
-    new Reducible[MergeTree] {
+  implicit val mergeTreeFoldable: UnorderedFoldable[MergeTree] = {
+    new UnorderedFoldable[MergeTree] {
       type F[A] = MergeTree[A]
 
-      def reduceLeftTo[A, B](fa: F[A])(f: A => B)(g: (B, A) => B): B = {
-        fa match {
-          case Leaf(_, value) => f(value)
-          case Merge(_, _, left, right) =>
-            foldLeft(right, reduceLeftTo(left)(f)(g))(g)
-        }
-      }
+      // def reduceLeftTo[A, B](fa: F[A])(f: A => B)(g: (B, A) => B): B = {
+      //   fa match {
+      //     case Leaf(_, value) => f(value)
+      //     case Merge(_, _, left, right) =>
+      //       foldLeft(right, reduceLeftTo(left)(f)(g))(g)
+      //   }
+      // }
 
-      // TODO make this properly lazy or... ?? not sure if this works exactly as I expect
-      def reduceRightTo[A, B](fa: F[A])(f: A => B)(g: (A, Eval[B]) => Eval[B]): Eval[B] = {
-        fa match {
-          case Leaf(_, value) => Eval.later(f(value))
-          case Merge(_, _, left, right) =>
-            foldRight(left, reduceRightTo(right)(f)(g))(g)
-        }
-      }
+      // // TODO make this properly lazy or... ?? not sure if this works exactly as I expect
+      // def reduceRightTo[A, B](fa: F[A])(f: A => B)(g: (A, Eval[B]) => Eval[B]): Eval[B] = {
+      //   fa match {
+      //     case Leaf(_, value) => Eval.later(f(value))
+      //     case Merge(_, _, left, right) =>
+      //       foldRight(left, reduceRightTo(right)(f)(g))(g)
+      //   }
+      // }
 
-      def foldLeft[A, B](fa: F[A], b: B)(f: (B, A) => B): B = fa match {
-        case Leaf(_, value) => f(b, value)
-        case Merge(_, _, left, right) =>
-          foldLeft(right, foldLeft(left, b)(f))(f)
-      }
+      def unorderedFoldMap[A, B: CommutativeMonoid](fa: F[A])(f: A => B): B = fa.cata[B](
+        leaf = (_, value) => f(value),
+        merge = (_, _, left, right) => left |+| right
+      )
 
-      def foldRight[A, B](fa: F[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = {
-        fa match {
-          case Leaf(_, value) => f(value, lb)
-          case Merge(_, _, left, right) =>
-            foldRight(left, foldRight(right, lb)(f))(f)
-        }
-      }
+      // def foldLeft[A, B](fa: F[A], b: B)(f: (B, A) => B): B = fa match {
+      //   case Leaf(_, value) => f(b, value)
+      //   case Merge(_, _, left, right) =>
+      //     foldLeft(right, foldLeft(left, b)(f))(f)
+      // }
+
+      // def foldRight[A, B](fa: F[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = {
+      //   fa match {
+      //     case Leaf(_, value) => f(value, lb)
+      //     case Merge(_, _, left, right) =>
+      //       foldRight(left, foldRight(right, lb)(f))(f)
+      //   }
+      // }
     }
   }
 }
+

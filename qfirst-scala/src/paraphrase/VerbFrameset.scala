@@ -3,6 +3,7 @@ import qfirst.MergeTree
 import qfirst.ClauseResolution
 
 import cats.Monoid
+import cats.kernel.CommutativeMonoid
 import cats.Order
 import cats.data.NonEmptySet
 import cats.implicits._
@@ -45,6 +46,8 @@ object VerbId {
 ) {
   // val coindexingScores = coindexingScoresList.toMap
   val numInstances = clusterTree.size
+  import io.circe.syntax._
+  def toJsonStringSafe = "{\"verbLemma\": " + verbLemma.asJson.noSpaces + ", \"clusterTree\": " + clusterTree.toJsonStringSafe + ", \"clauseSets\": " + clauseSets.asJson.noSpaces + "}"
 }
 object PropBankVerbClusterModel
 
@@ -79,8 +82,14 @@ class LazyFramesets(model: VerbClusterModel, initialCriterion: Either[Int, Doubl
     }
   }
   object FrameInputInfo {
-    implicit val verbIdStuffMonoid: Monoid[FrameInputInfo] = {
-      cats.derived.semi.monoid[FrameInputInfo]
+    implicit val verbIdStuffCommutativeMonoid: CommutativeMonoid[FrameInputInfo] = {
+      new CommutativeMonoid[FrameInputInfo] {
+        def empty: FrameInputInfo = FrameInputInfo(Set(), Map())
+        def combine(x: FrameInputInfo, y: FrameInputInfo) = FrameInputInfo(
+          x.verbIds ++ y.verbIds,
+          x.clauseCounts |+| y.clauseCounts
+        )
+      }
     }
   }
 
@@ -109,7 +118,7 @@ class LazyFramesets(model: VerbClusterModel, initialCriterion: Either[Int, Doubl
       val frames = frameInfos.map(_.getFrame).toList
       val frameset = VerbFrameset(model.verbInflectedForms, frames)
       resList = (maxLoss -> frameset) :: resList
-      aggTree = aggTree.cutMapAtN(nextSize, _.combineAll) // should do exactly one merge
+      aggTree = aggTree.cutMapAtN(nextSize, _.unorderedFold) // should do exactly one merge
       nextSize = nextSize - 1
     }
     resList
