@@ -1,18 +1,18 @@
-package qfirst.frames.annotation
-
-import org.scalajs.dom
-
-import scalacss.DevDefaults._
-
-import qasrl.bank._
-import qasrl.bank.service._
-
-import scala.concurrent.Future
-
-import radhoc._
-
-import nlpdata.util.LowerCaseStrings._
-
+// package qfirst.frames.annotation
+// 
+// import org.scalajs.dom
+// 
+// import scalacss.DevDefaults._
+// 
+// import qasrl.bank._
+// import qasrl.bank.service._
+// 
+// import scala.concurrent.Future
+// 
+// import radhoc._
+// 
+// import nlpdata.util.LowerCaseStrings._
+// 
 // object Main {
 //   def main(args: Array[String]): Unit = {
 //     FrameAnnStyles.addToDocument()
@@ -22,7 +22,7 @@ import nlpdata.util.LowerCaseStrings._
 //     val annApiEndpoint: String = dom.document
 //       .getElementById(SharedConstants.annApiUrlElementId)
 //       .getAttribute("value")
-
+//
 //     // TODO: don't need the full functionality of doc service. can switch out for simpler service later?
 //     import qasrl.bank.service.WebClientDocumentService
 //     val dataService = new WebClientDocumentService(docApiEndpoint)

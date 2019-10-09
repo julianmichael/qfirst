@@ -72,7 +72,7 @@ class Cell[A](create: IO[A]) {
 
 case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val outputDir = Paths.get("frame-induction")
-  val qasrlBankPath = Paths.get("qasrl-v2_1")
+  val qasrlBankPath = Paths.get("../qasrl-bank/data/qasrl-v2_1")
   val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
   val trainElmoPrefix = qasrlElmoPath.resolve("train").toString
   val devElmoPrefix = qasrlElmoPath.resolve("dev").toString
