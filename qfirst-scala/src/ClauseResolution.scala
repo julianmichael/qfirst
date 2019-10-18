@@ -5,16 +5,15 @@ import qfirst.frames.implicits._
 import cats._
 import cats.implicits._
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.DependentMap
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.ling.Text
+import jjm.implicits._
 
 import qasrl._
 import qasrl.data._
 import qasrl.labeling._
-import qasrl.util._
-import qasrl.util.implicits._
 
 import io.circe.generic.JsonCodec
 
@@ -42,17 +41,9 @@ object ClauseResolution {
       this.copy(args = newArgs)
     }
     override def toString = Frame(
-      genericInflectedForms, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
+      InflectedForms.generic, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
     ).clauses.head
   }
-
-  val genericInflectedForms = InflectedForms(
-    stem = "stem".lowerCase,
-    present = "present".lowerCase,
-    presentParticiple = "presentParticiple".lowerCase,
-    past = "past".lowerCase,
-    pastParticiple = "pastParticiple".lowerCase
-  )
 
   // returns generic inflected forms
   import scala.collection.mutable
@@ -61,7 +52,7 @@ object ClauseResolution {
   // returns generic inflected forms
   def getFramesWithAnswerSlots(questionSlots: SlotBasedLabel[VerbForm]): Set[(Frame, ArgumentSlot)] = {
     frameCache.get(questionSlots).getOrElse {
-      val question = questionSlots.renderQuestionString(genericInflectedForms)
+      val question = questionSlots.renderQuestionString(InflectedForms.generic.apply)
       val questionTokensIsh = question.init.split(" ").toVector.map(_.lowerCase)
       val qPreps = questionTokensIsh.filter(TemplateStateMachine.allPrepositions.contains).toSet
       val qPrepBigrams = questionTokensIsh
@@ -70,7 +61,7 @@ object ClauseResolution {
         .map(_.mkString(" ").lowerCase)
         .toSet
       val stateMachine =
-        new TemplateStateMachine(Vector(), genericInflectedForms, Some(qPreps ++ qPrepBigrams))
+        new TemplateStateMachine(Vector(), InflectedForms.generic, Some(qPreps ++ qPrepBigrams))
       val template = new QuestionProcessor(stateMachine)
       val framesWithAnswerSlots = template.processStringFully(question) match {
         case Left(QuestionProcessor.AggregatedInvalidState(_, _)) =>
@@ -101,7 +92,7 @@ object ClauseResolution {
     }
     framePairSets.map { framePairSet =>
       framePairSet.toList.maximaBy((p: (Frame, ArgumentSlot)) => framePseudoCounts(p._1)).toSet
-    }
+    }: List[Set[(Frame, ArgumentSlot)]]
   }
 
   def fallbackResolve(slots: SlotBasedLabel[VerbForm], framePairSet: Set[(Frame, ArgumentSlot)]) = {
@@ -148,7 +139,7 @@ object ClauseResolution {
   }
 
   def getResolvedStructures(qSlots: List[SlotBasedLabel[VerbForm]]) = {
-    getResolvedFramePairs(genericInflectedForms, qSlots).map { case (frame, slots) =>
+    getResolvedFramePairs(InflectedForms.generic, qSlots).map { case (frame, slots) =>
       getClauseTemplate(frame) -> slots
     }
   }

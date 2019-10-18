@@ -1,7 +1,6 @@
 package qfirst.frames.annotation
 
 import qasrl.bank.SentenceId
-import qasrl.bank.JsonCodecs._
 
 import qfirst.frames.ArgumentSlot
 import qfirst.frames.Frame

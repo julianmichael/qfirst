@@ -1,14 +1,14 @@
 package qfirst.frames
 
-import qasrl.util.implicits._
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
+
 import qasrl.{Tense, Modal, PresentTense, PastTense}
 
 import cats.data.NonEmptyList
 import cats.data.StateT
 import cats.implicits._
-
-import nlpdata.util.LowerCaseStrings._
-import nlpdata.datasets.wiktionary.InflectedForms
 
 import monocle.macros._
 
@@ -339,7 +339,7 @@ class TemplateStateMachine(
 
   // follows no aux
   val tensedVerb = progress(
-    (" " + present.toString) -> modFrame(Frame.tense.set(PresentTense)).as(obj),
+    (" " + presentSingular3rd.toString) -> modFrame(Frame.tense.set(PresentTense)).as(obj),
     (" " + past.toString)    -> modFrame(Frame.tense.set(PastTense)).as(obj)
   )
 

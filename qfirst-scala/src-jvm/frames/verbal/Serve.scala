@@ -1,8 +1,12 @@
 package qfirst.frames.verbal
-import qfirst.FileUtil
+
+import jjm.io.FileUtil
+import jjm.io.HttpUtil
 
 import qasrl.bank.Data
 
+import cats.~>
+import cats.Id
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.effect.{IOApp, ExitCode}
@@ -11,24 +15,26 @@ import cats.implicits._
 
 import fs2.Stream
 
-import qasrl.bank.service.HttpDocumentService
-import qasrl.bank.service.DocumentServiceWebServer
+import qasrl.bank.service.DocumentService
 import qasrl.bank.service.Search
 
 import java.nio.file.Path
 import java.nio.file.Files
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.http4s.implicits._
 
-object Serve extends IOApp {
+object Serve extends CommandIOApp(
+  name = "mill -i qfirst.jvm.runVerbAnn",
+  header = "Spin up the annotation server for QA-SRL Clause frames.") {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  def _run(
+  def program(
     jsDepsPath: Path, jsPath: Path,
     qasrlBankPath: Path, savePath: Path,
     domain: String, port: Int
@@ -45,7 +51,10 @@ object Serve extends IOApp {
       val index = data.index
       val docs = data.documentsById
       val searchIndex = Search.createSearchIndex(docs.values.toList)
-      val docService = HttpDocumentService.makeService(index, docs, searchIndex)
+      val docService = HttpUtil.makeHttpPostServer(
+        DocumentService.basic(index, docs, searchIndex)
+          .andThenK(Lambda[Id ~> IO](IO.pure(_)))
+      )
 
       val saveData = (data: VerbFrameData) => {
         FileUtil.writeJson(savePath, io.circe.Printer.noSpaces)(data)
@@ -57,8 +66,8 @@ object Serve extends IOApp {
           else IO.pure(VerbFrameData.newFromDataset(data.trainExpanded))
         }
         initDataRef <- Ref[IO].of(initData)
-        annotationService = VerbAnnotationHttpService.make(
-          VerbAnnotationServiceIO(initDataRef, saveData)
+        annotationService = HttpUtil.makeHttpPostServer(
+          VerbAnnotationService.basicIOService(initDataRef, saveData)
         )
         app = Router(
           "/" -> pageService,
@@ -73,7 +82,7 @@ object Serve extends IOApp {
     }
   }
 
-  override def run(args: List[String]): IO[ExitCode] = {
+  def main: Opts[IO[ExitCode]] = {
 
     val jsDepsPathO = Opts.option[Path](
       "jsDeps", metavar = "path", help = "Where to get the JS deps file."
@@ -103,16 +112,7 @@ object Serve extends IOApp {
     //   "domain", metavar = "http://...",
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
-
-    val command = Command(
-      name = "mill -i qfirst.jvm.runVerbAnn",
-      header = "Spin up the annotation server for QA-SRL Clause frames.") {
-      (jsDepsPathO, jsPathO, qasrlBankO, saveO, domainO, portO).mapN(_run(_, _, _, _, _, _))
-    }
-
-    command.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
+    //
+    (jsDepsPathO, jsPathO, qasrlBankO, saveO, domainO, portO).mapN(program(_, _, _, _, _, _))
   }
 }

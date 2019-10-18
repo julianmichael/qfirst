@@ -1,4 +1,3 @@
-import qasrl.data.AnswerSpan
 import qasrl.data.QuestionLabel
 import qasrl.data.VerbEntry
 
@@ -8,7 +7,7 @@ import cats.implicits._
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
-import nlpdata.datasets.wiktionary.InflectedForms
+import jjm.ling.en.InflectedForms
 
 package object qfirst extends PackagePlatformExtensions {
   def filterGold(minNumAnswers: Int, maxNumInvalid: Int) = (verb: VerbEntry) => {
@@ -41,14 +40,7 @@ package object qfirst extends PackagePlatformExtensions {
   val questionLabelIsValidNonDense = questionLabelIsValid(3, 0)
   val questionLabelIsValidDense = questionLabelIsValid(6, 1)
 
-  def overlaps(x: AnswerSpan)(y: AnswerSpan): Boolean = {
-    x.begin <= y.end && y.begin <= x.end
-  }
-
-  import cats.Foldable
   import cats.implicits._
-
-  def counts[F[_]: Foldable, A](fa: F[A]): Map[A, Int] = fa.foldMap(a => Map(a -> 1))
 
   val sortSpec = {
     import Metric._

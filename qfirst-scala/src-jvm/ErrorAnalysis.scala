@@ -2,9 +2,9 @@ package qfirst
 
 import qfirst.metrics.Confusion
 
-import qasrl.data.AnswerSpan
-
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.implicits._
 
 import cats.implicits._
 
@@ -33,7 +33,7 @@ object ErrorAnalysis {
     val other: PredClass = Other
   }
 
-  def iouMatch(x: AnswerSpan, y: AnswerSpan) = {
+  def iouMatch(x: ESpan, y: ESpan) = {
     val xs = (x.begin until x.end).toSet
     val ys = (y.begin until y.end).toSet
     val i = xs.intersect(ys).size.toDouble
@@ -46,7 +46,7 @@ object ErrorAnalysis {
     question.qas.pred.get(question.string).fold(P.notPredicted) { case (predSlots, predSpans) =>
       question.qas.goldValid.get(question.string) match {
         case Some(qLabel) =>
-          val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+          val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
           if(answerSpans.exists(g => predSpans.exists(p => iouMatch(g, p)))) P.correct else P.wrongAnswer
         case None =>
           val qaTemplates = Instances.qaSetToQATemplateSet(question.qas)

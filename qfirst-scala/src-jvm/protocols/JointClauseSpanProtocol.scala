@@ -8,19 +8,20 @@ import cats.Show
 import cats.data.NonEmptyList
 import cats.implicits._
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.LowerCaseStrings._
+import jjm.DependentMap
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.implicits._
 
-import qasrl.data.AnswerSpan
 import qasrl.{PresentTense, PastTense, Modal}
 import qasrl.labeling.SlotBasedLabel
-import qasrl.util.DependentMap
 
 case class JCSBeamItem(
   clause: String,
   clauseProb: Double,
-  span: AnswerSpan,
+  span: ESpan,
   spanProb: Double,
   answerSlots: Map[String, Double]
 )
@@ -70,12 +71,12 @@ object JointClauseSpanProtocol
 
   private[this] def constructQAs(
     clause: String,
-    span: AnswerSpan,
+    span: ESpan,
     answerSlot: String,
     beam: List[JCSBeamItem],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]]
-  ): List[(SlotBasedLabel[VerbForm], AnswerSpan)] = {
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]]
+  ): List[(SlotBasedLabel[VerbForm], ESpan)] = {
     val tans = getSpanTans.get(span).toList
     val animacy = getAnimacy.get
 
@@ -122,12 +123,12 @@ object JointClauseSpanProtocol
         .flatMap { tan =>
         val frame = Frame(
           ArgStructure(argMap, isPassive),
-          ClauseSlotMapper.genericInflectedForms,
+          InflectedForms.generic,
           tan)
         val questionStrings = frame.questionsForSlot(ArgumentSlot.fromString(answerSlot).get)
         questionStrings.headOption.map { questionString =>
           SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
-            Vector(), ClauseSlotMapper.genericInflectedForms, List(questionString)
+            Vector(), InflectedForms.generic, List(questionString)
           ).head.get -> span
         }
       }
@@ -138,9 +139,9 @@ object JointClauseSpanProtocol
     item: JCSBeamItem,
     beam: List[JCSBeamItem],
     filter: JCSFilter,
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]]
-  ): List[(SlotBasedLabel[VerbForm], AnswerSpan)] = {
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]]
+  ): List[(SlotBasedLabel[VerbForm], ESpan)] = {
     filter match {
       case JCSTripleFilter(cThresh, sThresh, asThresh) =>
         for {

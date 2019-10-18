@@ -7,23 +7,16 @@ import io.circe.Json
 import io.circe.{Encoder, Decoder}
 import io.circe.HCursor
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.util.LowerCaseStrings._
+import jjm.DependentMap
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
 import qasrl.data.Dataset
-import qasrl.util.DependentMap
 
 object FrameDataWriter {
-  // TODO change to presentSingular3rd
-  val genericInflectedForms = InflectedForms(
-    stem = "stem".lowerCase,
-    present = "present".lowerCase,
-    presentParticiple = "presentParticiple".lowerCase,
-    past = "past".lowerCase,
-    pastParticiple = "pastParticiple".lowerCase
-  )
   def recapitalizeInflection(s: String): String = s match {
-    // case "presentsingular3rd" => "presentSingular3rd"
+    case "presentsingular3rd" => "presentSingular3rd"
     case "presentparticiple" => "presentParticiple"
     case "pastparticiple" => "pastParticiple"
     case x => x
@@ -59,7 +52,7 @@ object FrameDataWriter {
     }
 
     def getFrameObj(frame: Frame) = {
-      val verbTokens = frame.copy(verbInflectedForms = genericInflectedForms).getVerbStack.map(recapitalizeInflection)
+      val verbTokens = frame.copy(verbInflectedForms = InflectedForms.generic).getVerbStack.map(recapitalizeInflection)
       val (auxSlotValue, verbSlotValue) = verbTokens.tail match {
         case Nil => ("_", verbTokens.toList.mkString(" "))
         case toks => (verbTokens.head, toks.mkString(" "))
@@ -84,7 +77,6 @@ object FrameDataWriter {
       )
     }
 
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     import io.circe.syntax._
 
     implicit val frameInfoEncoder: Encoder[FrameInfo] = new Encoder[FrameInfo] {

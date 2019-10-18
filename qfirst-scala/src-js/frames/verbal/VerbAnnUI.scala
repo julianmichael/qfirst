@@ -1,5 +1,4 @@
 package qfirst.frames.verbal
-import qfirst.Mounting
 import qfirst.frames._
 
 import cats.Id
@@ -18,7 +17,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import japgolly.scalajs.react.vdom.html_<^._
 import japgolly.scalajs.react._
 import japgolly.scalajs.react.extra.StateSnapshot
-import japgolly.scalajs.react.extra.Reusability
+import japgolly.scalajs.react.CatsReact._
+import japgolly.scalajs.react.MonocleReact._
 
 import scalacss.DevDefaults._
 import scalacss.ScalaCssReact._
@@ -26,7 +26,6 @@ import scalacss.ScalaCssReact._
 import monocle._
 import monocle.function.{all => Optics}
 import monocle.macros._
-import japgolly.scalajs.react.MonocleReact._
 
 import qasrl.bank.AnswerSource
 import qasrl.bank.AnnotationRound
@@ -44,16 +43,18 @@ import qasrl.bank.service.Search
 
 import qasrl.data.AnswerLabel
 import qasrl.data.AnswerJudgment
-import qasrl.data.AnswerSpan
 import qasrl.data.Answer
 import qasrl.data.InvalidQuestion
 import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 import qasrl.data.QuestionLabel
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.OrWrapped
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
 import scala.collection.immutable.SortedSet
 
@@ -127,7 +128,6 @@ object VerbAnnUI {
   val StringLocal = new LocalState[String]
 
   val (inflToString, inflFromString) = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     import io.circe.syntax._
     import io.circe.parser.decode
     val printer = io.circe.Printer.noSpaces
@@ -137,8 +137,8 @@ object VerbAnnUI {
   }
 
   case class Props(
-    docService: DocumentService[CacheCall],
-    verbService: VerbAnnotationService[Future],
+    docService: DocumentService[OrWrapped[AsyncCallback, ?]],
+    verbService: VerbAnnotationService[AsyncCallback],
     urlNavQuery: NavQuery
   )
 
@@ -202,27 +202,16 @@ object VerbAnnUI {
 
   import cats.Order.catsKernelOrderingForOrder
 
-  implicit val answerSpanOrder: Order[AnswerSpan] = Order.whenEqual(
-    Order.by[AnswerSpan, Int](_.begin),
-    Order.by[AnswerSpan, Int](_.end)
-  )
   implicit val qasrlDataQuestionLabelOrder: Order[QuestionLabel] = Order.whenEqual(
     Order.by[QuestionLabel, AnnotationRound](getRoundForQuestion _),
     Order.by[QuestionLabel, String](_.questionString)
   )
 
-  def spanOverlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
-    x.begin < y.end && y.begin < x.end
-  }
-  def spanContains(s: AnswerSpan, q: Int): Boolean = {
-    q >= s.begin && q < s.end
-  }
-
   sealed trait SpanColoringSpec {
-    def spansWithColors: List[(AnswerSpan, Rgba)]
+    def spansWithColors: List[(ESpan, Rgba)]
   }
-  case class RenderWholeSentence(val spansWithColors: List[(AnswerSpan, Rgba)]) extends SpanColoringSpec
-  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(AnswerSpan, Rgba)]) extends SpanColoringSpec {
+  case class RenderWholeSentence(val spansWithColors: List[(ESpan, Rgba)]) extends SpanColoringSpec
+  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(ESpan, Rgba)]) extends SpanColoringSpec {
     def spansWithColors = spansWithColorsNel.toList
   }
 
@@ -233,26 +222,26 @@ object VerbAnnUI {
   ) = {
     val containingSpan = coloringSpec match {
       case RenderWholeSentence(_) =>
-        AnswerSpan(0, sentenceTokens.size)
+        ESpan(0, sentenceTokens.size)
       case RenderRelevantPortion(swcNel) =>
         val spans = swcNel.map(_._1)
-        AnswerSpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
+        ESpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
     }
     val wordIndexToLayeredColors = (containingSpan.begin until containingSpan.end).map { i =>
       i -> coloringSpec.spansWithColors.collect {
-        case (span, color) if spanContains(span, i) => color
+        case (span, color) if span.contains(i) => color
       }
     }.toMap
     val indexAfterToSpaceLayeredColors = ((containingSpan.begin + 1) to containingSpan.end).map { i =>
       i -> coloringSpec.spansWithColors.collect {
-        case (span, color) if spanContains(span, i - 1) && spanContains(span, i) => color
+        case (span, color) if span.contains(i - 1) && span.contains(i) => color
       }
     }.toMap
-    Text.render[Int, List, List[VdomElement]](
+    Text.renderTokens[Int, List, List[VdomElement]](
       words = sentenceTokens.indices.toList,
       getToken = (index: Int) => sentenceTokens(index),
       spaceFromNextWord = (nextIndex: Int) => {
-        if(!spanContains(containingSpan, nextIndex) || nextIndex == containingSpan.begin) List() else {
+        if(!containingSpan.contains(nextIndex) || nextIndex == containingSpan.begin) List() else {
           val colors = indexAfterToSpaceLayeredColors(nextIndex)
           val colorStr = NonEmptyList[Rgba](transparent, colors)
             .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
@@ -266,7 +255,7 @@ object VerbAnnUI {
         }
       },
       renderWord = (index: Int) => {
-        if(!spanContains(containingSpan, index)) List() else {
+        if(!containingSpan.contains(index)) List() else {
           val colorStr = NonEmptyList(transparent, wordIndexToLayeredColors(index))
             .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
           val render: (VdomTag => VdomTag) = wordRenderers.get(index).getOrElse((x: VdomTag) => x)
@@ -289,12 +278,12 @@ object VerbAnnUI {
   ): VdomArray = {
     val orderedSpans = answers.flatMap(a => NonEmptyList.fromList(a.spans.toList).get).sorted
     case class GroupingState(
-      completeGroups: List[NonEmptyList[AnswerSpan]],
-      currentGroup: NonEmptyList[AnswerSpan]
+      completeGroups: List[NonEmptyList[ESpan]],
+      currentGroup: NonEmptyList[ESpan]
     )
     val groupingState = orderedSpans.tail.foldLeft(GroupingState(Nil, NonEmptyList.of(orderedSpans.head))) {
       case (GroupingState(groups, curGroup), span) =>
-        if(curGroup.exists(s => spanOverlaps(s, span))) {
+        if(curGroup.exists(s => s.overlaps(span))) {
           GroupingState(groups, span :: curGroup)
         } else {
           GroupingState(curGroup :: groups, NonEmptyList.of(span))
@@ -410,7 +399,7 @@ object VerbAnnUI {
           <.tbody(S.verbQAsTableBody) {
             val questionLabels = verb.questionLabels.toList.map(_._2).sorted
             if(questionLabels.isEmpty) {
-              <.tr(<.td(<.span((S.loadingNotice)("All questions have been filtered out."))))
+              <.tr(<.td(<.span(S.loadingNotice)("All questions have been filtered out.")))
             } else questionLabels.toVdomArray { label =>
               val qid = QuestionId(SentenceId.fromString(curSentence.sentenceId), verb.verbIndex, label.questionString)
               val resolutions = getFramesForQid(verb.verbInflectedForms, qid)
@@ -520,7 +509,7 @@ object VerbAnnUI {
       <.div(S.sentenceSelectionPane)(
         curSentences.toVdomArray { sentence =>
           val spanHighlights = qasrl.bank.service.Search.getQueryMatchesInSentence(sentence, searchQuery).toList.map(index =>
-            AnswerSpan(index, index + 1) -> queryKeywordHighlightLayer
+            ESpan(index, index + 1) -> queryKeywordHighlightLayer
           )
           <.div(S.sentenceSelectionEntry, S.labeledSentenceSelectionEntry.when(labeledSentences.contains(curSentenceId)))(
             ^.key := sentence.sentenceId,
@@ -882,7 +871,7 @@ object VerbAnnUI {
             sentence.verbEntries(qid.verbIndex).questionLabels(qid.questionString)
               .answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList)
               .groupBy(x => x).toList.sortBy(-_._2.size)
-              .headOption.map(_._1).map(s => Text.renderSpan(sentence.sentenceTokens, (s.begin until s.end).toSet))
+              .headOption.map(_._1).map(s => Text.renderSpan(sentence.sentenceTokens, s))
           )
         }
         def getSpanForQids(qids: List[QuestionId]): Option[String] = {
@@ -957,7 +946,7 @@ object VerbAnnUI {
   class Backend(scope: BackendScope[Props, State]) {
 
     def render(props: Props, state: State) = {
-      DataFetch.make(request = (), sendRequest = _ => props.docService.getDataIndex.product(Remote(props.verbService.getVerbs))) {
+      DataFetch.make(request = (), sendRequest = _ => props.docService.getDataIndex.product(OrWrapped.wrapped(props.verbService.getVerbs))) {
         case DataFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
         case DataFetch.Loaded((dataIndex, verbCounts)) =>
           NavQueryLocal.make(initialValue = props.urlNavQuery) { navQuery =>
@@ -987,10 +976,9 @@ object VerbAnnUI {
                   StateSnapshot.withReuse.prepare[VerbFrame](
                     (vfOpt, cb) => vfOpt.fold(cb)(vf =>
                       curFrame.setState(Some(vf), cb) >>
-                        Callback(
                           props.verbService.saveFrame(vf)
-                            .foreach(newVF => curFrame.setState(Some(newVF), cb).runNow)
-                        )
+                            .flatMap(newVF => curFrame.setState(Some(newVF), cb).asAsyncCallback)
+                            .toCallback
                     )
                   )(frame)(Reusability.by_==[VerbFrame])
                 }
@@ -1111,10 +1099,10 @@ object VerbAnnUI {
                                 syncedFrameOpt.filter(_.value.inflectedForms == curVerb.value) match {
                                   case None =>
                                     Mounting.make(
-                                      Callback.future(
-                                        props.verbService.getFrame(curVerb.value)
-                                          .map(f => curFrame.setState(Some(f)))))(
-                                      <.div(S.loadingNotice)("Loading frame..."))
+                                      props.verbService.getFrame(curVerb.value)
+                                        .flatMap(f => curFrame.setState(Some(f)).asAsyncCallback)
+                                        .toCallback
+                                      )(<.div(S.loadingNotice)("Loading frame..."))
                                   case Some(frame) => frameDisplayPane(
                                     dataIndex, curVerb.value, curDocMetasOpt, curSentenceOpt.value,
                                     frame, curFrameOptions, hoveredQids, navQuery

@@ -9,21 +9,22 @@ import cats.implicits._
 import cats.effect._
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.Files
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.Text
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.implicits._
 
 import qasrl.bank.Data
 import qasrl.bank.SentenceId
 
 import qasrl.data.{AnswerJudgment, Answer, InvalidQuestion}
-import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.QuestionLabel
 import qasrl.data.Sentence
@@ -54,9 +55,9 @@ object SandboxApp extends App {
   //   // _ <- printBeams
   // } yield ExitCode.Success
 
-  lazy val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz"))
-  lazy val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
-  lazy val denseDev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz"))
+  lazy val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz")).get
+  lazy val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
+  lazy val denseDev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz")).get
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   lazy val sortSpec = {

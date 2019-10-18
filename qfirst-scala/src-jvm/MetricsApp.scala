@@ -9,18 +9,21 @@ import cats.effect.concurrent.Ref
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import java.nio.file.{Path => NIOPath}
 import java.nio.file.Files
 
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.ling.en.VerbForm
+import jjm.implicits._
+import jjm.io.FileUtil
 
 import qasrl.bank.Data
 import qasrl.bank.SentenceId
 
-import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.VerbEntry
 import qasrl.data.QuestionLabel
@@ -33,7 +36,9 @@ import io.circe.{Encoder, Decoder}
 
 import HasMetrics.ops._
 
-object MetricsApp extends IOApp {
+object MetricsApp extends CommandIOApp(
+  name = "qfirst.jvm.runMetrics",
+  header = "Calculate QA-SRL metrics.") {
 
   import ErrorAnalysis._
 
@@ -114,16 +119,12 @@ object MetricsApp extends IOApp {
     //       val goldString = qas.goldValid.get(qString).orElse(
     //         qas.goldInvalid.get(qString).filter(_ => renderInvalidGold)
     //       ).fold("\t\t") { qLabel =>
-    //         val spans = qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet[AnswerSpan].toList.sortBy(_.begin)
-    //         val renderedSpans = spans.map(s =>
-    //           Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
-    //         ).mkString(" / ")
+    //         val spans = qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet[ESpan].toList.sortBy(_.begin)
+    //         val renderedSpans = spans.map(Text.renderSpan(sentenceTokens, _)).mkString(" / ")
     //         renderedQ + "\t" + renderedSpans + "\t"
     //       }
     //       val predString = qas.pred.get(qString).fold("\t") { case (_, spans) =>
-    //         val renderedSpans = spans.map(s =>
-    //           Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
-    //         ).mkString(" / ")
+    //         val renderedSpans = spans.map(Text.renderSpan(sentenceTokens, _)).mkString(" / ")
     //         renderedQ + "\t" + renderedSpans
     //       }
     //       goldString + predString
@@ -153,16 +154,12 @@ object MetricsApp extends IOApp {
           val goldString = qas.goldValid.get(qString).orElse(
             qas.goldInvalid.get(qString).filter(_ => renderInvalidGold)
           ).fold("\t\t") { qLabel =>
-            val spans = qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet[AnswerSpan].toList.sortBy(_.begin)
-            val renderedSpans = spans.map(s =>
-              Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
-            ).mkString(" / ")
+            val spans = qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet[ESpan].toList.sortBy(_.begin)
+            val renderedSpans = spans.map(Text.renderSpan(sentenceTokens, _)).mkString(" / ")
             renderedQ + "\t" + renderedSpans + "\t"
           }
           val predString = qas.pred.get(qString).fold("\t") { case (_, spans) =>
-            val renderedSpans = spans.map(s =>
-              Text.renderSpan(sentenceTokens, (s.begin until s.end).toSet)
-            ).mkString(" / ")
+            val renderedSpans = spans.map(Text.renderSpan(sentenceTokens, _)).mkString(" / ")
             renderedQ + "\t" + renderedSpans
           }
           goldString + predString
@@ -176,24 +173,24 @@ object MetricsApp extends IOApp {
         val verbStr = s"${si.goldVerb.verbInflectedForms.stem} (${si.goldVerb.verbIndex})"
         val goldValidStr = si.goldValid.toList.map {
           case (qString, qLabel) =>
-            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
             val spanStr = answerSpans.toList.sortBy(_.begin).map(s =>
-              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+              Text.renderSpan(si.goldSentence.sentenceTokens, s)
             ).mkString(" / ")
             f"$qString%-60s $spanStr%s"
         }.mkString("\n")
         val goldInvalidStr = si.goldInvalid.toList.map {
           case (qString, qLabel) =>
-            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
             val spanStr = answerSpans.toList.sortBy(_.begin).map(s =>
-              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+              Text.renderSpan(si.goldSentence.sentenceTokens, s)
             ).mkString(" / ")
             f"$qString%-60s $spanStr%s"
         }.mkString("\n")
         val predStr = si.pred.toList.map {
           case (qString, (qSlots, answerSpans)) =>
             val answerSpanStr = answerSpans.toList.sortBy(_.begin).map(s =>
-              Text.renderSpan(si.goldSentence.sentenceTokens, (s.begin until s.end).toSet)
+              Text.renderSpan(si.goldSentence.sentenceTokens, s)
             ).mkString(" / ")
             f"$qString%-60s $answerSpanStr%s"
         }.mkString("\n")
@@ -392,7 +389,7 @@ object MetricsApp extends IOApp {
         }
         def writeGenExamples(
           path: NIOPath,
-          examples: Vector[(Instances.GeneralizedQASetInstance[TemplateSlots], TemplateSlots, AnswerSpan)],
+          examples: Vector[(Instances.GeneralizedQASetInstance[TemplateSlots], TemplateSlots, ESpan)],
           rand: util.Random
         ) = {
           val exampleStrings = examples.map { case (instance, templateQ, _) =>
@@ -619,19 +616,18 @@ object MetricsApp extends IOApp {
         case _ => throw new RuntimeException("Must specify mode of dense-curve or dense.")
       }
     }
-    trainIO = IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
+    trainIO = IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
     verbFrequenciesIO = trainIO.map(getVerbFrequencies)
     dataset <- (
       if(isTest) {
-        IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz")))
+        IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz")))
       } else {
-        IO(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
+        IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       }
     )
     clauseInfoOpt = clauseInfoPathOpt.map(readClauseInfo)
     beamProtocol <- {
       import qfirst.protocols._
-      import qasrl.data.JsonCodecs._
       import io.circe.generic.auto._
       def go[Beam: Decoder, Filter: Show, FilterSpace: Encoder : Decoder](
         protocol: BeamProtocol[Beam, Filter, FilterSpace]
@@ -664,10 +660,7 @@ object MetricsApp extends IOApp {
     // }
   } yield ExitCode.Success
 
-  val runMetrics = Command(
-    name = "mill qfirst.jvm.runMetrics",
-    header = "Calculate metrics."
-  ) {
+  def main: Opts[IO[ExitCode]] = {
     val goldPath = Opts.option[NIOPath](
       "gold", metavar = "path", help = "Path to the QA-SRL Bank."
     )
@@ -691,12 +684,5 @@ object MetricsApp extends IOApp {
     ).orFalse
 
     (goldPath, predPath, clauseInfoPathOpt, mode, protocol, recomputeFilter, isTest).mapN(program)
-  }
-
-  def run(args: List[String]): IO[ExitCode] = {
-    runMetrics.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
   }
 }

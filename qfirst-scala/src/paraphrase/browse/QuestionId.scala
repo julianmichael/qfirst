@@ -4,7 +4,6 @@ import cats.Order
 import cats.implicits._
 
 import qasrl.bank.SentenceId
-import qasrl.bank.JsonCodecs._
 
 import io.circe.generic.JsonCodec
 

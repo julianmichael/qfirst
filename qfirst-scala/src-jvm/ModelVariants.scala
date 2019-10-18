@@ -13,8 +13,8 @@ import cats.effect.IOApp
 import cats.effect.IO
 import cats.effect.ExitCode
 
-import com.monovore.decline.Command
 import com.monovore.decline.Opts
+import com.monovore.decline.effect.CommandIOApp
 
 import io.circe.Encoder
 import io.circe.ACursor
@@ -22,7 +22,11 @@ import io.circe.Json
 
 import scala.util.Random
 
-object ModelVariants extends IOApp {
+import jjm.io.FileUtil
+
+object ModelVariants extends CommandIOApp(
+  name = "mill qfirst.jvm.runHyperparams",
+  header = "Generate hyperparam configurations.")  {
 
   case class Hyperparams[F[_]: Monad](
     tokenHandler: TokenHandler[F],
@@ -902,21 +906,10 @@ object ModelVariants extends IOApp {
     // }
   } yield ExitCode.Success
 
-  val command = Command(
-    name = "mill qfirst.jvm.runHyperparams",
-    header = "Generate hyperparam configurations."
-  ) {
+  def main: Opts[IO[ExitCode]] = {
     val path = Opts.option[Path](
       "path", metavar = "path", help = "Path to create the directory to place all of the generated config files."
     )
     (path).map(generateAll)
   }
-
-  def run(args: List[String]): IO[ExitCode] = {
-    command.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
-  }
-
 }

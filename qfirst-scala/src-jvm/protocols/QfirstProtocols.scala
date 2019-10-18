@@ -8,20 +8,21 @@ import cats.Show
 import cats.data.NonEmptyList
 import cats.implicits._
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.LowerCaseStrings._
+import jjm.DependentMap
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.implicits._
 
-import qasrl.data.AnswerSpan
 import qasrl.{PresentTense, PastTense, Modal}
 import qasrl.labeling.SlotBasedLabel
-import qasrl.util.DependentMap
 
 case class QfirstBeamItem[Q](
   questionSlots: Q,
   questionProb: Double,
   invalidProb: Double,
-  span: AnswerSpan,
+  span: ESpan,
   spanProb: Double) {
   def render(renderQ: Q => String) = {
     f"q: $questionProb%4.2f s: $spanProb%4.2f i: $invalidProb%4.2f   ${renderQ(questionSlots)}%80s     $span"
@@ -53,10 +54,10 @@ trait QfirstProtocol[Q] extends FactoringProtocol[
 
   def getQuestions(
     question: Q,
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Q]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]]
 
@@ -74,9 +75,9 @@ trait QfirstProtocol[Q] extends FactoringProtocol[
     item: QfirstBeamItem[Q],
     beam: List[QfirstBeamItem[Q]],
     filter: QfirstFilter,
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]]
-  ): List[(SlotBasedLabel[VerbForm], AnswerSpan)] = {
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]]
+  ): List[(SlotBasedLabel[VerbForm], ESpan)] = {
     for {
       span <- List(item.span)
       if item.spanProb >= filter.spanThreshold
@@ -93,10 +94,10 @@ trait QfirstProtocol[Q] extends FactoringProtocol[
 object QfirstFullProtocol extends QfirstProtocol[SlotBasedLabel[VerbForm]] {
   def getQuestions(
     question: SlotBasedLabel[VerbForm],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[SlotBasedLabel[VerbForm]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] =
     List(question)
@@ -105,10 +106,10 @@ object QfirstFullProtocol extends QfirstProtocol[SlotBasedLabel[VerbForm]] {
 object QfirstNoTanProtocol extends QfirstProtocol[Map[String, String]] {
   def getQuestions(
     question: Map[String, String],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Map[String, String]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] = {
     getSpanTans.get(span).toList.map { tan =>
@@ -129,13 +130,6 @@ object QfirstNoTanProtocol extends QfirstProtocol[Map[String, String]] {
 }
 
 object ClauseSlotMapper {
-  val genericInflectedForms = InflectedForms(
-    stem = "stem".lowerCase,
-    present = "present".lowerCase,
-    presentParticiple = "presentParticiple".lowerCase,
-    past = "past".lowerCase,
-    pastParticiple = "pastParticiple".lowerCase
-  )
   def recapitalizeInflection(s: String): String = s match {
     // case "presentsingular3rd" => "presentSingular3rd"
     case "presentparticiple" => "presentParticiple"
@@ -143,7 +137,7 @@ object ClauseSlotMapper {
     case x => x
   }
   private[this] val verbStateMachine = new VerbTemplateStateMachine(
-    genericInflectedForms, false, VerbTemplateStateMachine.TemplateComplete
+    InflectedForms.generic, false, VerbTemplateStateMachine.TemplateComplete
   )
   private[this] val verbStringProcessor = new VerbStringProcessor(verbStateMachine)
 
@@ -187,7 +181,7 @@ object ClauseSlotMapper {
           }.head
         val frame = Frame(
           ArgStructure(argMap, isPassive),
-          genericInflectedForms, tan
+          InflectedForms.generic, tan
         )
         val questionStrings = frame.questionsForSlot(ArgumentSlot.fromString(question("clause-qarg")).get)
         if(questionStrings.isEmpty) {
@@ -195,7 +189,7 @@ object ClauseSlotMapper {
         }
         val questionString = questionStrings.head
         val finalSlotsOpt = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
-          Vector(), genericInflectedForms, List(questionString)
+          Vector(), InflectedForms.generic, List(questionString)
         ).head
         if(finalSlotsOpt.isEmpty) {
           println("Can't map question to slots: " + questionString)
@@ -247,10 +241,10 @@ object QfirstClausalProtocol extends QfirstProtocol[Map[String, String]] {
 
   def getQuestions(
     question: Map[String, String],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Map[String, String]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] = {
     ClauseSlotMapper(question).toList
@@ -264,10 +258,10 @@ object QfirstClausalNoTanProtocol extends QfirstProtocol[Map[String, String]] {
   }
   def getQuestions(
     question: Map[String, String],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Map[String, String]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] = {
     val isPassive = question("clause-abst-verb") == "verb[pss]"
@@ -275,7 +269,7 @@ object QfirstClausalNoTanProtocol extends QfirstProtocol[Map[String, String]] {
       .filter(tan => !isPassive || !tan.isProgressive || (!tan.isPerfect && !isModal(tan)))
       .flatMap { tan =>
       val (wholeVerbPrefix, verbForm) = tan.getVerbPrefixAndForm(isPassive, false)
-      val verbString = ClauseSlotMapper.recapitalizeInflection(ClauseSlotMapper.genericInflectedForms(verbForm).toString)
+      val verbString = ClauseSlotMapper.recapitalizeInflection(InflectedForms.generic(verbForm).toString)
       val aux = wholeVerbPrefix.headOption.fold("_")(_.toString)
       val verbSlot = NonEmptyList.fromList(wholeVerbPrefix.drop(1)) match {
         case None => verbString
@@ -293,10 +287,10 @@ object QfirstClausalNoAnimProtocol extends QfirstProtocol[Map[String, String]] {
 
   def getQuestions(
     question: Map[String, String],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Map[String, String]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] = {
     def getSlot(slot: String): Option[String] = Option(question(s"clause-$slot")).filter(_ != "_")
@@ -346,10 +340,10 @@ object QfirstClausalNoTanOrAnimProtocol extends QfirstProtocol[Map[String, Strin
 
   def getQuestions(
     question: Map[String, String],
-    span: AnswerSpan,
+    span: ESpan,
     beam: List[QfirstBeamItem[Map[String, String]]],
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]],
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]],
     spanAnimacyThreshold: Double
   ): List[SlotBasedLabel[VerbForm]] = {
     def getSlot(slot: String): Option[String] = Option(question(s"clause-$slot")).filter(_ != "_")
@@ -371,7 +365,7 @@ object QfirstClausalNoTanOrAnimProtocol extends QfirstProtocol[Map[String, Strin
         .filter(tan => !isPassive || !tan.isProgressive || (!tan.isPerfect && !isModal(tan)))
         .map { tan =>
           val (wholeVerbPrefix, verbForm) = tan.getVerbPrefixAndForm(isPassive, false)
-          val verbString = ClauseSlotMapper.recapitalizeInflection(ClauseSlotMapper.genericInflectedForms(verbForm).toString)
+          val verbString = ClauseSlotMapper.recapitalizeInflection(InflectedForms.generic(verbForm).toString)
           val aux = wholeVerbPrefix.headOption.fold("_")(_.toString)
           val verbSlot = NonEmptyList.fromList(wholeVerbPrefix.drop(1)) match {
             case None => verbString

@@ -1,9 +1,13 @@
 package qfirst.frames
 import qfirst.frames.implicits._
 
-import qasrl.util.DependentMap
+import jjm.DependentMap
+import jjm.LowerCaseString
+import jjm.ling.en._
+import jjm.ling.en.VerbForm._
+import jjm.implicits._
+
 import qasrl.{Tense, Modal, PresentTense, PastTense}
-import qasrl.util.implicits._
 
 import cats.Id
 import cats.Foldable
@@ -11,9 +15,6 @@ import cats.data.NonEmptyList
 import cats.data.StateT
 import cats.data.State
 import cats.implicits._
-
-import nlpdata.util.LowerCaseStrings._
-import nlpdata.datasets.wiktionary._
 
 import monocle.macros._
 
@@ -58,15 +59,9 @@ object ArgStructure
     isPassive: Boolean,
     subjectPresent: Boolean
   ): (List[LowerCaseString], VerbForm) = {
-    val dummyInflectedForms = InflectedForms(
-      stem = "stem".lowerCase,
-      present = "present".lowerCase,
-      presentParticiple = "presentParticiple".lowerCase,
-      past = "past".lowerCase,
-      pastParticiple = "pastParticiple".lowerCase)
     val dummyFrame = Frame(
       ArgStructure(DependentMap.empty[ArgumentSlot.Aux, Id], isPassive),
-      dummyInflectedForms, this)
+      InflectedForms.generic, this)
     val initVerbStack = dummyFrame.getVerbStack
     val verbStack = if(subjectPresent) {
       dummyFrame.splitVerbStackIfNecessary(initVerbStack)
@@ -77,8 +72,6 @@ object ArgStructure
   }
 }
 object TAN
-
-import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
 
 @JsonCodec @Lenses case class Frame(
   structure: ArgStructure,

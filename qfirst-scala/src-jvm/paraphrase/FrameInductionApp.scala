@@ -19,15 +19,19 @@ import cats.effect.concurrent.Ref
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import java.nio.file.{Path => NIOPath}
 import java.nio.file.Files
 import java.nio.file.Paths
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.io.FileUtil
+import jjm.implicits._
 
 import qasrl.ArgumentSlot
 import qasrl.bank._
@@ -89,10 +93,12 @@ object Instances {
   type QasrlElmo = Instances[InflectedForms, DenseVector[Float]]
 }
 
-object FrameInductionApp extends IOApp {
+object FrameInductionApp extends CommandIOApp(
+  name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
+  header = "Induce verb frames.") {
 
   import ClauseResolution.ArgStructure
-  type QAPairs = Map[SlotBasedLabel[VerbForm], Set[AnswerSpan]]
+  type QAPairs = Map[SlotBasedLabel[VerbForm], Set[ESpan]]
   type ClausalQ = (ArgStructure, ArgumentSlot)
 
   def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, QAPairs]]): Vocab[ArgStructure] = {
@@ -1279,10 +1285,7 @@ object FrameInductionApp extends IOApp {
     } yield ExitCode.Success
   }
 
-  val runFrameInduction = Command(
-    name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
-    header = "Induce verb frames."
-  ) {
+  def main: Opts[IO[ExitCode]] = {
     val modeO = Opts.option[String](
       "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
     ).mapValidated { string =>
@@ -1305,13 +1308,6 @@ object FrameInductionApp extends IOApp {
     (modeO, verbSenseConfigOptO, isPropbankO).mapN { (mode, verbSenseConfigOpt, isPropbank) =>
       if(isPropbank) runPropBankFrameInduction(Config(mode), verbSenseConfigOpt)
       else runQasrlFrameInduction(Config(mode), verbSenseConfigOpt)
-    }
-  }
-
-  def run(args: List[String]): IO[ExitCode] = {
-    runFrameInduction.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
     }
   }
 }

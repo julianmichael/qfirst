@@ -1,7 +1,8 @@
 package qfirst.frames
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
 import cats.implicits._
 
@@ -30,17 +31,9 @@ class FrameTests extends FunSuite with Matchers {
 
   val questions = questionsTry.get
 
-  val genericInflectedForms = InflectedForms(
-    stem = "stem".lowerCase,
-    present = "present".lowerCase,
-    presentParticiple = "presentParticiple".lowerCase,
-    past = "past".lowerCase,
-    pastParticiple = "pastParticiple".lowerCase
-  )
-
   def processQuestion(question: String) = {
     val questionTokensIsh = question.init.split(" ").toVector
-    val stateMachine = new TemplateStateMachine(questionTokensIsh, genericInflectedForms)
+    val stateMachine = new TemplateStateMachine(questionTokensIsh, InflectedForms.generic)
     val template = new QuestionProcessor(stateMachine)
 
     template.processStringFully(question)
@@ -96,7 +89,7 @@ class FrameTests extends FunSuite with Matchers {
   // val completeStatesOld = {
   //   def processQuestion(question: String) = {
   //     val questionTokensIsh = question.init.split(" ").toVector
-  //     val stateMachine = new qasrl.TemplateStateMachine(questionTokensIsh, genericInflectedForms)
+  //     val stateMachine = new qasrl.TemplateStateMachine(questionTokensIsh, InflectedForms.generic)
   //     val template = new qasrl.QuestionProcessor(stateMachine)
 
   //     template.processStringFully(question)
@@ -225,7 +218,7 @@ class FrameTests extends FunSuite with Matchers {
   {
     import qasrl.bank.Data
     import qasrl.data.Dataset
-    val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz"))
+    val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
     Dataset.verbEntries.getAll(train).foreach { verb =>
       verb.questionLabels.keys.foreach { question =>
         val questionTokensIsh = question.init.split(" ").toVector

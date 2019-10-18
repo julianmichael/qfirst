@@ -1,7 +1,6 @@
 package qfirst
 
 import qfirst._
-import qfirst.frames.implicits._
 
 import cats._
 import cats.effect._
@@ -11,15 +10,17 @@ import java.nio.file._
 
 import qasrl._
 import qasrl.data._
-import qasrl.data.JsonCodecs._
 import qasrl.labeling._
-import qasrl.util._
-import qasrl.util.implicits._
 
 import qasrl.bank._
 
-import nlpdata.datasets.wiktionary._
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.Inflections
+import jjm.ling.en.VerbForm
+import jjm.implicits._
+
+import jjm.io.FileUtil
 
 import io.circe.Json
 import io.circe.generic.JsonCodec
@@ -27,9 +28,14 @@ import io.circe.syntax._
 
 import scala.util.Random
 
+import com.monovore.decline._
+import com.monovore.decline.effect._
+
 import fs2.Stream
 
-object ClauseResolutionApp extends IOApp {
+object ClauseResolutionApp extends CommandIOApp(
+  name = "qfirst.ClauseResolutionApp",
+  header = "Runs clause resolution on the relevant portion of the QA-SRL Bank 2.1 and outputs to a file.") {
 
   import ClauseResolution._
 
@@ -61,15 +67,19 @@ object ClauseResolutionApp extends IOApp {
     )
   }
 
-  def run(args: List[String]): IO[ExitCode] = {
-    val outPath = Paths.get(args(0))
-    Stream.resource(FileUtil.blockingExecutionContext).flatMap { _ec =>
-      Stream.emits[IO, Path](paths)
-        .flatMap(path => FileUtil.streamJsonLines[Sentence](path, _ec))
-        .map(processSentence)
-        .intersperse("\n")
-        .through(fs2.text.utf8Encode)
-        .through(fs2.io.file.writeAll(outPath, _ec))
-    }.compile.drain.as(ExitCode.Success)
+  def main: Opts[IO[ExitCode]] = {
+    val outPathO = Opts.option[Path](
+      "out", metavar = "path", help = "Output path."
+    )
+    outPathO.map(outPath =>
+      Stream.resource(FileUtil.blockingExecutionContext).flatMap { _ec =>
+        Stream.emits[IO, Path](paths)
+          .flatMap(path => FileUtil.streamJsonLines[Sentence](path, _ec))
+          .map(processSentence)
+          .intersperse("\n")
+          .through(fs2.text.utf8Encode)
+          .through(fs2.io.file.writeAll(outPath, _ec))
+      }.compile.drain.as(ExitCode.Success)
+    )
   }
 }

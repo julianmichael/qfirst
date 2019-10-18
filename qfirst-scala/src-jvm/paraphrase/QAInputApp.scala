@@ -12,15 +12,16 @@ import java.nio.file._
 
 import qasrl._
 import qasrl.data._
-import qasrl.data.JsonCodecs._
 import qasrl.labeling._
-import qasrl.util._
-import qasrl.util.implicits._
 
 import qasrl.bank._
 
-import nlpdata.datasets.wiktionary._
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.implicits._
+import jjm.io.FileUtil
 
 import io.circe.Json
 import io.circe.generic.JsonCodec
@@ -30,10 +31,13 @@ import scala.util.Random
 
 import java.nio.file.{Path => NIOPath}
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import ClauseResolution.ArgStructure
 
-object QAInputApp extends IOApp {
+object QAInputApp extends CommandIOApp(
+  name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",
+  header = "Write the QA input file for similarity-scoring slots.") {
 
   import io.circe.Json
   import io.circe.syntax._
@@ -87,8 +91,8 @@ object QAInputApp extends IOApp {
   }
 
   def adjacencyProb(
-    x: List[(AnswerSpan, Double)],
-    y: List[(AnswerSpan, Double)]
+    x: List[(ESpan, Double)],
+    y: List[(ESpan, Double)]
   ): Double = {
     val xMap = x.toMap
     val yMap = y.toMap
@@ -99,7 +103,7 @@ object QAInputApp extends IOApp {
 
   @JsonCodec case class ClauseQAOutput(
     question: ClauseQAQuestion,
-    spans: List[(AnswerSpan, Double)]
+    spans: List[(ESpan, Double)]
   )
 
   @JsonCodec case class SentenceQAOutput(
@@ -269,10 +273,7 @@ object QAInputApp extends IOApp {
     )
   } yield ExitCode.Success
 
-  val runQAInput = Command(
-    name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",
-    header = "Write the QA input file for similarity-scoring slots."
-  ) {
+  def main: Opts[IO[ExitCode]] = {
     val goldPath = Opts.option[NIOPath](
       "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank."
     )
@@ -284,12 +285,5 @@ object QAInputApp extends IOApp {
     ).orFalse
 
     (goldPath, outDir, test).mapN(program)
-  }
-
-  def run(args: List[String]): IO[ExitCode] = {
-    runQAInput.parse(args) match {
-      case Left(help) => IO { System.err.println(help); ExitCode.Error }
-      case Right(main) => main
-    }
   }
 }

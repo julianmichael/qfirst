@@ -1,18 +1,19 @@
 package qfirst.frames
 
-import nlpdata.util.LowerCaseStrings._
-import qasrl.util.implicits._
+import jjm.{DependentEncoder, DependentDecoder}
+import jjm.LowerCaseString
+import jjm.implicits._
 
-sealed trait ArgumentSlot { type Arg }
-case object Subj extends ArgumentSlot { type Arg = Noun }
-case object Obj extends ArgumentSlot { type Arg = Noun }
-case object Prep1 extends ArgumentSlot { type Arg = Preposition }
-case object Prep2 extends ArgumentSlot { type Arg = Preposition }
-case object Misc extends ArgumentSlot { type Arg = NonPrepArgument }
-case class Adv(wh: LowerCaseString) extends ArgumentSlot { type Arg = Unit }
+sealed trait ArgumentSlot { type Out }
+case object Subj extends ArgumentSlot { type Out = Noun }
+case object Obj extends ArgumentSlot { type Out = Noun }
+case object Prep1 extends ArgumentSlot { type Out = Preposition }
+case object Prep2 extends ArgumentSlot { type Out = Preposition }
+case object Misc extends ArgumentSlot { type Out = NonPrepArgument }
+case class Adv(wh: LowerCaseString) extends ArgumentSlot { type Out = Unit }
 
 object ArgumentSlot {
-  type Aux[A] = ArgumentSlot { type Arg = A }
+  type Aux[A] = ArgumentSlot { type Out = A }
 
   def allAdvSlots =
     List("when", "where", "why", "how", "how long", "how much").map(s => Adv(s.lowerCase))
@@ -49,7 +50,7 @@ object ArgumentSlot {
   import cats.Id
 
   implicit val dependentArgumentEncoder = new DependentEncoder[ArgumentSlot.Aux, Id] {
-    final def getEncoder[A](slot: ArgumentSlot.Aux[A]) = slot match {
+    final def apply[A](slot: ArgumentSlot.Aux[A]) = slot match {
       case Subj   => implicitly[Encoder[Noun]]
       case Obj    => implicitly[Encoder[Noun]]
       case Prep1  => implicitly[Encoder[Preposition]]
@@ -60,7 +61,7 @@ object ArgumentSlot {
   }
 
   implicit val dependentArgumentDecoder = new DependentDecoder[ArgumentSlot.Aux, Id] {
-    final def getDecoder[A](slot: ArgumentSlot.Aux[A]) = slot match {
+    final def apply[A](slot: ArgumentSlot.Aux[A]) = slot match {
       case Subj   => implicitly[Decoder[Noun]]
       case Obj    => implicitly[Decoder[Noun]]
       case Prep1  => implicitly[Decoder[Preposition]]

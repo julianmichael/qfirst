@@ -4,8 +4,9 @@ import cats.data.NonEmptyList
 import cats.data.EitherT
 import cats.implicits._
 
-import nlpdata.util.LowerCaseStrings._
-import nlpdata.datasets.wiktionary.InflectedForms
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
 import TemplateStateMachine.TemplateState
 import TemplateStateMachine.FrameState

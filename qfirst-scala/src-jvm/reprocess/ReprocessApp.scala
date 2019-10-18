@@ -8,23 +8,25 @@ import cats.implicits._
 import cats.data.NonEmptyList
 import cats.data.Writer
 import cats.effect.IO
+import cats.effect.ExitCode
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import java.nio.file.{Path => NIOPath}
 import java.nio.file.Files
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.implicits._
 
 import qasrl.bank.Data
 import qasrl.bank.FullData
 import qasrl.bank.SentenceId
 
-import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.QuestionLabel
 import qasrl.data.Sentence
@@ -34,7 +36,9 @@ import qasrl.labeling.SlotBasedLabel
 
 import HasMetrics.ops._
 
-object ReprocessApp {
+object ReprocessApp extends CommandIOApp(
+  name = "mill qfirst.runReprocess",
+  header = "Do the data reprocessing on QA-SRL."){
 
   def getMismatchInfo(
     sentence: Sentence,
@@ -50,8 +54,8 @@ object ReprocessApp {
     newSlotsOpt match {
       case None => Some("Cannot reconstruct slots for question: " + qLabel.questionString)
       case Some(newSlots) => if(oldSlots != newSlots) Some {
-        val oldString = oldSlots.renderWithSeparator(verb.verbInflectedForms, " ")
-        val newString = newSlots.renderWithSeparator(verb.verbInflectedForms, " ")
+        val oldString = oldSlots.renderWithSeparator(verb.verbInflectedForms.apply, " ")
+        val newString = newSlots.renderWithSeparator(verb.verbInflectedForms.apply, " ")
         s"Old:$oldString%-40s New: $newString%-40s"
       } else None
     }
@@ -198,7 +202,6 @@ object ReprocessApp {
 
   def writeDatasetLines(path: NIOPath, dataset: Dataset) = {
     import io.circe.syntax._
-    import qasrl.data.JsonCodecs._
     val printer = io.circe.Printer.noSpaces
     val linesStr = dataset.sentences.iterator.map(_._2).map(_.asJson).map(printer.pretty).mkString("\n")
     Files.write(path, linesStr.getBytes("UTF-8"))
@@ -311,12 +314,9 @@ object ReprocessApp {
         }
       }
     }
-  } yield ()
+  } yield ExitCode.Success
 
-  val runReprocess = Command(
-    name = "mill qfirst.runReprocess",
-    header = "Do the data reprocessing on QA-SRL."
-  ) {
+  val main: Opts[IO[ExitCode]] = {
     val qasrlBankPath = Opts.option[NIOPath](
       "qasrl-bank", metavar = "path", help = "Path to the original QA-SRL Bank."
     )
@@ -325,13 +325,5 @@ object ReprocessApp {
     ).orNone
 
     (qasrlBankPath, outPath).mapN(program)
-  }
-
-  def main(args: Array[String]): Unit = {
-    val result = runReprocess.parse(args) match {
-      case Left(help) => IO { System.err.println(help) }
-      case Right(main) => main
-    }
-    result.unsafeRunSync
   }
 }

@@ -8,11 +8,12 @@ import cats.data.Ior
 import cats.data.NonEmptyList
 import cats.implicits._
 
-// import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.datasets.wiktionary.PastParticiple
-import nlpdata.util.LowerCaseStrings._
-import nlpdata.util.Text
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.ling.en.VerbForm
+import jjm.ling.en.VerbForm.PastParticiple
+import jjm.implicits._
 
 // import qasrl.QuestionProcessor
 // import qasrl.TemplateStateMachine
@@ -25,7 +26,6 @@ import qasrl.bank.QuestionSource
 
 import qasrl.data.Answer
 import qasrl.data.AnswerLabel
-import qasrl.data.AnswerSpan
 import qasrl.data.Dataset
 import qasrl.data.Sentence
 import qasrl.data.VerbEntry
@@ -63,13 +63,13 @@ object Instances {
     goldVerb: VerbEntry,
     goldValid: Map[String, QuestionLabel],
     goldInvalid: Map[String, QuestionLabel],
-    pred: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])]
+    pred: Map[String, (SlotBasedLabel[VerbForm], Set[ESpan])]
   ) {
     def allQuestionStrings = (goldValid.keySet ++ goldInvalid.keySet ++ pred.keySet)
     def generalize = GeneralizedQASetInstance[SlotBasedLabel[VerbForm]](
       this,
       goldValid.map(p =>
-        p._2.questionSlots -> p._2.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        p._2.questionSlots -> p._2.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
       ), pred.map(_._2)
     )
   }
@@ -79,8 +79,8 @@ object Instances {
   }
   case class GeneralizedQASetInstance[A](
     original: QASetInstance,
-    gold: Map[A, Set[AnswerSpan]],
-    pred: Map[A, Set[AnswerSpan]]
+    gold: Map[A, Set[ESpan]],
+    pred: Map[A, Set[ESpan]]
   ) {
     def map[B](f: A => B): GeneralizedQASetInstance[B] = {
       GeneralizedQASetInstance(
@@ -100,8 +100,8 @@ object Instances {
     }
     def stripAnswers = GeneralizedQASetInstance(
       original,
-      gold.map { case (q, aSet) => q -> Set(AnswerSpan(0, 1)) },
-      pred.map { case (q, aSet) => q -> Set(AnswerSpan(0, 1)) }
+      gold.map { case (q, aSet) => q -> Set(ESpan(0, 1)) },
+      pred.map { case (q, aSet) => q -> Set(ESpan(0, 1)) }
     )
   }
 
@@ -120,7 +120,7 @@ object Instances {
       }
     ).map(_.lowerCase)
 
-    import nlpdata.datasets.wiktionary._
+    import VerbForm._
     val res: SlotBasedLabel[VerbForm] = slots.aux.map(removeAuxNeg) match {
       case Some("did") if slots.subj.isEmpty =>
         slots.copy(aux = None, verbPrefix = removeVerbNeg(slots.verbPrefix), verb = Past)
@@ -216,7 +216,7 @@ object Instances {
       case (None, Some(_)) => BinaryConf.fn(question)
       case (Some(predQA), Some(goldQA)) =>
         val predAnswerSpans = predQA._2
-        val goldAnswerSpans = goldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        val goldAnswerSpans = goldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
           BinaryConf.tp(question)
         } else BinaryConf.fp(question) |+| BinaryConf.fn(question)
@@ -227,7 +227,7 @@ object Instances {
     question.qas.pred.get(question.string).fold(BoundedAcc[QuestionInstance]()) { predQA =>
       question.qas.goldValid.get(question.string).map { validGoldQA =>
         val predAnswerSpans = predQA._2
-        val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+        val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
         if(predAnswerSpans.intersect(goldAnswerSpans).nonEmpty) {
           BoundedAcc.correct(question)
         } else BoundedAcc.incorrect(question)
@@ -239,12 +239,12 @@ object Instances {
 
   case class QAInstance(
     question: QuestionInstance,
-    span: AnswerSpan
+    span: ESpan
   )
 
   val questionToQAs = (question: QuestionInstance) => {
-    val allSpans = question.qas.goldValid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans)).toSet ++
-      question.qas.goldInvalid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans)).toSet ++
+    val allSpans = question.qas.goldValid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList)).toSet ++
+      question.qas.goldInvalid.get(question.string).toList.flatMap(_.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList)).toSet ++
       question.qas.pred.get(question.string).toList.flatMap(_._2).toSet
     allSpans.toList.map(s => QAInstance(question, s))
   }
@@ -257,7 +257,7 @@ object Instances {
           .as(BoundedAcc.incorrect(qa))
           .orElse {
           qa.question.qas.goldValid.get(qa.question.string).map { validGoldQA =>
-            val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+            val goldAnswerSpans = validGoldQA.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
             val goldContainsSpan = goldAnswerSpans.contains(qa.span)
             if(goldContainsSpan) BoundedAcc.correct(qa) else BoundedAcc.incorrect(qa)
           }
@@ -270,17 +270,17 @@ object Instances {
   // may have been invalid due to tense issues or other things abstracted out by the template
   case class QATemplateSetInstance(
     qaSet: QASetInstance,
-    gold: Map[String, (TemplateSlots, Set[AnswerSpan])],
-    pred: Map[String, (TemplateSlots, Set[AnswerSpan])]
+    gold: Map[String, (TemplateSlots, Set[ESpan])],
+    pred: Map[String, (TemplateSlots, Set[ESpan])]
   )
 
   val qaSetToQATemplateSet = (qas: QASetInstance) => {
     val goldTemplates = qas.goldValid.values.toList.map { qLabel =>
       val templateSlots = TemplateSlots.fromQuestionSlots(qLabel.questionSlots)
-      val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+      val answerSpans = qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList.toList).toSet
       templateSlots.toTemplateString -> (templateSlots, answerSpans)
     }.groupBy(_._1).map { case (string, templateSets) =>
-        string -> (templateSets.head._2._1, templateSets.flatMap(_._2._2).toSet)
+      string -> (templateSets.head._2._1 -> templateSets.flatMap(_._2._2).toSet)
     }
     val predTemplates = qas.pred.values.map { case (slots, answerSpans) =>
       val templateSlots = TemplateSlots.fromQuestionSlots(slots)
@@ -350,7 +350,7 @@ object Instances {
 
   case class QATemplateInstance(
     template: QuestionTemplateInstance,
-    span: AnswerSpan
+    span: ESpan
   )
 
   val questionTemplateToQATemplates = (template: QuestionTemplateInstance) => {
@@ -372,8 +372,8 @@ object Instances {
 
   case class SpanSetInstance(
     qaSet: QASetInstance,
-    gold: List[Set[AnswerSpan]],
-    pred: List[Set[AnswerSpan]]
+    gold: List[Set[ESpan]],
+    pred: List[Set[ESpan]]
   )
 
   val qaSetToSpanSet = (qaSet: QASetInstance) => {
@@ -381,8 +381,8 @@ object Instances {
       qLabel.answerJudgments.toList
         .map(_.judgment)
         .flatMap(_.getAnswer)
-        .map(_.spans)
-        .foldLeft(Set.empty[AnswerSpan])(_ union _)
+        .map(_.spans.toList.toSet)
+        .foldLeft(Set.empty[ESpan])(_ union _)
     }
     val predSpanSets = qaSet.pred.values.toList.map(_._2)
     SpanSetInstance(qaSet, goldSpanSets, predSpanSets)
@@ -391,11 +391,11 @@ object Instances {
   // NOTE: does not do bipartite matching thing
   val getSpanSetConf = (spanSet: SpanSetInstance) => {
     case class SpanAlignment(
-      remainingPred: Set[Set[AnswerSpan]],
+      remainingPred: Set[Set[ESpan]],
       conf: BinaryConf.Stats)
     val alignment = spanSet.gold.foldLeft(SpanAlignment(spanSet.pred.toSet, BinaryConf.Stats())) {
       case (SpanAlignment(preds, conf), goldSpanSet) =>
-        preds.find(_.exists(s => goldSpanSet.exists(overlaps(s)))) match {
+        preds.find(_.exists(s => goldSpanSet.exists(s.overlaps))) match {
           case None => (SpanAlignment(preds, conf |+| BinaryConf.Stats(fn = 1)))
           case Some(predSpanSet) => (SpanAlignment(preds - predSpanSet, conf |+| BinaryConf.Stats(tp = 1)))
         }
@@ -406,18 +406,18 @@ object Instances {
   // left = predicted, right = gold
   case class AlignedSpanInstance(
     spanSet: SpanSetInstance,
-    alignment: List[Ior[Set[AnswerSpan], Set[AnswerSpan]]],
-    span: Ior[Set[AnswerSpan], Set[AnswerSpan]]
+    alignment: List[Ior[Set[ESpan], Set[ESpan]]],
+    span: Ior[Set[ESpan], Set[ESpan]]
   )
 
   // NOTE: does not do bipartite matching thing
   val spanSetToAlignedSpans = (spanSet: SpanSetInstance) => {
     case class SpanAlignment(
-      alignedSpans: List[Ior[Set[AnswerSpan], Set[AnswerSpan]]],
-      remainingPred: Set[Set[AnswerSpan]])
+      alignedSpans: List[Ior[Set[ESpan], Set[ESpan]]],
+      remainingPred: Set[Set[ESpan]])
     val SpanAlignment(partialAlignment, unmatchedPreds) = spanSet.gold.foldLeft(SpanAlignment(Nil, spanSet.pred.toSet)) {
       case (SpanAlignment(alignment, preds), goldSpanSet) =>
-        preds.find(_.exists(s => goldSpanSet.exists(overlaps(s)))) match {
+        preds.find(_.exists(s => goldSpanSet.exists(s.overlaps))) match {
           case None => SpanAlignment(Ior.right(goldSpanSet) :: alignment, preds)
           case Some(predSpanSet) => SpanAlignment(Ior.both(predSpanSet, goldSpanSet) :: alignment, preds - predSpanSet)
         }

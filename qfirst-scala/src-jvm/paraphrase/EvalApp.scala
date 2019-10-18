@@ -11,14 +11,15 @@ import cats.effect.concurrent.Ref
 import cats.effect.{ExitCode, IO, IOApp, Resource}
 
 import com.monovore.decline._
+import com.monovore.decline.effect._
 
 import java.nio.file.{Path => NIOPath}
 import java.nio.file.Files
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.Text
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
 
 import qasrl.bank._
 
@@ -35,7 +36,9 @@ import HasMetrics.ops._
 
 import ClauseResolution.ArgStructure
 
-object EvalApp extends IOApp {
+object EvalApp extends CommandIOApp(
+  name = "qfirst.paraphrase.EvalApp",
+  header = "Evaluate paraphrases? idk this seems like a dummy file"){
 
   type ParaphraseAnnotations = Map[
     // sentence
@@ -167,11 +170,13 @@ object EvalApp extends IOApp {
   //   (experimentNameO, testOnTestO).mapN(program)
   // }
 
-  def run(args: List[String]): IO[ExitCode] = {
+  def main: Opts[IO[ExitCode]] = {
     // runFrameInduction.parse(args) match {
     //   case Left(help) => IO { System.err.println(help); ExitCode.Error }
     //   case Right(main) => main
     // }
-    IO.pure(ExitCode.Success)
+    Opts.flag("merp", help = "dummy flag").map(_ =>
+      IO.pure(ExitCode.Success)
+    )
   }
 }

@@ -7,11 +7,12 @@ import qfirst.VerbPrediction
 import cats.Show
 import cats.implicits._
 
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.ESpan
+import jjm.ling.en.VerbForm
+import jjm.implicits._
 
 import qasrl.{PresentTense, PastTense, Modal}
-import qasrl.data.AnswerSpan
 import qasrl.labeling.SlotBasedLabel
 
 object FactoringProtocol {
@@ -37,10 +38,10 @@ object FactoringProtocol {
   case class Beam[A](
     qa_beam: List[A],
     tans: Option[List[(String, Double)]],
-    span_tans: Option[List[(AnswerSpan, List[(String, Double)])]],
-    animacy: Option[List[(AnswerSpan, Double)]]) {
+    span_tans: Option[List[(ESpan, List[(String, Double)])]],
+    animacy: Option[List[(ESpan, Double)]]) {
     val tanMap: Option[Map[TAN, Double]] = tans.map(makeTanMap)
-    val spanTanMap: Option[Map[AnswerSpan, Map[TAN, Double]]] = span_tans.map {
+    val spanTanMap: Option[Map[ESpan, Map[TAN, Double]]] = span_tans.map {
       pairList => pairList.map {
         case (span, tanStringList) => span -> makeTanMap(tanStringList)
       }.toMap
@@ -82,9 +83,9 @@ trait FactoringProtocol[A, F, FS] extends BeamProtocol[
     item: A,
     beam: List[A],
     filter: F,
-    getSpanTans: Option[AnswerSpan => Set[TAN]],
-    getAnimacy: Option[AnswerSpan => Option[Boolean]]
-  ): List[(SlotBasedLabel[VerbForm], AnswerSpan)]
+    getSpanTans: Option[ESpan => Set[TAN]],
+    getAnimacy: Option[ESpan => Option[Boolean]]
+  ): List[(SlotBasedLabel[VerbForm], ESpan)]
 
   override def getAllFilters(fs: FilterSpace[FS, F]): List[Filter[F]] = {
     fs.best.map(List(_)).getOrElse(
@@ -103,26 +104,26 @@ trait FactoringProtocol[A, F, FS] extends BeamProtocol[
     fs.copy(best = f)
   }
 
-  def filterBeam(filter: Filter[F], verb: VerbPrediction[Beam[A]]): Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])] = {
+  def filterBeam(filter: Filter[F], verb: VerbPrediction[Beam[A]]): Map[String, (SlotBasedLabel[VerbForm], Set[ESpan])] = {
     val beam = verb.beam
-    val getSpanTans: Option[AnswerSpan => Set[TAN]] = {
+    val getSpanTans: Option[ESpan => Set[TAN]] = {
       if(filter.useSpanTans) {
         beam.spanTanMap.map { mapping =>
-          (s: AnswerSpan) => {
+          (s: ESpan) => {
             mapping(s).toList.filter(_._2 >= filter.tanThreshold).map(_._1).toSet
           }
         }
       } else {
         beam.tanMap.map(mapping =>
-          (s: AnswerSpan) => {
+          (s: ESpan) => {
             mapping.toList.filter(_._2 >= filter.tanThreshold).map(_._1).toSet
           }
         )
       }
     }
-    val getAnimacy: Option[AnswerSpan => Option[Boolean]] = {
+    val getAnimacy: Option[ESpan => Option[Boolean]] = {
       beam.animacyMap.map { animacyScores =>
-        (s: AnswerSpan) => {
+        (s: ESpan) => {
           if(animacyScores(s) >= filter.animacyPositiveThreshold) Some(true)
           else if(animacyScores(s) < filter.animacyNegativeThreshold) Some(false)
           else None
@@ -131,7 +132,7 @@ trait FactoringProtocol[A, F, FS] extends BeamProtocol[
     }
     verb.beam.qa_beam
       .flatMap(item => getQAs(item, verb.beam.qa_beam, filter.innerFilter, getSpanTans, getAnimacy))
-      .groupBy(_._1.renderQuestionString(verb.verbInflectedForms))
+      .groupBy(_._1.renderQuestionString(verb.verbInflectedForms.apply))
       .map { case (qString, qaItems) =>
         qString -> (qaItems.head._1 -> qaItems.map(_._2).toSet)
       }

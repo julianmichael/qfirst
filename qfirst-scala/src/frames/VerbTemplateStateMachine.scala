@@ -1,14 +1,14 @@
 package qfirst.frames
 
-import qasrl.util.implicits._
+import jjm.LowerCaseString
+import jjm.ling.en.InflectedForms
+import jjm.implicits._
+
 import qasrl.{Tense, Modal, PresentTense, PastTense}
 
 import cats.data.NonEmptyList
 import cats.data.StateT
 import cats.implicits._
-
-import nlpdata.util.LowerCaseStrings._
-import nlpdata.datasets.wiktionary.InflectedForms
 
 import monocle.macros._
 
@@ -121,7 +121,7 @@ class VerbTemplateStateMachine(
 
   // follows no aux
   val tensedVerb = progress(
-    (present.toString) -> modTAN(TAN.tense.set(PresentTense)).as(next),
+    (presentSingular3rd.toString) -> modTAN(TAN.tense.set(PresentTense)).as(next),
     (past.toString)    -> modTAN(TAN.tense.set(PastTense)).as(next)
   )
 

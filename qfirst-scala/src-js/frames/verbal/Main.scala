@@ -1,5 +1,7 @@
 package qfirst.frames.verbal
 
+import cats.~>
+import cats.Id
 import cats.implicits._
 
 import org.scalajs.dom
@@ -14,65 +16,54 @@ import scala.concurrent.Future
 
 import radhoc._
 
-import nlpdata.util.LowerCaseStrings._
+import jjm.DotMap
+import jjm.OrWrapped
+import jjm.LowerCaseString
+import jjm.io.HttpUtil
+import jjm.implicits._
+
+import japgolly.scalajs.react.AsyncCallback
 
 object Main {
   def main(args: Array[String]): Unit = {
     VerbAnnStyles.addToDocument()
+
     val docApiEndpoint: String = dom.document
       .getElementById(SharedConstants.docApiUrlElementId)
       .getAttribute("value")
+
+    val initialCache = DotMap.empty[Id, DocumentService.Request]
+    //  .put(DocumentService.GetDataIndex)(dataIndex)
+    //  .put(DocumentService.SearchDocuments(Search.Query(None, Set())))(dataIndex.allDocumentIds)
+
+    import scala.concurrent.ExecutionContext.Implicits.global
+
+    type DelayedFuture[A] = () => Future[A]
+    val wrapCallback = λ[DelayedFuture ~> AsyncCallback](f =>
+      AsyncCallback.fromFuture(f())
+    )
+
+    val documentService = DocumentService(
+      jjm.Memo.memoizeDotFuture(
+        HttpUtil.makeHttpPostClient[DocumentService.Request](docApiEndpoint),
+        initialCache
+      ).andThenK(OrWrapped.mapK(wrapCallback))
+    )
+
     val verbApiEndpoint: String = dom.document
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
 
-    import qasrl.bank.service.WebClientDocumentService
-    val dataService = new WebClientDocumentService(docApiEndpoint)
-    object CachedDataService extends DocumentService[CacheCall] {
-      import scala.concurrent.ExecutionContext.Implicits.global
-      import scala.collection.mutable
-      import DocumentService._
-      var indexCache: Option[DataIndex] = None
-      val documentCache = mutable.Map.empty[DocumentId, Document]
-      val documentRequestCache = mutable.Map.empty[DocumentId, Future[Document]]
-
-      def getDataIndex = indexCache.map(Cached(_)).getOrElse {
-        val fut = dataService.getDataIndex
-        fut.foreach { doc =>
-          indexCache = Some(doc)
-        }
-        Remote(fut)
-      }
-
-      def getDocument(id: DocumentId) = {
-        documentCache.get(id).map(Cached(_)).getOrElse {
-          documentRequestCache.get(id).map(Remote(_)).getOrElse {
-            val fut = dataService.getDocument(id)
-            documentRequestCache.put(id, fut)
-            fut.foreach { doc =>
-              documentRequestCache.remove(id)
-              documentCache.put(id, doc)
-            }
-            Remote(fut)
-          }
-        }
-      }
-
-      override def searchDocuments(query: Search.Query) = {
-        if(query.isEmpty) {
-          getDataIndex.map(_.allDocumentIds)
-        } else {
-          Remote(dataService.searchDocuments(query))
-        }
-      }
-    }
+    val verbClient = VerbAnnotationService(
+      HttpUtil
+        .makeHttpPostClient[VerbAnnotationService.Request](verbApiEndpoint)
+        .andThenK(wrapCallback)
+    )
 
     val query = NavQuery.fromString(dom.window.location.pathname.tail)
 
     VerbAnnUI.Component(
-      VerbAnnUI.Props(
-        CachedDataService, VerbAnnotationClient(verbApiEndpoint), query
-      )
+      VerbAnnUI.Props(documentService, verbClient, query)
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)
     )

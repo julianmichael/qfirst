@@ -12,8 +12,9 @@ import qasrl.bank.Data
 import qasrl.bank.FullData
 
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
+import jjm.io.FileUtil
 
 import cats.effect.ContextShift
 import cats.effect.IO
@@ -132,7 +133,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
             sid -> pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
               verbIndex -> verb.questionLabels.map { case (qString, qLabel) =>
                 qLabel.questionSlots -> (
-                  qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans).toSet
+                  qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
                 )
               }
             }
@@ -261,7 +262,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
 
   def readPropBankInstances(name: String) = {
     import io.circe.generic.auto._
-    import qasrl.data.JsonCodecs._
     import cats.effect.concurrent.Ref
     logOp(
       s"Reading QA-SRL on PropBank $name set",
@@ -297,7 +297,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
 
   def readPropBankLabels(name: String) = {
     import io.circe.generic.auto._
-    import qasrl.data.JsonCodecs._
     logOp(
       s"Reading verb sense labels on PropBank $name set",
       getPropBankSenseLabels(
@@ -330,7 +329,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
       )
       embeddings <- logOp(
         "Reading verb embeddings",
-        FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
+        VectorFileUtil.readDenseFloatVectorsNIO(embPath, embDim)
       )
       _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
@@ -373,7 +372,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
       )
       embeddings <- logOp(
         "Reading verb embeddings",
-        FileUtil.readDenseFloatVectorsNIO(embPath, embDim)
+        VectorFileUtil.readDenseFloatVectorsNIO(embPath, embDim)
       )
       _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
@@ -422,7 +421,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   val propBankFullElmo = new Cell(for(i <- propBankInputElmo.get; e <- propBankEvalElmo.get) yield i |+| e)
 
   val collapsedQAOutputs = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     new Cell(
       fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
         path = collapsedQAOutputPath,
@@ -448,7 +446,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   }
 
   val evaluationItems = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     new Cell(
       fileCached[Vector[(InflectedForms, String, Int)]](
         path = evaluationItemsPath,
@@ -500,7 +497,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
   }
 
   def getCachedVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, VerbClusterModel]]] = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     verbClustersPath(verbSenseConfig).flatMap(path =>
       fileCached[Option[Map[InflectedForms, VerbClusterModel]]](
         path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
@@ -510,7 +506,6 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
     )
   }
   def cacheVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, VerbClusterModel]): IO[Unit] = {
-    import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
     verbClustersPath(verbSenseConfig).flatMap(path =>
       FileUtil.writeJsonLines(path)(clusters.toList)
     )

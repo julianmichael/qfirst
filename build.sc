@@ -3,48 +3,38 @@ import mill.scalalib.scalafmt._
 import coursier.maven.MavenRepository
 import ammonite.ops._
 
-val thisScalaVersion = "2.12.6"
-val thisScalaJSVersion = "0.6.23"
+val thisScalaVersion = "2.12.8"
+val thisScalaJSVersion = "0.6.27"
 
 val macroParadiseVersion = "2.1.0"
 val kindProjectorVersion = "0.9.4"
 val splainVersion = "0.3.4"
-val betterMonadicForVersion = "0.3.0-M4"
+val betterMonadicForVersion = "0.3.1"
 
-val shapelessVersion = "2.3.3"
+val jjmVersion = "0.1.0-SNAPSHOT"
+val qasrlVersion = "0.2.0-SNAPSHOT"
+val qasrlBankVersion = "0.2.0-SNAPSHOT"
+val radhocVersion = "0.3.0-SNAPSHOT"
+val spacroVersion = "0.3.0-SNAPSHOT"
 
-// cats libs -- maintain version agreement or whatever
-val catsVersion = "1.1.0"
-val catsEffectVersion = "1.0.0"
+// val http4sVersion = "0.20.11"
 val kittensVersion = "1.1.1"
-val nlpdataVersion = "0.2.1-SNAPSHOT"
-val qasrlVersion = "0.1.2-SNAPSHOT"
-val qasrlBankVersion = "0.1.1-SNAPSHOT"
-val circeVersion = "0.11.1"
-val declineVersion = "0.4.2"
-val simulacrumVersion = "0.13.0"
-val monocleVersion = "1.5.1-cats"
-val fs2Version = "1.0.4"
-// js cats libs
-val radhocVersion = "0.2.0-SNAPSHOT"
-// jvm webby cats libs
-val http4sVersion = "0.20.0-M6"
+val declineVersion = "1.0.0"
 
-// non-cats
-val upickleVersion = "0.5.1"
-val spacroVersion = "0.2.0"
 val breezeVersion = "0.13.2"
 val evilplotVersion = "0.6.3"
 
+// non-cats
+// val upickleVersion = "0.5.1"
+
 // jvm webby libs
 val scalatagsVersion = "0.6.7"
-val scalacssVersion = "0.5.3"
 
 // jvm libs
 val ammoniteOpsVersion = "1.1.2"
 val logbackVersion = "1.2.3"
 // jvm crowd libs
-val akkaActorVersion = "2.4.20"
+// val akkaActorVersion = "2.4.20"
 val scalaLoggingVersion = "3.5.0"
 val slf4jApiVersion = "1.7.21"
 
@@ -52,12 +42,12 @@ val slf4jApiVersion = "1.7.21"
 val scalajsDomVersion = "0.9.6"
 val scalajsJqueryVersion = "0.9.3"
 // val scalajsReactVersion = "1.2.3"
-val scalajsReactVersion = "1.3.1"
-val scalajsScalaCSSVersion = "0.5.3"
+// val scalajsReactVersion = "1.3.1"
+val scalacssVersion = "0.5.3"
 
-val scalatestVersion = "3.0.5"
-val scalacheckVersion = "1.13.5"
-val disciplineVersion = "0.9.0"
+val scalatestVersion = "3.0.8"
+val scalacheckVersion = "1.14.0"
+val disciplineVersion = "1.0.0"
 
 import $file.`scripts-build`.SimpleJSDepsBuild, SimpleJSDepsBuild.SimpleJSDeps
 import $file.`scripts-build`.ScalatexBuild, ScalatexBuild.ScalatexModule
@@ -94,26 +84,14 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   // )
 
   override def ivyDeps = Agg(
-    ivy"org.typelevel::cats-core::$catsVersion",
-    ivy"org.typelevel::cats-effect::$catsEffectVersion",
-    ivy"org.typelevel::alleycats-core::$catsVersion",
-    ivy"com.github.mpilquist::simulacrum:$simulacrumVersion",
-    ivy"com.github.julien-truffaut::monocle-core::$monocleVersion",
-    ivy"com.github.julien-truffaut::monocle-macro::$monocleVersion",
-    ivy"com.github.julien-truffaut::monocle-generic::$monocleVersion",
-    ivy"com.chuusai::shapeless::$shapelessVersion",
+    ivy"org.julianmichael::jjm-core::$jjmVersion",
+    ivy"org.julianmichael::jjm-io::$jjmVersion",
+    // ivy"org.typelevel::alleycats-core::$catsVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
-    ivy"org.julianmichael::nlpdata::$nlpdataVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
-    ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank::$qasrlBankVersion",
     ivy"org.julianmichael::qasrl-bank-service::$qasrlBankVersion",
-    ivy"io.circe::circe-core::$circeVersion",
-    ivy"io.circe::circe-parser::$circeVersion",
-    ivy"io.circe::circe-generic::$circeVersion",
-    // crowd stuff
-    ivy"org.julianmichael::spacro::$spacroVersion",
-    ivy"com.lihaoyi::upickle::$upickleVersion",
+    ivy"com.github.japgolly.scalacss::core::$scalacssVersion"
   )
 }
 
@@ -155,13 +133,8 @@ object qfirst extends Module {
       ivy"org.julianmichael::radhoc::$radhocVersion",
       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
       ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-      ivy"com.github.japgolly.scalajs-react::core::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalajs-react::ext-monocle-cats::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalajs-react::ext-cats::$scalajsReactVersion",
-      ivy"com.github.japgolly.scalacss::core::$scalajsScalaCSSVersion",
-      ivy"com.github.japgolly.scalacss::ext-react::$scalajsScalaCSSVersion",
-      // crowd stuff
-      )
+      ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
+    )
     override def jsDeps = Agg(
       "https://code.jquery.com/jquery-2.1.4.min.js",
       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
@@ -174,20 +147,18 @@ object qfirst extends Module {
     )
     override def ivyDeps = super.ivyDeps() ++ Agg(
       ivy"com.monovore::decline::$declineVersion",
+      ivy"com.monovore::decline-effect::$declineVersion",
       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-      ivy"co.fs2::fs2-core::$fs2Version",
-      ivy"co.fs2::fs2-io::$fs2Version",
       ivy"org.scalanlp::breeze:$breezeVersion",
       ivy"org.scalanlp::breeze-natives:$breezeVersion",
       ivy"com.cibo::evilplot-repl:$evilplotVersion",
       // webby stuff
-      ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
-      ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      ivy"org.http4s::http4s-dsl::$http4sVersion",
-      ivy"org.http4s::http4s-blaze-server::$http4sVersion",
+      // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+      // ivy"org.http4s::http4s-dsl::$http4sVersion",
+      // ivy"org.http4s::http4s-blaze-server::$http4sVersion",
       ivy"ch.qos.logback:logback-classic:$logbackVersion",
       // crowd stuff
-      ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
+      // ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
       ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
       ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
       )
@@ -274,9 +245,58 @@ object qfirst extends Module {
       override def ivyDeps = Agg(
         ivy"org.scalatest::scalatest:$scalatestVersion",
         ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-        ivy"org.typelevel::discipline:$disciplineVersion"
+        ivy"org.typelevel::discipline-core:$disciplineVersion"
+        // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
       )
       def testFrameworks = Seq("org.scalatest.tools.Framework")
     }
+  }
+}
+
+trait ClausalDemoModule extends QfirstModule {
+  override def millSourcePath = build.millSourcePath / "clausal-demo"
+  override def ivyDeps = super.ivyDeps() ++ Agg(
+    ivy"org.julianmichael::spacro::$spacroVersion",
+    ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+  )
+}
+
+object `clausal-demo` extends Module {
+  object js extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
+    def moduleDeps = List(qfirst.js)
+
+    override def ivyDeps = super.ivyDeps() ++ Agg(
+      ivy"org.julianmichael::radhoc::$radhocVersion",
+      ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+      ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
+      ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
+    )
+    override def jsDeps = Agg(
+      "https://code.jquery.com/jquery-2.1.4.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+    )
+  }
+  object jvm extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
+    def moduleDeps = List(qfirst.jvm)
+
+    override def resources = T.sources(
+      millSourcePath / "resources",
+      `clausal-demo`.js.fastOpt().path / RelPath.up,
+      `clausal-demo`.js.aggregatedJSDeps().path / RelPath.up
+    )
+
+    override def ivyDeps = super.ivyDeps() ++ Agg(
+      // ivy"com.monovore::decline::$declineVersion",
+      // ivy"com.monovore::decline-effect::$declineVersion",
+      ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
+      // webby stuff
+      ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
+      // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+      ivy"ch.qos.logback:logback-classic:$logbackVersion",
+      // crowd stuff
+      ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+      ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
+    )
   }
 }

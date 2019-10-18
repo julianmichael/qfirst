@@ -3,11 +3,10 @@ package qfirst.paraphrase
 import cats.implicits._
 
 import qasrl.ArgumentSlot
-import qasrl.data.AnswerSpan
 import qasrl.data.VerbEntry
 import qasrl.labeling.SlotBasedLabel
 
-import nlpdata.datasets.wiktionary.VerbForm
+import jjm.ling.en.VerbForm
 
 import qfirst.filterGoldDense
 // import qfirst.{Instances => I}
@@ -52,7 +51,7 @@ object Evaluation {
 
   def getVerbResults(
     gold: VerbEntry,
-    // predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[AnswerSpan])],
+    // predictedQAs: Map[String, (SlotBasedLabel[VerbForm], Set[ESpan])],
     goldParaphrases: VerbParaphraseLabels,
     verbFrame: VerbFrame,
     filter: ParaphrasingFilter
@@ -62,7 +61,7 @@ object Evaluation {
     val goldValidStructures = ClauseResolution.getResolvedStructures(goldValidQLabels.map(_.questionSlots))
     val goldValidStructurePairs = goldValidStructures.zip(goldValidQLabels)
       .groupBy(_._1).map { case (struct, labels) =>
-        struct -> labels.unorderedFoldMap(_._2.answerJudgments.flatMap(_.judgment.getAnswer).unorderedFoldMap(_.spans))
+        struct -> labels.toList.foldMap(_._2.answerJudgments.flatMap(_.judgment.getAnswer).toList.foldMap(_.spans.toList)).toSet
     }
     // val predictedQAPairs = predictedQAs.values.toList
     // val predictedStructures = ClauseResolution.getResolvedStructures(predictedQAPairs.map(_._1))

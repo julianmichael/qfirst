@@ -9,7 +9,6 @@ import cats.data.NonEmptySet
 import cats.implicits._
 
 import qasrl.bank.SentenceId
-import qasrl.bank.JsonCodecs._
 
 import qasrl._
 import qasrl.labeling.SlotBasedLabel
@@ -17,10 +16,8 @@ import qfirst.ClauseResolution.ArgStructure
 
 import io.circe.generic.JsonCodec
 
-import nlpdata.datasets.wiktionary.InflectedForms
-import nlpdata.datasets.wiktionary.VerbForm
-
-import qasrl.data.JsonCodecs.{inflectedFormsEncoder, inflectedFormsDecoder}
+import jjm.ling.en.InflectedForms
+import jjm.ling.en.VerbForm
 
 import monocle.macros._
 

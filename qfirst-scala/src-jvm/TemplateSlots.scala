@@ -2,9 +2,10 @@ package qfirst
 
 import qasrl.labeling.SlotBasedLabel
 
-import nlpdata.datasets.wiktionary.VerbForm
-import nlpdata.datasets.wiktionary.PastParticiple
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.ling.en.VerbForm
+import jjm.ling.en.VerbForm.PastParticiple
+import jjm.implicits._
 
 case class TemplateSlots(
   wh: LowerCaseString,

@@ -39,15 +39,17 @@ import qasrl.bank.service.DocumentService
 
 import qasrl.data.AnswerLabel
 import qasrl.data.AnswerJudgment
-import qasrl.data.AnswerSpan
 import qasrl.data.Answer
 import qasrl.data.InvalidQuestion
 import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 import qasrl.data.QuestionLabel
 
-import nlpdata.util.Text
-import nlpdata.util.LowerCaseStrings._
+import jjm.LowerCaseString
+import jjm.OrWrapped
+import jjm.ling.ESpan
+import jjm.ling.Text
+import jjm.implicits._
 
 import scala.collection.immutable.SortedSet
 
@@ -77,8 +79,8 @@ object FrameAnnClient {
   val S = FrameAnnStyles
 
   case class Props(
-    docService: DocumentService[CacheCall],
-    annService: ClauseAnnotationService[Future]
+    docService: DocumentService[OrWrapped[AsyncCallback, ?]],
+    annService: ClauseAnnotationService[AsyncCallback]
   )
 
   case class State()
@@ -142,23 +144,11 @@ object FrameAnnClient {
 
   import cats.Order.catsKernelOrderingForOrder
 
-  implicit val answerSpanOrder: Order[AnswerSpan] = Order.whenEqual(
-    Order.by[AnswerSpan, Int](_.begin),
-    Order.by[AnswerSpan, Int](_.end)
-  )
-
-  def spanOverlaps(x: AnswerSpan, y: AnswerSpan): Boolean = {
-    x.begin < y.end && y.begin < x.end
-  }
-  def spanContains(s: AnswerSpan, q: Int): Boolean = {
-    q >= s.begin && q < s.end
-  }
-
   sealed trait SpanColoringSpec {
-    def spansWithColors: List[(AnswerSpan, Rgba)]
+    def spansWithColors: List[(ESpan, Rgba)]
   }
-  case class RenderWholeSentence(val spansWithColors: List[(AnswerSpan, Rgba)]) extends SpanColoringSpec
-  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(AnswerSpan, Rgba)]) extends SpanColoringSpec {
+  case class RenderWholeSentence(val spansWithColors: List[(ESpan, Rgba)]) extends SpanColoringSpec
+  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(ESpan, Rgba)]) extends SpanColoringSpec {
     def spansWithColors = spansWithColorsNel.toList
   }
 
@@ -169,26 +159,26 @@ object FrameAnnClient {
   ) = {
     val containingSpan = coloringSpec match {
       case RenderWholeSentence(_) =>
-        AnswerSpan(0, sentenceTokens.size)
+        ESpan(0, sentenceTokens.size)
       case RenderRelevantPortion(swcNel) =>
         val spans = swcNel.map(_._1)
-        AnswerSpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
+        ESpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
     }
     val wordIndexToLayeredColors = (containingSpan.begin until containingSpan.end).map { i =>
       i -> coloringSpec.spansWithColors.collect {
-        case (span, color) if spanContains(span, i) => color
+        case (span, color) if span.contains(i) => color
       }
     }.toMap
     val indexAfterToSpaceLayeredColors = ((containingSpan.begin + 1) to containingSpan.end).map { i =>
       i -> coloringSpec.spansWithColors.collect {
-        case (span, color) if spanContains(span, i - 1) && spanContains(span, i) => color
+        case (span, color) if span.contains(i - 1) && span.contains(i) => color
       }
     }.toMap
-    Text.render[Int, List, List[VdomElement]](
+    Text.renderTokens[Int, List, List[VdomElement]](
       words = sentenceTokens.indices.toList,
       getToken = (index: Int) => sentenceTokens(index),
       spaceFromNextWord = (nextIndex: Int) => {
-        if(!spanContains(containingSpan, nextIndex) || nextIndex == containingSpan.begin) List() else {
+        if(!containingSpan.contains(nextIndex) || nextIndex == containingSpan.begin) List() else {
           val colors = indexAfterToSpaceLayeredColors(nextIndex)
           val colorStr = NonEmptyList[Rgba](transparent, colors)
             .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
@@ -202,7 +192,7 @@ object FrameAnnClient {
         }
       },
       renderWord = (index: Int) => {
-        if(!spanContains(containingSpan, index)) List() else {
+        if(!containingSpan.contains(index)) List() else {
           val colorStr = NonEmptyList(transparent, wordIndexToLayeredColors(index))
             .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
           val render: (VdomTag => VdomTag) = wordRenderers.get(index).getOrElse((x: VdomTag) => x)
@@ -220,17 +210,17 @@ object FrameAnnClient {
 
   // def makeAllHighlightedAnswer(
   //   sentenceTokens: Vector[String],
-  //   spans: NonEmptyList[AnswerSpan],
+  //   spans: NonEmptyList[ESpan],
   //   color: Rgba
   // ): VdomArray = {
   //   val orderedSpans = spans.sorted
   //   case class GroupingState(
-  //     completeGroups: List[NonEmptyList[AnswerSpan]],
-  //     currentGroup: NonEmptyList[AnswerSpan]
+  //     completeGroups: List[NonEmptyList[ESpan]],
+  //     currentGroup: NonEmptyList[ESpan]
   //   )
   //   val groupingState = orderedSpans.tail.foldLeft(GroupingState(Nil, NonEmptyList.of(orderedSpans.head))) {
   //     case (GroupingState(groups, curGroup), span) =>
-  //       if(curGroup.exists(s => spanOverlaps(s, span))) {
+  //       if(curGroup.exists(s => s.overlaps(span))) {
   //         GroupingState(groups, span :: curGroup)
   //       } else {
   //         GroupingState(curGroup :: groups, NonEmptyList.of(span))
@@ -286,7 +276,7 @@ object FrameAnnClient {
               )
             )
           },
-          ResFetch.make(request = resId.value, sendRequest = id => Remote(props.annService.getResolution(id.isFull, id.index))) {
+          ResFetch.make(request = resId.value, sendRequest = id => OrWrapped.wrapped(props.annService.getResolution(id.isFull, id.index))) {
             case ResFetch.Loading => <.div(S.loadingNotice)("Waiting for clause ambiguity data...")
             case ResFetch.Loaded(loadedClauseResolution) =>
               ResLocal.make(initialValue = loadedClauseResolution) { clauseResolutionS =>
@@ -347,12 +337,12 @@ object FrameAnnClient {
                                   clauseChoice.frame.clauses(true).mkString(" / "),
                                   ),
                                 ^.onClick --> (
-                                  Callback(println(clauseChoice)) >>
-                                    Callback.future {
+                                  Callback(println(clauseChoice)) >> {
                                       val curChoice = clauseResolution.choiceOpt.getOrElse(Set.empty[ClauseChoice])
                                       val newChoice = if(curChoice.contains(clauseChoice)) curChoice - clauseChoice else curChoice + clauseChoice
                                       props.annService.saveResolution(resId.value.isFull, resId.value.index, newChoice)
-                                        .map(clauseResolutionS.setState)
+                                        .flatMap(s => clauseResolutionS.setState(s).asAsyncCallback)
+                                        .toCallback
                                     }
                                 )
                               )
@@ -372,10 +362,9 @@ object FrameAnnClient {
                                   "<None>"
                                 ),
                                 ^.onClick --> (
-                                  Callback.future {
-                                    props.annService.saveResolution(resId.value.isFull, resId.value.index, Set.empty[ClauseChoice])
-                                      .map(clauseResolutionS.setState)
-                                  }
+                                  props.annService.saveResolution(resId.value.isFull, resId.value.index, Set.empty[ClauseChoice])
+                                    .flatMap(s => clauseResolutionS.setState(s).asAsyncCallback)
+                                    .toCallback
                                 )
                               )
                               if(clauseResolution.choiceOpt.exists(_.isEmpty)) {
