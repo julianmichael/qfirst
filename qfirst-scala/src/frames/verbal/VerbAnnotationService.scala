@@ -18,7 +18,6 @@ import qasrl.data.Dataset
 import qfirst.frames.ArgumentSlot
 import qfirst.frames.ArgStructure
 import qfirst.frames.Frame
-import qfirst.frames.implicits._
 
 import io.circe.{Encoder, Decoder}
 import io.circe.generic.JsonCodec

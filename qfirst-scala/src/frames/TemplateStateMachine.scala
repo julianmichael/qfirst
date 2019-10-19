@@ -4,8 +4,6 @@ import jjm.LowerCaseString
 import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
-import qasrl.{Tense, Modal, PresentTense, PastTense}
-
 import cats.data.NonEmptyList
 import cats.data.StateT
 import cats.implicits._
@@ -339,8 +337,8 @@ class TemplateStateMachine(
 
   // follows no aux
   val tensedVerb = progress(
-    (" " + presentSingular3rd.toString) -> modFrame(Frame.tense.set(PresentTense)).as(obj),
-    (" " + past.toString)    -> modFrame(Frame.tense.set(PastTense)).as(obj)
+    (" " + presentSingular3rd.toString) -> modFrame(Frame.tense.set(Tense.Finite.Present)).as(obj),
+    (" " + past.toString)    -> modFrame(Frame.tense.set(Tense.Finite.Past)).as(obj)
   )
 
   // neg/subj states carry the verb form through; so, all need to be constructed at construction time
@@ -381,9 +379,9 @@ class TemplateStateMachine(
   def haveAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, pastParticipleVerb)
     progress(
-      " has" -> modFrame(Frame.tense.set(PresentTense) andThen Frame.isPerfect.set(true))
+      " has" -> modFrame(Frame.tense.set(Tense.Finite.Present) andThen Frame.isPerfect.set(true))
         .as(target),
-      " had" -> modFrame(Frame.tense.set(PastTense) andThen Frame.isPerfect.set(true)).as(target)
+      " had" -> modFrame(Frame.tense.set(Tense.Finite.Past) andThen Frame.isPerfect.set(true)).as(target)
     )
   }
 
@@ -395,32 +393,32 @@ class TemplateStateMachine(
     val infNegContraction = negContraction(subjRequired, infinitiveVerb)
     progress(
       " can't" -> modFrame(
-        Frame.tense.set(Modal("can".lowerCase)) andThen Frame.isNegated.set(true)
+        Frame.tense.set(Tense.Finite.Modal("can".lowerCase)) andThen Frame.isNegated.set(true)
       ).as(infSubj(true)),
-      " can" -> modFrame(Frame.tense.set(Modal("can".lowerCase))).as(infSubj(false)),
+      " can" -> modFrame(Frame.tense.set(Tense.Finite.Modal("can".lowerCase))).as(infSubj(false)),
       " won't" -> modFrame(
-        Frame.tense.set(Modal("will".lowerCase)) andThen Frame.isNegated.set(true)
+        Frame.tense.set(Tense.Finite.Modal("will".lowerCase)) andThen Frame.isNegated.set(true)
       ).as(infSubj(true)),
-      " will"   -> modFrame(Frame.tense.set(Modal("will".lowerCase))).as(infSubj(false)),
-      " might"  -> modFrame(Frame.tense.set(Modal("might".lowerCase))).as(infSubj(false)),
-      " would"  -> modFrame(Frame.tense.set(Modal("would".lowerCase))).as(infNegContraction),
-      " should" -> modFrame(Frame.tense.set(Modal("should".lowerCase))).as(infNegContraction)
+      " will"   -> modFrame(Frame.tense.set(Tense.Finite.Modal("will".lowerCase))).as(infSubj(false)),
+      " might"  -> modFrame(Frame.tense.set(Tense.Finite.Modal("might".lowerCase))).as(infSubj(false)),
+      " would"  -> modFrame(Frame.tense.set(Tense.Finite.Modal("would".lowerCase))).as(infNegContraction),
+      " should" -> modFrame(Frame.tense.set(Tense.Finite.Modal("should".lowerCase))).as(infNegContraction)
     )
   }
 
   def doAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, stemVerb)
     progress(
-      " does" -> modFrame(Frame.tense.set(PresentTense)).as(target),
-      " did"  -> modFrame(Frame.tense.set(PastTense)).as(target)
+      " does" -> modFrame(Frame.tense.set(Tense.Finite.Present)).as(target),
+      " did"  -> modFrame(Frame.tense.set(Tense.Finite.Past)).as(target)
     )
   }
 
   def beAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, presentParticipleOrPassiveVerb)
     progress(
-      " is"  -> modFrame(Frame.tense.set(PresentTense)).as(target),
-      " was" -> modFrame(Frame.tense.set(PastTense)).as(target)
+      " is"  -> modFrame(Frame.tense.set(Tense.Finite.Present)).as(target),
+      " was" -> modFrame(Frame.tense.set(Tense.Finite.Past)).as(target)
     )
   }
 

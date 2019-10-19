@@ -1,13 +1,10 @@
 package qfirst.frames
-import qfirst.frames.implicits._
 
 import jjm.DependentMap
 import jjm.LowerCaseString
 import jjm.ling.en._
 import jjm.ling.en.VerbForm._
 import jjm.implicits._
-
-import qasrl.{Tense, Modal, PresentTense, PastTense}
 
 import cats.Id
 import cats.Foldable
@@ -121,10 +118,13 @@ object TAN
     else if (isPerfect) PastParticiple
     else
       tense match {
-        case Modal(_)                           => Stem
+        case Tense.Finite.Modal(_)              => Stem
         case _ if (isNegated || subjectPresent) => Stem
-        case PastTense                          => Past
-        case PresentTense                       => PresentSingular3rd
+        case Tense.Finite.Past                  => Past
+        case Tense.Finite.Present               => PresentSingular3rd
+        case Tense.NonFinite.Bare               => Stem
+        case Tense.NonFinite.To                 => Stem
+        case Tense.NonFinite.Gerund             => PresentParticiple
       }
   }
 
@@ -138,17 +138,24 @@ object TAN
       _               <- (if (isPerfect) modForm(PastParticiple) >> push("have") else pass)
       postAspectStack <- State.get[NonEmptyList[String]]
       _ <- tense match {
-        case Modal(m) => pushAll(modalTokens(m))
-        case PastTense =>
+        case Tense.Finite.Modal(m) => pushAll(modalTokens(m))
+        case Tense.Finite.Past =>
           if (isNegated) {
             if (postAspectStack.size == 1) push("didn't")
             else (modForm(Past) >> modTop(_ + "n't"))
           } else modForm(Past)
-        case PresentTense =>
+        case Tense.Finite.Present =>
           if (isNegated) {
             if (postAspectStack.size == 1) push("doesn't")
             else (modForm(PresentSingular3rd) >> modTop(_ + "n't"))
           } else modForm(PresentSingular3rd)
+        case nf: Tense.NonFinite =>
+          val verbMod = nf match {
+            case Tense.NonFinite.Bare => pass
+            case Tense.NonFinite.To => push("to")
+            case Tense.NonFinite.Gerund => modForm(PresentParticiple)
+          }
+          verbMod >> (if (isNegated) push("not") else pass)
       }
     } yield ()
 
@@ -160,9 +167,10 @@ object TAN
       verbStack
     } else
       tense match {
-        case Modal(_)     => verbStack // should never happen, since a modal adds another token
-        case PastTense    => (modForm(Stem) >> push("did")).runS(verbStack).value
-        case PresentTense => (modForm(Stem) >> push("does")).runS(verbStack).value
+        case Tense.Finite.Past     => (modForm(Stem) >> push("did")).runS(verbStack).value
+        case Tense.Finite.Present  => (modForm(Stem) >> push("does")).runS(verbStack).value
+        case Tense.Finite.Modal(_) => verbStack // should never happen, since a modal adds another token
+        case _ => verbStack // Non-finite case, where splitting cannot occur
       }
   }
 
@@ -217,7 +225,7 @@ object TAN
     } else appendAllStrings[NonEmptyList, A](verbStack)
   }
 
-  def questionsForSlot(slot: ArgumentSlot) = questionsForSlotWithArgs(slot, Map())
+  def questionsForSlot(slot: ArgumentSlot) = questionsForSlotWithArgs(slot, Map[ArgumentSlot, String]())
 
   def clauses(addParens: Boolean = false) = clausesWithArgs(Map(), addParens)
 
@@ -259,50 +267,62 @@ object TAN
     genClausesWithArgs(args.keys.map(a => a.asInstanceOf[ArgumentSlot.Aux[Argument]]).map(a => a -> a).toMap)
   }
 
-  def questionsForSlotWithArgs(slot: ArgumentSlot, argValues: ArgMap[String]) = {
-    val qStateT = slot match {
-      case Subj =>
-        renderWhNoun[String](Subj) >>
-        renderAuxThroughVerb(includeSubject = false, argValues) >>
-        renderArgIfPresent(Obj  , argValues) >>
-        renderArgIfPresent(Prep1, argValues) >>
-        renderArgIfPresent(Prep2, argValues) >>
-        renderArgIfPresent(Misc , argValues)
-      case Obj =>
-        renderWhNoun[String](Obj) >>
-        renderAuxThroughVerb(includeSubject = true, argValues) >>
-        renderGap[Noun, String](Obj) >>
-        renderArgIfPresent(Prep1, argValues) >>
-        renderArgIfPresent(Prep2, argValues) >>
-        renderArgIfPresent(Misc , argValues)
-      case Prep1 =>
-        renderWhOrAbort[Preposition, String](Prep1) >>
-        renderAuxThroughVerb(includeSubject = true, argValues) >>
-        renderArgIfPresent(Obj, argValues) >>
-        renderGap[Preposition, String](Prep1) >>
-        renderArgIfPresent(Prep2, argValues) >>
-        renderArgIfPresent(Misc , argValues)
-      case Prep2 =>
-        renderWhOrAbort[Preposition, String](Prep2) >>
-        renderAuxThroughVerb(includeSubject = true, argValues) >>
-        renderArgIfPresent(Obj  , argValues) >>
-        renderArgIfPresent(Prep1, argValues) >>
-        renderGap[Preposition, String](Prep2) >>
-        renderArgIfPresent(Misc , argValues)
-      case Misc =>
-        renderWhOrAbort[NonPrepArgument, String](Misc) >>
-        renderAuxThroughVerb(includeSubject = true, argValues) >>
-        renderArgIfPresent(Obj  , argValues) >>
-        renderArgIfPresent(Prep1, argValues) >>
-        renderArgIfPresent(Prep2, argValues) >>
-        renderGap[NonPrepArgument, String](Misc)
-      case Adv(wh) =>
-        append(wh.toString.capitalize) >>
+  def questionsForSlotWithArgs(slot: ArgumentSlot, argValues: ArgMap[String]): List[String] = {
+    questionsForSlotWithArgs(Some(slot), argValues)
+  }
+
+  def questionsForSlotWithArgs(slotOpt: Option[ArgumentSlot], argValues: ArgMap[String]): List[String] = {
+    val qStateT = slotOpt match {
+      case None =>
         renderAuxThroughVerb(includeSubject = true, argValues) >>
         renderArgIfPresent(Obj  , argValues) >>
         renderArgIfPresent(Prep1, argValues) >>
         renderArgIfPresent(Prep2, argValues) >>
         renderArgIfPresent(Misc , argValues)
+      case Some(slot) => slot match {
+        case Subj =>
+          renderWhNoun[String](Subj) >>
+          renderAuxThroughVerb(includeSubject = false, argValues) >>
+          renderArgIfPresent(Obj  , argValues) >>
+          renderArgIfPresent(Prep1, argValues) >>
+          renderArgIfPresent(Prep2, argValues) >>
+          renderArgIfPresent(Misc , argValues)
+        case Obj =>
+          renderWhNoun[String](Obj) >>
+          renderAuxThroughVerb(includeSubject = true, argValues) >>
+          renderGap[Noun, String](Obj) >>
+          renderArgIfPresent(Prep1, argValues) >>
+          renderArgIfPresent(Prep2, argValues) >>
+          renderArgIfPresent(Misc , argValues)
+        case Prep1 =>
+          renderWhOrAbort[Preposition, String](Prep1) >>
+          renderAuxThroughVerb(includeSubject = true, argValues) >>
+          renderArgIfPresent(Obj, argValues) >>
+          renderGap[Preposition, String](Prep1) >>
+          renderArgIfPresent(Prep2, argValues) >>
+          renderArgIfPresent(Misc , argValues)
+        case Prep2 =>
+          renderWhOrAbort[Preposition, String](Prep2) >>
+          renderAuxThroughVerb(includeSubject = true, argValues) >>
+          renderArgIfPresent(Obj  , argValues) >>
+          renderArgIfPresent(Prep1, argValues) >>
+          renderGap[Preposition, String](Prep2) >>
+          renderArgIfPresent(Misc , argValues)
+        case Misc =>
+          renderWhOrAbort[NonPrepArgument, String](Misc) >>
+          renderAuxThroughVerb(includeSubject = true, argValues) >>
+          renderArgIfPresent(Obj  , argValues) >>
+          renderArgIfPresent(Prep1, argValues) >>
+          renderArgIfPresent(Prep2, argValues) >>
+          renderGap[NonPrepArgument, String](Misc)
+        case Adv(wh) =>
+          append(wh.toString.capitalize) >>
+          renderAuxThroughVerb(includeSubject = true, argValues) >>
+          renderArgIfPresent(Obj  , argValues) >>
+          renderArgIfPresent(Prep1, argValues) >>
+          renderArgIfPresent(Prep2, argValues) >>
+          renderArgIfPresent(Misc , argValues)
+      }
     }
     qStateT.runS(List.empty[Either[String, String]]).map(_.map(_.merge)).map(_.reverse.mkString(" ") + "?")
   }
@@ -324,7 +344,7 @@ object Frame {
         false),
       verbForms,
       TAN(
-        PastTense,
+        Tense.Finite.Past,
         false,
         false,
         false)

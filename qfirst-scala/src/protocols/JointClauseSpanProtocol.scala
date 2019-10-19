@@ -65,7 +65,7 @@ object JointClauseSpanProtocol
   }
 
   def isModal(t: TAN) = t.tense match {
-    case qasrl.Modal(_) => true
+    case Tense.Finite.Modal(_) => true
     case _ => false
   }
 

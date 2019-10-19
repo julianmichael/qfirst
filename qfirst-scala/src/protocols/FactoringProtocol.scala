@@ -2,6 +2,7 @@ package qfirst.protocols
 
 import qfirst.BeamProtocol
 import qfirst.frames.TAN
+import qfirst.frames.Tense
 import qfirst.VerbPrediction
 
 import cats.Show
@@ -12,16 +13,17 @@ import jjm.ling.ESpan
 import jjm.ling.en.VerbForm
 import jjm.implicits._
 
-import qasrl.{PresentTense, PastTense, Modal}
 import qasrl.labeling.SlotBasedLabel
+
+import io.circe.generic.JsonCodec
 
 object FactoringProtocol {
 
   private def getTanFromString(s: String): TAN = {
     val tense = s.takeWhile(_ != ' ') match {
-      case "past"    => PastTense
-      case "present" => PresentTense
-      case m         => Modal(m.lowerCase)
+      case "past"    => Tense.Finite.Past
+      case "present" => Tense.Finite.Present
+      case m         => Tense.Finite.Modal(m.lowerCase)
     }
     TAN(
       tense = tense,
@@ -35,7 +37,7 @@ object FactoringProtocol {
     tanStringList.map { case (tan, prob) => getTanFromString(tan) -> prob }.toMap
   }
 
-  case class Beam[A](
+  @JsonCodec case class Beam[A](
     qa_beam: List[A],
     tans: Option[List[(String, Double)]],
     span_tans: Option[List[(ESpan, List[(String, Double)])]],

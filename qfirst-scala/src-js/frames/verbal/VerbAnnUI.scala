@@ -647,8 +647,8 @@ object VerbAnnUI {
     navQuery: StateSnapshot[NavQuery]
   ) = {
     val sentenceIdOpt = sentenceOpt.map(s => SentenceId.fromString(s.sentenceId))
-    val presentTan = TAN(qasrl.PresentTense, false, false, false)
-    val mightTan = TAN(qasrl.Modal("might".lowerCase), false, false, false)
+    val presentTan = TAN(Tense.Finite.Present, false, false, false)
+    val mightTan = TAN(Tense.Finite.Modal("might".lowerCase), false, false, false)
     val docIdToDocMetaOpt = curDocMetasOpt.map(_.map(m => m.id -> m).toMap)
     <.div(S.frameContainer)(
       <.div(S.frameSpecDisplay, S.scrollPane)(

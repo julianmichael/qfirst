@@ -2,7 +2,6 @@ package qfirst.paraphrase
 import qfirst._
 import qfirst.paraphrase.models._
 import qfirst.paraphrase.browse._
-import qfirst.frames.implicits._
 import qfirst.metrics.HasMetrics
 import qfirst.metrics.HasMetrics.ops._
 import qfirst.protocols.SimpleQAs

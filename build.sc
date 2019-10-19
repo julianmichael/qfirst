@@ -277,7 +277,11 @@ object `clausal-demo` extends Module {
       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
     )
   }
-  object jvm extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
+  object jvm extends ClausalDemoModule with JvmPlatform {
+    override def repositories = super.repositories ++ Seq(
+      coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+    )
+
     def moduleDeps = List(qfirst.jvm)
 
     override def resources = T.sources(
@@ -287,6 +291,7 @@ object `clausal-demo` extends Module {
     )
 
     override def ivyDeps = super.ivyDeps() ++ Agg(
+    ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
       // ivy"com.monovore::decline::$declineVersion",
       // ivy"com.monovore::decline-effect::$declineVersion",
       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",

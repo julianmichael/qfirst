@@ -18,7 +18,9 @@ import jjm.implicits._
 import qasrl.{PresentTense, PastTense, Modal}
 import qasrl.labeling.SlotBasedLabel
 
-case class QfirstBeamItem[Q](
+import io.circe.generic.JsonCodec
+
+@JsonCodec case class QfirstBeamItem[Q](
   questionSlots: Q,
   questionProb: Double,
   invalidProb: Double,
@@ -136,8 +138,9 @@ object ClauseSlotMapper {
     case "pastparticiple" => "pastParticiple"
     case x => x
   }
+  // TODO: get rid of presentSingular3rd override once data is written correctly
   private[this] val verbStateMachine = new VerbTemplateStateMachine(
-    InflectedForms.generic, false, VerbTemplateStateMachine.TemplateComplete
+    InflectedForms.generic.copy(presentSingular3rd = "present".lowerCase), false, VerbTemplateStateMachine.TemplateComplete
   )
   private[this] val verbStringProcessor = new VerbStringProcessor(verbStateMachine)
 
@@ -149,9 +152,8 @@ object ClauseSlotMapper {
       res
     }
   }
-  def getQuestionSlots(
-    question: Map[String, String]
-  ): Option[SlotBasedLabel[VerbForm]] = {
+
+  def getGenericFrame(question: Map[String, String]): Option[Frame] = {
     if(question.get("clause-" + question("clause-qarg")).exists(_ == "_")) None else {
       def getSlot(slot: String): Option[String] = Option(question(s"clause-$slot")).filter(_ != "_")
       def getNoun(slot: String) = getSlot(slot).map(s => Noun.fromPlaceholder(s.lowerCase).get)
@@ -179,23 +181,32 @@ object ClauseSlotMapper {
             case VerbStringProcessor.CompleteState(_, _, isPassive, tan) =>
               (isPassive, tan)
           }.head
-        val frame = Frame(
-          ArgStructure(argMap, isPassive),
-          InflectedForms.generic, tan
+        Some(
+          Frame(
+            ArgStructure(argMap, isPassive),
+            InflectedForms.generic, tan
+          )
         )
-        val questionStrings = frame.questionsForSlot(ArgumentSlot.fromString(question("clause-qarg")).get)
-        if(questionStrings.isEmpty) {
-          println(frame, question("clause-qarg"))
-        }
-        val questionString = questionStrings.head
-        val finalSlotsOpt = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
-          Vector(), InflectedForms.generic, List(questionString)
-        ).head
-        if(finalSlotsOpt.isEmpty) {
-          println("Can't map question to slots: " + questionString)
-        }
-        finalSlotsOpt
       }
+    }
+  }
+
+  def getQuestionSlots(
+    question: Map[String, String]
+  ): Option[SlotBasedLabel[VerbForm]] = {
+    getGenericFrame(question).flatMap { frame =>
+      val questionStrings = frame.questionsForSlot(ArgumentSlot.fromString(question("clause-qarg")).get)
+      if(questionStrings.isEmpty) {
+        println(frame, question("clause-qarg"))
+      }
+      val questionString = questionStrings.head
+      val finalSlotsOpt = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
+        Vector(), InflectedForms.generic, List(questionString)
+      ).head
+      if(finalSlotsOpt.isEmpty) {
+        println("Can't map question to slots: " + questionString)
+      }
+      finalSlotsOpt
     }
   }
 
@@ -253,7 +264,7 @@ object QfirstClausalProtocol extends QfirstProtocol[Map[String, String]] {
 
 object QfirstClausalNoTanProtocol extends QfirstProtocol[Map[String, String]] {
   def isModal(t: TAN) = t.tense match {
-    case qasrl.Modal(_) => true
+    case Tense.Finite.Modal(_) => true
     case _ => false
   }
   def getQuestions(
@@ -329,7 +340,7 @@ object QfirstClausalNoAnimProtocol extends QfirstProtocol[Map[String, String]] {
 
 object QfirstClausalNoTanOrAnimProtocol extends QfirstProtocol[Map[String, String]] {
   def isModal(t: TAN) = t.tense match {
-    case qasrl.Modal(_) => true
+    case Tense.Finite.Modal(_) => true
     case _ => false
   }
 

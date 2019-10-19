@@ -1,7 +1,5 @@
 package qfirst
 
-import qfirst.frames.implicits._
-
 import cats._
 import cats.implicits._
 

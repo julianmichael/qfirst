@@ -4,8 +4,6 @@ import jjm.LowerCaseString
 import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
-import qasrl.{Tense, Modal, PresentTense, PastTense}
-
 import cats.data.NonEmptyList
 import cats.data.StateT
 import cats.implicits._
@@ -19,7 +17,7 @@ object VerbTemplateStateMachine {
     tan: TAN
   )
   object VerbState {
-    def initial = VerbState(None, false, TAN(PastTense, false, false, false))
+    def initial = VerbState(None, false, TAN(Tense.Finite.Past, false, false, false))
   }
 
   sealed trait TemplateState
@@ -121,8 +119,8 @@ class VerbTemplateStateMachine(
 
   // follows no aux
   val tensedVerb = progress(
-    (presentSingular3rd.toString) -> modTAN(TAN.tense.set(PresentTense)).as(next),
-    (past.toString)    -> modTAN(TAN.tense.set(PastTense)).as(next)
+    (presentSingular3rd.toString) -> modTAN(TAN.tense.set(Tense.Finite.Present)).as(next),
+    (past.toString)    -> modTAN(TAN.tense.set(Tense.Finite.Past)).as(next)
   )
 
   // neg/subj states carry the verb form through; so, all need to be constructed at construction time
@@ -162,9 +160,9 @@ class VerbTemplateStateMachine(
   def haveAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, pastParticipleVerb)
     progress(
-      "has" -> modTAN(TAN.tense.set(PresentTense) andThen TAN.isPerfect.set(true))
+      "has" -> modTAN(TAN.tense.set(Tense.Finite.Present) andThen TAN.isPerfect.set(true))
         .as(target),
-      "had" -> modTAN(TAN.tense.set(PastTense) andThen TAN.isPerfect.set(true)).as(target)
+      "had" -> modTAN(TAN.tense.set(Tense.Finite.Past) andThen TAN.isPerfect.set(true)).as(target)
     )
   }
 
@@ -176,32 +174,32 @@ class VerbTemplateStateMachine(
     val infNegContraction = negContraction(subjRequired, infinitiveVerb)
     progress(
       "can't" -> modTAN(
-        TAN.tense.set(Modal("can".lowerCase)) andThen TAN.isNegated.set(true)
+        TAN.tense.set(Tense.Finite.Modal("can".lowerCase)) andThen TAN.isNegated.set(true)
       ).as(infSubj(true)),
-      "can" -> modTAN(TAN.tense.set(Modal("can".lowerCase))).as(infSubj(false)),
+      "can" -> modTAN(TAN.tense.set(Tense.Finite.Modal("can".lowerCase))).as(infSubj(false)),
       "won't" -> modTAN(
-        TAN.tense.set(Modal("will".lowerCase)) andThen TAN.isNegated.set(true)
+        TAN.tense.set(Tense.Finite.Modal("will".lowerCase)) andThen TAN.isNegated.set(true)
       ).as(infSubj(true)),
-      "will"   -> modTAN(TAN.tense.set(Modal("will".lowerCase))).as(infSubj(false)),
-      "might"  -> modTAN(TAN.tense.set(Modal("might".lowerCase))).as(infSubj(false)),
-      "would"  -> modTAN(TAN.tense.set(Modal("would".lowerCase))).as(infNegContraction),
-      "should" -> modTAN(TAN.tense.set(Modal("should".lowerCase))).as(infNegContraction)
+      "will"   -> modTAN(TAN.tense.set(Tense.Finite.Modal("will".lowerCase))).as(infSubj(false)),
+      "might"  -> modTAN(TAN.tense.set(Tense.Finite.Modal("might".lowerCase))).as(infSubj(false)),
+      "would"  -> modTAN(TAN.tense.set(Tense.Finite.Modal("would".lowerCase))).as(infNegContraction),
+      "should" -> modTAN(TAN.tense.set(Tense.Finite.Modal("should".lowerCase))).as(infNegContraction)
     )
   }
 
   def doAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, stemVerb)
     progress(
-      "does" -> modTAN(TAN.tense.set(PresentTense)).as(target),
-      "did"  -> modTAN(TAN.tense.set(PastTense)).as(target)
+      "does" -> modTAN(TAN.tense.set(Tense.Finite.Present)).as(target),
+      "did"  -> modTAN(TAN.tense.set(Tense.Finite.Past)).as(target)
     )
   }
 
   def beAux(subjRequired: Boolean) = {
     val target = negContraction(subjRequired, presentParticipleOrPassiveVerb)
     progress(
-      "is"  -> modTAN(TAN.tense.set(PresentTense)).as(target),
-      "was" -> modTAN(TAN.tense.set(PastTense)).as(target)
+      "is"  -> modTAN(TAN.tense.set(Tense.Finite.Present)).as(target),
+      "was" -> modTAN(TAN.tense.set(Tense.Finite.Past)).as(target)
     )
   }
 

@@ -9,20 +9,22 @@ import scala.concurrent.duration._
 import com.amazonaws.services.mturk._
 import com.amazonaws.services.mturk.model._
 
-import nlpdata.util.Text
-import nlpdata.util.HasTokens.ops._
+import cats.implicits._
+
+import jjm.ling.Text
+import jjm.implicits._
 
 import java.nio.file.Paths
 
 val label = "trial"
 
 val isProduction = false // sandbox. change to true for production
-val domain = "localhost" // change to your domain, or keep localhost for testing
+val domain = "recycle.cs.washington.edu" // change to your domain, or keep localhost for testing
 val projectName = "qasrl-crowd-example" // make sure it matches the SBT project;
 // this is how the .js file is found to send to the server
 
 val interface = "0.0.0.0"
-val httpPort = 8888
+val httpPort = 7767
 val httpsPort = 8080
 
 val annotationPath = Paths.get(s"data/$label/annotations")
@@ -47,9 +49,7 @@ def exit = {
   System.out.println("Terminated actor system and logging. Type :q to end.")
 }
 
-// TODO
-val setup = new ClausalExample(label, Paths.get("predictions/qfirst-clause-2/predictions-dense.jsonl"))
-import setup.SentenceIdHasTokens
+val setup = new ClausalExample(label, Paths.get("qfirst-clausal-predictions.jsonl"))
 
 val exp = setup.experiment
 exp.server

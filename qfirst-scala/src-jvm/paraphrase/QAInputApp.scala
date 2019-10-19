@@ -1,7 +1,6 @@
 package qfirst.paraphrase
 
 import qfirst._
-import qfirst.frames.implicits._
 
 import cats.Applicative
 import cats.Id
