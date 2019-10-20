@@ -11,11 +11,11 @@ val kindProjectorVersion = "0.9.4"
 val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
 
-val jjmVersion = "0.1.0-SNAPSHOT"
-val qasrlVersion = "0.2.0-SNAPSHOT"
-val qasrlBankVersion = "0.2.0-SNAPSHOT"
-val radhocVersion = "0.3.0-SNAPSHOT"
-val spacroVersion = "0.3.0-SNAPSHOT"
+val jjmVersion = "0.1.0"
+val qasrlVersion = "0.2.0"
+val qasrlBankVersion = "0.2.0"
+val radhocVersion = "0.3.0"
+val spacroVersion = "0.3.0"
 
 // val http4sVersion = "0.20.11"
 val kittensVersion = "1.1.1"
@@ -154,8 +154,6 @@ object qfirst extends Module {
       ivy"com.cibo::evilplot-repl:$evilplotVersion",
       // webby stuff
       // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      // ivy"org.http4s::http4s-dsl::$http4sVersion",
-      // ivy"org.http4s::http4s-blaze-server::$http4sVersion",
       ivy"ch.qos.logback:logback-classic:$logbackVersion",
       // crowd stuff
       // ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
