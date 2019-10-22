@@ -18,9 +18,9 @@ Working repository for QA-SRL research.
   * `model-gen/`: Auto-generate AllenNLP configs for all of the QA-SRL model components.
   * `reprocess/`: Fix the slot formatting errors in the QA-SRL Bank 2.0.
 
-## Preliminaries
+## Setup
 
-I should write a setup script that downloads any extra stuff.
+Run `./scripts/setup.sh` to download extra data files.
 
 ### Python setup
 I need to document this. I can't remember if AllenNLP was used as a source or
@@ -33,4 +33,13 @@ later.
 
 ## Usage
 
-Still working on documenting usage for all of the modules.
+Still working on fixing up and documenting usage for all of the modules.
+
+### Clause formation / discourse question demo
+
+After doing the setup, you should have mill installed and you should have a
+file `data/clausal-predictions.jsonl` of model predictions. Then modify the
+`domain` and `httpPort` values to the ones you want to host the demo at
+(localhost is fine for the domain). Then execute
+`./scripts/run_clause_demo.sh` and after it finishes printing output the demo
+will be running at `http://<domain>:<port>/task/evaluation/preview`.

@@ -1,4 +1,4 @@
-import qfirst.frames.crowd._
+import qfirst.clause.ext.demo._
 import qasrl.crowd._
 import spacro._
 import spacro.tasks._
@@ -49,7 +49,7 @@ def exit = {
   System.out.println("Terminated actor system and logging. Type :q to end.")
 }
 
-val setup = new ClausalExample(label, Paths.get("qfirst-clausal-predictions.jsonl"))
+val setup = new ClausalExample(label, Paths.get("data/clausal-predictions.jsonl"))
 
 val exp = setup.experiment
 exp.server

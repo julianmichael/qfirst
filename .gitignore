@@ -103,8 +103,6 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-
-/data/
 /env/
 
 /out/
@@ -113,5 +111,3 @@ venv.bak/
 \#*
 
 !/lib/
-/qasrl-v2_1/
-/model-configs/
