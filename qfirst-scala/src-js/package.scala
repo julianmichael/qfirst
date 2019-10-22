@@ -1,3 +1,0 @@
-package qfirst
-
-trait PackagePlatformExtensions

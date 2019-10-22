@@ -56,6 +56,8 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
 
   def platformSegment: String
 
+  def millSourcePath = super.millSourcePath / RelPath.up
+
   override def sources = T.sources(
     millSourcePath / "src",
     millSourcePath / s"src-$platformSegment"
@@ -95,12 +97,26 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   )
 }
 
-trait JsPlatform extends CommonModule with ScalaJSModule {
+trait JsModule extends CommonModule with ScalaJSModule {
   def scalaJSVersion = T(thisScalaJSVersion)
   def platformSegment = "js"
 }
 
-trait JvmPlatform extends CommonModule {
+trait FullJsModule extends JsModule with SimpleJSDeps {
+  override def ivyDeps = super.ivyDeps() ++ Agg(
+    ivy"org.julianmichael::radhoc::$radhocVersion",
+    ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+    ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
+    ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
+  )
+  override def jsDeps = Agg(
+    "https://code.jquery.com/jquery-2.1.4.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+  )
+}
+
+trait JvmModule extends CommonModule {
   def platformSegment = "jvm"
 
   // for using runMain in commands
@@ -123,183 +139,219 @@ trait JvmPlatform extends CommonModule {
   }
 }
 
-trait QfirstModule extends CommonModule {
-  override def millSourcePath = build.millSourcePath / "qfirst-scala"
-}
-
-object qfirst extends Module {
-  object js extends QfirstModule with JsPlatform with SimpleJSDeps {
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"org.julianmichael::radhoc::$radhocVersion",
-      ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
-      ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-      ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
-    )
-    override def jsDeps = Agg(
-      "https://code.jquery.com/jquery-2.1.4.min.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
-    )
-  }
-  object jvm extends QfirstModule with JvmPlatform with ScalatexModule {
-    override def repositories = super.repositories ++ Seq(
-      coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-    )
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"com.monovore::decline::$declineVersion",
-      ivy"com.monovore::decline-effect::$declineVersion",
-      ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-      ivy"org.scalanlp::breeze:$breezeVersion",
-      ivy"org.scalanlp::breeze-natives:$breezeVersion",
-      ivy"com.cibo::evilplot-repl:$evilplotVersion",
-      // webby stuff
-      // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      ivy"ch.qos.logback:logback-classic:$logbackVersion",
-      // crowd stuff
-      // ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
-      ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-      ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
-      )
-
-    def runMetrics(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.MetricsApp", args)
-    }
-
-    def runLearn(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.learn.LearnApp", args)
-    }
-
-    def runReprocess(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.reprocess.ReprocessApp", args)
-    }
-
-    def runFrameLearn(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.frames.FrameLearnApp", args)
-    }
-
-    def runSandbox(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.SandboxApp", args)
-    }
-
-    def runClauseRank(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.ClauseRankApp", args)
-    }
-
-    def runHyperparams(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.ModelVariants", args)
-    }
-
-    def runClauseAnn(args: String*) = T.command {
-      val jsPath = qfirst.js.fastOpt().path.toString
-      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
-      val runMain = runMainFn()
-      runMain(
-        "qfirst.frames.annotation.Serve",
-        List(
-          "--jsDeps", jsDepsPath,
-          "--js", jsPath
-        ) ++ args)
-    }
-
-    def runVerbAnn(args: String*) = T.command {
-      val jsPath = qfirst.js.fastOpt().path.toString
-      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
-      val runMain = runMainFn()
-      runMain(
-        "qfirst.frames.verbal.Serve",
-        List(
-          "--jsDeps", jsDepsPath,
-          "--js", jsPath
-        ) ++ args)
-    }
-
-    def runBrowse(args: String*) = T.command {
-      val jsPath = qfirst.js.fastOpt().path.toString
-      val jsDepsPath = qfirst.js.aggregatedJSDeps().path.toString
-      val runMain = runMainFn()
-      runMain(
-        "qfirst.paraphrase.browse.Serve",
-        List(
-          "--jsDeps", jsDepsPath,
-          "--js", jsPath
-        ) ++ args)
-    }
-
-    def runTopics(args: String*) = T.command {
-      val runMain = runMainFn()
-      runMain("qfirst.topics.TopicModelingApp", args)
-    }
-
-    object test extends Tests with CommonModule {
-      override def scalaVersion = jvm.this.scalaVersion
-      def platformSegment = jvm.this.platformSegment
-      override def ivyDeps = Agg(
-        ivy"org.scalatest::scalatest:$scalatestVersion",
-        ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-        ivy"org.typelevel::discipline-core:$disciplineVersion"
-        // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
-      )
-      def testFrameworks = Seq("org.scalatest.tools.Framework")
-    }
-  }
-}
-
-trait ClausalDemoModule extends QfirstModule {
-  override def millSourcePath = build.millSourcePath / "clausal-demo"
+trait FullJvmModule extends JvmModule {
   override def ivyDeps = super.ivyDeps() ++ Agg(
-    ivy"org.julianmichael::spacro::$spacroVersion",
-    ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+    ivy"com.monovore::decline::$declineVersion",
+    ivy"com.monovore::decline-effect::$declineVersion",
+    ivy"ch.qos.logback:logback-classic:$logbackVersion",
+    // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+    // ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
+    // ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion"
+    // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+    // ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
   )
 }
 
-object `clausal-demo` extends Module {
-  object js extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
-    def moduleDeps = List(qfirst.js)
+object qfirst extends Module {
 
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-      ivy"org.julianmichael::radhoc::$radhocVersion",
-      ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
-      ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-      ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
-    )
-    override def jsDeps = Agg(
-      "https://code.jquery.com/jquery-2.1.4.min.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
-      "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
-    )
+  override def millSourcePath = build.millSourcePath / "qfirst-scala"
+
+  object metrics extends Module {
+    object js extends JsModule
+    object jvm extends JvmModule
   }
-  object jvm extends ClausalDemoModule with JvmPlatform {
-    override def repositories = super.repositories ++ Seq(
-      coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-    )
 
-    def moduleDeps = List(qfirst.jvm)
+  object clause extends Module {
+    object js extends JsModule
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(metrics.jvm)
+    }
+  }
 
-    override def resources = T.sources(
-      millSourcePath / "resources",
-      `clausal-demo`.js.fastOpt().path / RelPath.up,
-      `clausal-demo`.js.aggregatedJSDeps().path / RelPath.up
-    )
+  object `clause-ext` extends Module {
+    object js extends JsModule
+    object jvm extends JvmModule {
+      object test extends Tests {
+        override def millSourcePath = `clause-ext`.this.millSourcePath / "test"
+        override def scalaVersion = jvm.this.scalaVersion
+        // def platformSegment = jvm.this.platformSegment
+        override def ivyDeps = Agg(
+          ivy"org.scalatest::scalatest:$scalatestVersion",
+          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
+          ivy"org.typelevel::discipline-core:$disciplineVersion"
+          // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
+        )
+        def testFrameworks = Seq("org.scalatest.tools.Framework")
+      }
+    }
+  }
 
-    override def ivyDeps = super.ivyDeps() ++ Agg(
-    ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
-      // ivy"com.monovore::decline::$declineVersion",
-      // ivy"com.monovore::decline-effect::$declineVersion",
-      ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-      // webby stuff
-      ivy"com.github.japgolly.scalacss::core:$scalacssVersion",
-      // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-      ivy"ch.qos.logback:logback-classic:$logbackVersion",
-      // crowd stuff
-      ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-      ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
-    )
+  object `clause-ext-ann` extends Module {
+    object js extends FullJsModule {
+      def moduleDeps = Seq(`clause-ext`.js)
+    }
+    object jvm extends FullJvmModule {
+
+      def moduleDeps = Seq(`clause-ext`.jvm)
+
+      def serve(args: String*) = T.command {
+        val jsPath = `clause-ext-ann`.js.fastOpt().path.toString
+        val jsDepsPath = `clause-ext-ann`.js.aggregatedJSDeps().path.toString
+        val runMain = runMainFn()
+        runMain(
+          "qfirst.clause.ext.ann.Serve",
+          List(
+            "--jsDeps", jsDepsPath,
+            "--js", jsPath
+          ) ++ args)
+      }
+    }
+  }
+
+  object `clause-ext-demo` extends Module {
+    object js extends FullJsModule {
+
+      def moduleDeps = Seq(`clause-ext`.js, `model-eval`.js)
+
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::spacro::$spacroVersion",
+        ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+      )
+    }
+    object jvm extends FullJvmModule {
+
+      def moduleDeps = Seq(`clause-ext`.jvm, `model-eval`.jvm)
+
+      override def resources = T.sources(
+        millSourcePath / "resources",
+        `clause-ext-demo`.js.fastOpt().path / RelPath.up,
+        `clause-ext-demo`.js.aggregatedJSDeps().path / RelPath.up
+      )
+
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::spacro::$spacroVersion",
+        ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
+        ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
+        ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
+        // not sure if any of these are needed
+        // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+        // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+        // ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
+      )
+    }
+  }
+
+  object frame extends Module {
+    object js extends JsModule
+    object jvm extends FullJvmModule {
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
+
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.scalanlp::breeze:$breezeVersion",
+        ivy"org.scalanlp::breeze-natives:$breezeVersion",
+        ivy"com.cibo::evilplot-repl:$evilplotVersion"
+      )
+
+      // def runTopics(args: String*) = T.command {
+      //   val runMain = runMainFn()
+      //   runMain("qfirst.topics.TopicModelingApp", args)
+      // }
+    }
+  }
+
+  object `frame-ann` extends Module {
+    object js extends FullJsModule {
+      def moduleDeps = Seq(qfirst.frame.js)
+    }
+    object jvm extends FullJvmModule {
+
+      def moduleDeps = Seq(qfirst.frame.jvm)
+
+      def serve(args: String*) = T.command {
+        val jsPath = `frame-ann`.js.fastOpt().path.toString
+        val jsDepsPath = `frame-ann`.js.aggregatedJSDeps().path.toString
+        val runMain = runMainFn()
+        runMain(
+          "qfirst.frame.ann.Serve",
+          List(
+            "--jsDeps", jsDepsPath,
+            "--js", jsPath
+          ) ++ args)
+      }
+    }
+  }
+
+  object `frame-browse` extends Module {
+    object js extends FullJsModule {
+      def moduleDeps = Seq(qfirst.frame.js)
+    }
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(qfirst.frame.jvm)
+
+      def serve(args: String*) = T.command {
+        val jsPath = `frame-browse`.js.fastOpt().path.toString
+        val jsDepsPath = `frame-browse`.js.aggregatedJSDeps().path.toString
+        val runMain = runMainFn()
+        runMain(
+          "qfirst.frame.browse.Serve",
+          List(
+            "--jsDeps", jsDepsPath,
+            "--js", jsPath
+          ) ++ args)
+      }
+    }
+  }
+
+  object `model-gen` extends Module {
+    object jvm extends FullJvmModule
+  }
+
+  object `model-eval` extends Module {
+    object js extends JsModule {
+      def moduleDeps = Seq(metrics.js, `clause-ext`.js)
+    }
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(metrics.jvm, `clause-ext`.js)
+    }
+  }
+
+  object reprocess extends Module {
+    object jvm extends FullJvmModule
   }
 }
+
+// trait ClausalDemoModule extends QfirstModule {
+//   override def millSourcePath = build.millSourcePath / "clausal-demo"
+//   override def ivyDeps = super.ivyDeps() ++ Agg(
+//     ivy"org.julianmichael::spacro::$spacroVersion",
+//     ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+//   )
+// }
+// 
+// object `clausal-demo` extends Module {
+//   object js extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
+//     def moduleDeps = List(qfirst.js)
+// 
+//     override def ivyDeps = super.ivyDeps() ++ Agg(
+//       ivy"org.julianmichael::radhoc::$radhocVersion",
+//       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+//       ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
+//       ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
+//     )
+//     override def jsDeps = Agg(
+//       "https://code.jquery.com/jquery-2.1.4.min.js",
+//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+//     )
+//   }
+//   object jvm extends ClausalDemoModule with JvmPlatform {
+//     override def repositories = super.repositories ++ Seq(
+//       coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+//     )
+// 
+//     def moduleDeps = List(qfirst.jvm)
+// 
+//   }
+// }
