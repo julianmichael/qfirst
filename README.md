@@ -38,8 +38,8 @@ Still working on fixing up and documenting usage for all of the modules.
 ### Clause formation / discourse question demo
 
 After doing the setup, you should have mill installed and you should have a
-file `data/clausal-predictions.jsonl` of model predictions. Then modify the
-`domain` and `httpPort` values to the ones you want to host the demo at
-(localhost is fine for the domain). Then execute
-`./scripts/run_clause_demo.sh` and after it finishes printing output the demo
-will be running at `http://<domain>:<port>/task/evaluation/preview`.
+file `data/clausal-predictions.jsonl` of model predictions. Then, in
+`scripts/clause_demo.scala`, modify the `domain` and `httpPort` values to the
+ones you want to host the demo at (localhost is fine for the domain). Then
+execute `./scripts/run_clause_demo.sh` and after it finishes printing output
+the demo will be running at `http://<domain>:<port>/task/evaluation/preview`.
