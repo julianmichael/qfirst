@@ -263,11 +263,11 @@ object qfirst extends Module {
 
   object `frame-ann` extends Module {
     object js extends FullJsModule {
-      def moduleDeps = Seq(qfirst.frame.js)
+      def moduleDeps = Seq(frame.js)
     }
     object jvm extends FullJvmModule {
 
-      def moduleDeps = Seq(qfirst.frame.jvm)
+      def moduleDeps = Seq(frame.jvm)
 
       def serve(args: String*) = T.command {
         val jsPath = `frame-ann`.js.fastOpt().path.toString
@@ -285,10 +285,10 @@ object qfirst extends Module {
 
   object `frame-browse` extends Module {
     object js extends FullJsModule {
-      def moduleDeps = Seq(qfirst.frame.js)
+      def moduleDeps = Seq(frame.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(qfirst.frame.jvm)
+      def moduleDeps = Seq(frame.jvm)
 
       def serve(args: String*) = T.command {
         val jsPath = `frame-browse`.js.fastOpt().path.toString

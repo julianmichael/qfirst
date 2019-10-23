@@ -77,6 +77,45 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
   val SpanHighlighting = new SpanSelection[(Int, Int)] // clause group, question
   import MultiContigSpanHighlightableSentenceComponent._
 
+  def checkboxToggle(
+    label: String,
+    isValueActive: StateSnapshot[Boolean]
+  ) = <.span(
+    <.input(
+      ^.`type` := "checkbox",
+      ^.value := label,
+      ^.checked := isValueActive.value,
+      ^.onChange --> isValueActive.modState(!_)
+    ),
+    <.span(
+      label
+    )
+  )
+
+  def liveTextField[A](
+    label: Option[String],
+    value: StateSnapshot[A],
+    makeValue: String => Option[A]
+  ) = {
+    <.span(
+      label.whenDefined, " ",
+      StringLocal.make(initialValue = value.value.toString) { inputText =>
+        BoolLocal.make(initialValue = false) { isInvalid =>
+          <.input(/* Styles.textField, */Styles.badRed.when(isInvalid.value))(
+            ^.`type` := "text",
+            ^.value := inputText.value,
+            ^.onChange ==> ((e: ReactEventFromInput) =>
+              inputText.setState(e.target.value) >>
+                makeValue(e.target.value).fold(isInvalid.setState(true))(v =>
+                  isInvalid.setState(false) >> value.setState(v)
+                )
+            )
+          )
+        }
+      }
+    )
+  }
+
   def validationAnswerOptics(focus: (Int, Int)) = State.answers
     .composeOptional(Optics.index(focus._1))
     .composeOptional(Optics.index(focus._2))
@@ -116,18 +155,6 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
 
     <.div(
       ^.overflow := "hidden",
-      // <.div(
-      //   Styles.unselectable,
-      //   ^.float := "left",
-      //   ^.minHeight := "1px",
-      //   ^.border := "1px solid",
-      //   ^.borderRadius := "2px",
-      //   ^.textAlign := "center",
-      //   ^.width := "55px",
-      //   (^.backgroundColor := "#E01010").when(answer.isInvalid),
-      //   ^.onClick --> toggleInvalidAtFocus(s)(highlightedAnswers)(index),
-      //   "Invalid"
-      // ),
       <.span(
         Styles.bolded.when(isFocused),
         Styles.unselectable,
@@ -137,37 +164,6 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
         ^.onClick --> s.modState(State.curFocus.set(index)),
         f"($prob%.2f) $question%s"
       )
-      // <.div(
-      //   Styles.answerIndicator,
-      //   Styles.unselectable,
-      //   ^.float := "left",
-      //   ^.minHeight := "1px",
-      //   ^.width := "25px",
-      //   "-->".when(isFocused)
-      // ),
-      // <.div(
-      //   ^.float := "left",
-      //   ^.margin := "1px",
-      //   ^.padding := "1px",
-      //   answer match {
-      //     case InvalidQuestion =>
-      //       <.span(
-      //         ^.color := "#CCCCCC",
-      //         "N/A"
-      //       )
-      //     case Answer(spans) if spans.isEmpty && isFocused =>
-      //       <.span(^.color := "#CCCCCC", "Highlight answer above, move with arrow keys or mouse")
-      //     case Answer(spans) if isFocused => // spans nonempty
-      //       (spans.flatMap { span =>
-      //          List(
-      //            <.span(Text.renderSpan(sentence, span)),
-      //            <.span(" / ")
-      //          )
-      //        } ++ List(<.span(^.color := "#CCCCCC", "Highlight to add an answer"))).toVdomArray
-      //     case Answer(spans) =>
-      //       spans.map(s => Text.renderSpan(sentence, s)).mkString(" / ")
-      //   }
-      // )
     )
   }
 
@@ -184,30 +180,6 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
           .sortBy(-_._2).headOption.map(_._1)
           .map(slot -> _)
     }.toMap
-  }
-
-  def liveTextField[A](
-    label: Option[String],
-    value: StateSnapshot[A],
-    makeValue: String => Option[A]
-  ) = {
-    <.span(
-      label.whenDefined, " ",
-      StringLocal.make(initialValue = value.value.toString) { inputText =>
-        BoolLocal.make(initialValue = false) { isInvalid =>
-          <.input(/* Styles.textField, */Styles.badRed.when(isInvalid.value))(
-            ^.`type` := "text",
-            ^.value := inputText.value,
-            ^.onChange ==> ((e: ReactEventFromInput) =>
-              inputText.setState(e.target.value) >>
-                makeValue(e.target.value).fold(isInvalid.setState(true))(v =>
-                  isInvalid.setState(false) >> value.setState(v)
-                )
-            )
-          )
-        }
-      }
-    )
   }
 
   val body = {
@@ -240,12 +212,13 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
         DoubleLocal.make(0.1) { clauseInclusionThreshold =>
           DoubleLocal.make(0.0) { questionInclusionThreshold =>
             DoubleLocal.make(0.5) { spanInclusionThreshold =>
-              StateLocal.make(State.initial(clauseGroups.map(_.slotProbs.size))) { state =>
-                import state.value._
-                SpanHighlighting.make(
-                  isEnabled = !isNotAssigned && answers(curFocus._1)(curFocus._2).isAnswer,
-                  enableSpanOverlap = true,
-                  update = updateCurrentAnswers(state)) {
+              BoolLocal.make(true) { showDiscourseQuestions =>
+                StateLocal.make(State.initial(clauseGroups.map(_.slotProbs.size))) { state =>
+                  import state.value._
+                  SpanHighlighting.make(
+                    isEnabled = !isNotAssigned && answers(curFocus._1)(curFocus._2).isAnswer,
+                    enableSpanOverlap = true,
+                    update = updateCurrentAnswers(state)) {
                     case (hs @ SpanHighlighting.State(spans, status), SpanHighlighting.Context(_, hover, touch, cancelHighlight)) =>
                       val curVerbIndex = clauseGroups(curFocus._1).verbIndex
                       val inProgressAnswerOpt =
@@ -266,61 +239,6 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                       <.div(
                         ^.classSet1("container-fluid"),
                         ^.onClick --> cancelHighlight,
-                        // <.div(
-                        //   instructions,
-                        //   ^.margin := "5px"
-                        // ),
-                        // workerInfoSummaryOpt.whenDefined(
-                        //   summary =>
-                        //   <.div(
-                        //     ^.classSet1("card"),
-                        //     ^.margin := "5px",
-                        //     <.p( // TODO
-                        //       <.span(
-                        //         Styles.bolded,
-                        //         """Proportion of questions you marked invalid: """,
-                        //         <.span(
-                        //           if (summary.proportionInvalid < settings.invalidProportionEstimateLowerBound ||
-                        //                 summary.proportionInvalid > settings.invalidProportionEstimateUpperBound) {
-                        //             Styles.badRed
-                        //           } else {
-                        //             Styles.goodGreen
-                        //           },
-                        //           f"""${summary.proportionInvalid * 100.0}%.1f%%"""
-                        //         ),
-                        //         "."
-                        //       ),
-                        //       s""" This should generally be between
-                        //     ${(settings.invalidProportionEstimateLowerBound * 100).toInt}% and
-                        //     ${(settings.invalidProportionEstimateUpperBound * 100).toInt}%.""",
-                        //       (if (summary.proportionInvalid < 0.15)
-                        //           " Please be harsher on bad questions. "
-                        //         else "")
-                        //     ).when(!summary.proportionInvalid.isNaN),
-                        //     <.p(
-                        //       <.span(
-                        //         Styles.bolded,
-                        //         "Agreement score: ",
-                        //         <.span(
-                        //           if (summary.agreement <= settings.validationAgreementBlockingThreshold) {
-                        //             Styles.badRed
-                        //           } else if (summary.agreement <= settings.validationAgreementBlockingThreshold + 0.025) {
-                        //             TagMod(Styles.uncomfortableOrange, Styles.bolded)
-                        //           } else {
-                        //             Styles.goodGreen
-                        //           },
-                        //           f"""${summary.agreement * 100.0}%.1f%%"""
-                        //         ),
-                        //         "."
-                        //       ),
-                        //       f""" This must remain above ${settings.validationAgreementBlockingThreshold * 100.0}%.1f%%""",
-                        //       getRemainingInAgreementGracePeriodOpt(summary).fold(".")(
-                        //         remaining =>
-                        //         s" after the end of a grace period ($remaining HITs remaining)."
-                        //       )
-                        //     ).when(!summary.agreement.isNaN)
-                        //   )
-                        // ),
                         <.div(
                           ^.classSet1("card"),
                           ^.margin := "5px",
@@ -329,19 +247,6 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                           ^.onFocus --> state.modState(State.isInterfaceFocused.set(true)),
                           ^.onBlur --> state.modState(State.isInterfaceFocused.set(false)),
                           ^.position := "relative",
-                          // TODO fix this
-                          // <.div(
-                          //   ^.position := "absolute",
-                          //   ^.top := "20px",
-                          //   ^.left := "0px",
-                          //   ^.width := "100%",
-                          //   ^.height := "100%",
-                          //   ^.textAlign := "center",
-                          //   ^.color := "rgba(48, 140, 20, .3)",
-                          //   ^.fontSize := "48pt",
-                          //   (if (isNotAssigned) "Accept assignment to start"
-                          //    else "Click here to start")
-                          // ).when(!isInterfaceFocused),
                           MultiContigSpanHighlightableSentence(
                             MultiContigSpanHighlightableSentenceProps(
                               sentence = sentence.sentenceTokens,
@@ -349,9 +254,9 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                               TagMod(Styles.specialWord, Styles.niceBlue).when(i == curVerbIndex),
                               highlightedSpans =
                                 (inProgressAnswerOpt.map(_ -> (^.backgroundColor := "#FF8000")) ::
-                                    curAnswers
-                                    .map(_ -> (^.backgroundColor := "#FFFF00"))
-                                    .map(Some(_))).flatten,
+                                   curAnswers
+                                   .map(_ -> (^.backgroundColor := "#FFFF00"))
+                                   .map(Some(_))).flatten,
                               hover = hover(state.value.curFocus),
                               touch = touch(state.value.curFocus),
                               render = (
@@ -379,6 +284,12 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                               Some("Span inclusion threshold:"),
                               spanInclusionThreshold,
                               s => scala.util.Try(s.toDouble).toOption
+                            )
+                          ),
+                          <.div(
+                            checkboxToggle(
+                              label = "Show discourse questions",
+                              isValueActive = showDiscourseQuestions
                             )
                           ),
                           <.div(
@@ -421,22 +332,22 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                                     slotsWithProbs.zipWithIndex
                                       .filter(_._1._2 >= questionInclusionThreshold.value)
                                       .toVdomArray { case ((slot, prob), questionIndex) =>
-                                      val questionString = clauseGroup.frame.questionsForSlotWithArgs(slot, argValues).head
-                                        <.li(
-                                          ^.key := s"question-$clauseIndex-$questionIndex",
-                                          ^.display := "block",
-                                          qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, prob, highlightedAnswers)(
-                                            (clauseIndex, questionIndex)
-                                          ),
-                                          <.div(
-                                            ^.paddingLeft := "48px",
-                                            clauseGroup.slotSpans(slot).filter(_._2 >= spanInclusionThreshold.value).sortBy(-_._2).map {
-                                              case (span, prob) => Text.renderSpan(sentence.sentenceTokens, span) +
-                                                  f" ($prob%.2f)"
-                                            }.mkString(" / ")
+                                        val questionString = clauseGroup.frame.questionsForSlotWithArgs(slot, argValues).head
+                                          <.li(
+                                            ^.key := s"question-$clauseIndex-$questionIndex",
+                                            ^.display := "block",
+                                            qaField(state, sentence.sentenceTokens, clauseGroup.verbIndex, questionString, prob, highlightedAnswers)(
+                                              (clauseIndex, questionIndex)
+                                            ),
+                                            <.div(
+                                              ^.paddingLeft := "48px",
+                                              clauseGroup.slotSpans(slot).filter(_._2 >= spanInclusionThreshold.value).sortBy(-_._2).map {
+                                                case (span, prob) => Text.renderSpan(sentence.sentenceTokens, span) +
+                                                    f" ($prob%.2f)"
+                                              }.mkString(" / ")
+                                            )
                                           )
-                                        )
-                                    }
+                                      }
                                   ),
                                   <.div(
                                     <.h5("Discourse questions:"),
@@ -461,36 +372,37 @@ class ClausalClient[SID : Encoder : Decoder](instructions: VdomTag)(
                                       <.li(s"What is an alternative to $negFlippedNgClause?"),
                                       <.li(s"What are the options for $ngClause?")
                                     )
-                                  )
+                                  ).when(showDiscourseQuestions.value)
                                 )
-                            }
+                              }
                           )
                         )
-                        // <.div(
-                        //   ^.classSet1("form-group"),
-                        //   ^.margin := "5px",
-                        //   <.textarea(
-                        //     ^.classSet1("form-control"),
-                        //     ^.name := FieldLabels.feedbackLabel,
-                        //     ^.rows := 3,
-                        //     ^.placeholder := "Feedback? (Optional)"
-                        //   )
-                        // ),
-                        // <.input(
-                        //   ^.classSet1("btn btn-primary btn-lg btn-block"),
-                        //   ^.margin := "5px",
-                        //   ^.`type` := "submit",
-                        //   ^.disabled := !answers.forall(_.forall(_.isComplete)),
-                        //   ^.id := FieldLabels.submitButtonLabel,
-                        //   ^.value := (
-                        //     if (isNotAssigned) "You must accept the HIT to submit results"
-                        //     else if (!answers.forall(_.forall(_.isComplete)))
-                        //       "You must respond to all questions to submit results"
-                        //     else "Submit"
-                        //   )
-                        // )
+                          // <.div(
+                          //   ^.classSet1("form-group"),
+                          //   ^.margin := "5px",
+                          //   <.textarea(
+                          //     ^.classSet1("form-control"),
+                          //     ^.name := FieldLabels.feedbackLabel,
+                          //     ^.rows := 3,
+                          //     ^.placeholder := "Feedback? (Optional)"
+                          //   )
+                          // ),
+                          // <.input(
+                          //   ^.classSet1("btn btn-primary btn-lg btn-block"),
+                          //   ^.margin := "5px",
+                          //   ^.`type` := "submit",
+                          //   ^.disabled := !answers.forall(_.forall(_.isComplete)),
+                          //   ^.id := FieldLabels.submitButtonLabel,
+                          //   ^.value := (
+                          //     if (isNotAssigned) "You must accept the HIT to submit results"
+                          //     else if (!answers.forall(_.forall(_.isComplete)))
+                          //       "You must respond to all questions to submit results"
+                          //     else "Submit"
+                          //   )
+                          // )
                       )
-                    }
+                  }
+                }
               }
             }
           }
