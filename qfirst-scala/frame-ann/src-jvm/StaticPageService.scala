@@ -1,4 +1,4 @@
-package qfirst.frames.verbal
+package qfirst.frame.ann
 
 import cats.effect.IO
 import cats.effect.Sync

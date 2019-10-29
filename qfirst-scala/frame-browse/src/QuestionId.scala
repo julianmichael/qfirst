@@ -1,4 +1,4 @@
-package qfirst.paraphrase.browse
+package qfirst.frame.browse
 
 import cats.Order
 import cats.implicits._

@@ -1,7 +1,7 @@
-package qfirst.paraphrase
-import qfirst.paraphrase.browse._
-import qfirst._
-import qfirst.protocols.SimpleQAs
+package qfirst.frame
+// import qfirst.paraphrase.browse._
+// import qfirst._
+import qfirst.model.eval.protocols.SimpleQAs
 import qfirst.metrics._
 
 import cats.Show
@@ -34,19 +34,11 @@ import io.circe.generic.JsonCodec
 
 import HasMetrics.ops._
 
-import ClauseResolution.ArgStructure
+import qfirst.clause.ArgStructure
 
 object EvalApp extends CommandIOApp(
   name = "qfirst.paraphrase.EvalApp",
   header = "Evaluate paraphrases? idk this seems like a dummy file"){
-
-  type ParaphraseAnnotations = Map[
-    // sentence
-    String, Map[
-      // verb index
-      Int, VerbParaphraseLabels
-    ]
-  ]
 
   type QABeam = List[SimpleQAs.BeamItem[SlotBasedLabel[VerbForm]]]
 

@@ -1,5 +1,5 @@
-@package qfirst.frames.verbal.pages
-@import qfirst.frames.verbal._
+@package qfirst.frame.ann.pages
+@import qfirst.frame.ann._
 @param config: PageConfig
 
 @html(lang := "en")

@@ -1,4 +1,4 @@
-package qfirst
+package qfirst.frame.math
 
 import cats.Order
 

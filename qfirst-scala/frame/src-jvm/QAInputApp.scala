@@ -1,6 +1,8 @@
-package qfirst.paraphrase
+package qfirst.frame
 
-import qfirst._
+import qfirst.clause.ArgStructure
+import qfirst.clause.ClauseResolution
+import qfirst.model.eval.filterGoldNonDense
 
 import cats.Applicative
 import cats.Id
@@ -31,8 +33,6 @@ import scala.util.Random
 import java.nio.file.{Path => NIOPath}
 import com.monovore.decline._
 import com.monovore.decline.effect._
-
-import ClauseResolution.ArgStructure
 
 object QAInputApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",

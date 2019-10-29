@@ -1,4 +1,4 @@
-package qfirst.paraphrase
+package qfirst.frame
 
 import cats.Foldable
 import cats.implicits._
@@ -36,8 +36,8 @@ package object models {
 
   def logSumExp[F[_]: Foldable](args: F[Double]): Double = {
     val max = args.maximumOption.getOrElse(0.0)
-    val sumExp = args.foldMap(x => math.exp(x - max))
-    max + math.log(sumExp)
+    val sumExp = args.foldMap(x => scala.math.exp(x - max))
+    max + scala.math.log(sumExp)
   }
 
   def uniform(supportSize: Int) = {

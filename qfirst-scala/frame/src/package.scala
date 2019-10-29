@@ -1,9 +1,9 @@
 package qfirst
 
-import qfirst.ClauseResolution.ArgStructure
+import qfirst.clause.ArgStructure
 import qasrl.ArgumentSlot
 
-package object paraphrase extends qfirst.paraphrase.PackagePlatformExtensions {
+package object frame extends qfirst.frame.PackagePlatformExtensions {
   def getArgumentSlotsForClauseTemplate(clauseTemplate: ArgStructure): Set[ArgumentSlot] = {
     (clauseTemplate.args.keys.toList: List[ArgumentSlot]).filter {
       case qasrl.Obj2 => clauseTemplate.args.get(qasrl.Obj2) match {
@@ -13,4 +13,22 @@ package object paraphrase extends qfirst.paraphrase.PackagePlatformExtensions {
       case _ => true
     }.toSet
   }
+
+  type ParaphraseAnnotations = Map[
+    // sentence
+    String, Map[
+      // verb index
+      Int, VerbParaphraseLabels
+    ]
+  ]
+
+  import scala.collection.immutable.SortedSet
+  import cats.Order
+  import cats.data.NonEmptySet
+  import cats.implicits._
+  import monocle.Iso
+
+  def nonEmptySetOptionIso[A: Order] = Iso[Option[NonEmptySet[A]], Set[A]](
+    _.foldMap(_.toSortedSet: Set[A]))(
+    s => NonEmptySet.fromSet(SortedSet(s.toSeq:_*)))
 }

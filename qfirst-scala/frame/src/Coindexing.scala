@@ -1,7 +1,7 @@
-package qfirst.paraphrase
+package qfirst.frame
 
-import qfirst.ClauseResolution.ArgStructure
-import qfirst.paraphrase.models.CompleteLinkageClustering
+import qfirst.clause.ArgStructure
+import qfirst.frame.models.CompleteLinkageClustering
 
 import qasrl.ArgumentSlot
 

@@ -1,4 +1,4 @@
-package qfirst
+package qfirst.frame
 
 import cats.Applicative
 import cats.kernel.CommutativeMonoid
@@ -88,7 +88,7 @@ import scala.annotation.tailrec
 
   def depth = cata[Int](
     leaf = (_, _) => 0,
-    merge = (_, _, l, r) => math.max(l, r) + 1
+    merge = (_, _, l, r) => scala.math.max(l, r) + 1
   )
 
   def toJsonStringSafe(implicit e: io.circe.Encoder[A]) = {

@@ -1,3 +1,3 @@
-package qfirst.paraphrase
+package qfirst.frame
 
 trait PackagePlatformExtensions

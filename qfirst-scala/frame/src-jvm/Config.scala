@@ -1,6 +1,5 @@
-package qfirst.paraphrase
-import qfirst._
-import qfirst.protocols.SimpleQAs
+package qfirst.frame
+import qfirst.model.eval.protocols.SimpleQAs
 
 import java.nio.file._
 
@@ -22,11 +21,9 @@ import cats.implicits._
 
 import fs2.Stream
 
-import EvalApp.ParaphraseAnnotations
-
 import io.circe.generic.JsonCodec
 
-import qfirst.ClauseResolution.ArgStructure
+import qfirst.clause.ArgStructure
 
 @JsonCodec sealed trait VerbSenseConfig {
   import VerbSenseConfig._
@@ -334,7 +331,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
       _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
         val numToCheck = 5
-        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
+        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
         val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
         println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
         // embeddings.take(numToCheck).foreach(e => println(e.activeValuesIterator.take(10).mkString("\t")))
@@ -377,7 +374,7 @@ case class Config(mode: RunMode)(implicit cs: ContextShift[IO]) {
       _ <- IO(println(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}"))
       _ <- IO {
         val numToCheck = 5
-        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
+        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
         val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
         println(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
         // embeddings.take(numToCheck).foreach(e => println(e.activeValuesIterator.take(10).mkString("\t")))

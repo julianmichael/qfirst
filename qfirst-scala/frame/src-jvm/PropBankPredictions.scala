@@ -1,4 +1,6 @@
-package qfirst
+package qfirst.frame
+
+import qfirst.model.eval.VerbPrediction
 
 import io.circe.{Encoder, Decoder}
 

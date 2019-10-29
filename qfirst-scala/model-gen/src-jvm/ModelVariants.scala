@@ -1,5 +1,7 @@
 package qfirst
 
+import qfirst.metrics.MapTree
+
 import cats.~>
 import cats.Applicative
 import cats.Id

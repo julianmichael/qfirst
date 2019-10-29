@@ -1,5 +1,6 @@
-package qfirst.frames.verbal
-import qfirst.frames._
+package qfirst.frame.ann
+import qfirst.frame._
+import qfirst.clause.ext._
 
 import cats.Id
 import cats.Order
@@ -76,7 +77,7 @@ case class Rgba(r: Double, g: Double, b: Double, a: Double) {
       )
     }
   }
-  def toColorStyleString = f"rgba(${math.round(r)}%d, ${math.round(g)}%d, ${math.round(b)}%d, $a%.4f)"
+  def toColorStyleString = f"rgba(${scala.math.round(r)}%d, ${scala.math.round(g)}%d, ${scala.math.round(b)}%d, $a%.4f)"
 }
 
 case class NavQuery(

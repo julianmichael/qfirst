@@ -1,12 +1,11 @@
-package qfirst.paraphrase
-import qfirst._
-import qfirst.paraphrase.models._
-import qfirst.paraphrase.browse._
-import qfirst.metrics.HasMetrics
+package qfirst.frame
+import qfirst.frame.models._
+import qfirst.clause.ArgStructure
+import qfirst.clause.ClauseResolution
+// import qfirst.frame.browse._
+// import qfirst.model.eval.protocols.SimpleQAs
+import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
-import qfirst.protocols.SimpleQAs
-// import qfirst.frames._
-// import qfirst.metrics._
 
 import cats.Monoid
 import cats.Show
@@ -96,7 +95,6 @@ object FrameInductionApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
   header = "Induce verb frames.") {
 
-  import ClauseResolution.ArgStructure
   type QAPairs = Map[SlotBasedLabel[VerbForm], Set[ESpan]]
   type ClausalQ = (ArgStructure, ArgumentSlot)
 
@@ -257,7 +255,6 @@ object FrameInductionApp extends CommandIOApp(
     val f1 = 2 * precision * recall / (precision + recall)
   }
   object PropBankEvaluationPoint {
-    import qfirst.metrics.Metric
     implicit val propBankEvaluationPointHasMetrics: HasMetrics[PropBankEvaluationPoint] = {
       new HasMetrics[PropBankEvaluationPoint] {
         def getMetrics(p: PropBankEvaluationPoint) = MapTree.fromPairs(
@@ -325,7 +322,7 @@ object FrameInductionApp extends CommandIOApp(
       }
       bestModels <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
         val best = allPoints.maxBy(_.f1)
-        val resString = SandboxApp.getMetricsString(best)
+        val resString = getMetricsString(best)
         println(s"${vsConfig.modelName} propbank metrics: " + resString)
 
         config.propBankResultsPath(vsConfig).flatMap(path =>
@@ -349,7 +346,7 @@ object FrameInductionApp extends CommandIOApp(
         }
 
         val rand = new scala.util.Random(2643642L)
-        def noise = math.abs(rand.nextGaussian / 200.0)
+        def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
         val data = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
           PRPoint(vsTuningPoint.model, vsTuningPoint.recall + noise, vsTuningPoint.precision + noise)
@@ -366,8 +363,6 @@ object FrameInductionApp extends CommandIOApp(
       }
     } yield bestModels
   }
-
-  import qfirst.metrics.BinaryConf
 
   @JsonCodec case class VerbSenseTuningPoint(
     model: VerbSenseConfig,
@@ -465,8 +460,8 @@ object FrameInductionApp extends CommandIOApp(
         bestModels <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
           val lbBest = allPoints.maxBy(_.lbConf.f1)
           val ubBest = allPoints.maxBy(_.ubConf.f1)
-          val lbResString = SandboxApp.getMetricsString(lbBest.lbConf)
-          val ubResString = SandboxApp.getMetricsString(ubBest.ubConf)
+          val lbResString = getMetricsString(lbBest.lbConf)
+          val ubResString = getMetricsString(ubBest.ubConf)
           println(s"${vsConfig.modelName} clause lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson))
           println(s"${vsConfig.modelName} clause lb metrics: " + lbResString)
           println(s"${vsConfig.modelName} clause ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson))
@@ -496,7 +491,7 @@ object FrameInductionApp extends CommandIOApp(
           }
 
           val rand = new scala.util.Random(2643642L)
-          def noise = math.abs(rand.nextGaussian / 200.0)
+          def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
           val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
             PRPoint(vsTuningPoint.model, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
@@ -661,10 +656,10 @@ object FrameInductionApp extends CommandIOApp(
           //   vsConfig, verbClustersByConfig(vsConfig), ubBest.maxLoss, ubBest.minClauseProb
           // )
           // (lbBestModel, lbBest.lbConf, ubBestModel, ubBest.ubConf)
-          // println(s"${vsConfig.modelName}: " + SandboxApp.getMetricsString(ubBest.ubConf))
+          // println(s"${vsConfig.modelName}: " + getMetricsString(ubBest.ubConf))
 
-          val lbResString = SandboxApp.getMetricsString(lbBest.lbConf)
-          val ubResString = SandboxApp.getMetricsString(ubBest.ubConf)
+          val lbResString = getMetricsString(lbBest.lbConf)
+          val ubResString = getMetricsString(ubBest.ubConf)
           println(s"${vsConfig.modelName} paraphrase lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson))
           println(s"${vsConfig.modelName} paraphrase lb metrics: " + lbResString)
           println(s"${vsConfig.modelName} paraphrase ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson))
@@ -711,7 +706,7 @@ object FrameInductionApp extends CommandIOApp(
 
 
           val rand = new scala.util.Random(2643642L)
-          def noise = math.abs(rand.nextGaussian / 200.0)
+          def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
           val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
             PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
@@ -983,8 +978,8 @@ object FrameInductionApp extends CommandIOApp(
         bestTuningPoints <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
           val lbBest = allPoints.maxBy(_.lbConf.f1)
           val ubBest = allPoints.maxBy(_.ubConf.f1)
-          val lbResString = SandboxApp.getMetricsString(lbBest.lbConf)
-          val ubResString = SandboxApp.getMetricsString(ubBest.ubConf)
+          val lbResString = getMetricsString(lbBest.lbConf)
+          val ubResString = getMetricsString(ubBest.ubConf)
           println(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson))
           println(s"${vsConfig.modelName} question lb metrics: " + lbResString)
           println(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson))
@@ -1014,7 +1009,7 @@ object FrameInductionApp extends CommandIOApp(
           }
 
           val rand = new scala.util.Random(2643642L)
-          def noise = math.abs(rand.nextGaussian / 200.0)
+          def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
           val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
             PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
@@ -1099,12 +1094,12 @@ object FrameInductionApp extends CommandIOApp(
         }
 
         val rand = new scala.util.Random(2643642L)
-        def noise = math.abs(rand.nextGaussian / 40.0)
+        def noise = scala.math.abs(rand.nextGaussian / 40.0)
 
         val data = senseLabels.values.iterator.map { case (lemma, sentenceMap) =>
           val instances = sentenceMap.iterator.flatMap(_._2.values.iterator).toList
           val senses = instances.toSet
-          ThisPoint(lemma, instances.size, senses.size, math.min(1000, instances.size + noise), senses.size + (noise * 10))
+          ThisPoint(lemma, instances.size, senses.size, scala.math.min(1000, instances.size + noise), senses.size + (noise * 10))
         }.toList
 
         val plot = ScatterPlot(
@@ -1135,7 +1130,7 @@ object FrameInductionApp extends CommandIOApp(
         }
 
         val rand = new scala.util.Random(2643642L)
-        def noise = math.abs(rand.nextGaussian / 40.0)
+        def noise = scala.math.abs(rand.nextGaussian / 40.0)
 
         val data = verbModelsByConfig.toList.flatMap { case (vsConfig, verbModels) =>
           val maxLossPerInstance = chosenThresholds(vsConfig)
@@ -1143,7 +1138,7 @@ object FrameInductionApp extends CommandIOApp(
             val numInstances = model.clusterTree.size.toInt
             val clusters = model.clusterTree.splitByPredicate(_.loss > (maxLossPerInstance * numInstances))
             val numClusters = clusters.size
-            ThisPoint(vsConfig, numInstances, numClusters, math.min(1000, numInstances.toDouble + noise), numClusters.toDouble + (noise * 10))
+            ThisPoint(vsConfig, numInstances, numClusters, scala.math.min(1000, numInstances.toDouble + noise), numClusters.toDouble + (noise * 10))
           }
         }
 
@@ -1175,7 +1170,7 @@ object FrameInductionApp extends CommandIOApp(
         }
 
         val rand = new scala.util.Random(2643642L)
-        def noise = math.abs(rand.nextGaussian / 4.0)
+        def noise = scala.math.abs(rand.nextGaussian / 4.0)
 
         val data = verbModelsByConfig.toList.flatMap { case (vsConfig, verbModels) =>
           val maxLossPerInstance = chosenThresholds(vsConfig)
@@ -1194,7 +1189,7 @@ object FrameInductionApp extends CommandIOApp(
           val num = data.map(d => d.numGoldClusters * d.numPredictedClusters).sum
           val denomGold = data.map(d => d.numGoldClusters * d.numGoldClusters).sum
           val denomPredicted = data.map(d => d.numPredictedClusters * d.numPredictedClusters).sum
-          num.toDouble / math.exp((math.log(denomGold) + math.log(denomPredicted)) / 2)
+          num.toDouble / scala.math.exp((scala.math.log(denomGold) + scala.math.log(denomPredicted)) / 2)
         }
 
         println("Pearson's R between gold and predicted number of senses: " + pearsonR)
@@ -1223,7 +1218,7 @@ object FrameInductionApp extends CommandIOApp(
   // _ <- {
   //   import qfirst.metrics._
   //   val dist = Numbers(verbClusters.values.toVector.filterNot(_.loss == 0.0).map(tree => tree.loss / tree.size))
-  //   IO(println(SandboxApp.getMetricsString(dist)))
+  //   IO(println(getMetricsString(dist)))
   // }
 
   @JsonCodec case class ModelParams(

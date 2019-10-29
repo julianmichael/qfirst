@@ -1,4 +1,4 @@
-package qfirst.paraphrase.models
+package qfirst.frame.models
 
 import cats.Foldable
 import cats.data.NonEmptyList

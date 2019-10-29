@@ -1,4 +1,4 @@
-package qfirst.paraphrase.browse
+package qfirst.frame.browse
 
 import scalacss.DevDefaults._
 import scala.language.postfixOps

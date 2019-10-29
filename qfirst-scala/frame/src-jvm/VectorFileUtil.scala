@@ -1,6 +1,4 @@
-package qfirst
-import qfirst.frames._
-import FrameDataWriter.FrameInfo
+package qfirst.frame
 
 import cats.implicits._
 import cats.data.NonEmptyList

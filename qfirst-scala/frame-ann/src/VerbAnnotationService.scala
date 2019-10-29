@@ -1,4 +1,8 @@
-package qfirst.frames.verbal
+package qfirst.frame.ann
+
+import qfirst.clause.ext.ArgStructure
+import qfirst.clause.ext.ArgumentSlot
+import qfirst.clause.ext.Frame
 
 import jjm.DotKleisli
 import jjm.DotFunctionK
@@ -14,10 +18,6 @@ import cats.effect.concurrent.Ref
 import qasrl.bank.SentenceId
 
 import qasrl.data.Dataset
-
-import qfirst.frames.ArgumentSlot
-import qfirst.frames.ArgStructure
-import qfirst.frames.Frame
 
 import io.circe.{Encoder, Decoder}
 import io.circe.generic.JsonCodec

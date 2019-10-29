@@ -1,7 +1,11 @@
-package qfirst.paraphrase.browse
-import qfirst._
-import qfirst.paraphrase._
-import qfirst.ClauseResolution.ArgStructure
+package qfirst.frame.browse
+
+import qfirst.clause.ArgStructure
+import qfirst.clause.ClauseResolution
+import qfirst.frame._
+import qfirst.frame.math._
+import qfirst.model.eval.filterGoldNonDense
+import qfirst.model.eval.filterOrigAnnotationRound
 
 import cats.Id
 import cats.Monoid
@@ -67,7 +71,7 @@ case class Rgba(r: Double, g: Double, b: Double, a: Double) {
       )
     }
   }
-  def toColorStyleString = f"rgba(${math.round(r)}%d, ${math.round(g)}%d, ${math.round(b)}%d, $a%.4f)"
+  def toColorStyleString = f"rgba(${scala.math.round(r)}%d, ${scala.math.round(g)}%d, ${scala.math.round(b)}%d, $a%.4f)"
 }
 
 sealed trait NavQuery
@@ -247,7 +251,7 @@ object VerbAnnUI {
     value: StateSnapshot[Double],
     numSigFigs: Int = 3
   ) = {
-    val magnitude = math.pow(10, numSigFigs).toInt
+    val magnitude = scala.math.pow(10, numSigFigs).toInt
     def int(x: Double) = (x * magnitude).toInt
     def double(n: Int) = n.toDouble / magnitude
     <.span(

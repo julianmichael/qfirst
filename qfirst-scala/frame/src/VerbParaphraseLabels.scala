@@ -1,7 +1,7 @@
-package qfirst.paraphrase
+package qfirst.frame
 
-import qfirst.ClauseResolution.ArgStructure
-import qfirst.EquivalenceWithApartness
+import qfirst.clause.ArgStructure
+import qfirst.frame.math.EquivalenceWithApartness
 
 import io.circe.generic.JsonCodec
 

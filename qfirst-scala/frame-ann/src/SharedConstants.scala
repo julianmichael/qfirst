@@ -1,4 +1,4 @@
-package qfirst.frames.verbal
+package qfirst.frame.ann
 
 object SharedConstants {
   val mainDivElementId = "verb-main"

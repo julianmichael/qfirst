@@ -1,5 +1,5 @@
-package qfirst.paraphrase.browse
-import qfirst.paraphrase.RunMode
+package qfirst.frame.browse
+import qfirst.frame.RunMode
 
 import scalatags.Text.all.Frag
 import java.nio.file.Path

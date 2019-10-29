@@ -1,6 +1,7 @@
-package qfirst.paraphrase
-import qfirst.MergeTree
-import qfirst.ClauseResolution
+package qfirst.frame
+
+import qfirst.clause.ClauseResolution
+import qfirst.clause.ArgStructure
 
 import cats.Monoid
 import cats.kernel.CommutativeMonoid
@@ -12,7 +13,6 @@ import qasrl.bank.SentenceId
 
 import qasrl._
 import qasrl.labeling.SlotBasedLabel
-import qfirst.ClauseResolution.ArgStructure
 
 import io.circe.generic.JsonCodec
 
@@ -131,7 +131,7 @@ class LazyFramesets(model: VerbClusterModel, initialCriterion: Either[Int, Doubl
   def getFramesetWithNFrames(n: Int) = {
     val numFramesetsLoaded = framesetResolutions.size
     if(numFramesetsLoaded < n && !allFramesetsLoaded) {
-      refreshClusters(Left(math.max(n, numFramesetsLoaded) * 2))
+      refreshClusters(Left(scala.math.max(n, numFramesetsLoaded) * 2))
     }
     framesetResolutions.lift(n - 1).getOrElse(framesetResolutions.last)
   }

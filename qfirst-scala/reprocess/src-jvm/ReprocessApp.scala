@@ -1,6 +1,5 @@
 package qfirst.reprocess
 import qfirst._
-import qfirst.metrics._
 
 import cats.Id
 import cats.Monad
@@ -33,8 +32,6 @@ import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 
 import qasrl.labeling.SlotBasedLabel
-
-import HasMetrics.ops._
 
 object ReprocessApp extends CommandIOApp(
   name = "mill qfirst.runReprocess",

@@ -1,5 +1,5 @@
-@package qfirst.paraphrase.browse.pages
-@import qfirst.paraphrase.browse._
+@package qfirst.frame.browse.pages
+@import qfirst.frame.browse._
 @param config: PageConfig
 
 @import scalacss.internal.{Css, Renderer}

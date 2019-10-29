@@ -1,5 +1,5 @@
-package qfirst.paraphrase.models
-import qfirst.MergeTree
+package qfirst.frame.models
+import qfirst.frame.MergeTree
 
 import cats.Foldable
 import cats.data.NonEmptyList

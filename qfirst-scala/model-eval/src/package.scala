@@ -12,6 +12,7 @@ import qfirst.metrics.HasMetrics.ops._
 import jjm.ling.en.InflectedForms
 
 package object eval {
+
   def filterGold(minNumAnswers: Int, maxNumInvalid: Int) = (verb: VerbEntry) => {
     val (invalids, valids) = verb.questionLabels.toList.flatMap {
       case (questionString, qLabel) =>

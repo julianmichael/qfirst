@@ -1,4 +1,4 @@
-package qfirst.paraphrase
+package qfirst.frame
 
 import io.circe.generic.JsonCodec
 

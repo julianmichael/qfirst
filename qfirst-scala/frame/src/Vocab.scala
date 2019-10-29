@@ -1,4 +1,4 @@
-package qfirst.paraphrase
+package qfirst.frame
 
 class Vocab[A] private (
   indexToItem: Vector[A],

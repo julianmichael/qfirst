@@ -1,4 +1,4 @@
-package qfirst.frames.verbal
+package qfirst.frame.ann
 
 import scalacss.DevDefaults._
 import scala.language.postfixOps

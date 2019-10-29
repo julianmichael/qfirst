@@ -1,4 +1,4 @@
-package qfirst.paraphrase.browse
+package qfirst.frame.browse
 
 object SharedConstants {
   val mainDivElementId = "browse-main"

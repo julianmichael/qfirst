@@ -242,8 +242,12 @@ object qfirst extends Module {
   }
 
   object frame extends Module {
-    object js extends JsModule
+    object js extends JsModule {
+      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js)
+    }
     object jvm extends FullJvmModule {
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm)
+
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
       )
@@ -263,11 +267,15 @@ object qfirst extends Module {
 
   object `frame-ann` extends Module {
     object js extends FullJsModule {
-      def moduleDeps = Seq(frame.js)
+      def moduleDeps = Seq(frame.js, `clause-ext`.js)
     }
-    object jvm extends FullJvmModule {
+    object jvm extends FullJvmModule with ScalatexModule {
 
-      def moduleDeps = Seq(frame.jvm)
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
+
+      def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm)
 
       def serve(args: String*) = T.command {
         val jsPath = `frame-ann`.js.fastOpt().path.toString
@@ -287,8 +295,13 @@ object qfirst extends Module {
     object js extends FullJsModule {
       def moduleDeps = Seq(frame.js)
     }
-    object jvm extends FullJvmModule {
+    object jvm extends FullJvmModule with ScalatexModule {
+
       def moduleDeps = Seq(frame.jvm)
+
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
 
       def serve(args: String*) = T.command {
         val jsPath = `frame-browse`.js.fastOpt().path.toString
@@ -305,7 +318,9 @@ object qfirst extends Module {
   }
 
   object `model-gen` extends Module {
-    object jvm extends FullJvmModule
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(metrics.jvm)
+    }
   }
 
   object `model-eval` extends Module {
@@ -321,37 +336,3 @@ object qfirst extends Module {
     object jvm extends FullJvmModule
   }
 }
-
-// trait ClausalDemoModule extends QfirstModule {
-//   override def millSourcePath = build.millSourcePath / "clausal-demo"
-//   override def ivyDeps = super.ivyDeps() ++ Agg(
-//     ivy"org.julianmichael::spacro::$spacroVersion",
-//     ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
-//   )
-// }
-// 
-// object `clausal-demo` extends Module {
-//   object js extends ClausalDemoModule with JsPlatform with SimpleJSDeps {
-//     def moduleDeps = List(qfirst.js)
-// 
-//     override def ivyDeps = super.ivyDeps() ++ Agg(
-//       ivy"org.julianmichael::radhoc::$radhocVersion",
-//       ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
-//       ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-//       ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
-//     )
-//     override def jsDeps = Agg(
-//       "https://code.jquery.com/jquery-2.1.4.min.js",
-//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
-//       "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
-//     )
-//   }
-//   object jvm extends ClausalDemoModule with JvmPlatform {
-//     override def repositories = super.repositories ++ Seq(
-//       coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-//     )
-// 
-//     def moduleDeps = List(qfirst.jvm)
-// 
-//   }
-// }

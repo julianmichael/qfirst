@@ -1,4 +1,14 @@
-package qfirst.paraphrase
+package qfirst.frame
+
+import qfirst.model.eval.filterGoldDense
+import qfirst.metrics._
+  // import qfirst.{Instances => I}
+  // import qfirst.metrics.{Transformers => M}
+import shapeless._
+import shapeless.syntax.singleton._
+import shapeless.record._
+import qfirst.clause.ClauseResolution
+import qfirst.clause.ArgStructure
 
 import cats.implicits._
 
@@ -8,18 +18,11 @@ import qasrl.labeling.SlotBasedLabel
 
 import jjm.ling.en.VerbForm
 
-import qfirst.filterGoldDense
-// import qfirst.{Instances => I}
-// import qfirst.metrics.{Transformers => M}
-import qfirst.metrics._
-import shapeless._
-import shapeless.syntax.singleton._
-import shapeless.record._
 import monocle.function.{all => Optics}
-import qfirst.ClauseResolution
-import qfirst.ClauseResolution.ArgStructure
+
 
 object Evaluation {
+
   // def getParaphrasingClauses(
   //   frameset: VerbFrameset,
   //   frameProbabilities: Vector[Double], threshold: Double, marginalize: Boolean
