@@ -7,6 +7,35 @@ import io.circe.generic.JsonCodec
 
 import monocle.Lens
 
+/** Represents a paired consistent equivalence relation and apartness relation.
+  * An equivalence relation is a relation ~ which is:
+  * - Reflexive: x ~ x
+  * - Symmetric: x ~ y --> y ~ x
+  * - Transitive: x ~ y & y ~ z --> x ~ z
+  * An apartness relation is a relation ^ which is:
+  * - Irreflexive: !(x ^ x)
+  * - Symmetric: x ^ y --> y ^ x
+  * - Cotransitive: x ^ z --> x ^ y | y ^ z
+  * The complement of an equivalence relation is an apartness relation and vice versa.
+  * We say an equivalence relation and apartness relation are _consistent_
+  * if each is contained in the other's complement.
+  * Consistency gets us further:
+  * - Transport: x ~ y & y ^ z --> x ^ z
+  * Proof:
+  * 1. ~ and ^ are consistent | Assumption.
+  * 2. x ~ y                  | Assumption.
+  * 3. y ^ z                  | Assumption.
+  * 4. y ^ x | x ^ z          | by cotransitivity and 3.
+  * 5. y ~ x                  | by symmetry and 2.
+  * 6. !(y ^ x)               | by consistency and 5.
+  * 5. x ^ z                  | by resolution and 4.
+  * qed.
+  * Transport implies that apartness relations over X that are consistent with ~
+  * are in one-to-one correspondence with arbitrary apartness relations over X/~.
+  * We regardless represent ~ via X/~ in a union-find data structure.
+  * So we may represent the paired relations by storing an apartness relation over
+  * the class representatives in X/~ and updating them appropriately.
+  */
 @JsonCodec sealed trait EquivalenceWithApartness[A] {
   def equal(x: A, y: A): Boolean
   def equivalenceClass(x: A): Set[A]
@@ -25,6 +54,7 @@ object EquivalenceWithApartness {
     apartness: FiniteSymmetricRelation[A]
   ) extends EquivalenceWithApartness[A] {
     // def equivalence = EquivalenceRelation(equivalenceClasses)
+    // TODO scrap boilerplate with mapN from Applicative
     def equal(x: A, y: A): Boolean = {
       x == y || equivalenceClasses.find(x)
         .product(equivalenceClasses.find(y))
