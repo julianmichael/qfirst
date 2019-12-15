@@ -156,6 +156,24 @@ object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
+  object freelog extends Module {
+    object js extends JsModule
+    object jvm extends FullJvmModule {
+      object test extends Tests {
+        override def millSourcePath = freelog.this.millSourcePath / "test"
+        override def scalaVersion = jvm.this.scalaVersion
+        // def platformSegment = jvm.this.platformSegment
+        override def ivyDeps = Agg(
+          ivy"org.scalatest::scalatest:$scalatestVersion",
+          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
+          ivy"org.typelevel::discipline-core:$disciplineVersion"
+            // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
+        )
+        def testFrameworks = Seq("org.scalatest.tools.Framework")
+      }
+    }
+  }
+
   object metrics extends Module {
     object js extends JsModule
     object jvm extends JvmModule
@@ -186,27 +204,27 @@ object qfirst extends Module {
     }
   }
 
-  object `clause-ext-ann` extends Module {
-    object js extends FullJsModule {
-      def moduleDeps = Seq(`clause-ext`.js)
-    }
-    object jvm extends FullJvmModule {
+  // object `clause-ext-ann` extends Module {
+  //   object js extends FullJsModule {
+  //     def moduleDeps = Seq(`clause-ext`.js)
+  //   }
+  //   object jvm extends FullJvmModule {
 
-      def moduleDeps = Seq(`clause-ext`.jvm)
+  //     def moduleDeps = Seq(`clause-ext`.jvm)
 
-      def serve(args: String*) = T.command {
-        val jsPath = `clause-ext-ann`.js.fastOpt().path.toString
-        val jsDepsPath = `clause-ext-ann`.js.aggregatedJSDeps().path.toString
-        val runMain = runMainFn()
-        runMain(
-          "qfirst.clause.ext.ann.Serve",
-          List(
-            "--jsDeps", jsDepsPath,
-            "--js", jsPath
-          ) ++ args)
-      }
-    }
-  }
+  //     def serve(args: String*) = T.command {
+  //       val jsPath = `clause-ext-ann`.js.fastOpt().path.toString
+  //       val jsDepsPath = `clause-ext-ann`.js.aggregatedJSDeps().path.toString
+  //       val runMain = runMainFn()
+  //       runMain(
+  //         "qfirst.clause.ext.ann.Serve",
+  //         List(
+  //           "--jsDeps", jsDepsPath,
+  //           "--js", jsPath
+  //         ) ++ args)
+  //     }
+  //   }
+  // }
 
   object `clause-ext-demo` extends Module {
     object js extends FullJsModule {
