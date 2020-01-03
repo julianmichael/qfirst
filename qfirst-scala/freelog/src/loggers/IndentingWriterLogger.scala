@@ -13,8 +13,8 @@ case class IndentingWriterLogger(
   def log(msg: String) = Writer.tell(msg + "\n")
 
   def branch[A](msg: String)(body: Writer[String, A]): Writer[String, A] = for {
-    _ <- Writer.tell(msg + s"\n$indent")
-                    (nestedLog, res) = body.run
-    _ <- Writer.tell(nestedLog.replaceAll("\n", s"\n$indent"))
+    _ <- Writer.tell(msg)
+    (nestedLog, res) = body.run
+    _ <- Writer.tell(s"\n$indent" + nestedLog.init.replaceAll("\n", s"\n$indent") + "\n")
   } yield res
 }

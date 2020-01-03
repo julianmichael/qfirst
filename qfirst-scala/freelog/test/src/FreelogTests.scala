@@ -10,18 +10,24 @@ import cats.implicits._
 
 class FrameTests extends FunSuite with Matchers {
 
+  def showLogTree(tree: LogTree[String]) = tree.cata[String](
+    labeled = (label, children) => label + children.map(s =>
+      "\n  " + s.replaceAll("\n", "\n  ") // indent whole string and add indented newline
+    ).mkString,
+    unlabeled = _.mkString("\n")
+  )
+
   import org.scalatest.Inside._
   import org.scalatest.AppendedClues._
 
-  val writerLogger = freelog.loggers.IndentingWriterLogger()
-
-  val test1 = for {
-    _ <- writerLogger.branch("Beginning...") {
+  def runTest1[F[_]: Monad](logger: TreeLogger[String, F]) = for {
+    _ <- logger.branch("Beginning...") {
       (1 to 5).toList.traverse(i =>
         // List('a', 'b', 'c').traverse
-        writerLogger.log(s"Counting $i...")
+        logger.log(s"Counting $i...")
       )
     }
+    _ <- logger.log("Done.")
   } yield ()
 
   val test1Res = """
@@ -31,10 +37,17 @@ class FrameTests extends FunSuite with Matchers {
     |  Counting 3...
     |  Counting 4...
     |  Counting 5...
-  """.trim.stripMargin + "\n  "
+    |Done.
+  """.stripMargin.trim
 
-  test("logging sandbox") {
-    test1.run._1 shouldEqual test1Res
+  test("IndentingWriterLogger") {
+    runTest1(freelog.loggers.IndentingWriterLogger()).run._1.trim shouldEqual test1Res
+  }
+
+  test("TreeWriterLogger") {
+    showLogTree(
+      runTest1(freelog.loggers.TreeWriterLogger[String]()).run._1
+    ).trim shouldEqual test1Res
   }
 
   val ephLoggerIO = freelog.loggers.RewindingConsoleLineLogger.create(x => IO.unit)
