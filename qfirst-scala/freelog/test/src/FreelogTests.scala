@@ -13,15 +13,15 @@ class FrameTests extends FunSuite with Matchers {
   import org.scalatest.Inside._
   import org.scalatest.AppendedClues._
 
-  val writerLogger = Loggers.IndentingWriterLogger()
+  val writerLogger = freelog.loggers.IndentingWriterLogger()
 
   val test1 = for {
-    _ <- writerLogger.log(
-      "Beginning...", (1 to 5).toList.traverse(i =>
+    _ <- writerLogger.branch("Beginning...") {
+      (1 to 5).toList.traverse(i =>
         // List('a', 'b', 'c').traverse
         writerLogger.log(s"Counting $i...")
       )
-    )
+    }
   } yield ()
 
   val test1Res = """
@@ -37,7 +37,7 @@ class FrameTests extends FunSuite with Matchers {
     test1.run._1 shouldEqual test1Res
   }
 
-  val ephLoggerIO = Loggers.EphemeralConsoleLogger.create(x => IO.unit)
+  val ephLoggerIO = freelog.loggers.RewindingConsoleLineLogger.create(x => IO.unit)
 
   test("ephemeral logging 1") {
     val runTest = for {
