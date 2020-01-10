@@ -8,11 +8,11 @@ import cats.implicits._
 trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLogger[F, Msg] {
 
   // bar if arg present
-  override def progTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: String, sizeHint: Option[Long])(f: A => F[B])(
+  override def progTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, sizeHint: Option[Long])(f: A => F[B])(
     implicit progress: ProgressSpec[Msg], m: Monad[F]
   ): F[G[B]] = {
-    val renderProgress = progress.renderProgress(prefix, sizeHint)
-    block(
+    val renderProgress = progress.renderProgress(None, sizeHint)
+    branch(prefix)(
       fa.traverseWithIndexAndSizeM((a, i) =>
         branch(renderProgress(i))(f(a)) <* rewind
       ).flatMap { case (b, i) =>
@@ -22,11 +22,11 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
   }
 
   // sometimes bar
-  override def progTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: String, sizeHint: Option[Long])(f: (A, Int) => F[B])(
+  override def progTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, sizeHint: Option[Long])(f: (A, Int) => F[B])(
     implicit progress: ProgressSpec[Msg], m: Monad[F]
   ): F[G[B]] = {
-    val renderProgress = progress.renderProgress(prefix, sizeHint)
-    block(
+    val renderProgress = progress.renderProgress(None, sizeHint)
+    branch(prefix)(
       fa.traverseWithIndexAndSizeM((a, i) =>
         branch(renderProgress(i))(f(a, i)) <* rewind
       ).flatMap { case (b, i) =>

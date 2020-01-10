@@ -1,23 +1,27 @@
 package freelog
 
 case class ProgressSpec[Msg](
-  renderProgress: (String, Option[Long]) => Long => Msg
+  renderProgress: (Option[Msg], Option[Long]) => Long => Msg
 )
 object ProgressSpec {
 
-  val getSimpleIterationLabel = (prefix: String) => (cur: Long) => s"$prefix: ${cur}it"
+  val getSimpleIterationLabel = (prefixOpt: Option[String]) => (cur: Long) => {
+    val fullPrefix = prefixOpt.filter(_.nonEmpty).fold("")(_ + ": ")
+    s"${fullPrefix}${cur}it"
+  }
 
-  def getSimpleProgressBar(length: Int, prefix: String)(total: Long)(cur: Long): String = {
+  def getSimpleProgressBar(length: Int, prefixOpt: Option[String])(total: Long)(cur: Long): String = {
+    val fullPrefix = prefixOpt.filter(_.nonEmpty).fold("")(_ + ": ")
     val num = math.round(cur.toDouble / total * length).toInt
     val pct = math.round(cur.toDouble / total * 100.0).toInt
     val bars = "#" * num
     val spaces = " " * (length - num)
-    f"$prefix: $pct%3d%% [$bars%s$spaces%s] $cur%d/$total%d"
+    f"$cur%d/$total%d [$bars%s$spaces%s] ${fullPrefix}$pct%3d%%"
   }
 
   def simple(barLength: Int) = ProgressSpec[String](
-    (prefix, sizeOpt) => sizeOpt.fold(
-      getSimpleIterationLabel(prefix))(
-      getSimpleProgressBar(barLength, prefix))
+    (prefixOpt, sizeOpt) => sizeOpt.fold(
+      getSimpleIterationLabel(prefixOpt))(
+      getSimpleProgressBar(barLength, prefixOpt))
   )
 }

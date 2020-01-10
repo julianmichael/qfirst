@@ -1305,7 +1305,7 @@ object FrameInductionApp extends CommandIOApp(
 
 
     (modeO, verbSenseConfigOptO, isPropbankO).mapN { (mode, verbSenseConfigOpt, isPropbank) =>
-      freelog.loggers.EphemeralTreeConsoleLogger.create().flatMap { logger =>
+      freelog.loggers.TimingEphemeralTreeConsoleLogger.create().flatMap { logger =>
         implicit val _logger = logger
         if(isPropbank) runPropBankFrameInduction(Config(mode), verbSenseConfigOpt)
         else runQasrlFrameInduction(Config(mode), verbSenseConfigOpt)
