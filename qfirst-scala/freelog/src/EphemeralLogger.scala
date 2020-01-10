@@ -17,21 +17,24 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
 
   def blockTraverse[G[_]: Traverse, A, B](fa: G[A])(f: A => F[B])(
     implicit ap: Applicative[F]
-  ) = block(fa.traverse(a => rewind *> f(a)))
+  ) = block(fa.traverse(a => f(a) <* rewind))
 
   def blockTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A])(f: (A, Int) => F[B])(
     implicit ap: Monad[F]
   ) =
-    block(fa.traverseWithIndexM((a, i) => rewind >> f(a, i)))
-
+    block(fa.traverseWithIndexM((a, i) => f(a, i) <* rewind))
 
   // bar if arg present
   def progTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: String, sizeHint: Option[Long])(f: A => F[B])(
     implicit progress: ProgressSpec[Msg], ap: Monad[F]
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(prefix, sizeHint)
-    blockTraverseWithIndexM(fa)((a, i) =>
-      log(renderProgress(i)) >> f(a)
+    block(
+      fa.traverseWithIndexAndSizeM((a, i) =>
+        log(renderProgress(i)) >> f(a) <* rewind
+      ).flatMap { case (b, i) =>
+          log(renderProgress(i)).as(b)
+      }
     )
   }
   // never bar
@@ -52,8 +55,12 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
     implicit progress: ProgressSpec[Msg], ap: Monad[F]
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(prefix, sizeHint)
-    blockTraverseWithIndexM(fa)((a, i) =>
-      log(renderProgress(i)) >> f(a, i)
+    block(
+      fa.traverseWithIndexAndSizeM((a, i) =>
+        log(renderProgress(i)) >> f(a, i) <* rewind
+      ).flatMap { case (b, i) =>
+          log(renderProgress(i)).as(b)
+      }
     )
   }
   // never bar

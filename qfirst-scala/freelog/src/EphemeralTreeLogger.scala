@@ -12,8 +12,12 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
     implicit progress: ProgressSpec[Msg], m: Monad[F]
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(prefix, sizeHint)
-    blockTraverseWithIndexM(fa)((a, i) =>
-      branch(renderProgress(i))(f(a))
+    block(
+      fa.traverseWithIndexAndSizeM((a, i) =>
+        branch(renderProgress(i))(f(a)) <* rewind
+      ).flatMap { case (b, i) =>
+          log(renderProgress(i)).as(b)
+      }
     )
   }
 
@@ -22,8 +26,12 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
     implicit progress: ProgressSpec[Msg], m: Monad[F]
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(prefix, sizeHint)
-    blockTraverseWithIndexM(fa)((a, i) =>
-      branch(renderProgress(i))(f(a, i))
+    block(
+      fa.traverseWithIndexAndSizeM((a, i) =>
+        branch(renderProgress(i))(f(a, i)) <* rewind
+      ).flatMap { case (b, i) =>
+          log(renderProgress(i)).as(b)
+      }
     )
   }
 }
