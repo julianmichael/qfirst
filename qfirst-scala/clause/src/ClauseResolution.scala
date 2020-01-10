@@ -34,8 +34,9 @@ object ClauseResolution {
       val template = new QuestionProcessor(stateMachine)
       val framesWithAnswerSlots = template.processStringFully(question) match {
         case Left(QuestionProcessor.AggregatedInvalidState(_, _)) =>
-          println("Failed! " + question)
-            ???
+          throw new RuntimeException(
+            s"Question parsing unexpectedly failed for question: question"
+          )
         case Right(goodStates) => goodStates.toList.collect {
           case QuestionProcessor.CompleteState(_, frame, answerSlot) =>
             frame -> answerSlot

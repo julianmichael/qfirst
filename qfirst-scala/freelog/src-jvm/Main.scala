@@ -1,11 +1,11 @@
 package freelog
 
 import cats._
-import cats.implicits._
 import cats.effect.IO
 import cats.effect.ExitCode
 import cats.effect.Sync
 import cats.effect.concurrent.Ref
+import cats.implicits._
 
 import com.monovore.decline._
 import com.monovore.decline.effect._
@@ -20,7 +20,7 @@ object Main extends CommandIOApp(
     def traverseLogging[G[_]: Monad, B](
       getMessage: Int => String)(
       f: A => G[B])(
-      implicit logger: EphemeralLogger[String, G]) = {
+      implicit logger: EphemeralLogger[G, String]) = {
       // val prefix = if(label.isEmpty) "" else s"$label: "
       logger.block {
         logger.replace(getMessage(0)) >>
@@ -33,7 +33,7 @@ object Main extends CommandIOApp(
     def traverseLoggingIter[G[_]: Monad, B](
       prefix: String)(
       f: A => G[B])(
-      implicit logger: EphemeralLogger[String, G]) = {
+      implicit logger: EphemeralLogger[G, String]) = {
       traverseLogging(i => s"${prefix}${i}it")(f)
     }
 
@@ -48,7 +48,7 @@ object Main extends CommandIOApp(
     def traverseLoggingProgress[G[_]: Monad, B](
       prefix: String, size: Long = fa.size)(
       f: A => G[B])(
-      implicit logger: EphemeralLogger[String, G]) = {
+      implicit logger: EphemeralLogger[G, String]) = {
       val progress = getProgressBar(30)(size) _
       traverseLogging(i => s"${prefix}${progress(i)}")(f)
     }
@@ -56,7 +56,7 @@ object Main extends CommandIOApp(
     // def traverseLoggingIterSync[G[_]: Monad : Sync, B](
     //   label: String)(
     //   f: A => G[B])(
-    //   implicit logger: EphemeralLogger[String, G]) = {
+    //   implicit logger: EphemeralLogger[G, String]) = {
     //   val prefix = if(label.isEmpty) "" else s"$label: "
     //   Ref[G].of(0) >>= { iter =>
     //     logger.block {
@@ -74,7 +74,7 @@ object Main extends CommandIOApp(
     // def traverseLoggingIterSync[G[_]: Monad : Sync, B](
     //   label: String)(
     //   f: A => G[B])(
-    //   implicit logger: EphemeralLogger[String, G]) = {
+    //   implicit logger: EphemeralLogger[G, String]) = {
     //   val prefix = if(label.isEmpty) "" else s"$label: "
     //   Ref[G].of(0) >>= { iter =>
     //     logger.block {
@@ -94,7 +94,7 @@ object Main extends CommandIOApp(
     // def traverseLoggingProgressSync[G[_]: Monad : Sync, B](
     //   label: String, size: Long = fa.size)(
     //   f: A => G[B])(
-    //   implicit logger: EphemeralLogger[String, G]) = {
+    //   implicit logger: EphemeralLogger[G, String]) = {
     //   val prefix = if(label.isEmpty) "" else s"$label: "
     //   Ref[G].of(0) >>= { iter =>
     //     logger.block {
@@ -110,9 +110,9 @@ object Main extends CommandIOApp(
     // }
   }
 
-  def program: IO[ExitCode] = {
+  def ephemeralTreeDemo: IO[ExitCode] = {
     for {
-      implicit0(logger: EphemeralTreeLogger[String, IO]) <- freelog.loggers.EphemeralTreeConsoleLogger.create()
+      implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.EphemeralTreeConsoleLogger.create()
       _ <- (1 to 1000).toList.traverseLoggingIter("Initializing: ")(_ => IO.sleep(0.002.seconds))
 
       _ <- (1 to 1000).toList.traverseLoggingProgress("Buffering: ")(_ => IO.sleep(0.002.seconds))
@@ -135,7 +135,46 @@ object Main extends CommandIOApp(
     } yield ExitCode.Success
   }
 
+  import jjm.io.HttpUtil
+  import org.http4s.Uri
+  import org.http4s.server.Router
+  import org.http4s.server.blaze.BlazeServerBuilder
+  import org.http4s.implicits._
+  import freelog.loggers.remote.RemoteLoggerService
+
+  def clientServerDemo: IO[ExitCode] = for {
+    (simpleLogger: Logger[IO, String]) <- loggers.IndentingLogger.console()
+    nextSessionId <- Ref[IO].of(0)
+    port = 9564
+    serverFiber <- BlazeServerBuilder[IO]
+    .bindHttp(port, "0.0.0.0")
+    .withoutBanner.withNio2(true)
+    .withHttpApp(
+      Router(
+        "/" -> HttpUtil.makeHttpPostServer(
+          RemoteLoggerService.sessionPrefixingService[IO](
+            nextSessionId, simpleLogger
+          )
+        )
+      ).orNotFound
+    ).resource.use(_ => IO.never).start
+    // .serve.compile.drain
+    _ <- RemoteLoggerService.withHttpBlazeClientLogger[
+      Unit, Int, String, IO, Unit](
+      Uri.unsafeFromString(s"http://localhost:$port"), (), cats.Contravariant[Logger[IO, ?]].contramap[String, String](simpleLogger)("[CLIENT] " + _)
+    ) { logger =>
+      logger.log("Message 1") >> logger.log("Message 2")
+    }
+    _ <- RemoteLoggerService.withHttpBlazeClientLogger[
+      Unit, Int, String, IO, Unit](
+      Uri.unsafeFromString(s"http://localhost:$port"), (), cats.Contravariant[Logger[IO, ?]].contramap[String, String](simpleLogger)("[CLIENT] " + _)
+    ) { logger =>
+      logger.log("Message 3") >> logger.log("Message 4")
+    }
+    _ <- serverFiber.cancel
+  } yield ExitCode.Success
+
   val main: Opts[IO[ExitCode]] = {
-    Opts.unit.as(program)
+    Opts.unit.as(clientServerDemo)
   }
 }

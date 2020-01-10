@@ -11,7 +11,7 @@ case class RewindingConsoleStringLogger(
   checkpointState: Ref[IO, RewindingConsoleStringLogger.CheckpointState],
   pendingCheckpoint: Ref[IO, Option[RewindingConsoleStringLogger.ConsoleCheckpoint]],
   putStr: String => IO[Unit] = x => IO(print(x))
-) extends RewindingLogger[String, IO] {
+) extends RewindingLogger[IO, String] {
   import RewindingConsoleStringLogger.{CheckpointState, ConsoleCheckpoint}
   private[this] def getCheckpointRestorationStr = {
     pendingCheckpoint.get.flatMap {

@@ -11,7 +11,7 @@ case class RewindingConsoleLineLogger(
   checkpointState: Ref[IO, List[Int]],
   pendingCheckpoint: Ref[IO, Option[Int]],
   putStr: String => IO[Unit] = x => IO(print(x))
-) extends RewindingLogger[String, IO] {
+) extends RewindingLogger[IO, String] {
   private[this] def flushWithMessage(msg: String) = for {
     backtrackingStr <- pendingCheckpoint.get.flatMap {
       case None => IO.pure("")

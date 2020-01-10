@@ -9,7 +9,7 @@ import cats.implicits._
 
 case class IndentingWriterLogger(
   indent: String = "  "
-) extends TreeLogger[String, Writer[String, ?]] {
+) extends TreeLogger[Writer[String, ?], String] {
   def log(msg: String) = Writer.tell(msg + "\n")
 
   def branch[A](msg: String)(body: Writer[String, A]): Writer[String, A] = for {

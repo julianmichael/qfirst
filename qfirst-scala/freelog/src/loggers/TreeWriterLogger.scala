@@ -8,7 +8,7 @@ import cats.data.WriterT
 import cats.implicits._
 
 case class TreeWriterLogger[Msg](
-) extends TreeLogger[Msg, Writer[LogTree[Msg], ?]] {
+) extends TreeLogger[Writer[LogTree[Msg], ?], Msg] {
   def log(msg: Msg): Writer[LogTree[Msg], Unit] = Writer.tell(LogTree.labeled(msg, Nil))
   def branch[A](msg: Msg)(body: Writer[LogTree[Msg], A]): Writer[LogTree[Msg], A] = {
     val (logTree, res) = body.run
@@ -21,7 +21,7 @@ case class TreeWriterLogger[Msg](
 }
 
 case class TreeWriterTLogger[Msg, F[_]: Applicative](
-) extends TreeLogger[Msg, WriterT[F, LogTree[Msg], ?]] {
+) extends TreeLogger[WriterT[F, LogTree[Msg], ?], Msg] {
   def log(msg: Msg): WriterT[F, LogTree[Msg], Unit] = WriterT.tell[F, LogTree[Msg]](
     LogTree.labeled(msg, Nil)
   )

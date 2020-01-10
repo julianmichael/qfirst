@@ -7,35 +7,38 @@ import cats.Monoid
 import cats.Semigroup
 import cats.implicits._
 
-trait Logger[Msg, F[_]] {
+trait Logger[F[_], Msg] {
   def log(msg: Msg): F[Unit]
 }
 object Logger {
-  def unit[Msg, F[_]: Applicative] = new Logger[Msg, F] {
+  def apply[F[_], Msg](sendLog: Msg => F[Unit]): Logger[F, Msg] = new Logger[F, Msg] {
+    def log(msg: Msg): F[Unit] = sendLog(msg)
+  }
+
+  def unit[F[_]: Applicative, Msg] = new Logger[F, Msg] {
     def log(msg: Msg): F[Unit] = Applicative[F].unit
   }
 
-  case class Tee[Msg, F[_]: Apply](
-    first: Logger[Msg, F],
-    second: Logger[Msg, F]
-  ) extends Logger[Msg, F] {
+  case class Tee[F[_]: Apply, Msg](
+    first: Logger[F, Msg],
+    second: Logger[F, Msg]
+  ) extends Logger[F, Msg] {
     def log(msg: Msg): F[Unit] = first.log(msg) *> second.log(msg)
   }
 
-  def loggerContravariant[F[_]]: Contravariant[Logger[?, F]] = new Contravariant[Logger[?, F]] {
-    def contramap[A, B](fa: Logger[A, F])(f: B => A): Logger[B, F] = new Logger[B, F] {
+  implicit def loggerContravariant[F[_]]: Contravariant[Logger[F, ?]] = new Contravariant[Logger[F, ?]] {
+    def contramap[A, B](fa: Logger[F, A])(f: B => A): Logger[F, B] = new Logger[F, B] {
       def log(msg: B): F[Unit] = fa.log(f(msg))
     }
   }
 
-  class LoggerSemigroup[Msg, F[_]: Apply] extends Semigroup[Logger[Msg, F]] {
-    def combine(x: Logger[Msg, F], y: Logger[Msg, F]) = Tee(x, y)
+  class LoggerSemigroup[F[_]: Apply, Msg] extends Semigroup[Logger[F, Msg]] {
+    def combine(x: Logger[F, Msg], y: Logger[F, Msg]) = Tee(x, y)
   }
-  def loggerSemigroup[Msg, F[_]: Apply]: Semigroup[Logger[Msg, F]] = new LoggerSemigroup[Msg, F]
+  implicit def loggerSemigroup[F[_]: Apply, Msg]: Semigroup[Logger[F, Msg]] = new LoggerSemigroup[F, Msg]
 
-  class LoggerMonoid[Msg, F[_]: Applicative] extends LoggerSemigroup[Msg, F] with Monoid[Logger[Msg, F]] {
-    def empty: Logger[Msg, F] = Logger.unit[Msg, F]
+  class LoggerMonoid[F[_]: Applicative, Msg] extends LoggerSemigroup[F, Msg] with Monoid[Logger[F, Msg]] {
+    def empty: Logger[F, Msg] = Logger.unit[F, Msg]
   }
-  def loggerMonoid[Msg, F[_]: Applicative]: Monoid[Logger[Msg, F]] = new LoggerMonoid[Msg, F]
+  implicit def loggerMonoid[F[_]: Applicative, Msg]: Monoid[Logger[F, Msg]] = new LoggerMonoid[F, Msg]
 }
-

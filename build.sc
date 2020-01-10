@@ -11,13 +11,13 @@ val kindProjectorVersion = "0.9.4"
 val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
 
-val jjmVersion = "0.1.0"
+val jjmVersion = "0.1.1-SNAPSHOT"
 val qasrlVersion = "0.2.0"
 val qasrlBankVersion = "0.2.0"
 val radhocVersion = "0.3.0"
 val spacroVersion = "0.3.0"
 
-// val http4sVersion = "0.20.11"
+val http4sVersion = "0.20.11"
 val kittensVersion = "1.1.1"
 val declineVersion = "1.0.0"
 
@@ -159,6 +159,10 @@ object qfirst extends Module {
   object freelog extends Module {
     object js extends JsModule
     object jvm extends FullJvmModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.http4s::http4s-blaze-client::$http4sVersion",
+        ivy"org.http4s::http4s-blaze-server::$http4sVersion"
+      )
       object test extends Tests {
         override def millSourcePath = freelog.this.millSourcePath / "test"
         override def scalaVersion = jvm.this.scalaVersion
@@ -261,10 +265,10 @@ object qfirst extends Module {
 
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js)
+      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm)
 
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")

@@ -9,9 +9,9 @@ import cats.implicits._
 
 case class IndentingLogger(
   indentLevel: Ref[IO, Int],
-  getIndent: Int => String = i => "  " * i,
-  putStrLn: String => IO[Unit] = s => IO(println(s))
-) extends TreeLogger[String, IO] {
+  putStrLn: String => IO[Unit],
+  getIndent: Int => String = i => "  " * i
+) extends TreeLogger[IO, String] {
   def log(msg: String) = for {
     i <- indentLevel.get
     _ <- putStrLn(getIndent(i) + msg)
@@ -24,4 +24,14 @@ case class IndentingLogger(
     res <- body
     _ <- indentLevel.update(_ - 1)
   } yield res
+}
+object IndentingLogger {
+  def console(
+    initIndentLevel: Int = 0,
+    getIndent: Int => String = i => "  " * i
+  ): IO[IndentingLogger] = {
+    Ref[IO].of(initIndentLevel).map(indentLevel =>
+      IndentingLogger(indentLevel, s => IO(println(s)), getIndent)
+    )
+  }
 }

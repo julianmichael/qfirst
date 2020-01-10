@@ -258,14 +258,16 @@ object QAInputApp extends CommandIOApp(
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   def program(goldPath: NIOPath, outDir: NIOPath, test: Boolean): IO[ExitCode] = for {
-    inputSet <- logOp("Reading QA-SRL expanded/train", readDataset(goldPath.resolve("expanded/train.jsonl.gz")))
+    Log <- freelog.loggers.EphemeralTreeConsoleLogger.create()
+    inputSet <- Log.branch("Reading QA-SRL expanded/train")(
+      readDataset(goldPath.resolve("expanded/train.jsonl.gz"))
+    )
     evalSet <- {
-      if(test) logOp("Reading QA-SRL orig/test", readDataset(goldPath.resolve("orig/test.jsonl.gz")))
-      else logOp("Reading QA-SRL orig/dev", readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
+      if(test) Log.branch("Reading QA-SRL orig/test")(readDataset(goldPath.resolve("orig/test.jsonl.gz")))
+      else Log.branch("Reading QA-SRL orig/dev")(readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
     }
-    fullDataset <- logOp("Constructing full dataset", inputSet |+| evalSet)
-    _ <- logOp(
-      "Writing QA input file",
+    fullDataset <- Log.branch("Constructing full dataset")(IO(inputSet |+| evalSet))
+    _ <- Log.branch("Writing QA input file")(
       FileUtil.writeJsonLinesStreaming(
         outDir.resolve(if(test) "qa-input-test.jsonl.gz" else "qa-input-dev.jsonl.gz"), io.circe.Printer.noSpaces)(
         getJsonInputsForQA[IO](fullDataset))

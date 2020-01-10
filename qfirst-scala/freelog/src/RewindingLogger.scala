@@ -1,6 +1,6 @@
 package freelog
 
-trait RewindingLogger[Msg, F[_]] extends EphemeralLogger[Msg, F] {
+trait RewindingLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
   /** Save a new checkpoint. */
   def save: F[Unit]
 

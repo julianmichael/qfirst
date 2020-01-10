@@ -8,16 +8,13 @@ import java.nio.file.Path
 import qasrl.ArgumentSlot
 import qasrl.data.Dataset
 
+import freelog.TreeLogger
+
 import qfirst.model.eval.questionLabelIsValidNonDense
 import qfirst.clause.ArgStructure
 import qfirst.metrics.HasMetrics.ops._
 
 trait PackagePlatformExtensions {
-  def logOp[A](msg: String, op: IO[A]): IO[A] =
-    IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
-
-  def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
-
   def filterDatasetNonDense(dataset: Dataset) = {
     dataset.filterQuestionLabels(questionLabelIsValidNonDense)
       .cullQuestionlessVerbs
@@ -35,10 +32,11 @@ trait PackagePlatformExtensions {
     path: Path,
     read: Path => IO[A],
     write: (Path, A) => IO[Unit])(
-    compute: IO[A]
+    compute: IO[A])(
+    implicit Log: TreeLogger[IO, String]
   ): IO[A] = {
     IO(Files.exists(path)).ifM(
-      logOp(s"Reading data from $path", read(path)),
+      Log.branch(s"Reading data from $path")(read(path)),
       compute.flatTap(write(path, _))
     )
   }

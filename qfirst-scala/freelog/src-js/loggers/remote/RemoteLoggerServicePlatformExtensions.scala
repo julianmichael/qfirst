@@ -1,0 +1,3 @@
+package freelog.loggers.remote
+
+trait RemoteLoggerServicePlatformExtensions
