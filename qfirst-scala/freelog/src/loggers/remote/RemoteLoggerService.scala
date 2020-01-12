@@ -12,12 +12,12 @@ import io.circe.generic.JsonCodec
 trait RemoteLoggerService[SessionRequest, SessionId, Msg, F[_]]
     extends DotKleisli[F, RemoteLoggerService.Request[SessionRequest, SessionId, Msg]] {
   def start(request: SessionRequest): F[SessionId]
-  def log(id: SessionId, msg: Msg): F[Unit]
+  def log(id: SessionId, msg: Msg, logLevel: LogLevel): F[Unit]
   def end(id: SessionId): F[Unit]
   def apply(req: RemoteLoggerService.Request[SessionRequest, SessionId, Msg]): F[req.Out] =
     req match {
       case RemoteLoggerService.Request.Start(request) => start(request).asInstanceOf[F[req.Out]]
-      case RemoteLoggerService.Request.Log(id, msg) => log(id, msg).asInstanceOf[F[req.Out]]
+      case RemoteLoggerService.Request.Log(id, msg, level) => log(id, msg, level).asInstanceOf[F[req.Out]]
       case RemoteLoggerService.Request.End(id) => end(id).asInstanceOf[F[req.Out]]
     }
 }
@@ -27,14 +27,14 @@ object RemoteLoggerService extends RemoteLoggerServicePlatformExtensions {
     f: DotKleisli[F, RemoteLoggerService.Request[SessionRequest, SessionId, Msg]],
     id: SessionId
   ) = new Logger[F, Msg] {
-    def log(msg: Msg) = f(Request.Log(id, msg))
+    def emit(msg: Msg, logLevel: LogLevel) = f(Request.Log(id, msg, logLevel))
   }
 
   private[this] case class RemoteLoggerServiceDKWrapper[SessionRequest, SessionId, Msg, F[_]](
     f: DotKleisli[F, RemoteLoggerService.Request[SessionRequest, SessionId, Msg]]
   ) extends RemoteLoggerService[SessionRequest, SessionId, Msg, F] {
     def start(request: SessionRequest): F[SessionId] = f(Request.Start(request))
-    def log(id: SessionId, msg: Msg): F[Unit] = f(Request.Log(id, msg))
+    def log(id: SessionId, msg: Msg, logLevel: LogLevel): F[Unit] = f(Request.Log(id, msg, logLevel))
     def end(id: SessionId): F[Unit] = f(Request.End(id))
     override def apply(req: RemoteLoggerService.Request[SessionRequest, SessionId, Msg]): F[req.Out] =
       f(req)
@@ -53,7 +53,7 @@ object RemoteLoggerService extends RemoteLoggerServicePlatformExtensions {
       type Out = SessionId
     }
     @JsonCodec case class Log[SessionRequest, SessionId, Msg](
-      id: SessionId, msg: Msg
+      id: SessionId, msg: Msg, logLevel: LogLevel
     ) extends Request[SessionRequest, SessionId, Msg] {
       type Out = Unit
     }
@@ -68,7 +68,7 @@ object RemoteLoggerService extends RemoteLoggerServicePlatformExtensions {
     ] = new DotEncoder[Request[SessionRequest, SessionId, Msg]] {
       def apply(req: Request[SessionRequest, SessionId, Msg]) = req match {
         case Request.Start(_) => implicitly[Encoder[SessionId]].asInstanceOf[Encoder[req.Out]]
-        case Request.Log(_, _) => implicitly[Encoder[Unit]].asInstanceOf[Encoder[req.Out]]
+        case Request.Log(_, _, _) => implicitly[Encoder[Unit]].asInstanceOf[Encoder[req.Out]]
         case Request.End(_) => implicitly[Encoder[Unit]].asInstanceOf[Encoder[req.Out]]
       }
     }
@@ -78,7 +78,7 @@ object RemoteLoggerService extends RemoteLoggerServicePlatformExtensions {
     ] = new DotDecoder[Request[SessionRequest, SessionId, Msg]] {
       def apply(req: Request[SessionRequest, SessionId, Msg]) = req match {
         case Request.Start(_) => implicitly[Decoder[SessionId]].asInstanceOf[Decoder[req.Out]]
-        case Request.Log(_, _) => implicitly[Decoder[Unit]].asInstanceOf[Decoder[req.Out]]
+        case Request.Log(_, _, _) => implicitly[Decoder[Unit]].asInstanceOf[Decoder[req.Out]]
         case Request.End(_) => implicitly[Decoder[Unit]].asInstanceOf[Decoder[req.Out]]
       }
     }

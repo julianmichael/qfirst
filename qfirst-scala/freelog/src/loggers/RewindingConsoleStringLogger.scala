@@ -10,7 +10,8 @@ import cats.implicits._
 case class RewindingConsoleStringLogger(
   checkpointState: Ref[IO, RewindingConsoleStringLogger.CheckpointState],
   pendingCheckpoint: Ref[IO, Option[RewindingConsoleStringLogger.ConsoleCheckpoint]],
-  putStr: String => IO[Unit] = x => IO(print(x))
+  putStr: String => IO[Unit] = x => IO(print(x)),
+  getLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
   import RewindingConsoleStringLogger.{CheckpointState, ConsoleCheckpoint}
   private[this] def getCheckpointRestorationStr = {
@@ -29,7 +30,7 @@ case class RewindingConsoleStringLogger(
     } else column + msg.size
   }
 
-  def log(msg: String): IO[Unit] = for {
+  private[this] def sendString(msg: String): IO[Unit] = for {
     // state <- checkpointState.get
     // msg = _msg + s" ($state) "
     backtrackingStr <- getCheckpointRestorationStr
@@ -50,6 +51,10 @@ case class RewindingConsoleStringLogger(
     }
     _ <- putStr(backtrackingStr + msg)
   } yield ()
+
+  def emit(msg: String, logLevel: LogLevel): IO[Unit] = {
+    sendString(getLogMessage(msg, logLevel))
+  }
 
   def save: IO[Unit] = checkpointState.update(cs =>
     // CheckpointState.checkpoints.modify(ConsoleCheckpoint(0, cs.curColumn) :: _)(cs)
@@ -76,11 +81,9 @@ case class RewindingConsoleStringLogger(
   }
 
   // can implement directly?
-  def flush: IO[Unit] = log("")
+  def flush: IO[Unit] = sendString("")
 
   def rewind: IO[Unit] = restore >> save
-
-  def replace(msg: String): IO[Unit] = restore >> save >> log(msg)
 
   def block[A](fa: IO[A]): IO[A] = save >> fa <* commit
 }
@@ -92,8 +95,11 @@ object RewindingConsoleStringLogger {
   }
   case class CheckpointState(checkpoints: List[ConsoleCheckpoint], curColumn: Int)
 
-  def create(putStr: String => IO[Unit] = x => IO(print(x))): IO[RewindingConsoleStringLogger] = for {
+  def create(
+    putStr: String => IO[Unit] = x => IO(print(x)),
+    getLogMessage: (String, LogLevel) => String = (x, _) => x
+  ): IO[RewindingConsoleStringLogger] = for {
     checkpointState <- Ref[IO].of(CheckpointState(List(), 0))
     pendingCheckpoint <- Ref[IO].of(Option.empty[ConsoleCheckpoint])
-  } yield RewindingConsoleStringLogger(checkpointState, pendingCheckpoint, putStr)
+  } yield RewindingConsoleStringLogger(checkpointState, pendingCheckpoint, putStr, getLogMessage)
 }

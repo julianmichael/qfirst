@@ -27,7 +27,8 @@ trait RemoteLoggerServicePlatformExtensions {
     endpoint: Uri,
     sessionRequest: SessionRequest,
     metaLogger: Logger[F, String])(
-    run: Logger[F, Msg] => F[A]
+    run: Logger[F, Msg] => F[A])(
+    implicit logLevel: LogLevel
   ): F[A] = {
     import scala.concurrent.ExecutionContext.Implicits.global
     BlazeClientBuilder[F](global).resource.use { client =>
@@ -39,10 +40,10 @@ trait RemoteLoggerServicePlatformExtensions {
       )
       for {
         sessionId <- loggerClient.start(sessionRequest)
-        _ <- metaLogger.log(s"Logging session $sessionId started at $endpoint")
+        _ <- metaLogger.info(s"Logging session $sessionId started at $endpoint")
         res <- run(RemoteLoggerService.getLogger(loggerClient, sessionId))
         _ <- loggerClient.end(sessionId)
-        _ <- metaLogger.log(s"Logging session $sessionId completed at $endpoint")
+        _ <- metaLogger.info(s"Logging session $sessionId completed at $endpoint")
       } yield res
     }
   }
@@ -50,8 +51,9 @@ trait RemoteLoggerServicePlatformExtensions {
   // TODO: error reporting
   def basicLogListingService[SessionRequest, Msg, F[_]: Monad](
     startingId: Ref[F, Int],
-    currentSessions: Ref[F, TreeMap[Int, Vector[Msg]]],
-    finishedSessions: Ref[F, TreeMap[Int, Vector[Msg]]]
+    currentSessions: Ref[F, TreeMap[Int, Vector[(Msg, LogLevel)]]],
+    finishedSessions: Ref[F, TreeMap[Int, Vector[(Msg, LogLevel)]]])(
+    implicit logLevel: LogLevel
   ) = new RemoteLoggerService[Unit, Int, Msg, F] {
     def start(request: Unit): F[Int] = for {
       id <- startingId.get
@@ -59,8 +61,8 @@ trait RemoteLoggerServicePlatformExtensions {
       _ <- currentSessions.update(_ + (id -> Vector.empty))
     } yield id
 
-    def log(id: Int, msg: Msg): F[Unit] = currentSessions.update(logs =>
-      logs + (id -> (logs(id) :+ msg))
+    def log(id: Int, msg: Msg, logLevel: LogLevel): F[Unit] = currentSessions.update(logs =>
+      logs + (id -> (logs(id) :+ (msg -> logLevel)))
     )
 
     def end(id: Int): F[Unit] = for {
@@ -72,20 +74,21 @@ trait RemoteLoggerServicePlatformExtensions {
 
   def sessionPrefixingService[F[_]: Monad](
     nextSessionId: Ref[F, Int],
-    logger: Logger[F, String]
+    logger: Logger[F, String])(
+    implicit ambientLevel: LogLevel
   ) = new RemoteLoggerService[Unit, Int, String, F] {
     def start(request: Unit): F[Int] = for {
       id <- nextSessionId.get
-      _ <- logger.log(s"[META] Begun session $id")
+      _ <- logger.info(s"[META] Begun session $id")
       _ <- nextSessionId.update(_ + 1)
     } yield id
 
-    def log(id: Int, msg: String): F[Unit] = {
-      logger.log(f"[$id%4d] $msg")
+    def log(id: Int, msg: String, logLevel: LogLevel): F[Unit] = {
+      logger.log(f"[$id%4d] $msg", logLevel)
     }
 
     def end(id: Int): F[Unit] = {
-      logger.log(s"[META] Finished session $id")
+      logger.info(s"[META] Finished session $id")
     }
   }
 }

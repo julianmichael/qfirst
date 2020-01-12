@@ -18,9 +18,5 @@ trait RewindingLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
   /** Restore to last checkpoint without deleting it. */
   def rewind: F[Unit]// = restore >> save
 
-  /** Replace everything since last checkpoint with msg, keeping the checkpoint. */
-  def replace(msg: Msg): F[Unit]// = restore >> save >> log(msg)
-
   def block[A](fa: F[A]): F[A]// = save >> fa <* commit
-
 }

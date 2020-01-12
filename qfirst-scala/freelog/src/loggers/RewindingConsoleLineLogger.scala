@@ -10,7 +10,8 @@ import cats.implicits._
 case class RewindingConsoleLineLogger(
   checkpointState: Ref[IO, List[Int]],
   pendingCheckpoint: Ref[IO, Option[Int]],
-  putStr: String => IO[Unit] = x => IO(print(x))
+  putStr: String => IO[Unit] = x => IO(print(x)),
+  createLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
   private[this] def flushWithMessage(msg: String) = for {
     backtrackingStr <- pendingCheckpoint.get.flatMap {
@@ -28,7 +29,7 @@ case class RewindingConsoleLineLogger(
     _ <- putStr(backtrackingStr + msg)
   } yield ()
 
-  def log(msg: String): IO[Unit] = flushWithMessage(msg + "\n")
+  def emit(msg: String, logLevel: LogLevel): IO[Unit] = flushWithMessage(createLogMessage(msg, logLevel) + "\n")
 
   def save: IO[Unit] = checkpointState.update(0 :: _)
 
@@ -52,13 +53,14 @@ case class RewindingConsoleLineLogger(
 
   def rewind: IO[Unit] = restore >> save
 
-  def replace(msg: String): IO[Unit] = restore >> save >> log(msg)
-
   def block[A](fa: IO[A]): IO[A] = save >> fa <* commit
 }
 
 object RewindingConsoleLineLogger {
-  def create(putStr: String => IO[Unit] = x => IO(print(x))): IO[RewindingConsoleLineLogger] = for {
+  def create(
+    putStr: String => IO[Unit] = x => IO(print(x)),
+    createLogMessage: (String, LogLevel) => String = (x, _) => x
+  ): IO[RewindingConsoleLineLogger] = for {
     checkpointState <- Ref[IO].of(List.empty[Int])
     pendingCheckpoint <- Ref[IO].of(Option.empty[Int])
   } yield RewindingConsoleLineLogger(checkpointState, pendingCheckpoint, putStr)

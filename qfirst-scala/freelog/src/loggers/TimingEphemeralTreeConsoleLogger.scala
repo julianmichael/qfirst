@@ -8,12 +8,15 @@ import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import scala.concurrent.duration
+import scala.concurrent.duration.FiniteDuration
 
 case class TimingEphemeralTreeConsoleLogger(
   logger: RewindingConsoleLineLogger,
-  branchBeginTimesMillis: Ref[IO, List[Long]])(
+  branchBeginTimesMillis: Ref[IO, List[Long]],
+  minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
 ) extends EphemeralTreeLogger[IO, String] {
+  private[this] val branchEnd = "\u2514"
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"
@@ -56,19 +59,19 @@ case class TimingEphemeralTreeConsoleLogger(
     )
   }
 
-  private[this] def getTimingString(deltaMillis: Long): String = {
+  private[this] def getTimingString(_delta: FiniteDuration): String = {
+    var delta = _delta
     import duration._
-    var dur = FiniteDuration(deltaMillis, MILLISECONDS)
     val bigRes = bigUnitSpecs.flatMap { case (unit, convert, label) => 
-      val numUnits = convert(dur)
+      val numUnits = convert(delta)
       if(numUnits > 0) {
-        dur = dur - FiniteDuration(numUnits, unit)
+        delta = delta - FiniteDuration(numUnits, unit)
         Some(s"${numUnits}${label}")
       } else None
     }.mkString(" ")
     if(bigRes.nonEmpty) bigRes else {
       smallUnitSpecs.map { case (unit, convert, label) =>
-        val numUnits = convert(dur)
+        val numUnits = convert(delta)
         if(numUnits > 0) {
           Some(s"${numUnits}${label}")
         } else None
@@ -76,24 +79,29 @@ case class TimingEphemeralTreeConsoleLogger(
     }
   }
 
-  def log(msg: String) = branchBeginTimesMillis.get.map(_.size)
+  def emit(msg: String, logLevel: LogLevel) = branchBeginTimesMillis.get.map(_.size)
     .flatMap { indentLevel =>
       val passiveIndent = getPassiveIndent(indentLevel)
       val activeIndent = {
         if(indentLevel < 1) ""
         else passiveIndent + midBranch + " "
       }
-      logger.log(activeIndent + msg.replaceAll("\n", passiveIndent + "\n"))
+      logger.emit(activeIndent + msg.replaceAll("\n", passiveIndent + "\n"), logLevel)
     }
 
   def branch[A](msg: String)(body: IO[A]): IO[A] = for {
-    _ <- log(msg)
+    _ <- emit(msg, LogLevel.Info) // TODO
     beginTime <- timer.clock.monotonic(duration.MILLISECONDS)
     _ <- branchBeginTimesMillis.update(beginTime :: _)
     a <- block(body)
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     indent <- getIndent
-    _ <- logger.log(indent + lastBranch + s" Done (${getTimingString(endTime - beginTime)}).")
+    _ <- {
+      val delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
+      if(delta > minElapsedTimeToLog) {
+        logger.emit(indent + branchEnd + s" Done (${getTimingString(delta)})", LogLevel.Info) // TODO
+      } else IO.unit
+    }
     _ <- branchBeginTimesMillis.update {
       case Nil => Nil
       case _ :: rest => rest
@@ -108,13 +116,14 @@ case class TimingEphemeralTreeConsoleLogger(
 
   /** Flush the buffer to effect the last call to `rewind` */
   def flush: IO[Unit] = logger.flush
-
-  /** Rewind and log */
-  def replace(msg: String): IO[Unit] = rewind >> log(msg)
 }
 object TimingEphemeralTreeConsoleLogger {
-  def create(putStr: String => IO[Unit] = x => IO(print(x)))(implicit timer: Timer[IO]) = for {
-    lineLogger <- RewindingConsoleLineLogger.create(putStr)
+  def create(
+    putStr: String => IO[Unit] = x => IO(print(x)),
+    getLogMessage: (String, LogLevel) => String = (x, _) => x,
+    minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS)
+  )(implicit timer: Timer[IO]) = for {
+    lineLogger <- RewindingConsoleLineLogger.create(putStr, getLogMessage)
     timings <- Ref[IO].of(List.empty[Long])
-  } yield TimingEphemeralTreeConsoleLogger(lineLogger, timings)
+  } yield TimingEphemeralTreeConsoleLogger(lineLogger, timings, minElapsedTimeToLog)
 }

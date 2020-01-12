@@ -12,8 +12,6 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
   def rewind: F[Unit]
   /** Flush the buffer to effect the last call to `rewind` */
   def flush: F[Unit]
-  /** Rewind and log */
-  def replace(msg: Msg): F[Unit]
 
   def blockTraverse[G[_]: Traverse, A, B](fa: G[A])(f: A => F[B])(
     implicit ap: Applicative[F]
@@ -25,55 +23,59 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
     block(fa.traverseWithIndexM((a, i) => f(a, i) <* rewind))
 
   // bar if arg present
-  def progTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, sizeHint: Option[Long])(f: A => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
+  def logTraverse[G[_]: Traverse, A, B](
+    fa: G[A], prefix: Msg,
+    logLevel: LogLevel,
+    sizeHint: Option[Long])(
+    f: A => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(Some(prefix), sizeHint)
     block(
       fa.traverseWithIndexAndSizeM((a, i) =>
-        log(renderProgress(i)) >> f(a) <* rewind
+        log(renderProgress(i), logLevel) >> f(a) <* rewind
       ).flatMap { case (b, i) =>
-          log(renderProgress(i)).as(b)
+          log(renderProgress(i), logLevel).as(b)
       }
     )
   }
   // never bar
-  final def progTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg)(f: A => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverse(fa, prefix, None)(f)
+  final def logTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel)(f: A => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverse(fa, prefix, logLevel, None)(f)
   // always bar
-  final def progBarTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, size: Long)(f: A => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverse(fa, prefix, Some(size))(f)
+  final def logBarTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel, size: Long)(f: A => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverse(fa, prefix, logLevel, Some(size))(f)
   // always bar
-  final def progBarTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg)(f: A => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverse(fa, prefix, Some(fa.size))(f)
+  final def logBarTraverse[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel)(f: A => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverse(fa, prefix, logLevel, Some(fa.size))(f)
 
   // sometimes bar
-  def progTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, sizeHint: Option[Long])(f: (A, Int) => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
+  def logTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long])(f: (A, Int) => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
   ): F[G[B]] = {
     val renderProgress = progress.renderProgress(Some(prefix), sizeHint)
     block(
       fa.traverseWithIndexAndSizeM((a, i) =>
-        log(renderProgress(i)) >> f(a, i) <* rewind
+        log(renderProgress(i), logLevel) >> f(a, i) <* rewind
       ).flatMap { case (b, i) =>
-          log(renderProgress(i)).as(b)
+          log(renderProgress(i), logLevel).as(b)
       }
     )
   }
   // never bar
-  final def progTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg)(f: (A, Int) => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverseWithIndexM(fa, prefix, None)(f)
+  final def logTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel)(f: (A, Int) => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverseWithIndexM(fa, prefix, logLevel, None)(f)
   // always bar
-  final def progBarTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, size: Long)(f: (A, Int) => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverseWithIndexM(fa, prefix, Some(size))(f)
+  final def logBarTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel, size: Long)(f: (A, Int) => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverseWithIndexM(fa, prefix, logLevel,Some(size))(f)
   // always bar
-  final def progBarTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg)(f: (A, Int) => F[B])(
-    implicit progress: ProgressSpec[Msg], ap: Monad[F]
-  ): F[G[B]] = progTraverseWithIndexM(fa, prefix, Some(fa.size))(f)
+  final def logBarTraverseWithIndexM[G[_]: Traverse, A, B](fa: G[A], prefix: Msg, logLevel: LogLevel)(f: (A, Int) => F[B])(
+    implicit progress: ProgressSpec[Msg], ap: Monad[F], ambientLevel: LogLevel
+  ): F[G[B]] = logTraverseWithIndexM(fa, prefix, logLevel, Some(fa.size))(f)
 
 }

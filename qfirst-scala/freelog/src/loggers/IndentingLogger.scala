@@ -9,17 +9,17 @@ import cats.implicits._
 
 case class IndentingLogger(
   indentLevel: Ref[IO, Int],
-  putStrLn: String => IO[Unit],
+  putLog: (String, LogLevel) => IO[Unit],
   getIndent: Int => String = i => "  " * i
 ) extends TreeLogger[IO, String] {
-  def log(msg: String) = for {
+  def emit(msg: String, logLevel: LogLevel) = for {
     i <- indentLevel.get
-    _ <- putStrLn(getIndent(i) + msg)
+    _ <- putLog(getIndent(i) + msg, logLevel)
   } yield ()
 
   def branch[A](msg: String)(body: IO[A]): IO[A] = for {
     i <- indentLevel.get
-    _ <- putStrLn(getIndent(i) + msg)
+    _ <- putLog(getIndent(i) + msg, LogLevel.Info) // TODO get from param
     _ <- indentLevel.update(_ + 1)
     res <- body
     _ <- indentLevel.update(_ - 1)
@@ -31,7 +31,7 @@ object IndentingLogger {
     getIndent: Int => String = i => "  " * i
   ): IO[IndentingLogger] = {
     Ref[IO].of(initIndentLevel).map(indentLevel =>
-      IndentingLogger(indentLevel, s => IO(println(s)), getIndent)
+      IndentingLogger(indentLevel, (s, _) => IO(println(s)), getIndent)
     )
   }
 }

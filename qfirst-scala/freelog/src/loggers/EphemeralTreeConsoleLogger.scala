@@ -21,12 +21,12 @@ case class EphemeralTreeConsoleLogger(
   private[this] def right(i: Int) = if(i == 0) "" else s"\u001b[${i}C"
   private[this] def  left(i: Int) = if(i == 0) "" else s"\u001b[${i}D"
 
-  def log(msg: String) = distances.get >>= {
-    case Nil => logger.log(msg)
+  def emit(msg: String, logLevel: LogLevel) = distances.get >>= {
+    case Nil => logger.emit(msg, logLevel)
     case 0 :: parentDistances =>
       val depth = parentDistances.size
       distances.set(1 :: parentDistances) >>
-        logger.log(("  " * depth) + lastBranch + " " + msg)
+        logger.emit(("  " * depth) + lastBranch + " " + msg, logLevel)
     case width :: parentDistances =>
       val depth = parentDistances.size
       val backtrack = "\r" + up(width) + right(2 * depth) + midBranch
@@ -42,11 +42,12 @@ case class EphemeralTreeConsoleLogger(
           case Nil => 1 :: Nil
           case top :: rest => 1 :: (width + top) :: rest
         }
-      ) >> logger.log(fullMsg)
+      ) >> logger.emit(fullMsg, logLevel)
   }
 
   def branch[A](msg: String)(body: IO[A]): IO[A] = {
-    log(msg) >> distances.update(0 :: _) >> block(body) <* distances.update {
+    // TODO replace info with level provided in param
+    emit(msg, LogLevel.Info) >> distances.update(0 :: _) >> block(body) <* distances.update {
       case Nil => Nil
       case _ :: Nil => Nil // forget about it if it's the root branch
       case x :: y :: rest => (x + y) :: rest
@@ -71,9 +72,6 @@ case class EphemeralTreeConsoleLogger(
 
   /** Flush the buffer to effect the last call to `rewind` */
   def flush: IO[Unit] = logger.flush
-
-  /** Rewind and log */
-  def replace(msg: String): IO[Unit] = rewind >> log(msg)
 }
 object EphemeralTreeConsoleLogger {
   def create(putStr: String => IO[Unit] = x => IO(print(x))) = for {
