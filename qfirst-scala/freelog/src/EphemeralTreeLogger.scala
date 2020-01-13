@@ -1,4 +1,5 @@
 package freelog
+import freelog.implicits._
 
 import cats.Monad
 import cats.Traverse

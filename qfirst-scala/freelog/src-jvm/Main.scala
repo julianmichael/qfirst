@@ -1,4 +1,5 @@
 package freelog
+import freelog.implicits._
 
 import cats._
 import cats.effect.IO
@@ -44,12 +45,12 @@ object Main extends CommandIOApp(
     } yield ExitCode.Success
   }
 
-  import jjm.io.HttpUtil
-  import org.http4s.Uri
-  import org.http4s.server.Router
-  import org.http4s.server.blaze.BlazeServerBuilder
-  import org.http4s.implicits._
-  import freelog.loggers.remote.RemoteLoggerService
+  // import jjm.io.HttpUtil
+  // import org.http4s.Uri
+  // import org.http4s.server.Router
+  // import org.http4s.server.blaze.BlazeServerBuilder
+  // import org.http4s.implicits._
+  // import freelog.loggers.remote.RemoteLoggerService
 
   // def clientServerDemo: IO[ExitCode] = for {
   //   (simpleLogger: Logger[IO, String]) <- loggers.IndentingLogger.console()
