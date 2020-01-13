@@ -25,7 +25,8 @@ import io.circe.generic.JsonCodec
 
 import qfirst.clause.ArgStructure
 
-import freelog.TreeLogger
+import freelog._
+import freelog.implicits._
 
 @JsonCodec sealed trait VerbSenseConfig {
   import VerbSenseConfig._
@@ -73,6 +74,8 @@ class Cell[A](create: IO[A]) {
 case class Config(mode: RunMode)(
   implicit cs: ContextShift[IO], Log: TreeLogger[IO, String]
 ) {
+  implicit val logLevel = LogLevel.Info
+
   val outputDir = Paths.get("frame-induction")
   val qasrlBankPath = Paths.get("../qasrl-bank/data/qasrl-v2_1")
   val qasrlElmoPath = Paths.get("qasrl-v2-elmo")
@@ -114,13 +117,13 @@ case class Config(mode: RunMode)(
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   val qasrlBank = new Cell(
-    Log.branch("Reading QA-SRL Bank")(
+    Log.infoBranch("Reading QA-SRL Bank")(
       IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get)
     )
   )
 
   private[this] def readQasrlDataset(name: String) =
-    Log.branch(s"Reading QA-SRL dataset $name")(
+    Log.infoBranch(s"Reading QA-SRL dataset $name")(
       readDataset(qasrlBankPath.resolve(name + ".jsonl.gz"))
     )
 
@@ -263,7 +266,7 @@ case class Config(mode: RunMode)(
   def readPropBankInstances(name: String) = {
     import io.circe.generic.auto._
     import cats.effect.concurrent.Ref
-    Log.branch(s"Reading QA-SRL on PropBank $name set")(
+    Log.infoBranch(s"Reading QA-SRL on PropBank $name set")(
       propBankQasrlFilter.get.flatMap(filter =>
         for {
           bad <- Ref[IO].of(0)
@@ -279,7 +282,7 @@ case class Config(mode: RunMode)(
             }, filter
           )
           _ <- (bad.get, total.get).mapN((b, t) =>
-            Log.log(s"Ignored $b/$t sentences due to apparently bad verbs.")
+            Log.info(s"Ignored $b/$t sentences due to apparently bad verbs.")
           ).flatten
         } yield res
       )
@@ -296,7 +299,7 @@ case class Config(mode: RunMode)(
 
   def readPropBankLabels(name: String) = {
     import io.circe.generic.auto._
-    Log.branch(s"Reading verb sense labels on PropBank $name set")(
+    Log.infoBranch(s"Reading verb sense labels on PropBank $name set")(
       getPropBankSenseLabels(
         FileUtil.readJsonLines[PropBankSentencePrediction[QABeam]](
           propBankPredictionsPath.resolve(s"propbank-$name-qasrl.jsonl.gz")
@@ -321,17 +324,24 @@ case class Config(mode: RunMode)(
     val embPath = Paths.get(filePrefix + "_emb.bin")
     val embDim = 1024
     for {
-      ids <- Log.branch("Reading verb IDs")(
+      ids <- Log.infoBranch("Reading verb IDs")(
         FileUtil.readJsonLines[VerbId](idsPath).compile.toList
       )
-      embeddings <- Log.branch("Reading verb embeddings")(
+      embeddings <- Log.infoBranch("Reading verb embeddings")(
         VectorFileUtil.readDenseFloatVectorsNIO(embPath, embDim).flatTap { embeddings =>
           val numToCheck = 5
-          val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
-          val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
-          Log.log(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}") >>
-            Log.log(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
-          // embeddings.take(numToCheck).traverse(e => Log.log(e.activeValuesIterator.take(10).mkString("\t")))
+          val propSane = embeddings.take(numToCheck)
+            .foldMap(
+              _.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size
+            ).toDouble / (numToCheck * embDim)
+          val sanityCheckText = f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s."
+          Log.info(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}") >> {
+            if(propSane < 0.8) {
+              Log.warn(sanityCheckText) >>
+                Log.warn("There might be endianness issues with how you're reading the ELMo embeddings") >>
+                embeddings.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
+            } else Log.info(sanityCheckText)
+          }
         }
       )
     } yield Instances(
@@ -361,19 +371,25 @@ case class Config(mode: RunMode)(
     val embPath = Paths.get(filePrefix + "_emb.bin")
     val embDim = 1024
     for {
-      ids <- Log.branch("Reading verb IDs")(
+      ids <- Log.infoBranch("Reading verb IDs")(
         FileUtil.readJsonLines[VerbId](idsPath).compile.toList
       )
-      embeddings <- Log.branch("Reading verb embeddings")(
+      embeddings <- Log.infoBranch("Reading verb embeddings")(
         VectorFileUtil.readDenseFloatVectorsNIO(embPath, embDim)
       )
-      _ <- Log.log(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}")
+      _ <- Log.info(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}")
       _ <- {
         val numToCheck = 5
-        val propSane = embeddings.take(numToCheck).foldMap(_.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size).toDouble / (numToCheck * embDim)
-        val warnText = if(propSane < 0.8) "[== WARNING ==] there might be endianness issues with how you're reading the ELMo embeddings; " else ""
-        Log.log(warnText + f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s.")
-        // embeddings.take(numToCheck).traverse(e => Log.log(e.activeValuesIterator.take(10).mkString("\t")))
+        val propSane = embeddings.take(numToCheck)
+          .foldMap(
+            _.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size
+          ).toDouble / (numToCheck * embDim)
+        val sanityCheckText = f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s."
+        if(propSane < 0.8) {
+          Log.warn(sanityCheckText) >>
+            Log.warn("There might be endianness issues with how you're reading the ELMo embeddings") >>
+            embeddings.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
+        } else Log.info(sanityCheckText)
       }
     } yield Instances(
       ids.zip(embeddings).foldMap { case (vid @ VerbId(sentenceId, verbIndex), embedding) =>
@@ -421,7 +437,7 @@ case class Config(mode: RunMode)(
           FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
             .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
         ),
-        write = (path, collapsedQAOutputs) => Log.branch("Writing collapsed QA outputs")(
+        write = (path, collapsedQAOutputs) => Log.infoBranch("Writing collapsed QA outputs")(
           FileUtil.writeJsonLines(collapsedQAOutputPath, io.circe.Printer.noSpaces)(collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
         )
       )( // compute
@@ -443,7 +459,7 @@ case class Config(mode: RunMode)(
         path = evaluationItemsPath,
         read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
         write = (path, items) => FileUtil.writeJsonLines(path)(items))(
-        Log.branch(s"Creating new sample for evaluation at $evaluationItemsPath")(
+        Log.infoBranch(s"Creating new sample for evaluation at $evaluationItemsPath")(
           eval.get.map { evalSet =>
             (new scala.util.Random(86735932569L)).shuffle(
               evalSet.sentences.values.iterator.flatMap(sentence =>
@@ -460,7 +476,7 @@ case class Config(mode: RunMode)(
 
   def readGoldParaphrases(implicit cs: ContextShift[IO]) = {
     if(!Files.exists(paraphraseGoldPath)) {
-      Log.log("No gold paraphrase annotations found at the given path. Initializing to empty annotations.") >>
+      Log.info("No gold paraphrase annotations found at the given path. Initializing to empty annotations.") >>
         IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
     } else FileUtil.readJson[ParaphraseAnnotations](paraphraseGoldPath)
   }
@@ -526,7 +542,7 @@ case class Config(mode: RunMode)(
   }
   def cachePropBankVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[String, PropBankVerbClusterModel]): IO[Unit] = {
     propBankVerbClustersPath(verbSenseConfig).flatMap(path =>
-      Log.log(clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
+      Log.info(clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
         FileUtil.writeLines[PropBankVerbClusterModel](path, _.toJsonStringSafe)(clusters.toList.map(_._2))
     )
   }

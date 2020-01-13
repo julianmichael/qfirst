@@ -34,9 +34,14 @@ import java.nio.file.{Path => NIOPath}
 import com.monovore.decline._
 import com.monovore.decline.effect._
 
+import freelog._
+import freelog.implicits._
+
 object QAInputApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",
   header = "Write the QA input file for similarity-scoring slots.") {
+
+  implicit val logLevel = LogLevel.Info
 
   import io.circe.Json
   import io.circe.syntax._
@@ -259,15 +264,15 @@ object QAInputApp extends CommandIOApp(
 
   def program(goldPath: NIOPath, outDir: NIOPath, test: Boolean): IO[ExitCode] = for {
     Log <- freelog.loggers.EphemeralTreeConsoleLogger.create()
-    inputSet <- Log.branch("Reading QA-SRL expanded/train")(
+    inputSet <- Log.infoBranch("Reading QA-SRL expanded/train")(
       readDataset(goldPath.resolve("expanded/train.jsonl.gz"))
     )
     evalSet <- {
-      if(test) Log.branch("Reading QA-SRL orig/test")(readDataset(goldPath.resolve("orig/test.jsonl.gz")))
-      else Log.branch("Reading QA-SRL orig/dev")(readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
+      if(test) Log.infoBranch("Reading QA-SRL orig/test")(readDataset(goldPath.resolve("orig/test.jsonl.gz")))
+      else Log.infoBranch("Reading QA-SRL orig/dev")(readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
     }
-    fullDataset <- Log.branch("Constructing full dataset")(IO(inputSet |+| evalSet))
-    _ <- Log.branch("Writing QA input file")(
+    fullDataset <- Log.infoBranch("Constructing full dataset")(IO(inputSet |+| evalSet))
+    _ <- Log.infoBranch("Writing QA input file")(
       FileUtil.writeJsonLinesStreaming(
         outDir.resolve(if(test) "qa-input-test.jsonl.gz" else "qa-input-dev.jsonl.gz"), io.circe.Printer.noSpaces)(
         getJsonInputsForQA[IO](fullDataset))

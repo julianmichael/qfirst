@@ -50,6 +50,7 @@ import breeze.linalg._
 import scala.collection.immutable.Vector
 
 import freelog._
+import freelog.implicits._
 
 // TODO applicative
 case class Instances[VerbType, A](
@@ -97,6 +98,7 @@ object FrameInductionApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
   header = "Induce verb frames.") {
 
+  implicit val logLevel = LogLevel.Info
   implicit val progressSpec = ProgressSpec.simple(barLength = 50)
 
   type QAPairs = Map[SlotBasedLabel[VerbForm], Set[ESpan]]
@@ -121,7 +123,7 @@ object FrameInductionApp extends CommandIOApp(
     implicit Log: TreeLogger[IO, String]
   ): IO[MergeTree[VerbId]] = {
     val instances = verbIds.map(makeInstance)
-    Log.branch(verbLabel) {
+    Log.traceBranch(verbLabel) {
       IO(algorithm.runAgglomerativeClustering(instances, hyperparams)._1.map(verbIds))
     }
   }
@@ -141,7 +143,7 @@ object FrameInductionApp extends CommandIOApp(
         ).map(vi => VerbId(sid, vi))
       }
     }.filter(_._2.nonEmpty)
-    Log.progBarTraverse(verbs.toList.sortBy(-_._2.size), "Clustering verbs") { case (verbType, _verbIds) =>
+    verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
       val verbIds = _verbIds.take(1000) // hack to make it possible to even do the clustering on the really common words. need to generalize later
       val verbInstances = instances.values(verbType)
       val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
@@ -336,7 +338,7 @@ object FrameInductionApp extends CommandIOApp(
       bestModels <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
         val best = allPoints.maxBy(_.f1)
         val resString = getMetricsString(best)
-        Log.log(s"${vsConfig.modelName} propbank metrics: " + resString) >>
+        Log.info(s"${vsConfig.modelName} propbank metrics: " + resString) >>
           config.propBankResultsPath(vsConfig).flatMap(path =>
             FileUtil.writeString(path.resolve("propbank-results.txt"))(resString)
           ).as(vsConfig -> best)
@@ -475,10 +477,10 @@ object FrameInductionApp extends CommandIOApp(
           val ubBest = allPoints.maxBy(_.ubConf.f1)
           val lbResString = getMetricsString(lbBest.lbConf)
           val ubResString = getMetricsString(ubBest.ubConf)
-          Log.log(s"${vsConfig.modelName} clause lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} clause lb metrics: " + lbResString) >>
-            Log.log(s"${vsConfig.modelName} clause ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} clause ub metrics: " + ubResString) >>
+          Log.info(s"${vsConfig.modelName} clause lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} clause lb metrics: " + lbResString) >>
+            Log.info(s"${vsConfig.modelName} clause ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} clause ub metrics: " + ubResString) >>
             config.resultsPath(vsConfig).flatMap(path =>
               FileUtil.writeString(path.resolve("verb-sense-lb-results.txt"))(lbResString) >>
                 FileUtil.writeString(path.resolve("verb-sense-ub-results.txt"))(ubResString) >>
@@ -669,14 +671,14 @@ object FrameInductionApp extends CommandIOApp(
           //   vsConfig, verbClustersByConfig(vsConfig), ubBest.maxLoss, ubBest.minClauseProb
           // )
           // (lbBestModel, lbBest.lbConf, ubBestModel, ubBest.ubConf)
-          // Log.log(s"${vsConfig.modelName}: " + getMetricsString(ubBest.ubConf))
+          // Log.info(s"${vsConfig.modelName}: " + getMetricsString(ubBest.ubConf))
 
           val lbResString = getMetricsString(lbBest.lbConf)
           val ubResString = getMetricsString(ubBest.ubConf)
-          Log.log(s"${vsConfig.modelName} paraphrase lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} paraphrase lb metrics: " + lbResString) >>
-            Log.log(s"${vsConfig.modelName} paraphrase ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} paraphrase ub metrics: " + ubResString) >>
+          Log.info(s"${vsConfig.modelName} paraphrase lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} paraphrase lb metrics: " + lbResString) >>
+            Log.info(s"${vsConfig.modelName} paraphrase ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} paraphrase ub metrics: " + ubResString) >>
             config.resultsPath(vsConfig).flatMap(path =>
               FileUtil.writeString(path.resolve("questions-lb-results.txt"))(lbResString) >>
                 FileUtil.writeString(path.resolve("questions-ub-results.txt"))(ubResString) >>
@@ -870,13 +872,13 @@ object FrameInductionApp extends CommandIOApp(
       }
     } else {
       for {
-        _ <- Log.branch("Writing loss graph")(
+        _ <- Log.infoBranch("Writing loss graph")(
           writeLossGraph(
             verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
             config.globalResultsDir.map(_.resolve("loss-trends.png"))
           )
         )
-        _ <- Log.branch("Writing depth graph")(
+        _ <- Log.infoBranch("Writing depth graph")(
           writeDepthGraph(
             verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
             config.globalResultsDir.map(_.resolve("depth-trends.png"))
@@ -993,10 +995,10 @@ object FrameInductionApp extends CommandIOApp(
           val lbResString = getMetricsString(lbBest.lbConf)
           val ubResString = getMetricsString(ubBest.ubConf)
 
-          Log.log(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} question lb metrics: " + lbResString) >>
-            Log.log(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
-            Log.log(s"${vsConfig.modelName} question ub metrics: " + ubResString) >>
+          Log.info(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} question lb metrics: " + lbResString) >>
+            Log.info(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
+            Log.info(s"${vsConfig.modelName} question ub metrics: " + ubResString) >>
             config.resultsPath(vsConfig).flatMap(path =>
               FileUtil.writeString(path.resolve("full-lb-results.txt"))(lbResString) >>
                 FileUtil.writeString(path.resolve("full-ub-results.txt"))(ubResString) >>
@@ -1073,19 +1075,19 @@ object FrameInductionApp extends CommandIOApp(
     chosenThresholds: Map[VerbSenseConfig, Double])(
     implicit Log: TreeLogger[IO, String]
   ): IO[Unit] = for {
-    _ <- Log.branch("Writing loss graph")(
+    _ <- Log.infoBranch("Writing loss graph")(
       writeLossGraph(
         verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
         config.globalResultsDir.map(_.resolve("loss-trends.png"))
       )
     )
-    _ <- Log.branch("Writing depth graph")(
+    _ <- Log.infoBranch("Writing depth graph")(
       writeDepthGraph(
         verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
         config.globalResultsDir.map(_.resolve("depth-trends.png"))
       )
     )
-    _ <- Log.branch("Writing PropBank gold sense graph") {
+    _ <- Log.infoBranch("Writing PropBank gold sense graph") {
       import com.cibo.evilplot._
       import com.cibo.evilplot.numeric._
       import com.cibo.evilplot.plot._
@@ -1119,7 +1121,7 @@ object FrameInductionApp extends CommandIOApp(
         IO(plot.render().write(new java.io.File(path.resolve("propbank-sense-counts.png").toString)))
       )
     }
-    _ <- Log.branch("Writing partition sizes graph") {
+    _ <- Log.infoBranch("Writing partition sizes graph") {
       import com.cibo.evilplot._
       import com.cibo.evilplot.numeric._
       import com.cibo.evilplot.plot._
@@ -1157,7 +1159,7 @@ object FrameInductionApp extends CommandIOApp(
         IO(plot.render().write(new java.io.File(path.resolve("predicted-cluster-counts.png").toString)))
       )
     }
-    _ <- Log.branch("Writing partition size comparison graph") {
+    _ <- Log.infoBranch("Writing partition size comparison graph") {
       import com.cibo.evilplot._
       import com.cibo.evilplot.numeric._
       import com.cibo.evilplot.plot._
@@ -1201,7 +1203,7 @@ object FrameInductionApp extends CommandIOApp(
 		    pointRenderer = Some(PointRenderer.colorByCategory(data, ((x: ThisPoint) => x.model.modelName), size = Some(1.0)))
 	    ).xAxis().yAxis().frame().rightLegend()
 
-      Log.log("Pearson's R between gold and predicted number of senses: " + pearsonR) >>
+      Log.info("Pearson's R between gold and predicted number of senses: " + pearsonR) >>
         config.globalPropBankResultsDir.flatMap(path =>
           IO(plot.render().write(new java.io.File(path.resolve("cluster-num-correlation.png").toString)))
         )
@@ -1219,7 +1221,7 @@ object FrameInductionApp extends CommandIOApp(
   // _ <- {
   //   import qfirst.metrics._
   //   val dist = Numbers(verbClusters.values.toVector.filterNot(_.loss == 0.0).map(tree => tree.loss / tree.size))
-  //   Log.log(getMetricsString(dist))
+  //   Log.info(getMetricsString(dist))
   // }
 
   @JsonCodec case class ModelParams(
@@ -1246,7 +1248,7 @@ object FrameInductionApp extends CommandIOApp(
       ).map(_.toMap)
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
-      tunedThresholds <- Log.branch("Evaluating and tuning thresholds")(
+      tunedThresholds <- Log.infoBranch("Evaluating and tuning thresholds")(
         tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
       )
     } yield ExitCode.Success
@@ -1271,12 +1273,12 @@ object FrameInductionApp extends CommandIOApp(
         getPropBankVerbClusterModels(config, vsConfig).map(vsConfig -> _)
       ).map(_.toMap)
       evalSenseLabels <- config.propBankEvalLabels.get
-      tunedThresholds <- Log.branch("Evaluating and tuning on PropBank")(
+      tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
         evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
       )
       fullSenseLabels <- config.propBankFullLabels.get
       _ <- chosenThresholds.foldMapM(thresholds =>
-        Log.branch("Printing debuggy stuff")(
+        Log.infoBranch("Printing debuggy stuff")(
           doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
         )
       )

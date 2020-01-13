@@ -36,7 +36,7 @@ trait PackagePlatformExtensions {
     implicit Log: TreeLogger[IO, String]
   ): IO[A] = {
     IO(Files.exists(path)).ifM(
-      Log.branch(s"Reading data from $path")(read(path)),
+      Log.infoBranch(s"Reading data from $path")(read(path)),
       compute.flatTap(write(path, _))
     )
   }

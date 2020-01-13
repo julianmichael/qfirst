@@ -3,7 +3,11 @@ package qfirst
 import qfirst.clause.ArgStructure
 import qasrl.ArgumentSlot
 
+import freelog.LogLevel
+
 package object frame extends qfirst.frame.PackagePlatformExtensions {
+  implicit val logLevel = LogLevel.Info
+
   def getArgumentSlotsForClauseTemplate(clauseTemplate: ArgStructure): Set[ArgumentSlot] = {
     (clauseTemplate.args.keys.toList: List[ArgumentSlot]).filter {
       case qasrl.Obj2 => clauseTemplate.args.get(qasrl.Obj2) match {
