@@ -89,8 +89,12 @@ case class TimingEphemeralTreeConsoleLogger(
       logger.emit(activeIndent + msg.replaceAll("\n", passiveIndent + "\n"), logLevel)
     }
 
-  def branch[A](msg: String)(body: IO[A]): IO[A] = for {
-    _ <- emit(msg, LogLevel.Info) // TODO
+  def emitBranch[A](
+    msg: String, logLevel: LogLevel)(
+    body: IO[A])(
+    implicit ambientLevel: LogLevel
+  ): IO[A] = for {
+    _ <- emit(msg, logLevel)
     beginTime <- timer.clock.monotonic(duration.MILLISECONDS)
     _ <- branchBeginTimesMillis.update(beginTime :: _)
     a <- block(body)
@@ -99,7 +103,7 @@ case class TimingEphemeralTreeConsoleLogger(
     _ <- {
       val delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
       if(delta > minElapsedTimeToLog) {
-        logger.emit(indent + branchEnd + s" Done (${getTimingString(delta)})", LogLevel.Info) // TODO
+        logger.emit(indent + branchEnd + s" Done (${getTimingString(delta)})", logLevel)
       } else IO.unit
     }
     _ <- branchBeginTimesMillis.update {

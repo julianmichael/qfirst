@@ -13,8 +13,12 @@ case class IndentingWriterLogger(
 ) extends TreeLogger[Writer[String, ?], String] {
   def emit(msg: String, logLevel: LogLevel) = Writer.tell(getLogMessage(msg, logLevel) + "\n")
 
-  def branch[A](msg: String)(body: Writer[String, A]): Writer[String, A] = for {
-    _ <- Writer.tell(getLogMessage(msg, LogLevel.Info)) // TODO
+  def emitBranch[A](
+    msg: String, logLevel: LogLevel)(
+    body: Writer[String, A])(
+    implicit ambientLevel: LogLevel
+  ): Writer[String, A] = for {
+    _ <- Writer.tell(getLogMessage(msg, logLevel))
     (nestedLog, res) = body.run
     _ <- Writer.tell(s"\n$indent" + nestedLog.init.replaceAll("\n", s"\n$indent") + "\n")
   } yield res

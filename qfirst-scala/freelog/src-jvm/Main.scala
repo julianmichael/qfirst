@@ -147,15 +147,15 @@ object Main extends CommandIOApp(
       _ <- (1 to 1000).toList.infoTraverse("Initializing: ")(_ => IO.sleep(0.002.seconds))
 
       _ <- (1 to 1000).toList.infoBarTraverse("Buffering: ")(_ => IO.sleep(0.002.seconds))
-      _ <- logger.branch("Recruiting") {
+      _ <- logger.infoBranch("Recruiting") {
         (1 to 1000).toList.infoBarTraverse("New recruits: ")(_ => IO.sleep(0.002.seconds))
       }
-      _ <- logger.branch("Dominating") {
+      _ <- logger.infoBranch("Dominating") {
         logger.info("Trying soft power..") >> IO.sleep(0.5.seconds) >>
           logger.info("Acknowledging failure of soft power...") >> IO.sleep(1.second) >>
           logger.rewind >>
           logger.info("Mobilizing army...") >> IO.sleep(1.second) >>
-          logger.branch("Invading...") {
+          logger.infoBranch("Invading...") {
             logger.info("Landfall!") >> IO.sleep(0.5.seconds) >>
               (1 to 100).toList.infoBarTraverse("Enemies crushed: ")(
                 _ => IO.sleep(0.01.seconds)
