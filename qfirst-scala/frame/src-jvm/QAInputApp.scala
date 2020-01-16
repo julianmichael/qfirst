@@ -41,7 +41,7 @@ object QAInputApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",
   header = "Write the QA input file for similarity-scoring slots.") {
 
-  implicit val logLevel = LogLevel.Info
+  implicit val logLevel = LogLevel.Debug
 
   import io.circe.Json
   import io.circe.syntax._
@@ -181,20 +181,27 @@ object QAInputApp extends CommandIOApp(
 
   def getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
     dataset: Dataset,
-    sentenceQAs: SentenceQAOutput
-  ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]] = {
-    dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
-      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
-        val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
-        val adjacencyExpectations = verbQAs.tails.toList.flatMap {
-          case Nil => Nil
-          case fst :: tail => tail.map { snd =>
-            val adjProb = adjacencyProb(fst.spans, snd.spans)
-            val qPair = fst.question.clausalQ -> snd.question.clausalQ
-            Map(qPair -> ExpectedCount(adjProb, 1.0))
+    sentenceQAs: SentenceQAOutput)(
+    implicit Log: TreeLogger[IO, String]
+  ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+    dataset.sentences.get(sentenceQAs.sentenceId).foldMapM { sentence =>
+      Log.debugBranch(jjm.ling.Text.render(sentence.sentenceTokens)) {
+        IO(
+          sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
+            sentence.verbEntries.get(verbIndexStr.toInt).foldMap { verbEntry =>
+              val verbForms = verbEntry.verbInflectedForms
+              val adjacencyExpectations = verbQAs.tails.toList.flatMap {
+                case Nil => Nil
+                case fst :: tail => tail.map { snd =>
+                  val adjProb = adjacencyProb(fst.spans, snd.spans)
+                  val qPair = fst.question.clausalQ -> snd.question.clausalQ
+                  Map(qPair -> ExpectedCount(adjProb, 1.0))
+                }
+              }.combineAll
+              Map(verbForms -> adjacencyExpectations)
+            }
           }
-        }.combineAll
-        Map(verbForms -> adjacencyExpectations)
+        )
       }
     }
   }
@@ -211,21 +218,24 @@ object QAInputApp extends CommandIOApp(
 
   def getCollapsedFuzzyArgumentEquivalences(
     dataset: Dataset,
-    allSentenceQAs: Stream[IO, SentenceQAOutput]
+    allSentenceQAs: Stream[IO, SentenceQAOutput])(
+    implicit Log: TreeLogger[IO, String]
   ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]] = {
-    allSentenceQAs.map { sentenceQAs =>
-      getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
-        dataset, sentenceQAs
-      )
-    }.compile.foldMonoid
-      .map(symmetrizeCollapsedArgumentEquivalences)
-      .map(
-        _.transform { case (_, verbRel) =>
-          verbRel.transform { case (_, ec) =>
-            ec.expectationPerInstance
+    Log.infoBranch("Getting collapsed fuzzy argument equivalences")(
+      allSentenceQAs.evalMap { sentenceQAs =>
+        getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
+          dataset, sentenceQAs
+        )
+      }.compile.foldMonoid
+        .map(symmetrizeCollapsedArgumentEquivalences)
+        .map(
+          _.transform { case (_, verbRel) =>
+            verbRel.transform { case (_, ec) =>
+              ec.expectationPerInstance
+            }
           }
-        }
-      )
+        )
+    )
   }
 
   // def getFuzzyArgumentEquivalences(

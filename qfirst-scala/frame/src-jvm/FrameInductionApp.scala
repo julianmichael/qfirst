@@ -1239,25 +1239,28 @@ object FrameInductionApp extends CommandIOApp(
   def runQasrlFrameInduction(
     config: Config, modelOpt: Option[VerbSenseConfig])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[ExitCode] = {
+  ): IO[Unit] = {
     val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(allVerbSenseConfigs)
     // TODO read in tuned thresholds (in case of test)
     for {
+      _ <- Log.info(s"Running frame induction on QA-SRL. Models: ${verbSenseConfigs.mkString(", ")}")
       verbModelsByConfig <- verbSenseConfigs.traverse(vsConfig =>
-        getQasrlVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+        Log.infoBranch(s"Clustering for model: $vsConfig") {
+          getQasrlVerbClusterModels(config, vsConfig).map(vsConfig -> _)
+        }
       ).map(_.toMap)
       goldParaphrases <- config.readGoldParaphrases
       evaluationItems <- config.evaluationItems.get
       tunedThresholds <- Log.infoBranch("Evaluating and tuning thresholds")(
         tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
       )
-    } yield ExitCode.Success
+    } yield ()
   }
 
   def runPropBankFrameInduction(
     config: Config, modelOpt: Option[VerbSenseConfig])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[ExitCode] = {
+  ): IO[Unit] = {
     val verbSenseConfigs = modelOpt.map(List(_)).getOrElse(allVerbSenseConfigs)
     // TODO read in tuned threshold (in case of test)
     val chosenThresholds = Option(
@@ -1282,7 +1285,7 @@ object FrameInductionApp extends CommandIOApp(
           doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
         )
       )
-    } yield ExitCode.Success
+    } yield ()
   }
 
   def main: Opts[IO[ExitCode]] = {
@@ -1307,11 +1310,17 @@ object FrameInductionApp extends CommandIOApp(
 
 
     (modeO, verbSenseConfigOptO, isPropbankO).mapN { (mode, verbSenseConfigOpt, isPropbank) =>
-      freelog.loggers.TimingEphemeralTreeConsoleLogger.create().flatMap { logger =>
-        implicit val _logger = logger
-        if(isPropbank) runPropBankFrameInduction(Config(mode), verbSenseConfigOpt)
-        else runQasrlFrameInduction(Config(mode), verbSenseConfigOpt)
-      }
+      for {
+        implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeConsoleLogger.create(
+          getLogMessage = freelog.emitters.fansiColor
+        )
+        _ <- logger.info(s"Mode: $mode")
+        _ <- logger.info(s"Specified verb sense config: $verbSenseConfigOpt")
+        _ <- {
+          if(isPropbank) runPropBankFrameInduction(Config(mode), verbSenseConfigOpt)
+          else runQasrlFrameInduction(Config(mode), verbSenseConfigOpt)
+        }
+      } yield ExitCode.Success
     }
   }
 }

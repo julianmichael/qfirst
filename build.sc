@@ -23,6 +23,7 @@ val declineVersion = "1.0.0"
 
 val breezeVersion = "0.13.2"
 val evilplotVersion = "0.6.3"
+val fansiVersion = "0.2.7"
 
 // non-cats
 // val upickleVersion = "0.5.1"
@@ -157,11 +158,16 @@ object qfirst extends Module {
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
   object freelog extends Module {
-    object js extends JsModule
+    object js extends JsModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fansi::$fansiVersion"
+      )
+    }
     object jvm extends FullJvmModule {
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.http4s::http4s-blaze-client::$http4sVersion",
-        ivy"org.http4s::http4s-blaze-server::$http4sVersion"
+        ivy"org.http4s::http4s-blaze-server::$http4sVersion",
+        ivy"com.lihaoyi::fansi::$fansiVersion"
       )
       object test extends Tests {
         override def millSourcePath = freelog.this.millSourcePath / "test"

@@ -441,14 +441,16 @@ case class Config(mode: RunMode)(
           FileUtil.writeJsonLines(collapsedQAOutputPath, io.circe.Printer.noSpaces)(collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
         )
       )( // compute
-        for {
-          trainSet <- train.get
-          evalSet <- eval.get
-          collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
-            trainSet |+| evalSet,
-            FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-          )
-        } yield collapsedQAOutputs
+        Log.infoBranch("Computing collapsed QA outputs")(
+          for {
+            trainSet <- input.get
+            evalSet <- eval.get
+            collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
+              trainSet |+| evalSet,
+              FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+            )
+          } yield collapsedQAOutputs
+        )
       )
     )
   }
@@ -478,10 +480,14 @@ case class Config(mode: RunMode)(
     if(!Files.exists(paraphraseGoldPath)) {
       Log.info("No gold paraphrase annotations found at the given path. Initializing to empty annotations.") >>
         IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
-    } else FileUtil.readJson[ParaphraseAnnotations](paraphraseGoldPath)
+    } else Log.infoBranch(s"Reading gold paraphrases from $paraphraseGoldPath")(
+      FileUtil.readJson[ParaphraseAnnotations](paraphraseGoldPath)
+    )
   }
   def saveGoldParaphrases(data: ParaphraseAnnotations)(implicit cs: ContextShift[IO]) = {
-    FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
+    Log.infoBranch(s"Saving gold paraphrases to $paraphraseGoldPath")(
+      FileUtil.writeJson(paraphraseGoldPath, io.circe.Printer.noSpaces)(data)
+    )
   }
 
   def modelDir(verbSenseConfig: VerbSenseConfig) = {

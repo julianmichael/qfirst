@@ -12,6 +12,9 @@ import java.util.concurrent.Executors
 import scala.concurrent.ExecutionContext
 import scala.concurrent.ExecutionContextExecutorService
 
+import freelog.Logger
+import freelog.LogLevel
+
 object VectorFileUtil {
 
   import java.nio.ByteBuffer
@@ -43,23 +46,29 @@ object VectorFileUtil {
     }
   }
 
-  def readDenseFloatVectorsNIO(path: NIOPath, dim: Int) = IO {
-    import java.nio.file.Files
-    val bytes = Files.readAllBytes(path)
-    if(bytes.length % 4 != 0) println(s"[=== WARNING ===] number of bytes in embedding file (${bytes.length}) is not divisible by 4")
-    val numFloats = bytes.length / 4
-    val floats = new Array[Float](numFloats)
-    if(numFloats % dim != 0) println(s"[=== WARNING ===] number of floats in embedding file (${numFloats}) is not divisible by embedding dimension ($dim)")
+  def readDenseFloatVectorsNIO(path: NIOPath, dim: Int)(
+    implicit Log: Logger[IO, String]
+  ) = for {
+    bytes <- IO(java.nio.file.Files.readAllBytes(path))
+    _ <- Log.warn(
+      s"Number of bytes in embedding file (${bytes.length}) is not divisible by 4"
+    ).whenA(bytes.length % 4 != 0)
+    numFloats = bytes.length / 4
+    _ <- Log.warn(
+      s"Number of floats in embedding file (${numFloats}) is not divisible by embedding dimension ($dim)"
+    ).whenA(numFloats % dim != 0)
     // val numVectors = numFloats / dim
-    ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer.get(floats) // put data in float array
-    var offset = 0
-    var res = List.empty[DenseVector[Float]]
-    while(offset < numFloats) {
-      res = DenseVector.create(floats, offset, 1, dim) :: res
-      offset = offset + dim
+    result <- IO {
+      val floats = new Array[Float](numFloats)
+      ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer.get(floats) // put data in float array
+      var offset = 0
+      var res = List.empty[DenseVector[Float]]
+      while(offset < numFloats) {
+        res = DenseVector.create(floats, offset, 1, dim) :: res
+        offset = offset + dim
+      }
+      res.reverse
     }
-    val reverseRes = res.reverse
-    print(s" Read ${res.size} vectors of dimensionality $dim.")
-    reverseRes
-  }
+    _ <- Log.info(s"Read ${result.size} vectors of dimensionality $dim.")
+  } yield result
 }
