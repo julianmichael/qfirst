@@ -63,5 +63,5 @@ object RewindingConsoleLineLogger {
   ): IO[RewindingConsoleLineLogger] = for {
     checkpointState <- Ref[IO].of(List.empty[Int])
     pendingCheckpoint <- Ref[IO].of(Option.empty[Int])
-  } yield RewindingConsoleLineLogger(checkpointState, pendingCheckpoint, putStr)
+  } yield RewindingConsoleLineLogger(checkpointState, pendingCheckpoint, putStr, createLogMessage)
 }

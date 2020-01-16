@@ -13,6 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 case class TimingEphemeralTreeConsoleLogger(
   logger: RewindingConsoleLineLogger,
   branchBeginTimesMillis: Ref[IO, List[Long]],
+  createLogMessage: (String, LogLevel) => String,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
 ) extends EphemeralTreeLogger[IO, String] {
@@ -86,7 +87,7 @@ case class TimingEphemeralTreeConsoleLogger(
         if(indentLevel < 1) ""
         else passiveIndent + midBranch + " "
       }
-      logger.emit(activeIndent + msg.replaceAll("\n", passiveIndent + "\n"), logLevel)
+      logger.emit(activeIndent + createLogMessage(msg.replaceAll("\n", "\n" + passiveIndent), logLevel), logLevel)
     }
 
   def emitBranch[A](
@@ -127,7 +128,7 @@ object TimingEphemeralTreeConsoleLogger {
     getLogMessage: (String, LogLevel) => String = (x, _) => x,
     minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS)
   )(implicit timer: Timer[IO]) = for {
-    lineLogger <- RewindingConsoleLineLogger.create(putStr, getLogMessage)
+    lineLogger <- RewindingConsoleLineLogger.create(putStr)
     timings <- Ref[IO].of(List.empty[Long])
-  } yield TimingEphemeralTreeConsoleLogger(lineLogger, timings, minElapsedTimeToLog)
+  } yield TimingEphemeralTreeConsoleLogger(lineLogger, timings, getLogMessage, minElapsedTimeToLog)
 }
