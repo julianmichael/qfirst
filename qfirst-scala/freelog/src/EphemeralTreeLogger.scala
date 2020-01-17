@@ -28,6 +28,7 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
   ): F[A] = {
     branch(prefix, logLevel)(body)
   }
+  override def wrapProgressInnerUsesPrefix: Boolean = false
   override def wrapProgressInner[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], index: Long)(
     body: F[A])(
@@ -40,7 +41,7 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[Unit] = {
-    val renderProgress = progress.renderProgress(Some(prefix), sizeHint)
+    val renderProgress = progress.renderProgress(None, sizeHint)
     log(renderProgress(total), logLevel)
   }
 }

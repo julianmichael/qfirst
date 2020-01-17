@@ -19,6 +19,14 @@ object emitters {
     prefix + x.replaceAll("\n", s"\n$prefix")
   }
 
+  val fansiColorMap: Map[LogLevel, fansi.Attr] = Map(
+     LogLevel.Debug -> fansi.Color.Green,
+     LogLevel.Trace -> fansi.Color.Cyan,
+     LogLevel.Info  -> fansi.Attr.Reset,
+     LogLevel.Warn  -> fansi.Color.Yellow,
+     LogLevel.Error -> fansi.Color.Red
+  )
+
   val fansiColor: Emitter[String] = (x, level) => level match {
     case LogLevel.Debug => fansi.Color.Green(x).toString
     case LogLevel.Trace => fansi.Color.Cyan(x).toString

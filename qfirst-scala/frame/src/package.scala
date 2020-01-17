@@ -4,9 +4,11 @@ import qfirst.clause.ArgStructure
 import qasrl.ArgumentSlot
 
 import freelog.LogLevel
+import freelog.ProgressSpec
 
 package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Info
+  implicit val progressSpec = ProgressSpec.simple(barLength = 50)
 
   def getArgumentSlotsForClauseTemplate(clauseTemplate: ArgStructure): Set[ArgumentSlot] = {
     (clauseTemplate.args.keys.toList: List[ArgumentSlot]).filter {

@@ -98,8 +98,7 @@ object FrameInductionApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.FrameInductionApp",
   header = "Induce verb frames.") {
 
-  implicit val logLevel = LogLevel.Info
-  implicit val progressSpec = ProgressSpec.simple(barLength = 50)
+  implicit val logLevel = LogLevel.Trace
 
   type QAPairs = Map[SlotBasedLabel[VerbForm], Set[ESpan]]
   type ClausalQ = (ArgStructure, ArgumentSlot)
@@ -121,11 +120,9 @@ object FrameInductionApp extends CommandIOApp(
     makeInstance: VerbId => algorithm.Instance,
     hyperparams: algorithm.Hyperparams)(
     implicit Log: TreeLogger[IO, String]
-  ): IO[MergeTree[VerbId]] = {
+  ): MergeTree[VerbId] = {
     val instances = verbIds.map(makeInstance)
-    Log.traceBranch(verbLabel) {
-      IO(algorithm.runAgglomerativeClustering(instances, hyperparams)._1.map(verbIds))
-    }
+    algorithm.runAgglomerativeClustering(instances, hyperparams)._1.map(verbIds)
   }
 
   def runVerbSenseAgglomerativeClustering[VerbType](
@@ -144,44 +141,44 @@ object FrameInductionApp extends CommandIOApp(
       }
     }.filter(_._2.nonEmpty)
     verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
-      val verbIds = _verbIds.take(1000) // hack to make it possible to even do the clustering on the really common words. need to generalize later
-      val verbInstances = instances.values(verbType)
-      val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
-      val makeInstance = (verbId: VerbId) => {
-        val questions = verbInstances(verbId.sentenceId)(verbId.verbIndex).keySet.toList
-        val clauseCounts = ClauseResolution
-          .getResolvedStructures(questions).map(_._1)
-          .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
-        val vector = elmoVecs.values(verbType)(verbId.sentenceId)(verbId.verbIndex)
-        clauseCounts -> vector
-      }
-      val verbLabel = renderVerbType(verbType)
-      val clustering = verbSenseConfig match {
-        case VerbSenseConfig.SingleCluster =>
-          IO.pure(
+      Log.trace(renderVerbType(verbType)) >> IO {
+        val verbIds = _verbIds.take(1000) // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        val verbInstances = instances.values(verbType)
+        val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
+        val makeInstance = (verbId: VerbId) => {
+          val questions = verbInstances(verbId.sentenceId)(verbId.verbIndex).keySet.toList
+          val clauseCounts = ClauseResolution
+            .getResolvedStructures(questions).map(_._1)
+            .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
+          val vector = elmoVecs.values(verbType)(verbId.sentenceId)(verbId.verbIndex)
+          clauseCounts -> vector
+        }
+        val verbLabel = renderVerbType(verbType)
+        val clustering = verbSenseConfig match {
+          case VerbSenseConfig.SingleCluster =>
             NonEmptyList.fromList(verbIds.toList).get.zipWithIndex
               .reduceLeftTo(p => MergeTree.Leaf(0.0, p._1): MergeTree[VerbId]) {
                 case (tree, (next, newRank)) => MergeTree.Merge(newRank, 0.0, tree, MergeTree.Leaf(0.0, next))
               }
-          )
-        case VerbSenseConfig.EntropyOnly =>
-          runVerbWiseAgglomerative(MinEntropyClustering)(
-            verbLabel, verbIds, (v => makeInstance(v)._1), MinEntropyClustering.Hyperparams(clauseVocab.size)
-          )
-        case VerbSenseConfig.ELMoOnly =>
-          runVerbWiseAgglomerative(VectorMeanClustering)(
-            verbLabel, verbIds, (v => makeInstance(v)._2), ()
-          )
-        case VerbSenseConfig.Interpolated(lambda) =>
-          val algorithm = new CompositeClusteringAlgorithm {
-            val _1 = MinEntropyClustering; val _2 = VectorMeanClustering
-          }
-          runVerbWiseAgglomerative(algorithm)(
-            verbLabel, verbIds, makeInstance,
-            algorithm.Hyperparams(MinEntropyClustering.Hyperparams(clauseVocab.size), (), lambda)
-          )
+          case VerbSenseConfig.EntropyOnly =>
+            runVerbWiseAgglomerative(MinEntropyClustering)(
+              verbLabel, verbIds, (v => makeInstance(v)._1), MinEntropyClustering.Hyperparams(clauseVocab.size)
+            )
+          case VerbSenseConfig.ELMoOnly =>
+            runVerbWiseAgglomerative(VectorMeanClustering)(
+              verbLabel, verbIds, (v => makeInstance(v)._2), ()
+            )
+          case VerbSenseConfig.Interpolated(lambda) =>
+            val algorithm = new CompositeClusteringAlgorithm {
+              val _1 = MinEntropyClustering; val _2 = VectorMeanClustering
+            }
+            runVerbWiseAgglomerative(algorithm)(
+              verbLabel, verbIds, makeInstance,
+              algorithm.Hyperparams(MinEntropyClustering.Hyperparams(clauseVocab.size), (), lambda)
+            )
+        }
+        verbType -> clustering
       }
-      clustering.map(verbType -> _)
     }.map(_.toMap)//.flatTap(_ => Log.log(""))
   }
 
@@ -289,37 +286,38 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[Map[VerbSenseConfig, PropBankEvaluationPoint]] = {
     for {
       instances <- config.propBankFullInstances.get
-      fullEvaluationResultsByConfig <- verbModelsByConfig.toList.traverse { case (vsConfig, modelsByVerb) =>
-        IO(print(s"\n${vsConfig.modelName}:")) >> modelsByVerb.toList.sortBy(-_._2.clauseSets.size).flatTraverse { case (verbLemma, verbModel) =>
-          propBankSenseLabels.values.get(verbLemma).foldMapM { verbSenseLabels =>
-            IO(print(" " + verbLemma)) >> IO {
-              val predictedVerbIds = verbModel.clusterTree.unorderedFoldMap(Set(_))
-              // only includes IDs that were covered in the predictions as well
-              val verbSenseToIds = verbSenseLabels.toList.foldMap { case (sentenceId, verbMap) =>
-                verbMap.toList.foldMap { case (verbIndex, verbSense) =>
-                  Option(VerbId(sentenceId, verbIndex))
-                    .filter(predictedVerbIds.contains)
-                    .foldMap(vid => Map(verbSense -> Set(vid)))
-                }
-              }
-              verbSenseLabels.iterator.flatMap { case (sentenceId, verbMap) =>
-                verbMap.iterator.flatMap { case (verbIndex, verbSense) =>
-                  verbModel.clusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).iterator.map { clusters =>
-                    val goldIds = verbSenseToIds(verbSense)
-                    clusters.map { cluster =>
-                      val predictedIds = cluster.values.toSet
-                      val maxLoss = if(cluster.isLeaf) 0.0 else (cluster.loss / predictedIds.size)
-                      val tp = (predictedIds intersect goldIds).size
-                      val precision = tp / predictedIds.size
-                      val recall = tp / goldIds.size
-                      PropBankEvaluationPoint(vsConfig, maxLoss, precision, recall)
-                    }
+      fullEvaluationResultsByConfig <- verbModelsByConfig.toList.infoBarTraverse("Tuning all verb models") { case (vsConfig, modelsByVerb) =>
+        Log.info(vsConfig.modelName) >>
+          modelsByVerb.toList.sortBy(-_._2.clauseSets.size).infoBarTraverse("Tuning verbs") { case (verbLemma, verbModel) =>
+            propBankSenseLabels.values.get(verbLemma).foldMapM { verbSenseLabels =>
+              Log.trace(verbLemma) >> IO {
+                val predictedVerbIds = verbModel.clusterTree.unorderedFoldMap(Set(_))
+                // only includes IDs that were covered in the predictions as well
+                val verbSenseToIds = verbSenseLabels.toList.foldMap { case (sentenceId, verbMap) =>
+                  verbMap.toList.foldMap { case (verbIndex, verbSense) =>
+                    Option(VerbId(sentenceId, verbIndex))
+                      .filter(predictedVerbIds.contains)
+                      .foldMap(vid => Map(verbSense -> Set(vid)))
                   }
                 }
-              }.toList
-            }
-          }
-        }.map(vsConfig -> _)
+                verbSenseLabels.iterator.flatMap { case (sentenceId, verbMap) =>
+                  verbMap.iterator.flatMap { case (verbIndex, verbSense) =>
+                    verbModel.clusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).iterator.map { clusters =>
+                      val goldIds = verbSenseToIds(verbSense)
+                      clusters.map { cluster =>
+                        val predictedIds = cluster.values.toSet
+                        val maxLoss = if(cluster.isLeaf) 0.0 else (cluster.loss / predictedIds.size)
+                        val tp = (predictedIds intersect goldIds).size
+                        val precision = tp / predictedIds.size
+                        val recall = tp / goldIds.size
+                        PropBankEvaluationPoint(vsConfig, maxLoss, precision, recall)
+                      }
+                    }
+                  }
+                }.toList
+              }
+            }.map(_.flatten)
+          }.map(vsConfig -> _)
       }.map(_.toMap)
       allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
         val lossThresholds = evaluationItemResults.foldMap(_.map(_.maxLoss).toSet).toList.sortBy(-_)
@@ -866,10 +864,12 @@ object FrameInductionApp extends CommandIOApp(
     val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
       goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
     }
-    if(presentEvaluationItems.isEmpty) IO.pure {
-      verbModelsByConfig.transform { case (vsConfig, _) =>
-        FullTuningPoint(vsConfig, 0.0, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
-      }
+    if(presentEvaluationItems.isEmpty) {
+      Log.warn("No gold items to evaluate on. Returning empty evaluation.").as(
+        verbModelsByConfig.transform { case (vsConfig, _) =>
+          FullTuningPoint(vsConfig, 0.0, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
+        }
+      )
     } else {
       for {
         _ <- Log.infoBranch("Writing loss graph")(
@@ -1311,9 +1311,7 @@ object FrameInductionApp extends CommandIOApp(
 
     (modeO, verbSenseConfigOptO, isPropbankO).mapN { (mode, verbSenseConfigOpt, isPropbank) =>
       for {
-        implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeConsoleLogger.create(
-          getLogMessage = freelog.emitters.fansiColor
-        )
+        implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.create()
         _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Specified verb sense config: $verbSenseConfigOpt")
         _ <- {

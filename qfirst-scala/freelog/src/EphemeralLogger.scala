@@ -25,6 +25,7 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
   ): F[A] = {
     block(body)
   }
+  def wrapProgressInnerUsesPrefix: Boolean = true
   def wrapProgressInner[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], index: Long)(
     body: F[A])(

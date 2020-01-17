@@ -29,15 +29,24 @@ trait PackagePlatformExtensions {
   import java.nio.file._
 
   def fileCached[A](
+    name: String)(
     path: Path,
     read: Path => IO[A],
     write: (Path, A) => IO[Unit])(
     compute: IO[A])(
     implicit Log: TreeLogger[IO, String]
   ): IO[A] = {
-    IO(Files.exists(path)).ifM(
-      Log.infoBranch(s"Reading cached data from $path")(read(path)),
-      compute.flatTap(write(path, _))
+    Log.infoBranch(s"Loading cacheable resource: $name")(
+      IO(Files.exists(path)).ifM(
+        Log.infoBranch(s"Reading cached data from $path")(read(path)),
+        Log.warnBranch(s"Cache not found at $path. Computing now.")(
+          compute
+        ).flatTap(x =>
+          Log.infoBranch(s"Writing to cache at $path")(
+            write(path, x)
+          )
+        )
+      )
     )
   }
 

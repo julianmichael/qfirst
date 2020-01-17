@@ -16,7 +16,7 @@ object ProgressSpec {
     val pct = math.round(cur.toDouble / total * 100.0).toInt
     val bars = "#" * num
     val spaces = " " * (length - num)
-    f"$cur%d/$total%d [$bars%s$spaces%s] ${fullPrefix}$pct%3d%%"
+    f"${fullPrefix}$cur%d/$total%d [$bars%s$spaces%s] $pct%3d%%"
   }
 
   def simple(barLength: Int) = ProgressSpec[String](

@@ -72,7 +72,7 @@ class Cell[A](create: IO[A]) {
 }
 
 case class Config(mode: RunMode)(
-  implicit cs: ContextShift[IO], Log: TreeLogger[IO, String]
+  implicit cs: ContextShift[IO], Log: EphemeralTreeLogger[IO, String]
 ) {
   implicit val logLevel = LogLevel.Info
 
@@ -432,25 +432,24 @@ case class Config(mode: RunMode)(
   val collapsedQAOutputs = {
     new Cell(
       fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
+        "Collapsed QA Outputs")(
         path = collapsedQAOutputPath,
         read = path => (
           FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
-            .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
+            .map { case (k, v) => k -> v.toMap }.infoCompile("Reading JSON lines")(_.toList).map(_.toMap)
         ),
-        write = (path, collapsedQAOutputs) => Log.infoBranch("Writing collapsed QA outputs")(
-          FileUtil.writeJsonLines(collapsedQAOutputPath, io.circe.Printer.noSpaces)(collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
-        )
+        write = (path, collapsedQAOutputs) => FileUtil.writeJsonLines(
+          collapsedQAOutputPath, io.circe.Printer.noSpaces)(
+          collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
       )( // compute
-        Log.infoBranch("Computing collapsed QA outputs")(
-          for {
-            trainSet <- input.get
-            evalSet <- eval.get
-            collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
-              trainSet |+| evalSet,
-              FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-            )
-          } yield collapsedQAOutputs
-        )
+        for {
+          trainSet <- train.get
+          evalSet <- eval.get
+          collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
+            trainSet |+| evalSet,
+            FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
+          )
+        } yield collapsedQAOutputs
       )
     )
   }
@@ -458,6 +457,7 @@ case class Config(mode: RunMode)(
   val evaluationItems = {
     new Cell(
       fileCached[Vector[(InflectedForms, String, Int)]](
+        "Evaluation Items")(
         path = evaluationItemsPath,
         read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
         write = (path, items) => FileUtil.writeJsonLines(path)(items))(
@@ -478,7 +478,7 @@ case class Config(mode: RunMode)(
 
   def readGoldParaphrases(implicit cs: ContextShift[IO]) = {
     if(!Files.exists(paraphraseGoldPath)) {
-      Log.info("No gold paraphrase annotations found at the given path. Initializing to empty annotations.") >>
+      Log.warn(s"No gold paraphrase annotations found at $paraphraseGoldPath. Initializing to empty annotations.") >>
         IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]])
     } else Log.infoBranch(s"Reading gold paraphrases from $paraphraseGoldPath")(
       FileUtil.readJson[ParaphraseAnnotations](paraphraseGoldPath)
@@ -510,59 +510,34 @@ case class Config(mode: RunMode)(
     propBankModelDir(verbSenseConfig).map(_.resolve(s"results")).flatTap(createDir)
   }
 
-  def getCachedVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, VerbClusterModel]]] = {
-    verbClustersPath(verbSenseConfig).flatMap(path =>
-      fileCached[Option[Map[InflectedForms, VerbClusterModel]]](
-        path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
-          .compile.toList.map(l => Some(l.toMap)),
-        write = (_, _) => IO.unit
-      )(compute = IO(None))
-    )
-  }
-  def cacheVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, VerbClusterModel]): IO[Unit] = {
-    verbClustersPath(verbSenseConfig).flatMap(path =>
-      FileUtil.writeJsonLines(path)(clusters.toList)
-    )
-  }
   def cacheVerbModelComputation(
     verbSenseConfig: VerbSenseConfig)(
     computeVerbModels: IO[Map[InflectedForms, VerbClusterModel]]
   ): IO[Map[InflectedForms, VerbClusterModel]] = {
-    getCachedVerbModels(verbSenseConfig).flatMap {
-      case Some(verbModels) => IO.pure(verbModels)
-      case None => for {
-        models <- computeVerbModels
-        _ <- cacheVerbModels(verbSenseConfig, models)
-      } yield models
-    }
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      fileCached[Map[InflectedForms, VerbClusterModel]](
+        "Verb Models")(
+        path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
+          .infoCompile("Reading JSON lines")(_.toList).map(_.toMap),
+        write = (path, clusters) => FileUtil.writeJsonLines(path)(clusters.toList)
+      )(compute = computeVerbModels)
+    )
   }
 
-  def getCachedPropBankVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[String, PropBankVerbClusterModel]]] = {
-    propBankVerbClustersPath(verbSenseConfig).flatMap(path =>
-      fileCached[Option[Map[String, PropBankVerbClusterModel]]](
-        path, read = path => FileUtil.readJsonLines[PropBankVerbClusterModel](path)
-          .compile.toList.map(l => Some(l.map(m => m.verbLemma -> m).toMap)),
-        write = (_, _) => IO.unit
-      )(compute = IO(None))
-    )
-  }
-  def cachePropBankVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[String, PropBankVerbClusterModel]): IO[Unit] = {
-    propBankVerbClustersPath(verbSenseConfig).flatMap(path =>
-      Log.info(clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
-        FileUtil.writeLines[PropBankVerbClusterModel](path, _.toJsonStringSafe)(clusters.toList.map(_._2))
-    )
-  }
   def cachePropBankVerbModelComputation(
     verbSenseConfig: VerbSenseConfig)(
     computeVerbModels: IO[Map[String, PropBankVerbClusterModel]]
   ): IO[Map[String, PropBankVerbClusterModel]] = {
-    getCachedPropBankVerbModels(verbSenseConfig).flatMap {
-      case Some(verbModels) => IO.pure(verbModels)
-      case None => for {
-        models <- computeVerbModels
-        _ <- cachePropBankVerbModels(verbSenseConfig, models)
-      } yield models
-    }
+    propBankVerbClustersPath(verbSenseConfig).flatMap(path =>
+      fileCached[Map[String, PropBankVerbClusterModel]](
+        "PropBank Verb Models")(
+        path, read = path => FileUtil.readJsonLines[PropBankVerbClusterModel](path)
+          .infoCompile("Reading JSON lines")(_.toList).map(_.map(m => m.verbLemma -> m).toMap),
+        write = (path, clusters) =>
+        Log.info(clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
+          FileUtil.writeLines[PropBankVerbClusterModel](path, _.toJsonStringSafe)(clusters.toList.map(_._2))
+      )(compute = computeVerbModels)
+    )
   }
 
   // def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {

@@ -41,7 +41,7 @@ object QAInputApp extends CommandIOApp(
   name = "mill -i qfirst.jvm.runMain qfirst.paraphrase.QAInputApp",
   header = "Write the QA input file for similarity-scoring slots.") {
 
-  implicit val logLevel = LogLevel.Debug
+  // implicit val logLevel = LogLevel.Debug
 
   import io.circe.Json
   import io.circe.syntax._
@@ -185,7 +185,7 @@ object QAInputApp extends CommandIOApp(
     implicit Log: TreeLogger[IO, String]
   ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
     dataset.sentences.get(sentenceQAs.sentenceId).foldMapM { sentence =>
-      Log.debugBranch(jjm.ling.Text.render(sentence.sentenceTokens)) {
+      Log.debug(jjm.ling.Text.render(sentence.sentenceTokens)) >> {
         IO(
           sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
             sentence.verbEntries.get(verbIndexStr.toInt).foldMap { verbEntry =>
@@ -219,15 +219,19 @@ object QAInputApp extends CommandIOApp(
   def getCollapsedFuzzyArgumentEquivalences(
     dataset: Dataset,
     allSentenceQAs: Stream[IO, SentenceQAOutput])(
-    implicit Log: TreeLogger[IO, String]
+    implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]] = {
     Log.infoBranch("Getting collapsed fuzzy argument equivalences")(
       allSentenceQAs.evalMap { sentenceQAs =>
         getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
           dataset, sentenceQAs
         )
-      }.compile.foldMonoid
-        .map(symmetrizeCollapsedArgumentEquivalences)
+      }.infoCompile("Aggregating counts from predictions", dataset.sentences.size)(_.foldMonoid)
+        .flatMap(x =>
+          Log.infoBranch("Symmetrizing equivalence counts")(
+            IO(symmetrizeCollapsedArgumentEquivalences(x))
+          )
+        )
         .map(
           _.transform { case (_, verbRel) =>
             verbRel.transform { case (_, ec) =>
