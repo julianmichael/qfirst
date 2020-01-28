@@ -17,6 +17,7 @@ import jjm.io.FileUtil
 
 import cats.effect.ContextShift
 import cats.effect.IO
+import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import fs2.Stream
@@ -63,18 +64,18 @@ object VerbSenseConfig {
 }
 
 // circumvent side-effect of ref creation
-class Cell[A](create: IO[A]) {
-  private[this] var value: Option[A] = None
-  def get: IO[A] = value
-    .map(IO.pure)
-    .getOrElse(create.flatTap(a => IO { value = Some(a) }))
-  def isPresent = IO(value.nonEmpty)
+class Cell[A](name: String, create: IO[A])(implicit Log: TreeLogger[IO, String]) {
+  private[this] var value: Ref[IO, Option[A]] = Ref[IO].of[Option[A]](None).unsafeRunSync
+  val get: IO[A] = value.get.flatMap(innerValue =>
+    innerValue.map(a => Log.debug(s"Retrieving in-memory cached value: $name").as(a))
+      .getOrElse(Log.debugBranch(s"Computing and caching value: $name")(create.flatTap(a => value.set(Some(a)))))
+  )
+  val isPresent = value.get.map(_.nonEmpty)
 }
 
 case class Config(mode: RunMode)(
   implicit cs: ContextShift[IO], Log: EphemeralTreeLogger[IO, String]
 ) {
-  implicit val logLevel = LogLevel.Info
 
   val outputDir = Paths.get("frame-induction")
   val qasrlBankPath = Paths.get("../qasrl-bank/data/qasrl-v2_1")
@@ -117,6 +118,7 @@ case class Config(mode: RunMode)(
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   val qasrlBank = new Cell(
+    "QA-SRL Bank",
     Log.infoBranch("Reading QA-SRL Bank")(
       IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get)
     )
@@ -146,32 +148,38 @@ case class Config(mode: RunMode)(
   }
 
   val train = new Cell(
+    "QA-SRL train",
     qasrlBank.isPresent.ifM(
       qasrlBank.get.map(_.trainExpanded),
       readQasrlDataset("expanded/train")
     ).map(filterDatasetNonDense)
   )
   val trainInstances = new Cell(
+    "QA-SRL train instances",
     train.get.map(getGoldInstances)
   )
 
   val dev = new Cell(
+    "QA-SRL dev",
     qasrlBank.isPresent.ifM(
       qasrlBank.get.map(_.devOrig),
       readQasrlDataset("orig/dev")
     ).map(filterDatasetNonDense)
   )
   val devInstances = new Cell(
+    "QA-SRL dev instances",
     dev.get.map(getGoldInstances)
   )
 
   val test = new Cell(
+    "QA-SRL test",
     qasrlBank.isPresent.ifM(
       qasrlBank.get.map(_.testOrig),
       readQasrlDataset("orig/test")
     ).map(filterDatasetNonDense)
   )
   val testInstances = new Cell(
+    "QA-SRL test instances",
     test.get.map(getGoldInstances)
   )
 
@@ -181,8 +189,8 @@ case class Config(mode: RunMode)(
   val eval = if(mode.test) test else dev
   val evalInstances = if(mode.test) testInstances else devInstances
 
-  val full = new Cell(for(i <- input.get; e <- eval.get) yield i |+| e)
-  val fullInstances = new Cell(for(i <- inputInstances.get; e <- evalInstances.get) yield i |+| e)
+  val full = new Cell("QA-SRL full", for(i <- input.get; e <- eval.get) yield i |+| e)
+  val fullInstances = new Cell("QA-SRL full instances", for(i <- inputInstances.get; e <- evalInstances.get) yield i |+| e)
 
   // def getPredictedInstances(
   //   predictions: Stream[IO, SentencePrediction[QABeam]],
@@ -257,6 +265,7 @@ case class Config(mode: RunMode)(
   val propBankQasrlFilter = {
     import io.circe.generic.auto._
     new Cell(
+      "PropBank QA-SRL Filter",
       FileUtil.readJson[SimpleQAs.Filter](
         propBankPredictionsPath.resolve(s"filter.json")
       )
@@ -265,7 +274,6 @@ case class Config(mode: RunMode)(
 
   def readPropBankInstances(name: String) = {
     import io.circe.generic.auto._
-    import cats.effect.concurrent.Ref
     Log.infoBranch(s"Reading QA-SRL on PropBank $name set")(
       propBankQasrlFilter.get.flatMap(filter =>
         for {
@@ -289,13 +297,13 @@ case class Config(mode: RunMode)(
     )
   }
 
-  val propBankTrainInstances = new Cell(readPropBankInstances("train"))
-  val propBankDevInstances = new Cell(readPropBankInstances("dev"))
-  val propBankTestInstances = new Cell(readPropBankInstances("test"))
+  val propBankTrainInstances = new Cell("PropBank train instances", readPropBankInstances("train"))
+  val propBankDevInstances = new Cell("PropBank dev instances", readPropBankInstances("dev"))
+  val propBankTestInstances = new Cell("PropBank test instances", readPropBankInstances("test"))
 
   val propBankInputInstances = if(mode.sanity) propBankDevInstances else propBankTrainInstances
   val propBankEvalInstances = if(mode.test) propBankTestInstances else propBankDevInstances
-  val propBankFullInstances = new Cell(for(i <- propBankInputInstances.get; e <- propBankEvalInstances.get) yield i |+| e)
+  val propBankFullInstances = new Cell("PropBank full instances", for(i <- propBankInputInstances.get; e <- propBankEvalInstances.get) yield i |+| e)
 
   def readPropBankLabels(name: String) = {
     import io.circe.generic.auto._
@@ -308,9 +316,9 @@ case class Config(mode: RunMode)(
     )
   }
 
-  val propBankTrainLabels = new Cell(readPropBankLabels("train"))
-  val propBankDevLabels = new Cell(readPropBankLabels("dev"))
-  val propBankTestLabels = new Cell(readPropBankLabels("test"))
+  val propBankTrainLabels = new Cell("PropBank train labels", readPropBankLabels("train"))
+  val propBankDevLabels = new Cell("PropBank dev labels", readPropBankLabels("dev"))
+  val propBankTestLabels = new Cell("PropBank test labels", readPropBankLabels("test"))
   val propBankFullLabels = if(mode.sanity) propBankDevLabels else propBankTrainLabels
   val propBankEvalLabels = if(mode.test) propBankTestLabels else propBankDevLabels
 
@@ -356,12 +364,12 @@ case class Config(mode: RunMode)(
     ).map(_.head)
   }
 
-  val trainElmo = new Cell(train.get.flatMap(dataset => getGoldELMoInstances(dataset, trainElmoPrefix)))
-  val devElmo = new Cell(dev.get.flatMap(dataset => getGoldELMoInstances(dataset, devElmoPrefix)))
-  val testElmo = new Cell(test.get.flatMap(dataset => getGoldELMoInstances(dataset, testElmoPrefix)))
+  val trainElmo = new Cell("Train ELMo", train.get.flatMap(dataset => getGoldELMoInstances(dataset, trainElmoPrefix)))
+  val devElmo = new Cell("Dev ELMo", dev.get.flatMap(dataset => getGoldELMoInstances(dataset, devElmoPrefix)))
+  val testElmo = new Cell("Test ELMo", test.get.flatMap(dataset => getGoldELMoInstances(dataset, testElmoPrefix)))
   val inputElmo = if(mode.sanity) devElmo else trainElmo
   val evalElmo = if(mode.test) testElmo else devElmo
-  val fullElmo = new Cell(for(input <- inputElmo.get; eval <- evalElmo.get) yield input |+| eval)
+  val fullElmo = new Cell("Full ELMo", for(input <- inputElmo.get; eval <- evalElmo.get) yield input |+| eval)
 
   def getPropBankELMoInstances(
     verbIdToLemma: Map[VerbId, String],
@@ -411,32 +419,36 @@ case class Config(mode: RunMode)(
   }
 
   val propBankTrainElmo = new Cell(
+    "PropBank train ELMo",
     propBankTrainInstances.get.map(instancesToVerbIdMap).flatMap(
       getPropBankELMoInstances(_, propBankTrainElmoPrefix)
     )
   )
   val propBankDevElmo = new Cell(
+    "PropBank dev ELMo",
     propBankDevInstances.get.map(instancesToVerbIdMap).flatMap(
       getPropBankELMoInstances(_, propBankDevElmoPrefix)
     )
   )
   val propBankTestElmo = new Cell(
+    "PropBank test ELMo",
     propBankTestInstances.get.map(instancesToVerbIdMap).flatMap(
       getPropBankELMoInstances(_, propBankTestElmoPrefix)
     )
   )
   val propBankInputElmo = if(mode.sanity) propBankDevElmo else propBankTrainElmo
   val propBankEvalElmo = if(mode.test) propBankTestElmo else propBankDevElmo
-  val propBankFullElmo = new Cell(for(i <- propBankInputElmo.get; e <- propBankEvalElmo.get) yield i |+| e)
+  val propBankFullElmo = new Cell("PropBank full ELMo", for(i <- propBankInputElmo.get; e <- propBankEvalElmo.get) yield i |+| e)
 
   val collapsedQAOutputs = {
     new Cell(
+      "Collapsed QA outputs",
       fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
-        "Collapsed QA Outputs")(
+        "Collapsed QA outputs")(
         path = collapsedQAOutputPath,
         read = path => (
           FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
-            .map { case (k, v) => k -> v.toMap }.infoCompile("Reading JSON lines")(_.toList).map(_.toMap)
+            .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
         ),
         write = (path, collapsedQAOutputs) => FileUtil.writeJsonLines(
           collapsedQAOutputPath, io.circe.Printer.noSpaces)(
@@ -456,6 +468,7 @@ case class Config(mode: RunMode)(
 
   val evaluationItems = {
     new Cell(
+      "Evaluation items",
       fileCached[Vector[(InflectedForms, String, Int)]](
         "Evaluation Items")(
         path = evaluationItemsPath,
@@ -518,7 +531,7 @@ case class Config(mode: RunMode)(
       fileCached[Map[InflectedForms, VerbClusterModel]](
         "Verb Models")(
         path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
-          .infoCompile("Reading JSON lines")(_.toList).map(_.toMap),
+          .compile.toList.map(_.toMap),
         write = (path, clusters) => FileUtil.writeJsonLines(path)(clusters.toList)
       )(compute = computeVerbModels)
     )
@@ -532,9 +545,9 @@ case class Config(mode: RunMode)(
       fileCached[Map[String, PropBankVerbClusterModel]](
         "PropBank Verb Models")(
         path, read = path => FileUtil.readJsonLines[PropBankVerbClusterModel](path)
-          .infoCompile("Reading JSON lines")(_.toList).map(_.map(m => m.verbLemma -> m).toMap),
+          .compile.toList.map(_.map(m => m.verbLemma -> m).toMap),
         write = (path, clusters) =>
-        Log.info(clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
+        Log.info("Max cluster tree depth: " + clusters.toList.map(_._2.clusterTree.depth).max.toString) >>
           FileUtil.writeLines[PropBankVerbClusterModel](path, _.toJsonStringSafe)(clusters.toList.map(_._2))
       )(compute = computeVerbModels)
     )
