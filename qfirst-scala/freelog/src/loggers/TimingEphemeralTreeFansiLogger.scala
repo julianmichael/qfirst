@@ -15,6 +15,7 @@ import fansi.Attr
 case class TimingEphemeralTreeFansiLogger(
   logger: RewindingConsoleLineLogger,
   branchBeginTimesMillisAndLevels: Ref[IO, List[(Long, LogLevel)]],
+  justDoneMessageBuffer: Ref[IO, Option[(String, NonEmptyList[LogLevel])]],
   getLogLevelAttr: LogLevel => Attr,
   timingAttr: Attr,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
@@ -87,7 +88,7 @@ case class TimingEphemeralTreeFansiLogger(
   }
 
   def emit(msg: String, logLevel: LogLevel) =
-    getIndents >>= { indents =>
+    justDoneMessageBuffer.set(None) >> getIndents >>= { indents =>
       logger.emit(indents.active + getLogLevelAttr(logLevel)(msg.replaceAll("\n", "\n" + indents.passive)).toString, logLevel)
     }
 
@@ -102,12 +103,28 @@ case class TimingEphemeralTreeFansiLogger(
     a <- block(body)
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     indents <- getIndents
+    justDoneMsgOpt <- justDoneMessageBuffer.get
+    delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
+    timingString = getTimingString(delta)
     _ <- {
-      val delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
-      if(delta > minElapsedTimeToLog) {
-        logger.emit(indents.last + timingAttr(s"Done (${getTimingString(delta)})").toString, logLevel)
-      } else IO.unit
-    }
+      justDoneMsgOpt.filter(_._1 == timingString) match {
+        case None =>
+          logger.emit(indents.last + timingAttr(s"Done ($timingString)").toString, logLevel) >>
+            justDoneMessageBuffer.set(Some(timingString -> NonEmptyList.of(logLevel)))
+        case Some((timingString, innerLogLevels)) =>
+          val boxTee = "\u2534"
+          val horiz = "\u2500"
+          val upOne = "\r" + ("\u001b[K\u001b[1A" * 1) + "\u001b[K"
+          logger.emit(
+            upOne +
+              indents.last.init + getLogLevelAttr(logLevel)(horiz) +
+              innerLogLevels.init.map(level => getLogLevelAttr(level)(boxTee + horiz)).mkString +
+              getLogLevelAttr(innerLogLevels.last)(boxTee) +
+              timingAttr(s" Done ($timingString)"),
+            logLevel
+          ) >> justDoneMessageBuffer.set(Some(timingString -> NonEmptyList(logLevel, innerLogLevels.toList)))
+      }
+    }.whenA(delta > minElapsedTimeToLog)
     _ <- branchBeginTimesMillisAndLevels.update {
       case Nil => Nil
       case _ :: rest => rest
@@ -132,5 +149,6 @@ object TimingEphemeralTreeFansiLogger {
   )(implicit timer: Timer[IO]) = for {
     lineLogger <- RewindingConsoleLineLogger.create(putStr)
     timings <- Ref[IO].of(List.empty[(Long, LogLevel)])
-  } yield TimingEphemeralTreeFansiLogger(lineLogger, timings, getLogLevelAttr, timingAttr, minElapsedTimeToLog)
+    justDoneMessageBuffer <- Ref[IO].of[Option[(String, NonEmptyList[LogLevel])]](None)
+  } yield TimingEphemeralTreeFansiLogger(lineLogger, timings, justDoneMessageBuffer, getLogLevelAttr, timingAttr, minElapsedTimeToLog)
 }

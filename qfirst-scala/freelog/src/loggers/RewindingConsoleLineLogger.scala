@@ -24,7 +24,10 @@ case class RewindingConsoleLineLogger(
     _ <- checkpointState.update {
       case Nil => Nil
       case linesUp :: rest =>
-        (linesUp + msg.count(_ == '\n')) :: rest
+        // accommodate for 1 up-movement, specifically for the fansi logger.
+        // TODO: clean up the fansi logger so this isn't necessary, or,
+        // clean this up to properly rewind cursor movement.
+        (linesUp + msg.count(_ == '\n') - (if(msg.contains("\u001b[1A")) 1 else 0)) :: rest
     }
     _ <- putStr(backtrackingStr + msg)
   } yield ()
