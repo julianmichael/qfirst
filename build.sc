@@ -24,6 +24,7 @@ val declineVersion = "1.0.0"
 val breezeVersion = "0.13.2"
 val evilplotVersion = "0.6.3"
 val fansiVersion = "0.2.7"
+val scalaCsvVersion = "1.3.6"
 
 // non-cats
 // val upickleVersion = "0.5.1"
@@ -193,6 +194,18 @@ object qfirst extends Module {
     object js extends JsModule
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(metrics.jvm)
+    }
+  }
+
+  object `clause-align` extends Module {
+    object js extends FullJsModule {
+      def moduleDeps = Seq(clause.js)
+    }
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(clause.jvm, metrics.jvm)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
+      )
     }
   }
 
