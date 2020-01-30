@@ -27,7 +27,7 @@ case class RewindingConsoleLineLogger(
         // accommodate for 1 up-movement, specifically for the fansi logger.
         // TODO: clean up the fansi logger so this isn't necessary, or,
         // clean this up to properly rewind cursor movement.
-        (linesUp + msg.count(_ == '\n') - (msg.split("\u001b[1A", -1).size - 1) ) :: rest
+        (linesUp + msg.count(_ == '\n') - (msg.split("\u001b\\[1A", -1).size - 1) ) :: rest
     }
     _ <- putStr(backtrackingStr + msg)
   } yield ()
