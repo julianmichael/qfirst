@@ -44,63 +44,63 @@ object Serve extends CommandIOApp(
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  def logOp[A](msg: String, op: IO[A]): IO[A] =
-    IO(print(s"$msg...")) >> op >>= (a => IO(println(" Done.")).as(a))
-
-  def logOp[A](msg: String, op: => A): IO[A] = logOp(msg, IO(op))
-
   // val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
-    config: Config,
+    mode: RunMode,
     verbSenseConfig: VerbSenseConfig,
     domain: String,
     port: Int
-  ): IO[ExitCode] = config.qasrlBank.get.flatMap { data =>
-    val docApiSuffix = "doc"
-    val verbApiSuffix = "verb"
-    val pageService = StaticPageService.makeService(
-      domain,
-      docApiSuffix, verbApiSuffix,
-      config.mode,
-      jsDepsPath, jsPath, port
-    )
+  ): IO[ExitCode] = {
+    freelog.loggers.TimingEphemeralTreeFansiLogger.create().flatMap { implicit Log =>
+      val config = Config(mode)
+      config.qasrlBank.get.flatMap { data =>
+        val docApiSuffix = "doc"
+        val verbApiSuffix = "verb"
+        val pageService = StaticPageService.makeService(
+          domain,
+          docApiSuffix, verbApiSuffix,
+          config.mode,
+          jsDepsPath, jsPath, port
+        )
 
-    val index = data.index
-    val docs = data.documentsById
-    val searchIndex = Search.createSearchIndex(docs.values.toList)
-    val docService = HttpUtil.makeHttpPostServer(
-      DocumentService.basic(index, docs, searchIndex)
-        .andThenK(Lambda[Id ~> IO](IO.pure(_)))
-    )
+        val index = data.index
+        val docs = data.documentsById
+        val searchIndex = Search.createSearchIndex(docs.values.toList)
+        val docService = HttpUtil.makeHttpPostServer(
+          DocumentService.basic(index, docs, searchIndex)
+            .andThenK(Lambda[Id ~> IO](IO.pure(_)))
+        )
 
-    for {
-      fullSet <- config.full.get
-      inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-      verbModels <- config.getCachedVerbModels(verbSenseConfig).map(_.get)
-      goldParaphrases <- config.readGoldParaphrases
-      evaluationItems <- config.evaluationItems.get
-      goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
-      annotationService = HttpUtil.makeHttpPostServer(
-        VerbFrameService.basicIOService(
-          inflectionCounts,
-          verbModels,
-          fullSet,
-          evaluationItems.apply,
-          goldParaphraseDataRef,
-          config.saveGoldParaphrases(_))
-      )
-      app = Router(
-        "/" -> pageService,
-        s"/$docApiSuffix" -> docService,
-        s"/$verbApiSuffix" -> annotationService,
-        ).orNotFound
-      _ <- BlazeServerBuilder[IO]
-      .bindHttp(port, "0.0.0.0")
-      .withHttpApp(app)
-      .serve.compile.drain
-    } yield ExitCode.Success
+        for {
+          fullSet <- config.full.get
+          inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
+          verbModels <- config.getCachedVerbModels(verbSenseConfig).map(_.get)
+          goldParaphrases <- config.readGoldParaphrases
+          evaluationItems <- config.evaluationItems.get
+          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+          annotationService = HttpUtil.makeHttpPostServer(
+            VerbFrameService.basicIOService(
+              inflectionCounts,
+              verbModels,
+              fullSet,
+              evaluationItems.apply,
+              goldParaphraseDataRef,
+              config.saveGoldParaphrases(_))
+          )
+          app = Router(
+            "/" -> pageService,
+            s"/$docApiSuffix" -> docService,
+            s"/$verbApiSuffix" -> annotationService,
+            ).orNotFound
+          _ <- BlazeServerBuilder[IO]
+          .bindHttp(port, "0.0.0.0")
+          .withHttpApp(app)
+          .serve.compile.drain
+        } yield ExitCode.Success
+      }
+    }
   }
 
   def main: Opts[IO[ExitCode]] = {
@@ -113,13 +113,12 @@ object Serve extends CommandIOApp(
       "js", metavar = "path", help = "Where to get the JS main file."
     )
 
-    val configO = Opts.option[String](
+    val modeO = Opts.option[String](
       "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
     ).mapValidated { string =>
       RunMode.fromString(string)
         .map(Validated.valid)
         .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test."))
-        .map(Config(_))
     }
     val verbSenseConfigO = Opts.option[String](
       "model", metavar = "entropy|elmo|<float>", help = "Verb sense model configuration."
@@ -142,6 +141,6 @@ object Serve extends CommandIOApp(
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, configO, verbSenseConfigO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, modeO, verbSenseConfigO, domainO, portO).mapN(_run)
   }
 }

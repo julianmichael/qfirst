@@ -68,7 +68,7 @@ case class Instances[VerbType, A](
     )
   }
   // TODO merge and stuff
-}
+} 
 object Instances {
   implicit def instancesMonoid[VT, A]: Monoid[Instances[VT, A]] =
     new Monoid[Instances[VT, A]] {
@@ -142,7 +142,7 @@ object FrameInductionApp extends CommandIOApp(
     }.filter(_._2.nonEmpty)
     verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
       Log.trace(renderVerbType(verbType)) >> IO {
-        val verbIds = _verbIds.take(1000) // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        val verbIds = _verbIds.take(250) // hack to make it possible to even do the clustering on the really common words. need to generalize later
         val verbInstances = instances.values(verbType)
         val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
         val makeInstance = (verbId: VerbId) => {
