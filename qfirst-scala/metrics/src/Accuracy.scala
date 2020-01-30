@@ -22,6 +22,8 @@ object Accuracy {
       "num predicted" -> Metric.int(predicted),
       "accuracy" -> Metric.double(accuracy),
       )
+  }
+  object Stats {
     implicit val accuracyStatsMonoid: Monoid[Accuracy.Stats] = {
       import cats.derived.auto.monoid._
       cats.derived.semi.monoid

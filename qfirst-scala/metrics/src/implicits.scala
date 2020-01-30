@@ -1,6 +1,7 @@
 package qfirst.metrics
 
 import cats.Monoid
+import cats.kernel.CommutativeMonoid
 import cats.implicits._
 
 import shapeless.HList
@@ -10,8 +11,7 @@ import shapeless.Witness
 import shapeless.labelled.FieldType
 import shapeless.labelled.field
 
-trait Implicits {
-
+trait LowPriorityImplicits {
   final implicit def hnilMonoid: Monoid[HNil] =
     new Monoid[HNil] {
       def empty = HNil
@@ -21,6 +21,23 @@ trait Implicits {
   final implicit def hconsRecordMonoid[K, H: Monoid, Tail <: HList : Monoid]: Monoid[FieldType[K, H] :: Tail] =
     new Monoid[FieldType[K, H] :: Tail] {
       def empty = field[K](Monoid[H].empty) :: Monoid[Tail].empty
+      def combine(x: FieldType[K, H] :: Tail, y: FieldType[K, H] :: Tail) =
+        field[K]((x.head: H) |+| (y.head: H)) :: (x.tail |+| y.tail)
+    }
+}
+
+// TODO bring HasMetrics ops in here
+trait Implicits extends LowPriorityImplicits /*extends HasMetrics.Ops*/ {
+
+  final implicit def hnilCommutativeMonoid: CommutativeMonoid[HNil] =
+    new CommutativeMonoid[HNil] {
+      def empty = HNil
+      def combine(x: HNil, y: HNil) = HNil
+    }
+
+  final implicit def hconsRecordCommutativeMonoid[K, H: CommutativeMonoid, Tail <: HList : CommutativeMonoid]: CommutativeMonoid[FieldType[K, H] :: Tail] =
+    new CommutativeMonoid[FieldType[K, H] :: Tail] {
+      def empty = field[K](CommutativeMonoid[H].empty) :: CommutativeMonoid[Tail].empty
       def combine(x: FieldType[K, H] :: Tail, y: FieldType[K, H] :: Tail) =
         field[K]((x.head: H) |+| (y.head: H)) :: (x.tail |+| y.tail)
     }
