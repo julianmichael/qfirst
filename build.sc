@@ -12,7 +12,7 @@ val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
 
 val jjmVersion = "0.1.1-SNAPSHOT"
-val qasrlVersion = "0.2.0"
+val qasrlVersion = "0.2.1-SNAPSHOT"
 val qasrlBankVersion = "0.2.0"
 val radhocVersion = "0.3.0"
 val spacroVersion = "0.3.0"

@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import jjm.implicits._
+
 import cats.Applicative
 import cats.kernel.CommutativeMonoid
 import cats.Monad
@@ -7,6 +9,7 @@ import cats.Eval
 import cats.Foldable
 import cats.Reducible
 import cats.UnorderedFoldable
+import cats.data.Ior
 import cats.implicits._
 
 import monocle.macros._
@@ -67,6 +70,43 @@ import scala.annotation.tailrec
   def isMerge: Boolean = this match {
     case Merge(_, _, _, _) => true
     case _ => false
+  }
+
+  // def extractPureTrees[B](index: A => B): Map[B, Vector[MergeTree[A]]] = {
+  //   extractPureTreesAux(index).left.map { case (idx, tree) => idx -> Vector(tree) }.toMap.merge
+  // }
+  // // left: this tree is pure. right: this tree is not pure; here are the pure subtrees.
+  // def extractPureTreesAux[B](index: A => B): Either[(B, MergeTree[A]), Map[B, Vector[MergeTree[A]]]] = {
+  //   cata[Map[B, Vector[MergeTree[A]]]](
+  //     leaf = (_, value) => Left(index(value) -> this),
+  //     merge = (_, _, left, right) => left
+  //       .left.toOption.map(_._1).flatMap { b =>
+  //         right.left.toOption.map(_._1).filter(_ == b).as(
+  //           Left(b -> this)
+  //         )
+  //       }.getOrElse {
+  //         Right(
+  //           left.left.map { case (idx, tree) => idx -> Vector(tree) }.toMap.merge |+|
+  //             right.left.map { case (idx, tree) => idx -> Vector(tree) }.toMap.merge
+  //         )
+  //       }
+  //   )
+  // }
+
+  // partition by an indexing function, but keep the overarching tree structure.
+  // Each returned tree is a like a "view" on the original which ignores values outside its index,
+  // but retains rank/loss values.
+  def groupBy[B](index: A => B): Map[B, MergeTree[A]] = {
+    cata[Map[B, MergeTree[A]]](
+      leaf = (loss, value) => Map(index(value) -> Leaf(loss, value)),
+      merge = (rank, loss, left, right) => left.merge(right).transform {
+        case (_, treeIor) => treeIor match {
+          case Ior.Left(tree) => tree
+          case Ior.Right(tree) => tree
+          case Ior.Both(l, r) => Merge(rank, loss, l, r)
+        }
+      }
+    )
   }
 
   // returns Some if value appears at most once in the merge tree

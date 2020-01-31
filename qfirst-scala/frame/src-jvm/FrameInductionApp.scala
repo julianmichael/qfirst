@@ -68,7 +68,7 @@ case class Instances[VerbType, A](
     )
   }
   // TODO merge and stuff
-} 
+}
 object Instances {
   implicit def instancesMonoid[VT, A]: Monoid[Instances[VT, A]] =
     new Monoid[Instances[VT, A]] {
@@ -184,6 +184,24 @@ object FrameInductionApp extends CommandIOApp(
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
+  def getQuestionClustersFromAggregateQAForVerb(
+    instances: Map[String, Map[Int, QAPairs]],
+    verbCollapsedQAOutputs: Map[(ClausalQ, ClausalQ), Double]
+  ): Vector[MergeTree[QuestionId]] = {
+    ??? // TODO
+  }
+
+  def getQuestionClustersFromAggregateQA(
+    instances: Instances.Qasrl,
+    collapsedQAOutputs: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
+  ): Map[InflectedForms, Vector[MergeTree[QuestionId]]] = {
+    instances.values.map { case (verbInflectedForms, verbInstances) =>
+      verbInflectedForms -> getQuestionClustersFromAggregateQAForVerb(
+        verbInstances, collapsedQAOutputs(verbInflectedForms)
+      )
+    }
+  }
+
   def getQasrlVerbClusterModels(
     config: Config, verbSenseConfig: VerbSenseConfig)(
     implicit logger: EphemeralTreeLogger[IO, String]
@@ -199,6 +217,7 @@ object FrameInductionApp extends CommandIOApp(
           renderVerbType = (forms: InflectedForms) => forms.stem
         )
         collapsedQAOutputs <- config.collapsedQAOutputs.get
+        questionClusterTreesByVerb = getQuestionClustersFromAggregateQA(instances, collapsedQAOutputs)
         verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
           val clauseSets = instances.values(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
             verbMap.iterator.map { case (vi, qas) =>
@@ -212,8 +231,9 @@ object FrameInductionApp extends CommandIOApp(
           verbInflectedForms -> VerbClusterModel(
             verbInflectedForms,
             clusterTree,
-            clauseSets,
-            collapsedQAOutputs(verbInflectedForms).toList
+            questionClusterTreesByVerb(verbInflectedForms)
+            // clauseSets,
+            // collapsedQAOutputs(verbInflectedForms).toList
           )
         }
       } yield verbClusterModels
@@ -556,8 +576,11 @@ object FrameInductionApp extends CommandIOApp(
           verbClauseSets(vid).toList.foldMap(c => Map(c -> 1))
         }.toList.map { case (c, count) => FrameClause(c, (count.toDouble / verbIds.size)) }
         val frameProb = verbIds.size.toDouble / numInstancesForVerb
-        val coindexingTree = Coindexing.getCoindexingTree(clauseTemplates.map(_.args).toSet, verbRel)
-        VerbFrame(verbIds.toSet, clauseTemplates, coindexingTree, frameProb)
+        val questionClusterTrees = getQuestionClustersFromAggregateQAForVerb(
+          instances.values(verbInflectedForms), fuzzyArgEquivalences(verbInflectedForms)
+        )
+        // val coindexingTree = Coindexing.getCoindexingTree(clauseTemplates.map(_.args).toSet, verbRel)
+        VerbFrame(verbIds.toSet, clauseTemplates, questionClusterTrees, frameProb)
       }.toList
       VerbFrameset(verbInflectedForms, verbFrames)
     }
@@ -571,181 +594,181 @@ object FrameInductionApp extends CommandIOApp(
     ubConf: BinaryConf.Stats
   )
 
-  def tuningParaphraseEvaluation(
-    config: Config,
-    verbFramesetsByConfig: Map[VerbSenseConfig, Map[InflectedForms, VerbFrameset]],
-    goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
-    evaluationItems: Vector[(InflectedForms, String, Int)])(
-    implicit Log: Logger[IO, String]
-  ): IO[Map[VerbSenseConfig, ParaphraseTuningPoint]] = {
-    val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
-      goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
-    }
-    if(presentEvaluationItems.isEmpty) IO.pure {
-      verbFramesetsByConfig.transform { case (vsConfig, verbClusters) =>
-        ParaphraseTuningPoint(vsConfig, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
-      }
-    } else {
-      for {
-        instances <- config.fullInstances.get
-        fullEvaluationResultsByConfig = verbFramesetsByConfig.transform { case (vsConfig, framesets) =>
-          presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
-            val verbClausalQs = instances.values(verbInflectedForms).flatMap { case (sid, verbMap) =>
-              verbMap.map { case (vi, qMap) =>
-                val questions = qMap.keySet.toList
-                val clausalQs = ClauseResolution.getResolvedStructures(questions).toSet
-                  .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
-                VerbId(sid, vi) -> clausalQs
-              }
-            }
-            val verbId = VerbId(sentenceId, verbIndex)
-            val inputClausalQs = verbClausalQs(verbId)
-            val verbFrameset = framesets(verbInflectedForms)
-            val verbFrame = verbFrameset.frames.find(_.verbIds.contains(verbId)).get
-            // each is a (loss threshold, vector of (clause threshold, (perf lower bound, perf upper bound)))
-            val paraphrasingMetricByThresholds: List[(Double, List[(Double, (BinaryConf.Stats, BinaryConf.Stats))])] = {
-              verbFrame.clauseTemplates.sortBy(_.probability).tails.toList.map { clauses =>
-                val minClauseProb = clauses.headOption.fold(1.0)(_.probability)
-                val clauseTemplates = clauses.map(_.args).toSet
-                // each list is sorted increasing by minCoindexingProb
-                val confPairLists = inputClausalQs.toList.map { cq =>
-                  verbFrame.coindexingTree.clustersForValue(cq).get.map { tree =>
-                    val clusterSize = tree.size
-                    val maxLoss = if(tree.isLeaf) 0.0 else tree.loss
-                    val minCoindexingProb = 1.0 - maxLoss
-                    val predictedParaphrases = tree.values.toSet - cq
-                    val correctParaphrases = instanceParaphrases.paraphrases.equivalenceClass(cq) - cq
-                    val incorrectParaphrases = instanceParaphrases.paraphrases.apartSet(cq) ++
-                      instanceParaphrases.incorrectClauses.flatMap(ct =>
-                        getArgumentSlotsForClauseTemplate(ct).map(ct -> _)
-                      )
+  // def tuningParaphraseEvaluation(
+  //   config: Config,
+  //   verbFramesetsByConfig: Map[VerbSenseConfig, Map[InflectedForms, VerbFrameset]],
+  //   goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
+  //   evaluationItems: Vector[(InflectedForms, String, Int)])(
+  //   implicit Log: Logger[IO, String]
+  // ): IO[Map[VerbSenseConfig, ParaphraseTuningPoint]] = {
+  //   val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
+  //     goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
+  //   }
+  //   if(presentEvaluationItems.isEmpty) IO.pure {
+  //     verbFramesetsByConfig.transform { case (vsConfig, verbClusters) =>
+  //       ParaphraseTuningPoint(vsConfig, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
+  //     }
+  //   } else {
+  //     for {
+  //       instances <- config.fullInstances.get
+  //       fullEvaluationResultsByConfig = verbFramesetsByConfig.transform { case (vsConfig, framesets) =>
+  //         presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
+  //           val verbClausalQs = instances.values(verbInflectedForms).flatMap { case (sid, verbMap) =>
+  //             verbMap.map { case (vi, qMap) =>
+  //               val questions = qMap.keySet.toList
+  //               val clausalQs = ClauseResolution.getResolvedStructures(questions).toSet
+  //                 .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
+  //               VerbId(sid, vi) -> clausalQs
+  //             }
+  //           }
+  //           val verbId = VerbId(sentenceId, verbIndex)
+  //           val inputClausalQs = verbClausalQs(verbId)
+  //           val verbFrameset = framesets(verbInflectedForms)
+  //           val verbFrame = verbFrameset.frames.find(_.verbIds.contains(verbId)).get
+  //           // each is a (loss threshold, vector of (clause threshold, (perf lower bound, perf upper bound)))
+  //           val paraphrasingMetricByThresholds: List[(Double, List[(Double, (BinaryConf.Stats, BinaryConf.Stats))])] = {
+  //             verbFrame.clauseTemplates.sortBy(_.probability).tails.toList.map { clauses =>
+  //               val minClauseProb = clauses.headOption.fold(1.0)(_.probability)
+  //               val clauseTemplates = clauses.map(_.args).toSet
+  //               // each list is sorted increasing by minCoindexingProb
+  //               val confPairLists = inputClausalQs.toList.map { cq =>
+  //                 verbFrame.coindexingTree.clustersForValue(cq).get.map { tree =>
+  //                   val clusterSize = tree.size
+  //                   val maxLoss = if(tree.isLeaf) 0.0 else tree.loss
+  //                   val minCoindexingProb = 1.0 - maxLoss
+  //                   val predictedParaphrases = tree.values.toSet - cq
+  //                   val correctParaphrases = instanceParaphrases.paraphrases.equivalenceClass(cq) - cq
+  //                   val incorrectParaphrases = instanceParaphrases.paraphrases.apartSet(cq) ++
+  //                     instanceParaphrases.incorrectClauses.flatMap(ct =>
+  //                       getArgumentSlotsForClauseTemplate(ct).map(ct -> _)
+  //                     )
 
-                    val lbConf = BinaryConf.Stats(
-                      tp = (predictedParaphrases intersect correctParaphrases).size,
-                      tn = 0, // we don't need this for p/r/f
-                      fp = (predictedParaphrases -- correctParaphrases).size,
-                      fn = (correctParaphrases -- predictedParaphrases).size
-                    )
-                    val ubConf = BinaryConf.Stats(
-                      tp = (predictedParaphrases -- incorrectParaphrases).size,
-                      tn = 0, // we don't need this for p/r/f
-                      fp = (predictedParaphrases intersect incorrectParaphrases).size,
-                      fn = (correctParaphrases -- predictedParaphrases).size
-                    )
-                    minCoindexingProb -> (lbConf -> ubConf)
-                  }
-                }
-                val allMinCoindexingProbs = confPairLists.foldMap(_.map(_._1).toSet).toList.sorted
-                minClauseProb -> allMinCoindexingProbs.map { minCoindexingProb =>
-                  val lbConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._1)
-                  val ubConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._2)
-                  minCoindexingProb -> (lbConf -> ubConf)
-                }
-              }
-            }
-            paraphrasingMetricByThresholds
-          }
-        }
-        allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
-          val minClauseProbs = evaluationItemResults.foldMap(_.map(_._1).toSet).toList.sorted
-          minClauseProbs.flatMap { minClauseProb =>
-            val chosenClauseSets = evaluationItemResults.map(
-              _.find(_._1 >= minClauseProb).get._2
-            )
-            val minCoindexingProbs = chosenClauseSets.flatMap(_.map(_._1)).toSet.toList
-            minCoindexingProbs.map { minCoindexingProb =>
-              val confPairs = chosenClauseSets.map(_.find(_._1 >= minCoindexingProb).get._2)
-              val lbConf = confPairs.foldMap(_._1)
-              val ubConf = confPairs.foldMap(_._2)
-              ParaphraseTuningPoint(vsConfig, minClauseProb, minCoindexingProb, lbConf, ubConf)
-            }
-          }
-        }
-        bestThresholds <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
-          val lbBest = allPoints.maxBy(_.lbConf.f1)
-          val ubBest = allPoints.maxBy(_.ubConf.f1)
-          // val ubBest = allPoints.maxBy(_.ubConf.f1)
-          // val ubBestThresholds = CalibratedVerbSenseModel(
-          //   vsConfig, verbClustersByConfig(vsConfig), ubBest.maxLoss, ubBest.minClauseProb
-          // )
-          // (lbBestModel, lbBest.lbConf, ubBestModel, ubBest.ubConf)
-          // Log.info(s"${vsConfig.modelName}: " + getMetricsString(ubBest.ubConf))
+  //                   val lbConf = BinaryConf.Stats(
+  //                     tp = (predictedParaphrases intersect correctParaphrases).size,
+  //                     tn = 0, // we don't need this for p/r/f
+  //                     fp = (predictedParaphrases -- correctParaphrases).size,
+  //                     fn = (correctParaphrases -- predictedParaphrases).size
+  //                   )
+  //                   val ubConf = BinaryConf.Stats(
+  //                     tp = (predictedParaphrases -- incorrectParaphrases).size,
+  //                     tn = 0, // we don't need this for p/r/f
+  //                     fp = (predictedParaphrases intersect incorrectParaphrases).size,
+  //                     fn = (correctParaphrases -- predictedParaphrases).size
+  //                   )
+  //                   minCoindexingProb -> (lbConf -> ubConf)
+  //                 }
+  //               }
+  //               val allMinCoindexingProbs = confPairLists.foldMap(_.map(_._1).toSet).toList.sorted
+  //               minClauseProb -> allMinCoindexingProbs.map { minCoindexingProb =>
+  //                 val lbConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._1)
+  //                 val ubConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._2)
+  //                 minCoindexingProb -> (lbConf -> ubConf)
+  //               }
+  //             }
+  //           }
+  //           paraphrasingMetricByThresholds
+  //         }
+  //       }
+  //       allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
+  //         val minClauseProbs = evaluationItemResults.foldMap(_.map(_._1).toSet).toList.sorted
+  //         minClauseProbs.flatMap { minClauseProb =>
+  //           val chosenClauseSets = evaluationItemResults.map(
+  //             _.find(_._1 >= minClauseProb).get._2
+  //           )
+  //           val minCoindexingProbs = chosenClauseSets.flatMap(_.map(_._1)).toSet.toList
+  //           minCoindexingProbs.map { minCoindexingProb =>
+  //             val confPairs = chosenClauseSets.map(_.find(_._1 >= minCoindexingProb).get._2)
+  //             val lbConf = confPairs.foldMap(_._1)
+  //             val ubConf = confPairs.foldMap(_._2)
+  //             ParaphraseTuningPoint(vsConfig, minClauseProb, minCoindexingProb, lbConf, ubConf)
+  //           }
+  //         }
+  //       }
+  //       bestThresholds <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
+  //         val lbBest = allPoints.maxBy(_.lbConf.f1)
+  //         val ubBest = allPoints.maxBy(_.ubConf.f1)
+  //         // val ubBest = allPoints.maxBy(_.ubConf.f1)
+  //         // val ubBestThresholds = CalibratedVerbSenseModel(
+  //         //   vsConfig, verbClustersByConfig(vsConfig), ubBest.maxLoss, ubBest.minClauseProb
+  //         // )
+  //         // (lbBestModel, lbBest.lbConf, ubBestModel, ubBest.ubConf)
+  //         // Log.info(s"${vsConfig.modelName}: " + getMetricsString(ubBest.ubConf))
 
-          val lbResString = getMetricsString(lbBest.lbConf)
-          val ubResString = getMetricsString(ubBest.ubConf)
-          Log.info(s"${vsConfig.modelName} paraphrase lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
-            Log.info(s"${vsConfig.modelName} paraphrase lb metrics: " + lbResString) >>
-            Log.info(s"${vsConfig.modelName} paraphrase ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
-            Log.info(s"${vsConfig.modelName} paraphrase ub metrics: " + ubResString) >>
-            config.resultsPath(vsConfig).flatMap(path =>
-              FileUtil.writeString(path.resolve("questions-lb-results.txt"))(lbResString) >>
-                FileUtil.writeString(path.resolve("questions-ub-results.txt"))(ubResString) >>
-                FileUtil.writeJson(path.resolve("questions-lb-model.json"), io.circe.Printer.spaces2)(lbBest) >>
-                FileUtil.writeJson(path.resolve("questions-ub-model.json"), io.circe.Printer.spaces2)(ubBest)
-            ).as(vsConfig -> ubBest)
-        }.map(_.toMap)
-        _ <- {
-          import com.cibo.evilplot._
-          import com.cibo.evilplot.numeric._
-          import com.cibo.evilplot.plot._
-          import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-          import com.cibo.evilplot.plot.renderers._
+  //         val lbResString = getMetricsString(lbBest.lbConf)
+  //         val ubResString = getMetricsString(ubBest.ubConf)
+  //         Log.info(s"${vsConfig.modelName} paraphrase lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
+  //           Log.info(s"${vsConfig.modelName} paraphrase lb metrics: " + lbResString) >>
+  //           Log.info(s"${vsConfig.modelName} paraphrase ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
+  //           Log.info(s"${vsConfig.modelName} paraphrase ub metrics: " + ubResString) >>
+  //           config.resultsPath(vsConfig).flatMap(path =>
+  //             FileUtil.writeString(path.resolve("questions-lb-results.txt"))(lbResString) >>
+  //               FileUtil.writeString(path.resolve("questions-ub-results.txt"))(ubResString) >>
+  //               FileUtil.writeJson(path.resolve("questions-lb-model.json"), io.circe.Printer.spaces2)(lbBest) >>
+  //               FileUtil.writeJson(path.resolve("questions-ub-model.json"), io.circe.Printer.spaces2)(ubBest)
+  //           ).as(vsConfig -> ubBest)
+  //       }.map(_.toMap)
+  //       _ <- {
+  //         import com.cibo.evilplot._
+  //         import com.cibo.evilplot.numeric._
+  //         import com.cibo.evilplot.plot._
+  //         import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+  //         import com.cibo.evilplot.plot.renderers._
 
-          case class PRPoint(
-            model: VerbSenseConfig,
-            recall: Double,
-            precision: Double) extends Datum2d[PRPoint] {
-            val x = recall
-            val y = precision
-            def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
-          }
+  //         case class PRPoint(
+  //           model: VerbSenseConfig,
+  //           recall: Double,
+  //           precision: Double) extends Datum2d[PRPoint] {
+  //           val x = recall
+  //           val y = precision
+  //           def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
+  //         }
 
-          // val linePointsByModel = allPointsByModel.transform { case (model, vsTuningPoints) =>
-          //   NonEmptyList.fromList(vsTuningPoints.sortBy(-_.lbConf.recall)).get
-          //     .reduceLeftTo(NonEmptyList.of(_)) { (best, next) =>
-          //       if(next.lbConf.precision > best.head.lbConf.precision) {
-          //         if(next.lbConf.recall == best.head.lbConf.recall) best
-          //         else NonEmptyList(next, best.toList)
-          //       } else best
-          //     }.toList
-          // }
-          // val lbLineData = linePointsByModel.values.toList.flatten.map { vsTuningPoint =>
-          //   PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall, vsTuningPoint.lbConf.precision)
-          // }
-          // val lbLinePlot = LinePlot(
-		      //   lbData,
-		      //   pathRenderer = Some(PathRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        // ).xAxis().yAxis().frame().rightLegend()
+  //         // val linePointsByModel = allPointsByModel.transform { case (model, vsTuningPoints) =>
+  //         //   NonEmptyList.fromList(vsTuningPoints.sortBy(-_.lbConf.recall)).get
+  //         //     .reduceLeftTo(NonEmptyList.of(_)) { (best, next) =>
+  //         //       if(next.lbConf.precision > best.head.lbConf.precision) {
+  //         //         if(next.lbConf.recall == best.head.lbConf.recall) best
+  //         //         else NonEmptyList(next, best.toList)
+  //         //       } else best
+  //         //     }.toList
+  //         // }
+  //         // val lbLineData = linePointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //         //   PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall, vsTuningPoint.lbConf.precision)
+  //         // }
+  //         // val lbLinePlot = LinePlot(
+	// 	      //   lbData,
+	// 	      //   pathRenderer = Some(PathRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         // ).xAxis().yAxis().frame().rightLegend()
 
 
-          val rand = new scala.util.Random(2643642L)
-          def noise = scala.math.abs(rand.nextGaussian / 200.0)
+  //         val rand = new scala.util.Random(2643642L)
+  //         def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
-          val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
-            PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
-          }
-          val ubData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
-            PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.ubConf.recall + noise, vsTuningPoint.ubConf.precision + noise)
-          }
+  //         val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //           PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
+  //         }
+  //         val ubData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //           PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.ubConf.recall + noise, vsTuningPoint.ubConf.precision + noise)
+  //         }
 
-          val lbPlot = ScatterPlot(
-		        lbData,
-		        pointRenderer = Some(PointRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        ).xAxis().yAxis().frame().rightLegend()
-          val ubPlot = ScatterPlot(
-		        ubData,
-		        pointRenderer = Some(PointRenderer.colorByCategory(ubData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        ).xAxis().yAxis().frame().rightLegend()
+  //         val lbPlot = ScatterPlot(
+	// 	        lbData,
+	// 	        pointRenderer = Some(PointRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         ).xAxis().yAxis().frame().rightLegend()
+  //         val ubPlot = ScatterPlot(
+	// 	        ubData,
+	// 	        pointRenderer = Some(PointRenderer.colorByCategory(ubData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         ).xAxis().yAxis().frame().rightLegend()
 
-          config.globalResultsDir.flatMap(path =>
-            // IO(lbLinePlot.render().write(new java.io.File(path.resolve("question-lb-line.png").toString))) >>
-              IO(lbPlot.render().write(new java.io.File(path.resolve("question-lb.png").toString))) >>
-              IO(ubPlot.render().write(new java.io.File(path.resolve("question-ub.png").toString)))
-          )
-        }
-      } yield bestThresholds
-    }
-  }
+  //         config.globalResultsDir.flatMap(path =>
+  //           // IO(lbLinePlot.render().write(new java.io.File(path.resolve("question-lb-line.png").toString))) >>
+  //             IO(lbPlot.render().write(new java.io.File(path.resolve("question-lb.png").toString))) >>
+  //             IO(ubPlot.render().write(new java.io.File(path.resolve("question-ub.png").toString)))
+  //         )
+  //       }
+  //     } yield bestThresholds
+  //   }
+  // }
 
   @JsonCodec case class ModelMetrics(
     clauseLBConf: BinaryConf.Stats,
@@ -854,219 +877,219 @@ object FrameInductionApp extends CommandIOApp(
     ubConf: BinaryConf.Stats
   )
 
-  def tuningFullEvaluation(
-    config: Config,
-    verbModelsByConfig: Map[VerbSenseConfig, Map[InflectedForms, VerbClusterModel]],
-    goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
-    evaluationItems: Vector[(InflectedForms, String, Int)])(
-    implicit Log: TreeLogger[IO, String]
-  ): IO[Map[VerbSenseConfig, FullTuningPoint]] = {
-    val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
-      goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
-    }
-    if(presentEvaluationItems.isEmpty) {
-      Log.warn("No gold items to evaluate on. Returning empty evaluation.").as(
-        verbModelsByConfig.transform { case (vsConfig, _) =>
-          FullTuningPoint(vsConfig, 0.0, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
-        }
-      )
-    } else {
-      for {
-        _ <- Log.infoBranch("Writing loss graph")(
-          writeLossGraph(
-            verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
-            config.globalResultsDir.map(_.resolve("loss-trends.png"))
-          )
-        )
-        _ <- Log.infoBranch("Writing depth graph")(
-          writeDepthGraph(
-            verbModelsByConfig.mapValues(_.mapValues(_.clusterTree)),
-            config.globalResultsDir.map(_.resolve("depth-trends.png"))
-          )
-        )
-        instances <- config.fullInstances.get
-        fullEvaluationResultsByConfig = verbModelsByConfig.transform { case (vsConfig, verbModels) =>
-          presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
-            val verbId = VerbId(sentenceId, verbIndex)
-            val goldQs = instances.values(verbInflectedForms)(sentenceId)(verbIndex).keySet
-            val goldClausalQs = ClauseResolution.getResolvedStructures(goldQs.toList).toSet
-              .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
-            val goldClauseSet = goldClausalQs.map(_._1)
-            val verbModel = verbModels(verbInflectedForms)
-            val instanceClusters = verbModel.clusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).get // verb id must be present
+  // def tuningFullEvaluation(
+  //   config: Config,
+  //   verbModelsByConfig: Map[VerbSenseConfig, Map[InflectedForms, VerbClusterModel]],
+  //   goldParaphrases: Map[String, Map[Int, VerbParaphraseLabels]],
+  //   evaluationItems: Vector[(InflectedForms, String, Int)])(
+  //   implicit Log: TreeLogger[IO, String]
+  // ): IO[Map[VerbSenseConfig, FullTuningPoint]] = {
+  //   val presentEvaluationItems = evaluationItems.flatMap { case (forms, sid, vi) =>
+  //     goldParaphrases.get(sid).flatMap(_.get(vi)).map(labels => (forms, sid, vi, labels))
+  //   }
+  //   if(presentEvaluationItems.isEmpty) {
+  //     Log.warn("No gold items to evaluate on. Returning empty evaluation.").as(
+  //       verbModelsByConfig.transform { case (vsConfig, _) =>
+  //         FullTuningPoint(vsConfig, 0.0, 0.0, 0.0, BinaryConf.Stats(), BinaryConf.Stats())
+  //       }
+  //     )
+  //   } else {
+  //     for {
+  //       _ <- Log.infoBranch("Writing loss graph")(
+  //         writeLossGraph(
+  //           verbModelsByConfig.mapValues(_.mapValues(_.verbClusterTree)),
+  //           config.globalResultsDir.map(_.resolve("loss-trends.png"))
+  //         )
+  //       )
+  //       _ <- Log.infoBranch("Writing depth graph")(
+  //         writeDepthGraph(
+  //           verbModelsByConfig.mapValues(_.mapValues(_.verbClusterTree)),
+  //           config.globalResultsDir.map(_.resolve("depth-trends.png"))
+  //         )
+  //       )
+  //       instances <- config.fullInstances.get
+  //       fullEvaluationResultsByConfig = verbModelsByConfig.transform { case (vsConfig, verbModels) =>
+  //         presentEvaluationItems.map { case (verbInflectedForms, sentenceId, verbIndex, instanceParaphrases) =>
+  //           val verbId = VerbId(sentenceId, verbIndex)
+  //           val goldQs = instances.values(verbInflectedForms)(sentenceId)(verbIndex).keySet
+  //           val goldClausalQs = ClauseResolution.getResolvedStructures(goldQs.toList).toSet
+  //             .filter(p => p._2 match { case qasrl.Adv(_) => false; case _ => true }) // don't include adverbial questions
+  //           val goldClauseSet = goldClausalQs.map(_._1)
+  //           val verbModel = verbModels(verbInflectedForms)
+  //           val instanceClusters = verbModel.verbClusterTree.clustersForValue(VerbId(sentenceId, verbIndex)).get // verb id must be present
 
-            // max verb cluster loss/elt (dec) -> min clause prob (inc) -> min coindexing prob (inc) -> stats
-            instanceClusters.map { tree =>
-              val clusterSize = tree.size
-              val lossThreshold = if(tree.isLeaf) 0.0 else tree.loss / clusterSize
-              val clauseCounts: Map[ArgStructure, Int] = tree.values.foldMap { vid =>
-                verbModel.clauseSets(vid).toList.foldMap(c => Map(c -> 1))
-              }
-              val predictedClausesWithProbsIncreasing = clauseCounts
-                // .filter(p => !inputClauseSet.contains(p._1)) // remove clauses already present in gold
-                .toList.map { case (clause, count) => clause -> (count.toDouble / clusterSize)} // prob of clause appearing for a verb
-                .sortBy(_._2)
-              lossThreshold -> predictedClausesWithProbsIncreasing.tails.map { clausesWithProbs =>
-                val clauseThreshold = clausesWithProbs.headOption.fold(1.0)(_._2) // predict nothing
-                val frameClauses = clausesWithProbs.map(_._1).toList.toSet
-                val coindexingTreeOpt = if(frameClauses.isEmpty) None else Some(
-                  Coindexing.getCoindexingTree(frameClauses, verbModel.coindexingScores)
-                )
-                val confPairLists = goldClausalQs.toList.map { cq =>
-                  val correctParaphrases = instanceParaphrases.paraphrases.equivalenceClass(cq) - cq
-                  val incorrectParaphrases = instanceParaphrases.paraphrases.apartSet(cq) ++
-                    instanceParaphrases.incorrectClauses.flatMap(ct =>
-                      getArgumentSlotsForClauseTemplate(ct).map(ct -> _)
-                    )
-                  coindexingTreeOpt.flatMap(_.clustersForValue(cq)) match {
-                    case None =>
-                      val lbConf = BinaryConf.Stats(fn = correctParaphrases.size)
-                      val ubConf = lbConf
-                      List(1.0 -> (lbConf -> ubConf))
-                    case Some(clustersForQuestion) => clustersForQuestion.map { tree =>
-                      val clusterSize = tree.size
-                      val maxLoss = if(tree.isLeaf) 0.0 else tree.loss
-                      val minCoindexingProb = 1.0 - maxLoss
-                      val predictedParaphrases = tree.values.toSet - cq
-                      val lbConf = BinaryConf.Stats(
-                        tp = (predictedParaphrases intersect correctParaphrases).size,
-                        tn = 0, // we don't need this for p/r/f
-                        fp = (predictedParaphrases -- correctParaphrases).size,
-                        fn = (correctParaphrases -- predictedParaphrases).size
-                      )
-                      val ubConf = BinaryConf.Stats(
-                        tp = (predictedParaphrases -- incorrectParaphrases).size,
-                        tn = 0, // we don't need this for p/r/f
-                        fp = (predictedParaphrases intersect incorrectParaphrases).size,
-                        fn = (correctParaphrases -- predictedParaphrases).size
-                      )
-                      minCoindexingProb -> (lbConf -> ubConf)
-                    }
-                  }
-                }
-                val allMinCoindexingProbs = confPairLists.foldMap(_.map(_._1).toSet).toList.sorted
-                clauseThreshold -> allMinCoindexingProbs.map { minCoindexingProb =>
-                  val lbConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._1)
-                  val ubConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._2)
-                  minCoindexingProb -> (lbConf -> ubConf)
-                }
-              }.toList
-            }
-            // clause stats
-            // val correctClauses = instanceParaphrases.correctClauses.filter(c => !inputClauseSet.contains(c))
-            // val incorrectClauses = instanceParaphrases.incorrectClauses.filter(c => !inputClauseSet.contains(c))
-            // val lbConf = BinaryConf.Stats(
-            //   tp = (predictedClauses intersect correctClauses).size,
-            //   tn = 0, // we don't need this for p/r/f
-            //   fp = (predictedClauses -- correctClauses).size,
-            //   fn = (correctClauses -- predictedClauses).size
-            // )
-            // val ubConf = BinaryConf.Stats(
-            //   tp = (predictedClauses -- incorrectClauses).size,
-            //   tn = 0, // we don't need this for p/r/f
-            //   fp = (predictedClauses intersect incorrectClauses).size,
-            //   fn = (correctClauses -- predictedClauses).size
-            // )
-            // clauseThreshold -> (lbConf -> ubConf)
-          }
-        }
-        allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
-          val maxLosses = evaluationItemResults.foldMap(_.map(_._1).toSet).toList.sortBy(-_)
-          maxLosses.flatMap { maxLoss =>
-            val chosenClusters = evaluationItemResults.map(
-              _.find(_._1 <= maxLoss).get._2
-            )
-            val minClauseProbs = chosenClusters.foldMap(_.map(_._1).toSet).toList.sorted
-            minClauseProbs.flatMap { minClauseProb =>
-              val chosenClauseSets = chosenClusters.map(_.find(_._1 >= minClauseProb).get._2)
-              val minCoindexingProbs = chosenClauseSets.flatMap(_.map(_._1)).toSet.toList.sorted
-              minCoindexingProbs.map { minCoindexingProb =>
-                val confPairs = chosenClauseSets.map(_.find(_._1 >= minCoindexingProb).get._2)
-                val lbConf = confPairs.foldMap(_._1)
-                val ubConf = confPairs.foldMap(_._2)
-                FullTuningPoint(vsConfig, maxLoss, minClauseProb, minCoindexingProb, lbConf, ubConf)
-              }
-            }
-          }
-        }
-        bestTuningPoints <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
-          val lbBest = allPoints.maxBy(_.lbConf.f1)
-          val ubBest = allPoints.maxBy(_.ubConf.f1)
-          val lbResString = getMetricsString(lbBest.lbConf)
-          val ubResString = getMetricsString(ubBest.ubConf)
+  //           // max verb cluster loss/elt (dec) -> min clause prob (inc) -> min coindexing prob (inc) -> stats
+  //           instanceClusters.map { tree =>
+  //             val clusterSize = tree.size
+  //             val lossThreshold = if(tree.isLeaf) 0.0 else tree.loss / clusterSize
+  //             val clauseCounts: Map[ArgStructure, Int] = tree.values.foldMap { vid =>
+  //               verbModel.clauseSets(vid).toList.foldMap(c => Map(c -> 1))
+  //             }
+  //             val predictedClausesWithProbsIncreasing = clauseCounts
+  //               // .filter(p => !inputClauseSet.contains(p._1)) // remove clauses already present in gold
+  //               .toList.map { case (clause, count) => clause -> (count.toDouble / clusterSize)} // prob of clause appearing for a verb
+  //               .sortBy(_._2)
+  //             lossThreshold -> predictedClausesWithProbsIncreasing.tails.map { clausesWithProbs =>
+  //               val clauseThreshold = clausesWithProbs.headOption.fold(1.0)(_._2) // predict nothing
+  //               val frameClauses = clausesWithProbs.map(_._1).toList.toSet
+  //               val coindexingTreeOpt = if(frameClauses.isEmpty) None else Some(
+  //                 Coindexing.getCoindexingTree(frameClauses, verbModel.coindexingScores)
+  //               )
+  //               val confPairLists = goldClausalQs.toList.map { cq =>
+  //                 val correctParaphrases = instanceParaphrases.paraphrases.equivalenceClass(cq) - cq
+  //                 val incorrectParaphrases = instanceParaphrases.paraphrases.apartSet(cq) ++
+  //                   instanceParaphrases.incorrectClauses.flatMap(ct =>
+  //                     getArgumentSlotsForClauseTemplate(ct).map(ct -> _)
+  //                   )
+  //                 coindexingTreeOpt.flatMap(_.clustersForValue(cq)) match {
+  //                   case None =>
+  //                     val lbConf = BinaryConf.Stats(fn = correctParaphrases.size)
+  //                     val ubConf = lbConf
+  //                     List(1.0 -> (lbConf -> ubConf))
+  //                   case Some(clustersForQuestion) => clustersForQuestion.map { tree =>
+  //                     val clusterSize = tree.size
+  //                     val maxLoss = if(tree.isLeaf) 0.0 else tree.loss
+  //                     val minCoindexingProb = 1.0 - maxLoss
+  //                     val predictedParaphrases = tree.values.toSet - cq
+  //                     val lbConf = BinaryConf.Stats(
+  //                       tp = (predictedParaphrases intersect correctParaphrases).size,
+  //                       tn = 0, // we don't need this for p/r/f
+  //                       fp = (predictedParaphrases -- correctParaphrases).size,
+  //                       fn = (correctParaphrases -- predictedParaphrases).size
+  //                     )
+  //                     val ubConf = BinaryConf.Stats(
+  //                       tp = (predictedParaphrases -- incorrectParaphrases).size,
+  //                       tn = 0, // we don't need this for p/r/f
+  //                       fp = (predictedParaphrases intersect incorrectParaphrases).size,
+  //                       fn = (correctParaphrases -- predictedParaphrases).size
+  //                     )
+  //                     minCoindexingProb -> (lbConf -> ubConf)
+  //                   }
+  //                 }
+  //               }
+  //               val allMinCoindexingProbs = confPairLists.foldMap(_.map(_._1).toSet).toList.sorted
+  //               clauseThreshold -> allMinCoindexingProbs.map { minCoindexingProb =>
+  //                 val lbConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._1)
+  //                 val ubConf = confPairLists.foldMap(_.find(_._1 >= minCoindexingProb).get._2._2)
+  //                 minCoindexingProb -> (lbConf -> ubConf)
+  //               }
+  //             }.toList
+  //           }
+  //           // clause stats
+  //           // val correctClauses = instanceParaphrases.correctClauses.filter(c => !inputClauseSet.contains(c))
+  //           // val incorrectClauses = instanceParaphrases.incorrectClauses.filter(c => !inputClauseSet.contains(c))
+  //           // val lbConf = BinaryConf.Stats(
+  //           //   tp = (predictedClauses intersect correctClauses).size,
+  //           //   tn = 0, // we don't need this for p/r/f
+  //           //   fp = (predictedClauses -- correctClauses).size,
+  //           //   fn = (correctClauses -- predictedClauses).size
+  //           // )
+  //           // val ubConf = BinaryConf.Stats(
+  //           //   tp = (predictedClauses -- incorrectClauses).size,
+  //           //   tn = 0, // we don't need this for p/r/f
+  //           //   fp = (predictedClauses intersect incorrectClauses).size,
+  //           //   fn = (correctClauses -- predictedClauses).size
+  //           // )
+  //           // clauseThreshold -> (lbConf -> ubConf)
+  //         }
+  //       }
+  //       allPointsByModel = fullEvaluationResultsByConfig.transform { case (vsConfig, evaluationItemResults) =>
+  //         val maxLosses = evaluationItemResults.foldMap(_.map(_._1).toSet).toList.sortBy(-_)
+  //         maxLosses.flatMap { maxLoss =>
+  //           val chosenClusters = evaluationItemResults.map(
+  //             _.find(_._1 <= maxLoss).get._2
+  //           )
+  //           val minClauseProbs = chosenClusters.foldMap(_.map(_._1).toSet).toList.sorted
+  //           minClauseProbs.flatMap { minClauseProb =>
+  //             val chosenClauseSets = chosenClusters.map(_.find(_._1 >= minClauseProb).get._2)
+  //             val minCoindexingProbs = chosenClauseSets.flatMap(_.map(_._1)).toSet.toList.sorted
+  //             minCoindexingProbs.map { minCoindexingProb =>
+  //               val confPairs = chosenClauseSets.map(_.find(_._1 >= minCoindexingProb).get._2)
+  //               val lbConf = confPairs.foldMap(_._1)
+  //               val ubConf = confPairs.foldMap(_._2)
+  //               FullTuningPoint(vsConfig, maxLoss, minClauseProb, minCoindexingProb, lbConf, ubConf)
+  //             }
+  //           }
+  //         }
+  //       }
+  //       bestTuningPoints <- allPointsByModel.toList.traverse { case (vsConfig, allPoints) =>
+  //         val lbBest = allPoints.maxBy(_.lbConf.f1)
+  //         val ubBest = allPoints.maxBy(_.ubConf.f1)
+  //         val lbResString = getMetricsString(lbBest.lbConf)
+  //         val ubResString = getMetricsString(ubBest.ubConf)
 
-          Log.info(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
-            Log.info(s"${vsConfig.modelName} question lb metrics: " + lbResString) >>
-            Log.info(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
-            Log.info(s"${vsConfig.modelName} question ub metrics: " + ubResString) >>
-            config.resultsPath(vsConfig).flatMap(path =>
-              FileUtil.writeString(path.resolve("full-lb-results.txt"))(lbResString) >>
-                FileUtil.writeString(path.resolve("full-ub-results.txt"))(ubResString) >>
-                FileUtil.writeJson(path.resolve("full-lb-model.json"), io.circe.Printer.spaces2)(lbBest) >>
-                FileUtil.writeJson(path.resolve("full-ub-model.json"), io.circe.Printer.spaces2)(ubBest)
-            ).as(vsConfig -> ubBest)
-        }.map(_.toMap)
-        _ <- {
-          import com.cibo.evilplot._
-          import com.cibo.evilplot.numeric._
-          import com.cibo.evilplot.plot._
-          import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-          import com.cibo.evilplot.plot.renderers.PointRenderer
+  //         Log.info(s"${vsConfig.modelName} question lb model: " + io.circe.Printer.spaces2.pretty(lbBest.asJson)) >>
+  //           Log.info(s"${vsConfig.modelName} question lb metrics: " + lbResString) >>
+  //           Log.info(s"${vsConfig.modelName} question ub model: " + io.circe.Printer.spaces2.pretty(ubBest.asJson)) >>
+  //           Log.info(s"${vsConfig.modelName} question ub metrics: " + ubResString) >>
+  //           config.resultsPath(vsConfig).flatMap(path =>
+  //             FileUtil.writeString(path.resolve("full-lb-results.txt"))(lbResString) >>
+  //               FileUtil.writeString(path.resolve("full-ub-results.txt"))(ubResString) >>
+  //               FileUtil.writeJson(path.resolve("full-lb-model.json"), io.circe.Printer.spaces2)(lbBest) >>
+  //               FileUtil.writeJson(path.resolve("full-ub-model.json"), io.circe.Printer.spaces2)(ubBest)
+  //           ).as(vsConfig -> ubBest)
+  //       }.map(_.toMap)
+  //       _ <- {
+  //         import com.cibo.evilplot._
+  //         import com.cibo.evilplot.numeric._
+  //         import com.cibo.evilplot.plot._
+  //         import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+  //         import com.cibo.evilplot.plot.renderers.PointRenderer
 
-          case class PRPoint(
-            model: VerbSenseConfig,
-            recall: Double,
-            precision: Double) extends Datum2d[PRPoint] {
-            val x = recall
-            val y = precision
-            def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
-          }
+  //         case class PRPoint(
+  //           model: VerbSenseConfig,
+  //           recall: Double,
+  //           precision: Double) extends Datum2d[PRPoint] {
+  //           val x = recall
+  //           val y = precision
+  //           def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
+  //         }
 
-          val rand = new scala.util.Random(2643642L)
-          def noise = scala.math.abs(rand.nextGaussian / 200.0)
+  //         val rand = new scala.util.Random(2643642L)
+  //         def noise = scala.math.abs(rand.nextGaussian / 200.0)
 
-          val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
-            PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
-          }
-          val ubData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
-            PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.ubConf.recall + noise, vsTuningPoint.ubConf.precision + noise)
-          }
+  //         val lbData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //           PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.lbConf.recall + noise, vsTuningPoint.lbConf.precision + noise)
+  //         }
+  //         val ubData = allPointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //           PRPoint(vsTuningPoint.verbSenseConfig, vsTuningPoint.ubConf.recall + noise, vsTuningPoint.ubConf.precision + noise)
+  //         }
 
-          val lbPlot = ScatterPlot(
-		        lbData,
-		        pointRenderer = Some(PointRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        ).xAxis().yAxis().frame().rightLegend()
-          val ubPlot = ScatterPlot(
-		        ubData,
-		        pointRenderer = Some(PointRenderer.colorByCategory(ubData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        ).xAxis().yAxis().frame().rightLegend()
+  //         val lbPlot = ScatterPlot(
+	// 	        lbData,
+	// 	        pointRenderer = Some(PointRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         ).xAxis().yAxis().frame().rightLegend()
+  //         val ubPlot = ScatterPlot(
+	// 	        ubData,
+	// 	        pointRenderer = Some(PointRenderer.colorByCategory(ubData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         ).xAxis().yAxis().frame().rightLegend()
 
-          // val linePointsByModel = allPointsByModel.transform { case (model, vsTuningPoints) =>
-          //   NonEmptyList.fromList(vsTuningPoints.sortBy(-_.lbConf.recall)).get
-          //     .reduceLeftTo(NonEmptyList.of(_)) { (best, next) =>
-          //       if(next.lbConf.precision > best.head.lbConf.precision) {
-          //         if(next.lbConf.recall == best.head.lbConf.recall) best
-          //         else NonEmptyList(next, best.toList)
-          //       } else best
-          //     }.toList
-          // }
-          // val lbLineData = linePointsByModel.values.toList.flatten.map { vsTuningPoint =>
-          //   PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall, vsTuningPoint.lbConf.precision)
-          // }
-          // val lbLinePlot = LinePlot(
-		      //   lbData,
-		      //   pathRenderer = Some(PathRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
-	        // ).xAxis().yAxis().frame().rightLegend()
+  //         // val linePointsByModel = allPointsByModel.transform { case (model, vsTuningPoints) =>
+  //         //   NonEmptyList.fromList(vsTuningPoints.sortBy(-_.lbConf.recall)).get
+  //         //     .reduceLeftTo(NonEmptyList.of(_)) { (best, next) =>
+  //         //       if(next.lbConf.precision > best.head.lbConf.precision) {
+  //         //         if(next.lbConf.recall == best.head.lbConf.recall) best
+  //         //         else NonEmptyList(next, best.toList)
+  //         //       } else best
+  //         //     }.toList
+  //         // }
+  //         // val lbLineData = linePointsByModel.values.toList.flatten.map { vsTuningPoint =>
+  //         //   PRPoint(vsTuningPoint.vsConfig, vsTuningPoint.lbConf.recall, vsTuningPoint.lbConf.precision)
+  //         // }
+  //         // val lbLinePlot = LinePlot(
+	// 	      //   lbData,
+	// 	      //   pathRenderer = Some(PathRenderer.colorByCategory(lbData, ((x: PRPoint) => x.model.modelName), size = Some(1.0)))
+	//         // ).xAxis().yAxis().frame().rightLegend()
 
-          // IO(lbLinePlot.render().write(new java.io.File(path.resolve("question-lb-line.png").toString))) >>
-          config.globalResultsDir.flatMap(path =>
-            IO(lbPlot.render().write(new java.io.File(path.resolve("full-question-lb.png").toString))) >>
-              IO(ubPlot.render().write(new java.io.File(path.resolve("full-question-ub.png").toString)))
-          )
-        }
-      } yield bestTuningPoints
-    }
-  }
+  //         // IO(lbLinePlot.render().write(new java.io.File(path.resolve("question-lb-line.png").toString))) >>
+  //         config.globalResultsDir.flatMap(path =>
+  //           IO(lbPlot.render().write(new java.io.File(path.resolve("full-question-lb.png").toString))) >>
+  //             IO(ubPlot.render().write(new java.io.File(path.resolve("full-question-ub.png").toString)))
+  //         )
+  //       }
+  //     } yield bestTuningPoints
+  //   }
+  // }
 
   def doPropBankClusterDebugging(
     config: Config,
@@ -1249,11 +1272,11 @@ object FrameInductionApp extends CommandIOApp(
           getQasrlVerbClusterModels(config, vsConfig).map(vsConfig -> _)
         }
       ).map(_.toMap)
-      goldParaphrases <- config.readGoldParaphrases
-      evaluationItems <- config.evaluationItems.get
-      tunedThresholds <- Log.infoBranch("Evaluating and tuning thresholds")(
-        tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
-      )
+      // goldParaphrases <- config.readGoldParaphrases
+      // evaluationItems <- config.evaluationItems.get
+      // tunedThresholds <- Log.infoBranch("Evaluating and tuning thresholds")(
+      //   tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
+      // )
     } yield ()
   }
 

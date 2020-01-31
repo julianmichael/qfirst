@@ -1086,26 +1086,26 @@ object VerbAnnUI {
           )
         ),
       // only expect this to happen in eval anyway, when verbIndices has at most 1 elt
-      (sentenceOpt, verbIndices.headOption, goldParaphrasesOpt, paraphrasingFilterOpt).mapN {
-        (sentence, verbIndex, goldParaphrases, paraphrasingFilter) =>
-        val chosenFrame = frameset.frames.find(_.verbIds.contains(VerbId(sentence.sentenceId, verbIndex))).get
-        val goldVerb = sentence.verbEntries(verbIndex)
-        val results = Evaluation.getVerbResults(goldVerb, goldParaphrases.value, chosenFrame, paraphrasingFilter.value)
-        import shapeless._
-        import shapeless.syntax.singleton._
-        import shapeless.record._
-        val clauseBoundedAcc = results("clause paraphrasing accuracy").stats
-        val paraphrasingBoundedAcc = results("question template paraphrasing accuracy (correct QAs)").stats
+      // (sentenceOpt, verbIndices.headOption, goldParaphrasesOpt, paraphrasingFilterOpt).mapN {
+      //   (sentence, verbIndex, goldParaphrases, paraphrasingFilter) =>
+      //   val chosenFrame = frameset.frames.find(_.verbIds.contains(VerbId(sentence.sentenceId, verbIndex))).get
+      //   val goldVerb = sentence.verbEntries(verbIndex)
+      //   val results = Evaluation.getVerbResults(goldVerb, goldParaphrases.value, chosenFrame, paraphrasingFilter.value)
+      //   import shapeless._
+      //   import shapeless.syntax.singleton._
+      //   import shapeless.record._
+      //   val clauseBoundedAcc = results("clause paraphrasing accuracy").stats
+      //   val paraphrasingBoundedAcc = results("question template paraphrasing accuracy (correct QAs)").stats
 
-        <.div(S.clauseDecodingResultsDisplay)(
-          <.span(S.clauseDecodingResultsText)(
-            f"Clause accuracy: ${clauseBoundedAcc.accuracyLowerBound}%.2f / ${clauseBoundedAcc.accuracyUpperBound}%.2f"
-          ),
-          <.span(S.paraphraseDecodingResultsText)(
-            f"Paraphrase accuracy: ${paraphrasingBoundedAcc.accuracyLowerBound}%.2f / ${paraphrasingBoundedAcc.accuracyUpperBound}%.2f"
-          )
-        )
-      }.whenDefined,
+      //   <.div(S.clauseDecodingResultsDisplay)(
+      //     <.span(S.clauseDecodingResultsText)(
+      //       f"Clause accuracy: ${clauseBoundedAcc.accuracyLowerBound}%.2f / ${clauseBoundedAcc.accuracyUpperBound}%.2f"
+      //     ),
+      //     <.span(S.paraphraseDecodingResultsText)(
+      //       f"Paraphrase accuracy: ${paraphrasingBoundedAcc.accuracyLowerBound}%.2f / ${paraphrasingBoundedAcc.accuracyUpperBound}%.2f"
+      //     )
+      //   )
+      // }.whenDefined,
       <.div(S.frameSpecDisplay, S.scrollPane) {
         val frameList = frameset.frames.zipWithIndex
         frameList.toVdomArray { case (frame, frameIndex) =>
