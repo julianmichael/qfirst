@@ -10,6 +10,7 @@ import cats.Foldable
 import cats.Reducible
 import cats.UnorderedFoldable
 import cats.data.Ior
+import cats.data.NonEmptyList
 import cats.implicits._
 
 import monocle.macros._
@@ -31,6 +32,19 @@ import scala.annotation.tailrec
     case Merge(r, l, left, right) => Merge(r, l, left.map(f), right.map(f))
   }
 
+  // TODO fix interactions with loss / rank
+  def flatMap[B](f: A => MergeTree[B]): MergeTree[B] = this match {
+    case Leaf(l, a) => f(a)
+    case Merge(r, l, left, right) => Merge(r, l, left.flatMap(f), right.flatMap(f))
+  }
+
+  def mapRank(f: Int => Int): MergeTree[A] = MergeTree.cata[A, MergeTree[A]](
+    MergeTree.embed[A] andThen {
+      case Merge(rank, loss, l, r) => Merge(f(rank), loss, l, r)
+      case x => x
+    }
+  )(this)
+
   // TODO fix ranks
   def cutMap[B](
     shouldKeep: Merge[A] => Boolean,
@@ -43,24 +57,29 @@ import scala.annotation.tailrec
       } else Leaf(loss, f(m))
   }
 
-  def cut(shouldKeep: Merge[A] => Boolean): MergeTree[MergeTree[A]] =
-    cutMap(shouldKeep, identity)
+  // TODO: cut at N?
 
+  // TODO: remove this. unsafe since ranks aren't preserved
   def cutMapAtN[B](n: Int, f: MergeTree[A] => B) = cutMap(
     _.rank > (rank + 1 - n), f
   )
 
-  def splitByPredicate(shouldSplit: Merge[A] => Boolean): Vector[MergeTree[A]] = this match {
-    case l @ Leaf(_, _) => Vector(l)
-    case m @ Merge(r, p, left, right) =>
-      if(shouldSplit(m)) {
-        left.splitByPredicate(shouldSplit) ++ right.splitByPredicate(shouldSplit)
-      } else Vector(m)
-  }
+  def cut(shouldKeep: Merge[A] => Boolean): MergeTree[MergeTree[A]] =
+    cutMap(shouldKeep, identity)
+
+  def splitWhile(shouldSplit: Merge[A] => Boolean): Vector[MergeTree[A]] =
+    cut(shouldSplit).values
 
   def splitToN(n: Int): Vector[MergeTree[A]] = {
-    assert(n >= 1)
-    splitByPredicate(_.rank > (rank + 1 - n))
+    require(n >= 1)
+    // using vars bc too lazy to look into foldRight on stream
+    var splits = this.clusterSplittings
+    var cur = splits.head
+    while(splits.headOption.exists(_.size < n)) {
+      cur = splits.head
+      splits = splits.tail
+    }
+    cur
   }
 
   def isLeaf: Boolean = this match {
@@ -146,18 +165,37 @@ import scala.annotation.tailrec
   }
 }
 object MergeTree {
+
+  def createBalancedTree[A](inputs: NonEmptyList[A]): MergeTree[A] = {
+    var nodes: List[MergeTree[A]] = inputs.toList.map(a => Leaf(0.0, a))
+    var lastRank = 0
+    while(nodes.size > 1) {
+      nodes = nodes.grouped(2).map(_.toList).flatMap {
+        case l :: r :: Nil =>
+          lastRank = lastRank + 1
+          List(Merge(lastRank, 0.0, l, r))
+        case x => x
+      }.toList
+    }
+    nodes.head
+  }
+
   // def reduceLossThreshold[A](trees: Vector[MergeTree[A]]): Vector[MergeTree[A]] = {
   //   val maxLoss = trees.map(_.loss).max
   //   trees.flatMap(_.splitByPredicate(_.loss >= maxLoss)) -> maxLoss
   // }
   def clusterSplittings[A](trees: Vector[MergeTree[A]]) = {
+    println(s"${trees.size}: $trees")
     trees #:: clusterSplittingsAux(trees, trees.map(_.loss).max)
   }
   private[this] def clusterSplittingsAux[A](trees: Vector[MergeTree[A]], maxLoss: Double): Stream[Vector[MergeTree[A]]] = {
     if(trees.forall(_.isLeaf)) Stream.empty[Vector[MergeTree[A]]] else {
-      val newTrees = trees.flatMap(_.splitByPredicate(_.loss >= maxLoss))
-      val newMaxLoss = newTrees.filter(_.isMerge).map(_.loss).max
-      newTrees #:: clusterSplittingsAux(newTrees, newMaxLoss)
+      val newTrees = trees.flatMap(_.splitWhile(_.loss >= maxLoss))
+      println(s"${newTrees.size}: $newTrees")
+      if(newTrees.forall(_.isLeaf)) Stream(newTrees) else {
+        val newMaxLoss = newTrees.filter(_.isMerge).map(_.loss).max
+        newTrees #:: clusterSplittingsAux(newTrees, newMaxLoss)
+      }
     }
   }
 
@@ -172,6 +210,16 @@ object MergeTree {
       case Right((rank, loss, left, right)) => merge(rank, loss, left, right)
     }
   }
+  def makeAlgebraM[F[_], B, A](
+    leaf: (Double, B) => F[A],
+    merge: (Int, Double, A, A) => F[A]
+  ): AlgebraM[F, B, A] = {
+    (params: Either[(Double, B), (Int, Double, A, A)]) => params match {
+      case Left((loss, value)) => leaf(loss, value)
+      case Right((rank, loss, left, right)) => merge(rank, loss, left, right)
+    }
+  }
+
   type Coalgebra[B, A] = A => Either[(Double, B), (Int, Double, A, A)]
   type CoalgebraM[F[_], B, A] = A => F[Either[(Double, B), (Int, Double, A, A)]]
 

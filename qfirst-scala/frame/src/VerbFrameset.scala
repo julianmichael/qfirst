@@ -32,12 +32,25 @@ object VerbId {
   implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
     scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
   )
+  implicit val verbIdOrder = Order.whenEqual(
+    Order.by[VerbId, String](_.sentenceId),
+    Order.by[VerbId, Int](_.verbIndex)
+  )
 }
 
 @Lenses @JsonCodec case class QuestionId(
   verbId: VerbId, clause: Frame, slot: ArgumentSlot
 )
-object QuestionId
+object QuestionId {
+  implicit val questionIdOrder =
+    Order.whenEqual(
+      Order.by[QuestionId, VerbId](_.verbId),
+      Order.whenEqual(
+        Order.by[QuestionId, String](_.clause.toString),
+        Order.by[QuestionId, String](_.slot.toString)
+      )
+    )
+}
 
 @JsonCodec case class PropBankVerbClusterModel(
   verbLemma: String,
@@ -56,110 +69,167 @@ object PropBankVerbClusterModel
 @JsonCodec case class VerbClusterModel(
   verbInflectedForms: InflectedForms,
   verbClusterTree: MergeTree[VerbId],
-  questionClusterTrees: Vector[MergeTree[QuestionId]]
+  questionClusterTree: MergeTree[QuestionId]
   // clauseSets: Map[VerbId, Set[ArgStructure]],
   // coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
 ) {
+  val clauseSets = questionClusterTree.unorderedFoldMap(qid =>
+    Map(qid.verbId -> Set(ArgStructure(qid.clause.args, qid.clause.isPassive).forgetAnimacy))
+  )
   // val coindexingScores = coindexingScoresList.toMap
   val numVerbInstances = verbClusterTree.size
 }
 object VerbClusterModel
 
-// TODO fix up LazyFramesets
+@JsonCodec sealed trait ClusterSplittingCriterion {
+  import ClusterSplittingCriterion._
+  def getNumber: Option[Int] = this match { case Number(value) => Some(value); case _ => None }
+  def getLoss: Option[Double] = this match { case Loss(value) => Some(value); case _ => None }
 
-// class LazyFramesets(model: VerbClusterModel, initialCriterion: Either[Int, Double] = Left(5)) {
-//   case class FrameInputInfo(
-//     verbIds: Set[VerbId],
-//     clauseCounts: Map[ArgStructure, Int]
-//   ) {
-//     def getFrame = {
-//       val numInstancesInFrame = verbIds.size
-//       val frameClauses = clauseCounts.iterator.map { case (clauseTemplate, count) =>
-//         FrameClause(clauseTemplate, count.toDouble / numInstancesInFrame)
-//       }.toList
-//       val coindexingTree = Coindexing.getCoindexingTree(frameClauses.map(_.args).toSet, model.coindexingScores)
-//       VerbFrame(
-//         verbIds = verbIds,
-//         clauseTemplates = frameClauses,
-//         coindexingTree = coindexingTree,
-//         probability = numInstancesInFrame.toDouble / model.numInstances
-//       )
-//     }
-//   }
-//   object FrameInputInfo {
-//     implicit val verbIdStuffCommutativeMonoid: CommutativeMonoid[FrameInputInfo] = {
-//       new CommutativeMonoid[FrameInputInfo] {
-//         def empty: FrameInputInfo = FrameInputInfo(Set(), Map())
-//         def combine(x: FrameInputInfo, y: FrameInputInfo) = FrameInputInfo(
-//           x.verbIds ++ y.verbIds,
-//           x.clauseCounts |+| y.clauseCounts
-//         )
-//       }
-//     }
-//   }
+  def splitTree[A](tree: MergeTree[A]): Vector[MergeTree[A]] = this match {
+    case Number(numClusters) => tree.splitToN(numClusters)
+    case Loss(maxLoss) => tree.splitWhile(_.loss > maxLoss)
+  }
+}
+object ClusterSplittingCriterion {
+  @Lenses @JsonCodec case class Number(value: Int) extends ClusterSplittingCriterion
+  @Lenses @JsonCodec case class Loss(value: Double) extends ClusterSplittingCriterion
 
-//   private[this] def makeFramesets(criterion: Either[Int, Double]) = {
-//     val aggFrameInfo = (childTree: MergeTree[VerbId]) => {
-//       val verbIds = childTree.values
-//       FrameInputInfo(
-//         verbIds.toSet,
-//         verbIds.foldMap(vid =>
-//           model.clauseSets(vid).iterator.map(_ -> 1).toMap
-//         )
-//       )
-//     }
-//     var aggTree = criterion match {
-//       case Left(numClusters) => model.clusterTree.cutMapAtN(numClusters, aggFrameInfo)
-//       case Right(maxLoss) => model.clusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
-//     }
-//     var resList = List.empty[(Double, VerbFrameset)]
-//     var nextSize = aggTree.size.toInt - 1
-//     if(nextSize == model.numInstances - 1) {
-//       allFramesetsLoaded = true
-//     }
-//     while(nextSize >= 0) {
-//       val (losses, frameInfos) = aggTree.valuesWithLosses.unzip
-//       val maxLoss = losses.max
-//       val frames = frameInfos.map(_.getFrame).toList
-//       val frameset = VerbFrameset(model.verbInflectedForms, frames)
-//       resList = (maxLoss -> frameset) :: resList
-//       aggTree = aggTree.cutMapAtN(nextSize, _.unorderedFold) // should do exactly one merge
-//       nextSize = nextSize - 1
-//     }
-//     resList
-//   }
+  val number = GenPrism[ClusterSplittingCriterion, Number].composeIso(
+    monocle.Iso[Number, Int](_.value)(Number(_))
+  )
+  val loss = GenPrism[ClusterSplittingCriterion, Loss].composeIso(
+    monocle.Iso[Loss, Double](_.value)(Loss(_))
+  )
+}
 
-//   private[this] def refreshClusters(criterion: Either[Int, Double]) = {
-//     framesetResolutions = makeFramesets(criterion)
-//   }
+class LazyFramesets(model: VerbClusterModel, initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
+  case class FrameInputInfo(
+    verbIds: Set[VerbId],
+    clauseCounts: Map[ArgStructure, Int])
+  object FrameInputInfo {
+    implicit val frameInputInfoCommutativeMonoid: CommutativeMonoid[FrameInputInfo] = {
+      new CommutativeMonoid[FrameInputInfo] {
+        def empty: FrameInputInfo = FrameInputInfo(Set(), Map())
+        def combine(x: FrameInputInfo, y: FrameInputInfo) = FrameInputInfo(
+          x.verbIds ++ y.verbIds,
+          x.clauseCounts |+| y.clauseCounts
+        )
+      }
+    }
+  }
 
-//   private[this] var allFramesetsLoaded: Boolean = false
-//   private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(initialCriterion)
+  private[this] def getFrames(infos: Vector[FrameInputInfo]) = {
+    val infosWithIndex = infos.zipWithIndex
+    val questionClusterTrees = model.questionClusterTree.groupBy(qid =>
+      infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
+    )
+    infos.indices.toList.map { index =>
+      val info = infos(index)
+      val numInstancesInFrame = info.verbIds.size
+      val frameClauses = info.clauseCounts.iterator.map { case (clauseTemplate, count) =>
+        FrameClause(clauseTemplate, count.toDouble / numInstancesInFrame)
+      }.toList
+      VerbFrame(
+        verbIds = info.verbIds,
+        clauseTemplates = frameClauses,
+        questionClusterTree = questionClusterTrees(index),
+        probability = numInstancesInFrame.toDouble / model.numVerbInstances
+      )
+    }
+  }
 
-//   def getFramesetWithNFrames(n: Int) = {
-//     val numFramesetsLoaded = framesetResolutions.size
-//     if(numFramesetsLoaded < n && !allFramesetsLoaded) {
-//       refreshClusters(Left(scala.math.max(n, numFramesetsLoaded) * 2))
-//     }
-//     framesetResolutions.lift(n - 1).getOrElse(framesetResolutions.last)
-//   }
-//   def getFramesetWithMaxLoss(maxLoss: Double): (Double, VerbFrameset) = {
-//     framesetResolutions.find(_._1 <= maxLoss).getOrElse {
-//       refreshClusters(Right(maxLoss))
-//       getFramesetWithMaxLoss(maxLoss)
-//     }
-//   }
-// }
+  private[this] def makeFramesets(criterion: ClusterSplittingCriterion) = {
+    val aggFrameInfo = (childTree: MergeTree[VerbId]) => {
+      val verbIds = childTree.values
+      FrameInputInfo(
+        verbIds.toSet,
+        verbIds.foldMap(vid =>
+          model.clauseSets(vid).iterator.map(_ -> 1).toMap
+        )
+      )
+    }
+    var aggTree = criterion match {
+      case ClusterSplittingCriterion.Number(numClusters) => model.verbClusterTree.cutMapAtN(numClusters, aggFrameInfo)
+      case ClusterSplittingCriterion.Loss(maxLoss) => model.verbClusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
+    }
+    var resList = List.empty[(Double, VerbFrameset)]
+    var nextSize = aggTree.size.toInt - 1
+    if(nextSize == model.numVerbInstances - 1) {
+      allFramesetsLoaded = true
+    }
+    while(nextSize >= 0) {
+      val (losses, frameInfos) = aggTree.valuesWithLosses.unzip
+      val maxLoss = losses.max
+      val frames = getFrames(frameInfos.toVector)
+      val frameset = VerbFrameset(model.verbInflectedForms, frames)
+      resList = (maxLoss -> frameset) :: resList
+      aggTree = aggTree.cutMapAtN(nextSize, _.unorderedFold) // should do exactly one merge
+      nextSize = nextSize - 1
+    }
+    resList
+  }
+
+  private[this] def refreshClusters(criterion: ClusterSplittingCriterion) = {
+    framesetResolutions = makeFramesets(criterion)
+  }
+
+  private[this] var allFramesetsLoaded: Boolean = false
+  private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(initialCriterion)
+
+  def getFrameset(criterion: ClusterSplittingCriterion): (Double, VerbFrameset) = {
+    criterion match {
+      case ClusterSplittingCriterion.Number(numClusters) =>
+        getFramesetWithNFrames(numClusters)
+      case ClusterSplittingCriterion.Loss(maxLoss) =>
+        getFramesetWithMaxLoss(maxLoss)
+    }
+  }
+
+  def getFramesetWithNFrames(n: Int) = {
+    val numFramesetsLoaded = framesetResolutions.size
+    if(numFramesetsLoaded < n && !allFramesetsLoaded) {
+      refreshClusters(ClusterSplittingCriterion.Number(scala.math.max(n, numFramesetsLoaded) * 2))
+    }
+    framesetResolutions.lift(n - 1).getOrElse(framesetResolutions.last)
+  }
+  def getFramesetWithMaxLoss(maxLoss: Double): (Double, VerbFrameset) = {
+    framesetResolutions.find(_._1 <= maxLoss).getOrElse {
+      refreshClusters(ClusterSplittingCriterion.Loss(maxLoss))
+      getFramesetWithMaxLoss(maxLoss)
+    }
+  }
+}
+
 
 @Lenses @JsonCodec case class ParaphrasingFilter(
+  verbCriterion: ClusterSplittingCriterion,
+  questionCriterion: ClusterSplittingCriterion,
   minClauseProb: Double,
-  minCoindexingProb: Double
+  minParaphrasingProb: Double
 ) {
-  // TODO add this back in
+
+  // assume the question is in the tree
+  def getParaphrases(
+    frame: VerbFrame,
+    question: QuestionId,
+    questionClusterTree: MergeTree[QuestionId]
+  ): Set[(ArgStructure, ArgumentSlot)] = {
+    val structureCounts = questionClusterTree.unorderedFoldMap(qid =>
+      Map((ArgStructure(qid.clause.args, qid.clause.isPassive).forgetAnimacy -> qid.slot) -> 1)
+    )
+    val total = structureCounts.values.sum
+    structureCounts.collect {
+      case (clausalQ, count) if (
+        frame.clauseTemplates.find(_.args == clausalQ._1).exists(_.probability >= this.minClauseProb) &&
+          (count.toDouble / total) >= this.minParaphrasingProb
+      ) => clausalQ
+    }.toSet
+  }
 
   // def getParaphrases(
   //   frame: VerbFrame,
-  //   structure: (ArgStructure, ArgumentSlot)
+  //   question: QuestionId
   // ): Set[(ArgStructure, ArgumentSlot)] = {
   //   val goodClauses = frame.clauseTemplates.collect {
   //     case FrameClause(clauseTemplate, prob) if prob >= minClauseProb => clauseTemplate
@@ -170,7 +240,8 @@ object VerbClusterModel
   //     .foldMap(_.values.filter(p => goodClauses.contains(p._1)).toSet)
   // }
 }
-object ParaphrasingFilter
+object ParaphrasingFilter {
+}
 
 // @JsonCodec sealed trait ParaphrasingFilter {
 //   def getParaphrases(
@@ -228,7 +299,7 @@ object FrameClause
 @Lenses @JsonCodec case class VerbFrame(
   verbIds: Set[VerbId],
   clauseTemplates: List[FrameClause],
-  questionClusterTrees: Vector[MergeTree[QuestionId]],
+  questionClusterTree: MergeTree[QuestionId],
   // coindexingTree: MergeTree[(ArgStructure, ArgumentSlot)],
   probability: Double) {
 

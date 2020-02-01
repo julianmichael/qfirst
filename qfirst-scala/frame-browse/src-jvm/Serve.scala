@@ -94,6 +94,7 @@ object Serve extends CommandIOApp(
             s"/$docApiSuffix" -> docService,
             s"/$verbApiSuffix" -> annotationService,
             ).orNotFound
+          _ <- Log.info("Starting server.")
           _ <- BlazeServerBuilder[IO]
           .bindHttp(port, "0.0.0.0")
           .withHttpApp(app)

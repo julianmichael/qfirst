@@ -7,15 +7,10 @@ import qasrl.ArgumentSlot
 
 object Coindexing {
   def getCoindexingTree(
-    clauseTemplates: Set[ArgStructure],
+    questionTemplates: Set[(ArgStructure, ArgumentSlot)],
     coindexingScores: Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]
   ) = {
-    val clausalQVocab = Vocab.make(
-      clauseTemplates.flatMap { clauseTemplate =>
-        getArgumentSlotsForClauseTemplate(clauseTemplate).toList
-          .map(slot => clauseTemplate -> slot)
-      }.toSet
-    )
+    val clausalQVocab = Vocab.make(questionTemplates)
     val indices = clausalQVocab.indices
     val fuzzyEquivMatrix = Array.ofDim[Double](clausalQVocab.size, clausalQVocab.size)
     for(i <- indices; j <- indices) {
@@ -26,8 +21,10 @@ object Coindexing {
         else {
           val resOpt = coindexingScores.get(qi -> qj).orElse(coindexingScores.get(qj -> qi))
           resOpt.getOrElse {
-            println(s"XXX: $qi \t $qj")
-            0.5 // shouldn't happen
+            if(!qi._2.isInstanceOf[qasrl.Adv] && !qj._2.isInstanceOf[qasrl.Adv]) {
+              println(s"XXX: $qi \t $qj")
+            } // otherwise, shouldn't happen. but of course we need to just get all the coindexing done...
+            0.05
           }
         }
       )

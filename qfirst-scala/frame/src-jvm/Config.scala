@@ -233,7 +233,7 @@ case class Config(mode: RunMode)(
           ).filter(_._2.nonEmpty)
         ).filter(_._2.nonEmpty)
       )
-    }.compile.foldMonoid.map(Instances(_))
+    }.infoCompile("Sentences")(_.foldMonoid).map(Instances(_))
   }
 
   def getPropBankSenseLabels(
@@ -448,7 +448,7 @@ case class Config(mode: RunMode)(
         path = collapsedQAOutputPath,
         read = path => (
           FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
-            .map { case (k, v) => k -> v.toMap }.compile.toList.map(_.toMap)
+            .map { case (k, v) => k -> v.toMap }.infoCompile("Reading lines")(_.toList).map(_.toMap)
         ),
         write = (path, collapsedQAOutputs) => FileUtil.writeJsonLines(
           collapsedQAOutputPath, io.circe.Printer.noSpaces)(
@@ -523,14 +523,17 @@ case class Config(mode: RunMode)(
     propBankModelDir(verbSenseConfig).map(_.resolve(s"results")).flatTap(createDir)
   }
 
+  def readCachedVerbModels(path: Path): IO[Map[InflectedForms, VerbClusterModel]] = {
+    FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
+      .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+  }
+
   def getCachedVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[InflectedForms, VerbClusterModel]]] = {
     verbClustersPath(verbSenseConfig).flatMap(path =>
-      fileCached[Option[Map[InflectedForms, VerbClusterModel]]](
-        "Verb Models")(
-        path, read = path => FileUtil.readJsonLines[(InflectedForms, VerbClusterModel)](path)
-          .compile.toList.map(l => Some(l.toMap)),
-        write = (_, _) => IO.unit
-      )(compute = IO(None))
+      IO(Files.exists(path)).ifM(
+        readCachedVerbModels(path).map(Some(_)),
+        IO.pure(None)
+      )
     )
   }
   def cacheVerbModels(verbSenseConfig: VerbSenseConfig, clusters: Map[InflectedForms, VerbClusterModel]): IO[Unit] = {
@@ -542,13 +545,13 @@ case class Config(mode: RunMode)(
     verbSenseConfig: VerbSenseConfig)(
     computeVerbModels: IO[Map[InflectedForms, VerbClusterModel]]
   ): IO[Map[InflectedForms, VerbClusterModel]] = {
-    getCachedVerbModels(verbSenseConfig).flatMap {
-      case Some(verbModels) => IO.pure(verbModels)
-      case None => for {
-        models <- computeVerbModels
-        _ <- cacheVerbModels(verbSenseConfig, models)
-      } yield models
-    }
+    verbClustersPath(verbSenseConfig).flatMap(path =>
+      fileCached[Map[InflectedForms, VerbClusterModel]](
+        "Verb Models")(
+        path, read = path => readCachedVerbModels(path),
+        write = (path, models) => cacheVerbModels(verbSenseConfig, models)
+      )(compute = computeVerbModels)
+    )
   }
 
   def getCachedPropBankVerbModels(verbSenseConfig: VerbSenseConfig): IO[Option[Map[String, PropBankVerbClusterModel]]] = {
@@ -556,7 +559,7 @@ case class Config(mode: RunMode)(
       fileCached[Option[Map[String, PropBankVerbClusterModel]]](
         "PropBank Verb Models")(
         path, read = path => FileUtil.readJsonLines[PropBankVerbClusterModel](path)
-          .compile.toList.map(l => Some(l.map(m => m.verbLemma -> m).toMap)),
+          .infoCompile("Verbs")(_.toList).map(l => Some(l.map(m => m.verbLemma -> m).toMap)),
         write = (_, _) => IO.unit
       )(compute = IO(None))
     )

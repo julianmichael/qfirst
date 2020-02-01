@@ -185,19 +185,35 @@ object FrameInductionApp extends CommandIOApp(
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   def getQuestionClustersFromAggregateQAForVerb(
+    verbInflectedForms: InflectedForms,
     instances: Map[String, Map[Int, QAPairs]],
     verbCollapsedQAOutputs: Map[(ClausalQ, ClausalQ), Double]
-  ): Vector[MergeTree[QuestionId]] = {
-    ??? // TODO
+  ): MergeTree[QuestionId] = {
+    val qidsByStructure = instances.toList.foldMap { case (sid, verbs) =>
+      verbs.toList.foldMap { case (verbIndex, qaPairs) =>
+        ClauseResolution.getResolvedFramePairs(verbInflectedForms, qaPairs.keys.toList).foldMap {
+          case (frame, slot) =>
+            val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
+            Map((clauseTemplate -> slot) -> Vector(QuestionId(VerbId(sid, verbIndex), frame, slot)))
+        }
+      }
+    }
+    val baseTrees = qidsByStructure.map { case (structure, qids) =>
+      structure -> MergeTree.createBalancedTree(NonEmptyList.fromList(qids.toList).get)
+    }
+    val clauseTemplates = qidsByStructure.keySet
+    val rankIncrement = baseTrees.unorderedFoldMap(_.rank)
+    val structureTree = Coindexing.getCoindexingTree(clauseTemplates, verbCollapsedQAOutputs)
+    structureTree.mapRank(_ + rankIncrement).flatMap(baseTrees)
   }
 
   def getQuestionClustersFromAggregateQA(
     instances: Instances.Qasrl,
     collapsedQAOutputs: Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]
-  ): Map[InflectedForms, Vector[MergeTree[QuestionId]]] = {
+  ): Map[InflectedForms, MergeTree[QuestionId]] = {
     instances.values.map { case (verbInflectedForms, verbInstances) =>
       verbInflectedForms -> getQuestionClustersFromAggregateQAForVerb(
-        verbInstances, collapsedQAOutputs(verbInflectedForms)
+        verbInflectedForms, verbInstances, collapsedQAOutputs(verbInflectedForms)
       )
     }
   }
@@ -568,7 +584,7 @@ object FrameInductionApp extends CommandIOApp(
           VerbId(sid, vi) -> clauses
         }
       }
-      val clusterTrees = tree.splitByPredicate(t => (t.loss / numInstancesForVerb) > verbSenseModel.maxLoss)
+      val clusterTrees = tree.splitWhile(t => (t.loss / numInstancesForVerb) > verbSenseModel.maxLoss)
       val verbRel = fuzzyArgEquivalences(verbInflectedForms)
       val verbFrames = clusterTrees.map { frameTree =>
         val verbIds = frameTree.values
@@ -576,11 +592,11 @@ object FrameInductionApp extends CommandIOApp(
           verbClauseSets(vid).toList.foldMap(c => Map(c -> 1))
         }.toList.map { case (c, count) => FrameClause(c, (count.toDouble / verbIds.size)) }
         val frameProb = verbIds.size.toDouble / numInstancesForVerb
-        val questionClusterTrees = getQuestionClustersFromAggregateQAForVerb(
-          instances.values(verbInflectedForms), fuzzyArgEquivalences(verbInflectedForms)
+        val questionClusterTree = getQuestionClustersFromAggregateQAForVerb(
+          verbInflectedForms, instances.values(verbInflectedForms), fuzzyArgEquivalences(verbInflectedForms)
         )
         // val coindexingTree = Coindexing.getCoindexingTree(clauseTemplates.map(_.args).toSet, verbRel)
-        VerbFrame(verbIds.toSet, clauseTemplates, questionClusterTrees, frameProb)
+        VerbFrame(verbIds.toSet, clauseTemplates, questionClusterTree, frameProb)
       }.toList
       VerbFrameset(verbInflectedForms, verbFrames)
     }
@@ -1167,7 +1183,7 @@ object FrameInductionApp extends CommandIOApp(
         val maxLossPerInstance = chosenThresholds(vsConfig)
         verbModels.values.toList.map { model =>
           val numInstances = model.clusterTree.size.toInt
-          val clusters = model.clusterTree.splitByPredicate(_.loss > (maxLossPerInstance * numInstances))
+          val clusters = model.clusterTree.splitWhile(_.loss > (maxLossPerInstance * numInstances))
           val numClusters = clusters.size
           ThisPoint(vsConfig, numInstances, numClusters, scala.math.min(1000, numInstances.toDouble + noise), numClusters.toDouble + (noise * 10))
         }
@@ -1207,7 +1223,7 @@ object FrameInductionApp extends CommandIOApp(
           senseLabels.values.get(verbLemma).map { verbSenseLabels =>
             val numGoldClusters = verbSenseLabels.values.iterator.flatMap(_.values.iterator).toSet.size
             val numInstances = model.clusterTree.size
-            val clusters = model.clusterTree.splitByPredicate(_.loss > (maxLossPerInstance * numInstances))
+            val clusters = model.clusterTree.splitWhile(_.loss > (maxLossPerInstance * numInstances))
             val numPredictedClusters = clusters.size
             ThisPoint(vsConfig, numGoldClusters, numPredictedClusters, numGoldClusters.toDouble + noise, numPredictedClusters.toDouble + noise)
           }
@@ -1234,7 +1250,7 @@ object FrameInductionApp extends CommandIOApp(
     // _ <- verbModelsByConfig.toList.traverse { case (vsConfig, verbModels) =>
     //   val maxLoss = chosenThresholds(vsConfig)
     //   verbModels.toList.traverse { case (verbLemma, verbModel) =>
-    //     val clusters = verbModel.clusterTree.splitByPredicate(_.loss > maxLoss)
+    //     val clusters = verbModel.clusterTree.splitWhile(_.loss > maxLoss)
     //     IO.unit // TODO
     //   }
     // }

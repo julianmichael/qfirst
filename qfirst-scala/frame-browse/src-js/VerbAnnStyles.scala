@@ -770,6 +770,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val goldClauseDisplay = style()
   val goldClauseText = style()
 
+  val genericGoldMatchingArgMarker = style(
+    fontStyle.italic
+  )
   val goldMatchingArgMarker = style(
     fontWeight.bold
   )
