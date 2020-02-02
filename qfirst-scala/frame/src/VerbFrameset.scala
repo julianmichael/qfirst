@@ -85,6 +85,8 @@ object VerbClusterModel
   import ClusterSplittingCriterion._
   def getNumber: Option[Int] = this match { case Number(value) => Some(value); case _ => None }
   def getLoss: Option[Double] = this match { case Loss(value) => Some(value); case _ => None }
+  def isNumber: Boolean = getNumber.nonEmpty
+  def isLoss: Boolean = getLoss.nonEmpty
 
   def splitTree[A](tree: MergeTree[A]): Vector[MergeTree[A]] = this match {
     case Number(numClusters) => tree.splitToN(numClusters)

@@ -110,6 +110,11 @@ object NavQuery {
 
 object VerbAnnUI {
 
+  implicit val callbackMonoit = new Monoid[Callback] {
+    override def empty = Callback.empty
+    override def combine(x: Callback, y: Callback) = x >> y
+  }
+
   val S = VerbAnnStyles
 
   val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[InflectedForms, Int])]
@@ -228,7 +233,8 @@ object VerbAnnUI {
 
   def doubleTextField(style: TagMod)(
     label: Option[String],
-    value: StateSnapshot[Double]
+    value: StateSnapshot[Double],
+    onChange: Double => Callback = _ => Callback.empty
   ): VdomElement = liveTextField[Double](style)(
     label, value, (s: String) => scala.util.Try(s.toDouble).toOption
   )
@@ -237,12 +243,13 @@ object VerbAnnUI {
   //   value: StateSnapshot[Double]
   // ): VdomElement = doubleTextField(style)(Some(label), value)
 
-  def intArrowField(
-    label: String,
-    value: StateSnapshot[Int]
+  def intArrowField(style: TagMod)(
+    label: Option[String],
+    value: StateSnapshot[Int],
+    onChange: Int => Callback = _ => Callback.empty
   ) = {
-    <.span(
-      s"$label: ",
+    <.span(style)(
+      label.whenDefined(l => "$l: "),
       <.input(S.intArrowFieldInput)(
         ^.`type` := "number",
         ^.min := 1,
@@ -254,32 +261,77 @@ object VerbAnnUI {
     )
   }
 
+  @Lenses case class ClusterCriterionControl(
+    numClusters: Int,
+    maxLoss: Double
+  )
+  object ClusterCriterionControl {
+    def default = ClusterCriterionControl(1, 0.0)
+  }
+
+  val LocalClusterCriterionControl = new LocalState[ClusterCriterionControl]
+
   def clusterCriterionField(
     label: String,
-    numClustersFallback: Int,
-    maxLossFallback: Double,
     criterion: StateSnapshot[ClusterSplittingCriterion]
   ): VdomElement = {
     <.div(
-      zoomStateP(criterion, ClusterSplittingCriterion.number) match {
-        case Some(numClusters) => intArrowField(s"$label clusters", numClusters)
-        case None => <.span(
-          s"$label clusters: ",
-          <.input(
-            ^.`type` := "text",
-            ^.onClick --> criterion.setState(ClusterSplittingCriterion.Number(numClustersFallback))
+      LocalClusterCriterionControl.make(ClusterCriterionControl.default) { criterionControl =>
+        <.span(
+          label + " ",
+          <.span(S.disabledCriterionText.unless(criterion.value.isNumber))(
+            "clusters",
+            ^.onClick --> criterion.value.getLoss.foldMap(_ =>
+              criterion.setState(
+                ClusterSplittingCriterion.Number(criterionControl.value.numClusters)
+              )
+            )
+          ),
+          " / ",
+          <.span(S.disabledCriterionText.unless(criterion.value.isLoss))(
+            "loss",
+            ^.onClick --> criterion.value.getNumber.foldMap(_ =>
+              criterion.setState(
+                ClusterSplittingCriterion.Loss(criterionControl.value.maxLoss)
+              )
+            )
+          ),
+          ": ",
+          zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
+            intArrowField(S.shortTextField)(
+              None,
+              numClusters,
+              criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
+            )
+          ),
+          zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)).whenDefined(maxLoss =>
+            doubleTextField(S.shortTextField)(
+              None,
+              maxLoss,
+              criterionControl.zoomStateL(ClusterCriterionControl.maxLoss).setState(_)
+            )
           )
         )
-      },
-      zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)) match {
-        case Some(maxLoss) => doubleTextField(S.shortTextField)(Some(s"$label max loss"), maxLoss)
-        case None => <.span(
-          s"$label max loss: ",
-          <.input(
-            ^.`type` := "text",
-            ^.onClick --> criterion.setState(ClusterSplittingCriterion.Loss(maxLossFallback))
-          )
-        )
+        // zoomStateP(criterion, ClusterSplittingCriterion.number) match {
+        //   case Some(numClusters) => intArrowField(s"$label clusters", numClusters)
+        //   case None => <.span(
+        //     s"$label clusters: ",
+        //     <.input(S.shortTextField)(
+        //       ^.`type` := "text",
+        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Number(numClustersFallback))
+        //     )
+        //   )
+        // },
+        // zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)) match {
+        //   case Some(maxLoss) => doubleTextField(S.shortTextField)(Some(s"$label loss"), maxLoss)
+        //   case None => <.span(
+        //     s"$label loss: ",
+        //     <.input(S.shortTextField)(
+        //       ^.`type` := "text",
+        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Loss(maxLossFallback))
+        //     )
+        //   )
+        // }
       }
     )
   }
@@ -1086,10 +1138,6 @@ object VerbAnnUI {
     // val fullStructureRelationOpt = (goldStructureRelationOpt, predStructureRelationOpt).mapN(_ |+| _)
     val numFrames = frameset.frames.size
 
-    // TODO TODO !!! calculate these correctly
-    val maxNumQuestions: Int = 5
-    val maxQuestionLoss: Double = 0.0
-
     val sentenceIdOpt = sentenceOpt.map(s => SentenceId.fromString(s.sentenceId))
     val numInstances = frameset.frames.foldMap(_.verbIds.size)
     def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
@@ -1111,12 +1159,10 @@ object VerbAnnUI {
 
     def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
 
-    println("12.1")
-
     <.div(S.framesetContainer)(
       <.div(S.paraphrasingFilterDisplay)(
-        clusterCriterionField("Verb", numFrames, maxLoss, paraphrasingFilter.zoomStateL(ParaphrasingFilter.verbCriterion)),
-        clusterCriterionField("Question", maxNumQuestions, maxQuestionLoss, paraphrasingFilter.zoomStateL(ParaphrasingFilter.questionCriterion)),
+        clusterCriterionField("Verb", paraphrasingFilter.zoomStateL(ParaphrasingFilter.verbCriterion)),
+        clusterCriterionField("Question", paraphrasingFilter.zoomStateL(ParaphrasingFilter.questionCriterion)),
         <.div(sliderField("Clause", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minClauseProb))),
         <.div(sliderField("Paraphrase", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minParaphrasingProb))),
         <.div(
@@ -1150,7 +1196,6 @@ object VerbAnnUI {
       // }.whenDefined,
       <.div(S.frameSpecDisplay, S.scrollPane) {
         val frameList = frameset.frames.zipWithIndex
-        println(s"12.2: ${frameList.size}")
         frameList.toVdomArray { case (frame, frameIndex) =>
           val isFrameChosen = {
             val bools = for {
@@ -1161,9 +1206,7 @@ object VerbAnnUI {
           }
           val frameLens = VerbFrameset.frames
             .composeLens(unsafeListAt[VerbFrame](frameIndex))
-          println(s"12.25: ${frame.questionClusterTree}")
           val roleClusters = paraphrasingFilter.value.questionCriterion.splitTree(frame.questionClusterTree)
-          println(s"12.3: ${roleClusters.mkString("\n\n")}")
           // clause -> slot -> role -> qids
           val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, Set[QuestionId]]]] = {
             roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
@@ -1173,23 +1216,11 @@ object VerbAnnUI {
               }
             }
           }
-          println(s"12.4: ${argMappings}")
-          val baseArgSigils = List("X", "Y", "Z", "A", "B", "C")
-          val argSigils = baseArgSigils ++ baseArgSigils.map(_ + "2") ++ baseArgSigils.map(_ + "3")
+          val baseArgSigils = Vector("X", "Y", "Z", "A", "B", "C")
+          val argSigils = baseArgSigils ++ (2 to 9).toVector.flatMap(i =>
+            baseArgSigils.map(_ + i.toString)
+          )
           val getArgSigil = argSigils(_)
-          // val argMappings: Map[ArgStructure, Map[ArgumentSlot, String]] = {
-          //   val baseArgSigils = List("X", "Y", "Z", "A", "B", "C")
-          //   val argSigils = baseArgSigils ++ baseArgSigils.map(_ + "2") ++ baseArgSigils.map(_ + "3")
-          //   frame.coindexingTree
-          //     .splitByPredicate(t => t.loss > (1.0 - paraphrasingFilter.value.minCoindexingProb))
-          //     .filter(_.size > 1)
-          //     .zip(argSigils)
-          //     .foldMap { case (cluster, sigil) =>
-          //       cluster.values.groupBy(_._1).map { case (argStructure, clausalQs) =>
-          //         argStructure -> clausalQs.map(_._2 -> sigil).toMap
-          //       }
-          //     }
-          // }
 
           val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
             (frame.verbIds.map(vid => SentenceId.fromString(vid.sentenceId)).toSet + SentenceId.fromString(sentence.sentenceId)).toList
@@ -1203,8 +1234,6 @@ object VerbAnnUI {
                 )
               )
           }
-
-          println(s"12.5: ${frameSentenceDocPairsOpt}")
 
           def makeNavQueryForSentenceIndexOpt(index: Int) = {
             frameSentenceDocPairsOpt.map { allSentencesForFrame =>
@@ -1230,7 +1259,6 @@ object VerbAnnUI {
               (curSentenceIndex + 1) % frameSentenceDocPairs.size
             )
           }.flatten
-          println(s"A-$frameIndex")
           <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
             ^.key := "clause-set-" + frameIndex.toString,
             <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
@@ -1253,7 +1281,6 @@ object VerbAnnUI {
                 .filter(p => isClauseProbabilityAcceptable(p._1.probability))
                 .sortBy(-_._1.probability)
                 .toVdomArray { case (frameClause, clauseIndex) =>
-                  println(s"B-$frameIndex-$clauseIndex: $frameClause")
                   val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
 
                   <.div(S.clauseDisplay, S.matchingClause.when(predictedParaphraseClauseTemplatesOpt.exists(_.contains(frameClause.args))))(
@@ -1495,15 +1522,12 @@ object VerbAnnUI {
           )
           ParaphrasingFilterLocal.make(initialValue = defaultParaphrasingFilter) { cachedParaphrasingFilter =>
             NavQueryLocal.make(initialValue = props.urlNavQuery) { navQuery =>
-              println("1")
               navQuery.value match {
                 case query @ DatasetQuery(_, _, _) =>
-                  println("2")
                   val initVerb = sortedVerbCounts.map(_._1)
                     .find(query.matchesVerb)
                     .getOrElse(sortedVerbCounts.head._1)
                   VerbLocal.make(initialValue = initVerb) { curVerb =>
-                    println("3")
                     val verbSpec = curVerb.value.allForms
                       .map(form => form -> sortedVerbCounts.filter(_._1.allForms.contains(form)).size)
                       .sortBy(_._2).map(_._1)
@@ -1514,13 +1538,10 @@ object VerbAnnUI {
                       }._2
                     val searchQuery = Search.Query(predicateOpt = Some(curVerb.value), keywords = Set())
                     VerbModelLocal.make(initialValue = None) { curModel =>
-                      println("4")
                       val framesetsOpt = curModel.value.map(new LazyFramesets(_))
                       ParaphrasingFilterLocal.make(initialValue = cachedParaphrasingFilter.value) { paraphrasingFilter =>
-                        println("5")
                         val curFramesetWithLoss = framesetsOpt.map(_.getFrameset(paraphrasingFilter.value.verbCriterion))
                         SearchFetch.make(request = searchQuery, sendRequest = props.docService.searchDocuments _) { searchFetchCtx =>
-                          println("6")
                           val searchCtx = searchFetchCtx match {
                             case SearchFetch.Loading => None
                             case SearchFetch.Loaded(docIds) =>
@@ -1534,7 +1555,6 @@ object VerbAnnUI {
                           def curDocMetasOpt = searchCtx.map(_._2)
                           def initDocMetaOpt = searchCtx.map(_._3)
                           DocMetaOptLocal.make(initialValue = initDocMetaOpt) { curDocMetaOpt =>
-                            println("7")
                             val docSpecOpt = (curDocMetasOpt, curDocMetaOpt.value).mapN { (curDocMetas, curDocMeta) =>
                               if(curDocMetas.size == 1) Set[LowerCaseString]()
                               else {
@@ -1552,7 +1572,6 @@ object VerbAnnUI {
                             DocOptFetch.make(
                               request = curDocMetaOpt.value.map(_.id),
                               sendRequest = idOpt => idOpt.map(props.docService.getDocument).sequence) { docFetchCtx =>
-                              println("8")
                               val docCtx = docFetchCtx match {
                                 case DocOptFetch.Loading => None
                                 case DocOptFetch.Loaded(None) => None
@@ -1567,9 +1586,7 @@ object VerbAnnUI {
                               def curSentencesOpt = docCtx.map(_._2)
                               def initSentenceOpt = docCtx.map(_._3)
                               SentOptLocal.make(initialValue = initSentenceOpt) { curSentenceOpt =>
-                                println("9")
                                 BoolLocal.make(initialValue = false) { showInvalidQuestions =>
-                                  println("10")
                                   val sentSpecOpt = (curSentencesOpt, curSentenceOpt.value).mapN { (curSentences, curSentence) =>
                                     if(curSentences.size == 1) Set[LowerCaseString]()
                                     else {
@@ -1602,7 +1619,6 @@ object VerbAnnUI {
                                         )
                                     }
                                   )
-                                  println("11")
 
                                   <.div(S.mainContainer)(
                                     <.div(S.headerContainer)(
@@ -1661,13 +1677,10 @@ object VerbAnnUI {
                                                   .toCallback
                                               )(<.div(S.loadingNotice)("Loading frameset..."))
                                             case Some((maxLoss, frameset)) =>
-                                              println("12")
-                                              val res = frameDisplayPane(
+                                              frameDisplayPane(
                                                 dataIndex, curVerb.value, curDocMetasOpt, curSentenceOpt.value, currentVerbIndicesOpt.getOrElse(Set()),
                                                 goldStructureRelationOpt, frameset, maxLoss, None, None, cachedParaphrasingFilter, paraphrasingFilter, argStructureChoiceOpt, argStructureHoverOpt, navQuery
                                               )
-                                              println("13")
-                                              res
 
                                           },
                                           (searchCtx, zoomOpt(curDocMetaOpt)(Reusability.by_==[DocumentMetadata])) match {

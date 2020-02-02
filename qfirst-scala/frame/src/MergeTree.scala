@@ -185,13 +185,11 @@ object MergeTree {
   //   trees.flatMap(_.splitByPredicate(_.loss >= maxLoss)) -> maxLoss
   // }
   def clusterSplittings[A](trees: Vector[MergeTree[A]]) = {
-    println(s"${trees.size}: $trees")
     trees #:: clusterSplittingsAux(trees, trees.map(_.loss).max)
   }
   private[this] def clusterSplittingsAux[A](trees: Vector[MergeTree[A]], maxLoss: Double): Stream[Vector[MergeTree[A]]] = {
     if(trees.forall(_.isLeaf)) Stream.empty[Vector[MergeTree[A]]] else {
       val newTrees = trees.flatMap(_.splitWhile(_.loss >= maxLoss))
-      println(s"${newTrees.size}: $newTrees")
       if(newTrees.forall(_.isLeaf)) Stream(newTrees) else {
         val newMaxLoss = newTrees.filter(_.isMerge).map(_.loss).max
         newTrees #:: clusterSplittingsAux(newTrees, newMaxLoss)

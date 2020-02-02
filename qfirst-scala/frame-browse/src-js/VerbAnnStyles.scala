@@ -530,6 +530,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
     addClassNames("p-3"),
     width(45 rem)
   )
+  val disabledCriterionText = style(
+    color(grey(192))
+  )
   val frameHeading = verbHeading
   val frameHeadingText = verbHeadingText
   val clauseSetDisplay = style(
@@ -809,6 +812,6 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   val intArrowFieldInput = style(
-    width(4 em)
+    width(3 em)
   )
 }
