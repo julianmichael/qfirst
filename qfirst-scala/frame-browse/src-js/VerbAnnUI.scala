@@ -110,7 +110,7 @@ object NavQuery {
 
 object VerbAnnUI {
 
-  implicit val callbackMonoit = new Monoid[Callback] {
+  implicit val callbackMonoid = new Monoid[Callback] {
     override def empty = Callback.empty
     override def combine(x: Callback, y: Callback) = x >> y
   }

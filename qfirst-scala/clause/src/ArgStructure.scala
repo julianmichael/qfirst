@@ -9,7 +9,9 @@ import jjm.ling.en.InflectedForms
 
 import qasrl._
 
-@JsonCodec case class ArgStructure(
+import monocle.macros._
+
+@JsonCodec @Lenses case class ArgStructure(
   args: DependentMap[ArgumentSlot.Aux, Id],
   isPassive: Boolean
 ) {
@@ -34,3 +36,4 @@ import qasrl._
     InflectedForms.generic, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
   ).clauses.head
 }
+object ArgStructure

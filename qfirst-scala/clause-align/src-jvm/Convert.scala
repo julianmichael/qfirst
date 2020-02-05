@@ -18,9 +18,12 @@ import cats.implicits._
 
 import fs2.Stream
 
+import jjm.DependentMap
 import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
-import qasrl.PresentTense
+import qasrl._
+// import qasrl.PresentTense
 import qasrl.labeling.SlotBasedLabel
 import qasrl.bank.Data
 
@@ -83,7 +86,7 @@ object Convert extends CommandIOApp(
     }
     val inc = value[String](double)
     val dec = value[String](double andThen (_ * -1))
-    List("mean" :: inc)
+    List(dec)
   }
 
   def getMetricsString[M: HasMetrics](m: M) =
@@ -109,8 +112,113 @@ object Convert extends CommandIOApp(
     val resolvedQAPairsByFrame = resolvedQAPairs.groupBy(_._1._1)
 
     val resolvedQAPairsByStructure = resolvedQAPairs.groupBy(
-      p => ArgStructure(p._1._1.args, p._1._1.isPassive)
+      p => ArgStructure(p._1._1.args, p._1._1.isPassive).forgetAnimacy
     )
+
+    val resolvedQAPairsByObj2lessStructure = resolvedQAPairs.groupBy(
+      p => ArgStructure(p._1._1.args remove Obj2, p._1._1.isPassive).forgetAnimacy
+    )
+
+    val intransitive = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false)),
+      isPassive = false
+    )
+    val transitive = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false))
+        .put(Obj, Noun(false)),
+      isPassive = false
+    )
+    val passive = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false)),
+      isPassive = true
+    )
+    val transitiveWhere = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false))
+        .put(Obj, Noun(false))
+        .put(Obj2, Locative),
+      isPassive = false
+    )
+    val intransitiveWhere = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false))
+        .put(Obj2, Locative),
+      isPassive = false
+    )
+    val passiveWhere = ArgStructure(
+      DependentMap.empty[ArgumentSlot.Aux, Id]
+        .put(Subj, Noun(false))
+        .put(Obj2, Locative),
+      isPassive = true
+    )
+
+    type ClausalQ = (ArgStructure, ArgumentSlot)
+    type ClausalQPair = (ClausalQ, ClausalQ)
+
+    val structuralMappingPairs = Vector[ClausalQPair](
+      (transitive -> Subj) -> (transitiveWhere -> Subj),
+      (transitive -> Obj) -> (transitiveWhere -> Obj),
+      (intransitive -> Subj) -> (intransitiveWhere -> Subj),
+      (intransitive -> Obj) -> (intransitiveWhere -> Obj),
+      (transitive -> Obj) -> (passive -> Subj),
+      (transitiveWhere -> Obj) -> (passiveWhere -> Subj),
+      (transitiveWhere -> Obj2) -> (transitive -> Adv("where".lowerCase))
+    )
+
+    val structuralMapping = structuralMappingPairs
+      .foldMap(p =>
+        Map(
+          p._1 -> Vector(p._2),
+          p._2 -> Vector(p._1),
+        )
+      )
+
+    def removeObj2(structure: ArgStructure): ArgStructure = {
+      ArgStructure.args.modify(_ remove Obj2)(structure)
+    }
+
+    def getAlignedAnswers(clausalQ: (ArgStructure, ArgumentSlot)): Option[List[(ArgumentSlot, String)]] = {
+      val queries = clausalQ +: structuralMapping.get(clausalQ).foldK
+      queries.map(q =>
+        resolvedQAPairsByStructure.get(q._1).flatMap(
+          _.find(_._1._2 == q._2).map(_._2).map(
+            _.split("~!~").toList.map(clausalQ._2 -> _)
+          )
+        )
+      ).foldK.orElse {
+        if(clausalQ._2 != Subj) None else {
+          val obj2lessCQ = removeObj2(clausalQ._1) -> clausalQ._2
+          val obj2lessQueries = obj2lessCQ +: structuralMapping.get(obj2lessCQ).foldK.filter(_._2 == Subj)
+          obj2lessQueries.map(q =>
+            resolvedQAPairsByObj2lessStructure.get(q._1).flatMap(
+              _.find(_._1._2 == q._2).map(_._2).map(
+                _.split("~!~").toList.map(Subj -> _)
+              )
+            )
+          ).foldK
+        }
+      }
+      //   .orElse {
+      //   if(clausalQ._2 != Obj2) None else {
+      //     clausalQ._1.args.get(Obj2).get match {
+      //       case Prep(prep, _) if !prep.endsWith("do".lowerCase) && !prep.endsWith("doing".lowerCase) =>
+      //         val obj2lessTemplate = removeObj2(clausalQ._1)
+      //         resolvedQAPairsByObj2lessStructure.get(obj2lessTemplate).map(
+      //           _.collect { case ((_, Adv(_)), answers) =>
+      //             answers.split("~!~").toList
+      //               .filter(_.startsWith(prep))
+      //               .filter(_.length > prep.length)
+      //               .map(_.substring(prep.length + 1))
+      //           }.flatten.map(Obj2 -> _)
+      //         ).filter(_.nonEmpty)
+      //       case _ => None
+      //     }
+      //   }
+      // }
+    }
 
     val newLines = (originalLines, resolvedQAPairs).zipped.map {
       case (fields, ((frame, slot), answer)) =>
@@ -118,45 +226,44 @@ object Convert extends CommandIOApp(
           tense = PresentTense, isPerfect = false,
           isProgressive = false, isNegated = false
         )
-        val argMappings = resolvedQAPairsByStructure(
-          ArgStructure(frame.args, frame.isPassive)
-        ).map { case ((_, slot), answer) =>
-            answer.split("~!~").toList.map(slot -> _)
+        val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
+        val argMappings = clauseTemplate.args.keys.toList.filter(_ != slot).flatMap { (slot: ArgumentSlot) =>
+          getAlignedAnswers(clauseTemplate -> slot)
         }.sequence.map(_.toMap)
+
+        // val argMappings = resolvedQAPairsByStructure(clauseTemplate)
+        // .map { case ((_, slot), answer) =>
+        //   answer.split("~!~").toList.map(slot -> _)
+        // }.sequence.map(_.toMap)
+
         fields +
           ("clause+arg" -> s"${frame.clauses.head}: $slot") +
           ("templated_clause+arg" -> s"${templatedFrame.clauses.head}: $slot") +
           ("aligned_question" -> argMappings.map(argMapping =>
              frame.questionsForSlotWithArgs(slot, argMapping).head
-           ).mkString("~!~"))
+           ).toSet.mkString("~!~"))
     }
 
     val metrics = {
-      "placeholder coverage (same clause, by clause)" ->>
-        resolvedQAPairsByFrame.toList.foldMap { case (frame, questions) =>
-          val (covered, uncovered) = frame.args.keySet
-            .partition(questions.map(_._1._2).toSet.contains)
-          Proportion.Stats(covered.size, uncovered.size)
-        } ::
-      "placeholder coverage (same clause, by question)" ->>
-        resolvedQAPairsByFrame.toList.foldMap { case (frame, questions) =>
-          val total = questions.size
-          val (covered, uncovered) = frame.args.keySet
-            .partition(questions.map(_._1._2).toSet.contains)
-          Proportion.Stats(covered.size * total, uncovered.size * total)
-        } ::
       "placeholder coverage (same clause (no tense), by clause (no tense))" ->>
         resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
           val (covered, uncovered) = frame.args.keySet
-            .partition(questions.map(_._1._2).toSet.contains)
+            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
           Proportion.Stats(covered.size, uncovered.size)
         } ::
-      "placeholder coverage (same clause (no tense), by question)" ->>
+      "placeholder coverage (same clause (no tense))" ->>
         resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
           val total = questions.size
           val (covered, uncovered) = frame.args.keySet
-            .partition(questions.map(_._1._2).toSet.contains)
+            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
           Proportion.Stats(covered.size * total, uncovered.size * total)
+        } ::
+      "uncovered placeholders (same clause (no tense))" ->>
+        resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
+          val total = questions.size
+          val (covered, uncovered) = frame.args.keySet
+            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
+          FewClassCount(uncovered.toVector.map(unc => (frame -> unc).toString))
         } ::
       HNil
     }
