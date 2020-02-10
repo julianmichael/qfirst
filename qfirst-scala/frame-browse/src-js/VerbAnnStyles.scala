@@ -599,6 +599,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
   val adverbialRoleAdverb = style()
 
+  val sigilProportionalColor = styleF.int(0 to 20)(i =>
+    styleS(color(grey((20 - i) * 10)))
+  )
+
   val sentenceLink = style()
 
   val goDisplay = style(

@@ -1324,6 +1324,7 @@ object VerbAnnUI {
                 .filter(p => isClauseProbabilityAcceptable(p._1.probability))
                 .sortBy(-_._1.probability)
                 .toVdomArray { case (frameClause, clauseIndex) =>
+                  val numQuestions = argMappings(frameClause.args).unorderedFoldMap(_.unorderedFoldMap(_.size))
                   val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
 
                   <.div(S.clauseDisplay, S.matchingClause.when(predictedParaphraseClauseTemplatesOpt.exists(_.contains(frameClause.args))))(
@@ -1387,6 +1388,7 @@ object VerbAnnUI {
                                 <.span(
                                   S.argSigil, genericGoldMatchingMod,
                                   goldMatchingMod, /* predMatchingMod, */selectionMod,
+                                  S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
                                   sigilNavigationMod(ids))(
                                   getArgSigil(roleIndex) + sigilSuffix
                                 )
@@ -1458,6 +1460,7 @@ object VerbAnnUI {
 
                               <.span(
                                 S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod,
+                                S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
                                 sigilNavigationMod(ids))(
                                 getArgSigil(roleIndex)
                               )
