@@ -586,7 +586,7 @@ object VerbAnnUI {
   ) = {
     TagMod(
       argStructureChoiceOpt.value match {
-        case None => ^.onClick --> argStructureChoiceOpt.setState(Some(structure))
+        case None => goldParaphrasesOpt.whenDefined(_ => ^.onClick --> argStructureChoiceOpt.setState(Some(structure)))
         case Some(`structure`) => ^.onClick --> argStructureChoiceOpt.setState(None)
         case Some(otherStructure) => goldParaphrasesOpt.whenDefined { goldParaphrases =>
           val paraphrases = goldParaphrases.zoomStateL(VerbParaphraseLabels.paraphrases)
@@ -762,8 +762,6 @@ object VerbAnnUI {
                         //   case Locative => "[where]"
                         // }
                         val thisArgChoice = clauseTemplate -> argSlot
-
-                        // TODO add adverbial whs listed after each clause
 
                         <.span(
                           S.argPlaceholder,
@@ -1207,12 +1205,12 @@ object VerbAnnUI {
           val frameLens = VerbFrameset.frames
             .composeLens(unsafeListAt[VerbFrame](frameIndex))
           val roleClusters = paraphrasingFilter.value.questionCriterion.splitTree(frame.questionClusterTree)
-          // clause -> slot -> role -> qids
-          val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, Set[QuestionId]]]] = {
+          // clause -> slot -> role -> sorted qids
+          val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[QuestionId]]]] = {
             roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
               tree.unorderedFoldMap { case qid @ QuestionId(_, clause, slot) =>
                 val argStructure = ArgStructure(clause.args, clause.isPassive).forgetAnimacy
-                Map(argStructure -> Map(slot -> Map(roleIndex -> Set(qid))))
+                Map(argStructure -> Map(slot -> Map(roleIndex -> SortedSet(qid))))
               }
             }
           }
@@ -1259,6 +1257,51 @@ object VerbAnnUI {
               (curSentenceIndex + 1) % frameSentenceDocPairs.size
             )
           }.flatten
+
+          def goToPrev(ids: SortedSet[QuestionId]) = {
+            sentenceIdOpt.foldMap { sentenceId =>
+              val querySentenceIds = {
+                val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
+                (sids + sentenceId).toList
+              }
+              (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
+                _._2 == sentenceId
+              ).map(_._1).foldMap(newSid =>
+                navQuery.setState(
+                  DatasetQuery(
+                    verbInflectedForms.allForms.toSet,
+                    Set(newSid.documentId.toString.lowerCase),
+                    Set(SentenceId.toString(newSid).lowerCase)
+                  )
+                )
+              )
+            }
+          }
+          def goToNext(ids: SortedSet[QuestionId]) = {
+            sentenceIdOpt.foldMap { sentenceId =>
+              val querySentenceIds = {
+                val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
+                (sids + sentenceId).toList
+              }
+              (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
+                _._1 == sentenceId
+              ).map(_._2).foldMap(newSid =>
+                navQuery.setState(
+                  DatasetQuery(
+                    verbInflectedForms.allForms.toSet,
+                    Set(newSid.documentId.toString.lowerCase),
+                    Set(SentenceId.toString(newSid).lowerCase)
+                  )
+                )
+              )
+            }
+          }
+          def sigilNavigationMod(ids: SortedSet[QuestionId]) = TagMod(
+            ^.onClick ==> ((e: ReactMouseEvent) =>
+              if(e.altKey) goToPrev(ids) else goToNext(ids)
+            )
+          )
+
           <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
             ^.key := "clause-set-" + frameIndex.toString,
             <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
@@ -1336,16 +1379,19 @@ object VerbAnnUI {
                               val selectionMod = tagModForStructureLabel(
                                 frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
                               )
-                              def getSigilSpan(roleIndex: Int, ids: Set[QuestionId]): VdomElement = {
+                              def getSigilSpan(roleIndex: Int, ids: SortedSet[QuestionId]): VdomElement = {
                                 val goldMatchingMod = S.goldMatchingArgMarker.when(
                                   sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
                                 )
 
-                                <.span(S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod)(
+                                <.span(
+                                  S.argSigil, genericGoldMatchingMod,
+                                  goldMatchingMod, /* predMatchingMod, */selectionMod,
+                                  sigilNavigationMod(ids))(
                                   getArgSigil(roleIndex) + sigilSuffix
                                 )
                               }
-                              def getRoleSpan(roleCounts: Map[Int, Set[QuestionId]]) = {
+                              def getRoleSpan(roleCounts: Map[Int, SortedSet[QuestionId]]) = {
                                 if(roleCounts.size == 1) {
                                   val (roleIndex, ids) = roleCounts.head
                                   getSigilSpan(roleIndex, ids)
@@ -1405,16 +1451,18 @@ object VerbAnnUI {
                             val selectionMod = tagModForStructureLabel(
                               frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
                             )
-                            def getSigilSpan(roleIndex: Int, ids: Set[QuestionId]): VdomElement = {
+                            def getSigilSpan(roleIndex: Int, ids: SortedSet[QuestionId]): VdomElement = {
                               val goldMatchingMod = S.goldMatchingArgMarker.when(
                                 sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
                               )
 
-                              <.span(S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod)(
+                              <.span(
+                                S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod,
+                                sigilNavigationMod(ids))(
                                 getArgSigil(roleIndex)
                               )
                             }
-                            def getRoleSpan(roleCounts: Map[Int, Set[QuestionId]]) = {
+                            def getRoleSpan(roleCounts: Map[Int, SortedSet[QuestionId]]) = {
                               if(roleCounts.size == 1) {
                                 val (roleIndex, ids) = roleCounts.head
                                 getSigilSpan(roleIndex, ids)
