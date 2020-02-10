@@ -1285,50 +1285,120 @@ object VerbAnnUI {
 
                   <.div(S.clauseDisplay, S.matchingClause.when(predictedParaphraseClauseTemplatesOpt.exists(_.contains(frameClause.args))))(
                     ^.key := "clause-" + clauseIndex.toString,
-                    goldParaphrasesOpt.whenDefined { goldParaphrases =>
-                      val clauseCorrectLens = VerbParaphraseLabels.correctClauses.composeLens(Optics.at(frameClause.args))
-                      val clauseIncorrectLens = VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(frameClause.args))
-                      val clauseCorrectness = goldParaphrases.zoomStateL(sequenceLenses(clauseCorrectLens, clauseIncorrectLens))
-                        <.div(S.goldClauseMarkerDisplay)(
-                          <.label(S.goldClauseCheckLabel)(
-                            <.input(
-                              ^.`type` := "checkbox",
-                              ^.value := clauseCorrectness.value._1,
-                              ^.onChange ==> ((e: ReactEventFromInput) =>
-                                if(clauseCorrectness.value._1) clauseCorrectness.setState(false -> false)
-                                else clauseCorrectness.setState(true -> false)
-                              )
+                    <.div(
+                      goldParaphrasesOpt.whenDefined { goldParaphrases =>
+                        val clauseCorrectLens = VerbParaphraseLabels.correctClauses.composeLens(Optics.at(frameClause.args))
+                        val clauseIncorrectLens = VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(frameClause.args))
+                        val clauseCorrectness = goldParaphrases.zoomStateL(sequenceLenses(clauseCorrectLens, clauseIncorrectLens))
+                          <.div(S.goldClauseMarkerDisplay)(
+                            <.label(S.goldClauseCheckLabel)(
+                              <.input(
+                                ^.`type` := "checkbox",
+                                ^.value := clauseCorrectness.value._1,
+                                ^.onChange ==> ((e: ReactEventFromInput) =>
+                                  if(clauseCorrectness.value._1) clauseCorrectness.setState(false -> false)
+                                  else clauseCorrectness.setState(true -> false)
+                                )
+                              ),
+                              <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(clauseCorrectness.value._1))
                             ),
-                            <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(clauseCorrectness.value._1))
-                          ),
-                          <.label(S.goldClauseXLabel)(
-                            <.input(
-                              ^.`type` := "checkbox",
-                              ^.value := clauseCorrectness.value._2,
-                              ^.onChange ==> ((e: ReactEventFromInput) =>
-                                if(clauseCorrectness.value._2) clauseCorrectness.setState(false -> false)
-                                else clauseCorrectness.setState(false -> true)
-                              )
-                            ),
-                            <.div(S.goldClauseX, S.goldClauseXIncorrect.when(clauseCorrectness.value._2))
+                            <.label(S.goldClauseXLabel)(
+                              <.input(
+                                ^.`type` := "checkbox",
+                                ^.value := clauseCorrectness.value._2,
+                                ^.onChange ==> ((e: ReactEventFromInput) =>
+                                  if(clauseCorrectness.value._2) clauseCorrectness.setState(false -> false)
+                                  else clauseCorrectness.setState(false -> true)
+                                )
+                              ),
+                              <.div(S.goldClauseX, S.goldClauseXIncorrect.when(clauseCorrectness.value._2))
+                            )
                           )
-                        )
-                    },
-                    <.span(S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
-                      <.span(f"(${frameClause.probability}%.2f) "),
-                      surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
-                        case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
-                        case (Right(argSlot), i) => <.span(
-                          ^.key := s"frame-clause-$i",
-                          BoolLocal.make(initialValue = false) { isEditingSlot =>
-                            val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
-                              case Noun(_) => ""
-                              case Prep(p, _) =>
-                                if(p.toString.contains("doing")) "[ng]"
-                                else if(p.toString.contains(" do")) "[inf]"
-                                else ""
-                              case Locative => "[where]"
+                      },
+                      <.span(S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
+                        <.span(f"(${frameClause.probability}%.2f) "),
+                        surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
+                          case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
+                          case (Right(argSlot), i) => <.span(
+                            ^.key := s"frame-clause-$i",
+                            BoolLocal.make(initialValue = false) { isEditingSlot =>
+                              val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
+                                case Noun(_) => ""
+                                case Prep(p, _) =>
+                                  if(p.toString.contains("doing")) "[ng]"
+                                  else if(p.toString.contains(" do")) "[inf]"
+                                  else ""
+                                case Locative => "[where]"
+                              }
+                              val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
+                                goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+                              )
+                              val selectionMod = tagModForStructureLabel(
+                                frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
+                              )
+                              def getSigilSpan(roleIndex: Int, ids: Set[QuestionId]): VdomElement = {
+                                val goldMatchingMod = S.goldMatchingArgMarker.when(
+                                  sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
+                                )
+
+                                <.span(S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod)(
+                                  getArgSigil(roleIndex) + sigilSuffix
+                                )
+                              }
+                              def getRoleSpan(roleCounts: Map[Int, Set[QuestionId]]) = {
+                                if(roleCounts.size == 1) {
+                                  val (roleIndex, ids) = roleCounts.head
+                                  getSigilSpan(roleIndex, ids)
+                                } else {
+                                  val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
+                                    <.span(
+                                      "[",
+                                      argSigils.map(Vector(_))
+                                        .intercalate(Vector(<.span(" / ")))
+                                        // .zipWithIndex
+                                        // .map { case (x, i) => x(^.key := s"sigil-$i") }
+                                        .toVdomArray,
+                                      "]"
+                                    )
+                                }
+                              }
+
+                              argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map { roleCounts =>
+                                getRoleSpan(roleCounts)
+                              }.getOrElse {
+                                <.span(S.argPlaceholder, genericGoldMatchingMod, /* predMatchingMod, */ selectionMod){
+                                  val prefix = surrogateFrame.args.get(argSlot) match {
+                                    case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
+                                    case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
+                                    case _ => ""
+                                  }
+                                  prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+                                }
+                              }
+                              // TODO integrate these into the common tag mod
+                              // val predMatchingMod = S.predMatchingArgMarker.when(
+                              //   predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+                              // )
+
+                              // argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map(s =>
+                              //   <.span(S.argSigil, goldMatchingMod, /* predMatchingMod, */selectionMod)(s + sigilSuffix): VdomElement
+                              // ).getOrElse(
+                              //   <.span(S.argPlaceholder, goldMatchingMod, /* predMatchingMod, */ selectionMod){
+                              //     val prefix = surrogateFrame.args.get(argSlot) match {
+                              //       case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
+                              //       case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
+                              //       case _ => ""
+                              //     }
+                              //     prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+                              //   }
+                              // )
                             }
+                          )
+                        }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.toVdomArray(p => p._1(^.key := s"frame-clause-tok-${p._2}"))
+                      ),
+                      <.div(S.adverbialRoles)(
+                        argMappings.get(frameClause.args).whenDefined { argSlotToRoleCounts =>
+                          argSlotToRoleCounts.toVector.collect { case (argSlot @ Adv(wh), roleCounts) =>
                             val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
                               goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
                             )
@@ -1341,55 +1411,34 @@ object VerbAnnUI {
                               )
 
                               <.span(S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod)(
-                                getArgSigil(roleIndex) + sigilSuffix
+                                getArgSigil(roleIndex)
                               )
                             }
-                            argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map { roleCounts =>
+                            def getRoleSpan(roleCounts: Map[Int, Set[QuestionId]]) = {
                               if(roleCounts.size == 1) {
                                 val (roleIndex, ids) = roleCounts.head
                                 getSigilSpan(roleIndex, ids)
                               } else {
                                 val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
-                                <.span(
-                                  "[",
-                                  argSigils.map(Vector(_))
-                                    .intercalate(Vector(<.span(" / ")))
-                                    // .zipWithIndex
-                                    // .map { case (x, i) => x(^.key := s"sigil-$i") }
-                                    .toVdomArray,
-                                  "]"
-                                )
-                              }
-                            }.getOrElse {
-                              <.span(S.argPlaceholder, genericGoldMatchingMod, /* predMatchingMod, */ selectionMod){
-                                val prefix = surrogateFrame.args.get(argSlot) match {
-                                  case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
-                                  case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
-                                  case _ => ""
-                                }
-                                prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+                                  <.span(
+                                    "[",
+                                    argSigils.map(Vector(_))
+                                      .intercalate(Vector(<.span(" / ")))
+                                      // .zipWithIndex
+                                      // .map { case (x, i) => x(^.key := s"sigil-$i") }
+                                      .toVdomArray,
+                                    "]"
+                                  )
                               }
                             }
-                            // TODO integrate these into the common tag mod
-                            // val predMatchingMod = S.predMatchingArgMarker.when(
-                            //   predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
-                            // )
 
-                            // argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map(s =>
-                            //   <.span(S.argSigil, goldMatchingMod, /* predMatchingMod, */selectionMod)(s + sigilSuffix): VdomElement
-                            // ).getOrElse(
-                            //   <.span(S.argPlaceholder, goldMatchingMod, /* predMatchingMod, */ selectionMod){
-                            //     val prefix = surrogateFrame.args.get(argSlot) match {
-                            //       case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
-                            //       case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
-                            //       case _ => ""
-                            //     }
-                            //     prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
-                            //   }
-                            // )
-                          }
-                        )
-                      }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.toVdomArray(p => p._1(^.key := s"frame-clause-tok-${p._2}"))
+                            <.span(S.adverbialRole)(
+                              <.span(S.adverbialRoleAdverb)(s"$wh: "),
+                              getRoleSpan(roleCounts)
+                            )
+                          }.toVdomArray
+                        }
+                      )
                     )
                   )
                 }
