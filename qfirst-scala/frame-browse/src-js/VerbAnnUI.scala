@@ -1387,28 +1387,30 @@ object VerbAnnUI {
 
                                 <.span(
                                   S.argSigil, genericGoldMatchingMod,
-                                  goldMatchingMod, /* predMatchingMod, */selectionMod,
+                                  goldMatchingMod, /* predMatchingMod, */
                                   S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
                                   sigilNavigationMod(ids))(
                                   getArgSigil(roleIndex) + sigilSuffix
                                 )
                               }
                               def getRoleSpan(roleCounts: Map[Int, SortedSet[QuestionId]]) = {
-                                if(roleCounts.size == 1) {
-                                  val (roleIndex, ids) = roleCounts.head
-                                  getSigilSpan(roleIndex, ids)
-                                } else {
-                                  val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
-                                    <.span(
-                                      "[",
-                                      argSigils.map(Vector(_))
-                                        .intercalate(Vector(<.span(" / ")))
-                                        // .zipWithIndex
-                                        // .map { case (x, i) => x(^.key := s"sigil-$i") }
-                                        .toVdomArray,
-                                      "]"
-                                    )
-                                }
+                                <.span(selectionMod)(
+                                  if(roleCounts.size == 1) {
+                                    val (roleIndex, ids) = roleCounts.head
+                                    getSigilSpan(roleIndex, ids)
+                                  } else {
+                                    val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
+                                      <.span(
+                                        "[",
+                                        argSigils.map(Vector(_))
+                                          .intercalate(Vector(<.span(" / ")))
+                                          // .zipWithIndex
+                                          // .map { case (x, i) => x(^.key := s"sigil-$i") }
+                                          .toVdomArray,
+                                        "]"
+                                      )
+                                  }
+                                )
                               }
 
                               argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map { roleCounts =>
