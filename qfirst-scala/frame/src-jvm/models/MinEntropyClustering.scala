@@ -19,7 +19,7 @@ import scala.collection.immutable.Vector
 // can also be regarded as "MLE clustering"
 object MinEntropyClustering extends ClusteringAlgorithm {
   case class ClusterParam(counts: DenseVector[Double], total: Double)
-  type Instance = Map[Int, Int] // sparse counts
+  type Instance = Map[Int, Double] // sparse soft counts
   case class Hyperparams(vocabSize: Int)
 
   // loss is entropy * num elements (same as likelihood under MLE in our case)

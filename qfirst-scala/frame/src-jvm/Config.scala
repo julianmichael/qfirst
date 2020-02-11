@@ -138,7 +138,7 @@ case class Config(mode: RunMode)(
             sid -> pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
               verbIndex -> verb.questionLabels.map { case (qString, qLabel) =>
                 qLabel.questionSlots -> (
-                  qLabel.answerJudgments.flatMap(_.judgment.getAnswer).flatMap(_.spans.toList).toSet
+                  qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).map(_.spans.toList)
                 )
               }
             }
@@ -227,7 +227,7 @@ case class Config(mode: RunMode)(
             sentencePred.sentenceId -> Map(
               verbPred.verbIndex ->
                 protocol.filterBeam(filter, verbPred.toGenericVerbPrediction).map {
-                  case (qString, (slots, spans)) => slots -> spans
+                  case (qString, (slots, spans)) => slots -> List(spans.toList)
                 }
             ).filter(_._2.nonEmpty)
           ).filter(_._2.nonEmpty)

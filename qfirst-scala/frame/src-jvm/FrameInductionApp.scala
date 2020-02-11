@@ -100,7 +100,7 @@ object FrameInductionApp extends CommandIOApp(
 
   implicit val logLevel = LogLevel.Trace
 
-  type QAPairs = Map[SlotBasedLabel[VerbForm], Set[ESpan]]
+  type QAPairs = Map[SlotBasedLabel[VerbForm], List[List[ESpan]]]
   type ClausalQ = (ArgStructure, ArgumentSlot)
 
   def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, QAPairs]]): Vocab[ArgStructure] = {
@@ -142,14 +142,14 @@ object FrameInductionApp extends CommandIOApp(
     }.filter(_._2.nonEmpty)
     verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
       Log.trace(renderVerbType(verbType)) >> IO {
-        val verbIds = _verbIds.take(250) // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        val verbIds = _verbIds.take(50) // hack to make it possible to even do the clustering on the really common words. need to generalize later
         val verbInstances = instances.values(verbType)
         val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
         val makeInstance = (verbId: VerbId) => {
           val questions = verbInstances(verbId.sentenceId)(verbId.verbIndex).keySet.toList
           val clauseCounts = ClauseResolution
             .getResolvedStructures(questions).map(_._1)
-            .foldMap(c => Map(clauseVocab.getIndex(c) -> 1))
+            .foldMap(c => Map(clauseVocab.getIndex(c) -> 1.0))
           val vector = elmoVecs.values(verbType)(verbId.sentenceId)(verbId.verbIndex)
           clauseCounts -> vector
         }
@@ -218,6 +218,93 @@ object FrameInductionApp extends CommandIOApp(
     }
   }
 
+  val pronouns = Set(
+    "he", "him", "it", "she", "her", "they", "them", "we", "us"
+  ).map(_.lowerCase)
+  val tokensToSkip = pronouns
+
+  def getQuestionClustersForVerb(
+    verbInflectedForms: InflectedForms,
+    verbIds: Set[VerbId],
+    instances: Map[String, Map[Int, QAPairs]],
+    data: Dataset,
+    interpolationFactor: Double)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[MergeTree[QuestionId]] = {
+    val algorithm = new CompositeClusteringAlgorithm {
+      val _1 = MinEntropyClustering; val _2 = MinEntropyClustering
+    }
+
+    val featurefulInstances = instances.toList.flatMap { case (sid, verbs) =>
+      verbs.toList.flatMap { case (verbIndex, qaPairs) =>
+        val verbId = VerbId(sid, verbIndex)
+        if(!verbIds.contains(verbId)) List() else {
+          val qaPairList = qaPairs.toList
+          ClauseResolution.getResolvedFramePairs(verbInflectedForms, qaPairList.map(_._1))
+            .zip(qaPairList.map(_._2)).map { case ((frame, slot), answerSpans) =>
+              val qid = QuestionId(verbId, frame, slot)
+              val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
+              val sentenceTokens = data.sentences(sid).sentenceTokens
+              val tokenCounts = answerSpans.map(
+                _.foldMap(span =>
+                  sentenceTokens.slice(span.begin, span.endExclusive)
+                    .map(_.lowerCase)
+                    .filter(t => !tokensToSkip.contains(t))
+                    .foldMap(t => Map(t -> 1))
+                )
+              )
+              (qid, clauseTemplate -> slot, tokenCounts)
+            }
+        }
+      }
+    }
+    val questionTemplateVocab = Vocab.make(featurefulInstances.map(_._2).toSet)
+    val tokenVocab = Vocab.make(featurefulInstances.foldMap(_._3.foldMap(_.keySet)))
+
+    val indexedInstances = featurefulInstances.map { case (qid, questionTemplate, tokenCounts) =>
+      val questionTemplateCounts = Map(
+        questionTemplateVocab.getIndex(questionTemplate) -> 1.0
+      )
+      val tokenDists = tokenCounts.foldMap(
+        _.map { case (tok, count) =>
+          tokenVocab.getIndex(tok) -> (count.toDouble / tokenCounts.size)
+        }
+      )
+      questionTemplateCounts -> tokenDists
+    }.toVector
+    val hyperparams = algorithm.Hyperparams(
+      algorithm._1.Hyperparams(questionTemplateVocab.size),
+      algorithm._2.Hyperparams(tokenVocab.size),
+      interpolationFactor
+    )
+    IO {
+      algorithm.runAgglomerativeClustering(indexedInstances, hyperparams)._1.map(
+        i => featurefulInstances(i)._1
+      )
+    }
+  }
+
+  def getQuestionClusters(
+    instances: Instances.Qasrl,
+    verbClusters: Map[InflectedForms, MergeTree[VerbId]],
+    data: Dataset,
+    interpolationFactor: Double = 0.8)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[InflectedForms, MergeTree[QuestionId]]] = {
+    instances.values.toList
+      .sortBy(-_._2.size)
+      .infoBarTraverse("Clustering questions") { case (verbInflectedForms, verbInstances) =>
+      Log.trace(verbInflectedForms.stem) >> {
+        getQuestionClustersForVerb(
+          verbInflectedForms,
+          verbClusters(verbInflectedForms).values.foldMap(Set(_)),
+          verbInstances,
+          data, interpolationFactor
+        ).map(verbInflectedForms -> _)
+      }
+    }.map(_.toMap)
+  }
+
   def getQasrlVerbClusterModels(
     config: Config, verbSenseConfig: VerbSenseConfig)(
     implicit logger: EphemeralTreeLogger[IO, String]
@@ -232,8 +319,11 @@ object FrameInductionApp extends CommandIOApp(
           elmoVecs = elmoVecs,
           renderVerbType = (forms: InflectedForms) => forms.stem
         )
-        collapsedQAOutputs <- config.collapsedQAOutputs.get
-        questionClusterTreesByVerb = getQuestionClustersFromAggregateQA(instances, collapsedQAOutputs)
+        dataset <- config.full.get
+        // collapsedQAOutputs <- config.collapsedQAOutputs.get
+        questionClusterTreesByVerb <- getQuestionClusters(
+          instances, verbClusters, dataset
+        )
         verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
           val clauseSets = instances.values(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
             verbMap.iterator.map { case (vi, qas) =>
