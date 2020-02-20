@@ -85,16 +85,6 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     val param = mergeParams(instances, left, leftParam, right, rightParam)
     val newLoss = (left.values ++ right.values)
       .foldMap(i => getInstanceLoss(instances(i), param))
-    if(!(newLoss > left.loss && newLoss > right.loss)) {
-      println("WARNING: clusters seem to be incorrectly merged")
-      println("===== LEFT ===== : " + left)
-      println("== LEFT PARAM == : " + leftParam)
-      println("==== RIGHT ===== : " + right)
-      println("= RIGHT PARAM == : " + rightParam)
-      println("==== PARAM ===== : " + param)
-      println("===== LOSS ===== : " + newLoss)
-      ???
-    }
     newLoss
   }
 }

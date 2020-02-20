@@ -68,7 +68,6 @@ class MinEntropyClustering(
     ClusterParam(counts, total)
   }
 
-  // can do efficient merge by summing counts
   override def mergeLoss(
     instances: Vector[Instance],
     left: MergeTree[Int],
@@ -81,18 +80,6 @@ class MinEntropyClustering(
       .filter(_ > 0.0) // prevent log of 0
       .map(c => c * log(c / param.total)) // count * log probability = log likelihood
       .sum * -1.0
-    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
-      println("WARNING: clusters seem to be incorrectly merged")
-      println(instances)
-      println(left)
-      println(leftParam)
-      println(right)
-      println(rightParam)
-      println(param.counts)
-      println(param.total)
-      println(newLoss)
-      ???
-    }
     newLoss
   }
 
