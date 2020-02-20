@@ -19,23 +19,24 @@ object VectorMeanClustering extends ClusteringAlgorithm {
   // cluster means keep track of size too so they can be added and for loss calculation
   case class ClusterParam(mean: DenseVector[Float], size: Double)
   type Instance = DenseVector[Float]
-  type Hyperparams = Unit
 
   // k-means loss: sum of square distances from mean
-  def computeLoss(
+  def getInstanceLoss(
     instance: Instance,
-    param: ClusterParam,
-    hyperparams: Hyperparams
+    param: ClusterParam
   ): Double = {
     val displacement = instance - param.mean
     (displacement dot displacement).toDouble / 175.0 // adjust so interpolation is reasonable
   }
 
+  override def getSingleInstanceParameter(
+    instance: Instance
+  ): ClusterParam = ClusterParam(instance, 1)
+
   // just take the mean of all of the elements in the cluster (in expectation)
-  def estimateParameter(
+  def estimateParameterSoft(
     instances: Vector[Instance],
-    assignmentProbabilities: Vector[Double],
-    hyperparams: Hyperparams
+    assignmentProbabilities: Vector[Double]
   ): ClusterParam = {
     val size = assignmentProbabilities.sum
     val mean = DenseVector.zeros[Float](instances.head.length)
@@ -47,14 +48,8 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     ClusterParam(mean, size)
   }
 
-  override def getSingleInstanceParameter(
-    instance: Instance,
-    hyperparams: Hyperparams
-  ): ClusterParam = ClusterParam(instance, 1)
-
   override def estimateParameterHard(
-    instances: Vector[Instance],
-    hyperparams: Hyperparams
+    instances: Vector[Instance]
   ): ClusterParam = {
     val size = instances.size
     val mean = DenseVector.zeros[Float](instances.head.length)
@@ -71,8 +66,7 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams
+    rightParam: ClusterParam
   ): ClusterParam = {
     val size = leftParam.size + rightParam.size
     val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
@@ -86,14 +80,12 @@ object VectorMeanClustering extends ClusteringAlgorithm {
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams,
-    sanityCheck: Boolean = true
+    rightParam: ClusterParam
   ): Double = {
-    val param = mergeParams(instances, left, leftParam, right, rightParam, hyperparams)
+    val param = mergeParams(instances, left, leftParam, right, rightParam)
     val newLoss = (left.values ++ right.values)
-      .foldMap(i => computeLoss(instances(i), param, hyperparams))
-    if(sanityCheck && !(newLoss > left.loss && newLoss > right.loss)) {
+      .foldMap(i => getInstanceLoss(instances(i), param))
+    if(!(newLoss > left.loss && newLoss > right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println("===== LEFT ===== : " + left)
       println("== LEFT PARAM == : " + leftParam)

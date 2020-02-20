@@ -114,15 +114,14 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runVerbWiseAgglomerative(
-    algorithm: ClusteringAlgorithm)(
+    algorithm: AgglomerativeClusteringAlgorithm)(
     verbLabel: String,
     verbIds: Vector[VerbId],
-    makeInstance: VerbId => algorithm.Instance,
-    hyperparams: algorithm.Hyperparams)(
+    makeInstance: VerbId => algorithm.Instance)(
     implicit Log: TreeLogger[IO, String]
   ): MergeTree[VerbId] = {
     val instances = verbIds.map(makeInstance)
-    algorithm.runAgglomerativeClustering(instances, hyperparams)._1.map(verbIds)
+    algorithm.runFullAgglomerativeClustering(instances)._1.map(verbIds)
   }
 
   def runVerbSenseAgglomerativeClustering[VerbType](
@@ -161,21 +160,19 @@ object FrameInductionApp extends CommandIOApp(
                 case (tree, (next, newRank)) => MergeTree.Merge(newRank, 0.0, tree, MergeTree.Leaf(0.0, next))
               }
           case VerbSenseConfig.EntropyOnly =>
-            runVerbWiseAgglomerative(MinEntropyClustering)(
-              verbLabel, verbIds, (v => makeInstance(v)._1), MinEntropyClustering.Hyperparams(clauseVocab.size)
+            runVerbWiseAgglomerative(new MinEntropyClustering(clauseVocab.size))(
+              verbLabel, verbIds, (v => makeInstance(v)._1)
             )
           case VerbSenseConfig.ELMoOnly =>
             runVerbWiseAgglomerative(VectorMeanClustering)(
-              verbLabel, verbIds, (v => makeInstance(v)._2), ()
+              verbLabel, verbIds, (v => makeInstance(v)._2)
             )
           case VerbSenseConfig.Interpolated(lambda) =>
-            val algorithm = new CompositeClusteringAlgorithm {
-              val _1 = MinEntropyClustering; val _2 = VectorMeanClustering
+            val algorithm = new CompositeAgglomerativeClusteringAlgorithm {
+              val _1 = new MinEntropyClustering(clauseVocab.size); val _2 = VectorMeanClustering;
+              val _1Lambda = lambda                              ; val _2Lambda = 1.0 - lambda
             }
-            runVerbWiseAgglomerative(algorithm)(
-              verbLabel, verbIds, makeInstance,
-              algorithm.Hyperparams(MinEntropyClustering.Hyperparams(clauseVocab.size), (), lambda)
-            )
+            runVerbWiseAgglomerative(algorithm)(verbLabel, verbIds, makeInstance)
         }
         verbType -> clustering
       }
@@ -231,10 +228,6 @@ object FrameInductionApp extends CommandIOApp(
     interpolationFactor: Double)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[MergeTree[QuestionId]] = {
-    val algorithm = new CompositeClusteringAlgorithm {
-      val _1 = MinEntropyClustering; val _2 = MinEntropyClustering
-    }
-
     val featurefulInstances = instances.toList.flatMap { case (sid, verbs) =>
       verbs.toList.flatMap { case (verbIndex, qaPairs) =>
         val verbId = VerbId(sid, verbIndex)
@@ -272,13 +265,16 @@ object FrameInductionApp extends CommandIOApp(
       )
       questionTemplateCounts -> tokenDists
     }.toVector
-    val hyperparams = algorithm.Hyperparams(
-      algorithm._1.Hyperparams(questionTemplateVocab.size),
-      algorithm._2.Hyperparams(tokenVocab.size),
-      interpolationFactor
-    )
+
+    val algorithm = new CompositeAgglomerativeClusteringAlgorithm {
+      val _1 = new MinEntropyClustering(questionTemplateVocab.size)
+      val _1Lambda = interpolationFactor
+      val _2 = new MinEntropyClustering(tokenVocab.size)
+      val _2Lambda = 1.0 - interpolationFactor
+    }
+
     IO {
-      algorithm.runAgglomerativeClustering(indexedInstances, hyperparams)._1.map(
+      algorithm.runFullAgglomerativeClustering(indexedInstances)._1.map(
         i => featurefulInstances(i)._1
       )
     }

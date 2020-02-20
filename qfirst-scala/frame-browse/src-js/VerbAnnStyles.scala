@@ -568,7 +568,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
     height(80 %%)
   )
 
-  val frameContainer = style()
+  val frameContainer = style(
+    userSelect.none
+  )
   val chosenFrameContainer = style(
     borderStyle.solid,
     borderColor(c"#000"),

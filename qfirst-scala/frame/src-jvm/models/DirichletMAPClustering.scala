@@ -14,28 +14,26 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
-object DirichletMAPClustering extends ClusteringAlgorithm {
+class DirichletMAPClustering(
+  vocabSize: Int,
+  clusterConcentrationParameter: Double
+) extends ClusteringAlgorithm {
+
   type ClusterParam = DenseMultinomial
   type Instance = Map[Int, Int]
-  case class Hyperparams(
-    vocabSize: Int,
-    clusterConcentrationParameter: Double
-  )
 
-  def computeLoss(
+  def getInstanceLoss(
     instance: Instance,
-    param: ClusterParam,
-    hyperparams: Hyperparams
+    param: ClusterParam
   ): Double = {
     instance.iterator.map { case (item, count) =>
       math.log(param.probabilityOf(item)) * count
     }.sum * -1
   }
 
-  def estimateParameter(
+  def estimateParameterSoft(
     instances: Vector[Instance],
-    assignmentProbabilities: Vector[Double],
-    hyperparams: Hyperparams
+    assignmentProbabilities: Vector[Double]
   ): ClusterParam = {
     val pseudoCounts = instances.iterator
       .zip(assignmentProbabilities.iterator)
@@ -44,7 +42,7 @@ object DirichletMAPClustering extends ClusteringAlgorithm {
         instance.transform { case (_, c) => prob * c } // expected counts
       }.foldLeft(Map.empty[Int, Double])(_ |+| _)
     dirichletPosteriorFromSparseNew(
-      pseudoCounts, hyperparams.vocabSize, hyperparams.clusterConcentrationParameter
+      pseudoCounts, vocabSize, clusterConcentrationParameter
     )
   }
 }

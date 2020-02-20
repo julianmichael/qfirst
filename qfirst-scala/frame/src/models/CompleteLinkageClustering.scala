@@ -12,51 +12,35 @@ import io.circe.generic.JsonCodec
 
 import scala.collection.immutable.Vector
 
-object CompleteLinkageClustering extends ClusteringAlgorithm {
+class CompleteLinkageClustering(
+  distances: Array[Array[Double]] // fuzzy eq neg log probs
+) extends AgglomerativeClusteringAlgorithm {
   type ClusterParam = Set[Int] // DenseVector[Double] // boolean sets
   type Instance = Int // DenseVector[Double] // fuzzy eq neg log probs
-  type Hyperparams = Array[Array[Double]] // fuzzy eq neg log probs
   // case class Hyperparams(vocabSize: Int)
 
   // loss of a cluster is max distance between any two elements
-  def computeLoss(
+  def getInstanceLoss(
     instance: Instance,
     param: ClusterParam,
-    hyperparams: Hyperparams
   ): Double = {
-    param.map(i => hyperparams(i)(instance)).max
+    param.map(i => distances(i)(instance)).max
   }
 
-  // to make agglom work. assumes all instances included in cluster.
-  // TODO we should really just separate agglom. clustering into a different trait
-  def estimateParameter(
-    instances: Vector[Instance],
-    assignmentProbabilities: Vector[Double],
-    hyperparams: Hyperparams
+  def getSingleInstanceParameter(
+    instance: Instance
   ): ClusterParam = {
-    instances.toSet
+    Set(instance)
   }
 
-  override def aggregateLosses(
-    losses: Vector[Double]
-  ): Double = losses.max
-
-  override def getLossChangePriority(
-    newLoss: Double,
-    leftLoss: Double,
-    rightLoss: Double
-  ) = List(newLoss, leftLoss, rightLoss).max // though newLoss should always be biggest
-
-  // only need to consider pairs that cross between clusters to find the new max pairwise distance
   override def mergeParams(
     instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams
-  ): Set[Int] = {
-    (left.values ++ right.values).toSet
+    rightParam: ClusterParam
+  ): ClusterParam = {
+    leftParam union rightParam
   }
 
   // only need to consider pairs that cross between clusters to find the new max pairwise distance
@@ -65,26 +49,31 @@ object CompleteLinkageClustering extends ClusteringAlgorithm {
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams,
-    sanityCheck: Boolean = true
+    rightParam: ClusterParam
   ): Double = {
     val leftValues = left.values
     val rightValues = right.values
     val param = (leftValues ++ rightValues).toSet
-    val newLoss = leftValues.flatMap { lv =>
-      rightValues.map { rv =>
-        hyperparams(lv)(rv)
+    val newLoss = leftParam.iterator.flatMap { lv =>
+      rightParam.iterator.map { rv =>
+        distances(lv)(rv)
       }
     }.max
     val loss = List(newLoss, left.loss, right.loss).max
-    if(sanityCheck && !(newLoss >= left.loss && newLoss >= right.loss)) {
+    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(left)
       println(right)
       println(newLoss)
-        ???
+      ???
     }
     loss
   }
+
+  override def getLossChangePriority(
+    newLoss: Double,
+    leftLoss: Double,
+    rightLoss: Double
+  ) = List(newLoss, leftLoss, rightLoss).max // though newLoss should always be biggest?
+
 }

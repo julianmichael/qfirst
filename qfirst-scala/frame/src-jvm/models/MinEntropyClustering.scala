@@ -17,16 +17,16 @@ import scala.collection.immutable.Vector
 
 // same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
 // can also be regarded as "MLE clustering"
-object MinEntropyClustering extends ClusteringAlgorithm {
+class MinEntropyClustering(
+  vocabSize: Int
+) extends ClusteringAlgorithm {
   case class ClusterParam(counts: DenseVector[Double], total: Double)
   type Instance = Map[Int, Double] // sparse soft counts
-  case class Hyperparams(vocabSize: Int)
 
   // loss is entropy * num elements (same as likelihood under MLE in our case)
-  def computeLoss(
+  def getInstanceLoss(
     instance: Instance,
-    param: ClusterParam,
-    hyperparams: Hyperparams
+    param: ClusterParam
   ): Double = {
     instance.iterator.map { case (item, count) =>
       math.log(param.counts(item) / param.total) * count
@@ -34,12 +34,11 @@ object MinEntropyClustering extends ClusteringAlgorithm {
   }
 
   // just get MLE by counting
-  def estimateParameter(
+  def estimateParameterSoft(
     instances: Vector[Instance],
-    assignmentProbabilities: Vector[Double],
-    hyperparams: Hyperparams
+    assignmentProbabilities: Vector[Double]
   ): ClusterParam = {
-    val arr = new Array[Double](hyperparams.vocabSize)
+    val arr = new Array[Double](vocabSize)
     var total = 0.0
     var numInstances = 0.0
     instances.iterator
@@ -62,8 +61,7 @@ object MinEntropyClustering extends ClusteringAlgorithm {
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams
+    rightParam: ClusterParam
   ): ClusterParam = {
     val counts = leftParam.counts + rightParam.counts
     val total = leftParam.total + rightParam.total
@@ -76,16 +74,14 @@ object MinEntropyClustering extends ClusteringAlgorithm {
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
-    rightParam: ClusterParam,
-    hyperparams: Hyperparams,
-    sanityCheck: Boolean = true
+    rightParam: ClusterParam
   ): Double = {
-    val param = mergeParams(instances, left, leftParam, right, rightParam, hyperparams)
+    val param = mergeParams(instances, left, leftParam, right, rightParam)
     val newLoss = param.counts.activeValuesIterator
       .filter(_ > 0.0) // prevent log of 0
       .map(c => c * log(c / param.total)) // count * log probability = log likelihood
       .sum * -1.0
-    if(sanityCheck && !(newLoss >= left.loss && newLoss >= right.loss)) {
+    if(!(newLoss >= left.loss && newLoss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(instances)
       println(left)

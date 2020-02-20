@@ -30,7 +30,7 @@ object Coindexing {
       )
       fuzzyEquivMatrix(i)(j) = score
     }
-    val (mergeTree, _) = CompleteLinkageClustering.runAgglomerativeClustering(indices, fuzzyEquivMatrix)
+    val (mergeTree, _) = new CompleteLinkageClustering(fuzzyEquivMatrix).runFullAgglomerativeClustering(indices)
     val coindexingTree = mergeTree.map(clausalQVocab.getItem)
     coindexingTree
   }
