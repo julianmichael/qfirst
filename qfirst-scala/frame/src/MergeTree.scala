@@ -20,49 +20,57 @@ import io.circe.generic.JsonCodec
 import scala.annotation.tailrec
 
 /*@JsonCodec */sealed trait MergeTree[A] {
-  def rank: Int
   def loss: Double
   def values: Vector[A]
   def valuesWithLosses: Vector[(Double, A)]
 
   import MergeTree._
 
+  def deltaOpt: Option[Double] = this match {
+    case Leaf(_, _) => None
+    case Merge(loss, left, right) => Some(loss - left.loss - right.loss)
+  }
+
   def map[B](f: A => B): MergeTree[B] = this match {
     case Leaf(l, a) => Leaf(l, f(a))
-    case Merge(r, l, left, right) => Merge(r, l, left.map(f), right.map(f))
+    case Merge(l, left, right) => Merge(l, left.map(f), right.map(f))
   }
 
-  // TODO fix interactions with loss / rank
+  // TODO fix interactions with loss
   def flatMap[B](f: A => MergeTree[B]): MergeTree[B] = this match {
     case Leaf(l, a) => f(a)
-    case Merge(r, l, left, right) => Merge(r, l, left.flatMap(f), right.flatMap(f))
+    case Merge(l, left, right) => Merge(l, left.flatMap(f), right.flatMap(f))
   }
 
-  def mapRank(f: Int => Int): MergeTree[A] = MergeTree.cata[A, MergeTree[A]](
-    MergeTree.embed[A] andThen {
-      case Merge(rank, loss, l, r) => Merge(f(rank), loss, l, r)
-      case x => x
-    }
-  )(this)
-
-  // TODO fix ranks
   def cutMap[B](
     shouldKeep: Merge[A] => Boolean,
     f: MergeTree[A] => B
   ): MergeTree[B] = this match {
     case l @ Leaf(loss, _) => Leaf(loss, f(l))
-    case m @ Merge(rank, loss, left, right) =>
+    case m @ Merge(loss, left, right) =>
       if(shouldKeep(m)) {
-        Merge(rank, loss, left.cutMap(shouldKeep, f), right.cutMap(shouldKeep, f))
+        Merge(loss, left.cutMap(shouldKeep, f), right.cutMap(shouldKeep, f))
       } else Leaf(loss, f(m))
   }
 
   // TODO: cut at N?
 
-  // TODO: remove this. unsafe since ranks aren't preserved
-  def cutMapAtN[B](n: Int, f: MergeTree[A] => B) = cutMap(
-    _.rank > (rank + 1 - n), f
-  )
+  // def getMinDeltaForNClusters(n: Int): Option[Double] = {
+  //   this.splitToN(scala.math.max(n, 1)).flatMap(_.deltaOpt).minimumOption
+  // }
+
+  def cutToN[B](n: Int) = {
+    var tree = Leaf(this.loss, this): MergeTree[MergeTree[A]]
+    var nextOpt = MergeTree.splitNext(tree)
+    while(nextOpt.exists(_.size <= n)) {
+      tree = nextOpt.get // ok because of exists check
+      nextOpt = MergeTree.splitNext(tree)
+    }
+    tree
+  }
+
+  def cutMapAtN[B](n: Int, f: MergeTree[A] => B) =
+    cutToN(n).map(f)
 
   def cut(shouldKeep: Merge[A] => Boolean): MergeTree[MergeTree[A]] =
     cutMap(shouldKeep, identity)
@@ -87,7 +95,7 @@ import scala.annotation.tailrec
     case _ => false
   }
   def isMerge: Boolean = this match {
-    case Merge(_, _, _, _) => true
+    case Merge(_, _, _) => true
     case _ => false
   }
 
@@ -98,7 +106,7 @@ import scala.annotation.tailrec
   // def extractPureTreesAux[B](index: A => B): Either[(B, MergeTree[A]), Map[B, Vector[MergeTree[A]]]] = {
   //   cata[Map[B, Vector[MergeTree[A]]]](
   //     leaf = (_, value) => Left(index(value) -> this),
-  //     merge = (_, _, left, right) => left
+  //     merge = (_, left, right) => left
   //       .left.toOption.map(_._1).flatMap { b =>
   //         right.left.toOption.map(_._1).filter(_ == b).as(
   //           Left(b -> this)
@@ -114,15 +122,15 @@ import scala.annotation.tailrec
 
   // partition by an indexing function, but keep the overarching tree structure.
   // Each returned tree is a like a "view" on the original which ignores values outside its index,
-  // but retains rank/loss values.
+  // but retains loss values.
   def groupBy[B](index: A => B): Map[B, MergeTree[A]] = {
     cata[Map[B, MergeTree[A]]](
       leaf = (loss, value) => Map(index(value) -> Leaf(loss, value)),
-      merge = (rank, loss, left, right) => left.merge(right).transform {
+      merge = (loss, left, right) => left.merge(right).transform {
         case (_, treeIor) => treeIor match {
           case Ior.Left(tree) => tree
           case Ior.Right(tree) => tree
-          case Ior.Both(l, r) => Merge(rank, loss, l, r)
+          case Ior.Both(l, r) => Merge(loss, l, r)
         }
       }
     )
@@ -131,7 +139,7 @@ import scala.annotation.tailrec
   // returns Some if value appears at most once in the merge tree
   def clustersForValue(value: A): Option[List[MergeTree[A]]] = this match {
     case Leaf(_, `value`) => Some(List(this)) // 0 because thresholding doesn't affect leaves
-    case Merge(_, loss, left, right) =>
+    case Merge(loss, left, right) =>
       left.clustersForValue(value)
         .orElse(right.clustersForValue(value))
         .map(this :: _)
@@ -142,20 +150,20 @@ import scala.annotation.tailrec
 
   def cata[B](
     leaf: (Double, A) => B,
-    merge: (Int, Double, B, B) => B
+    merge: (Double, B, B) => B
   ): B = MergeTree.cata(MergeTree.makeAlgebra(leaf, merge))(this)
 
   def depth = cata[Int](
     leaf = (_, _) => 0,
-    merge = (_, _, l, r) => scala.math.max(l, r) + 1
+    merge = (_, l, r) => scala.math.max(l, r) + 1
   )
 
   def toJsonStringSafe(implicit e: io.circe.Encoder[A]) = {
     import io.circe.syntax._
     cata[Vector[String]](
       leaf = (loss, value) => Vector(Leaf(loss, value).asJson.noSpaces),
-      merge = (rank, loss, left, right) => Vector(
-        Vector("{\"rank\": " + rank.asJson.noSpaces + ", \"loss\": " + loss.asJson.noSpaces + ", \"left\": "),
+      merge = (loss, left, right) => Vector(
+        Vector("{\"loss\": " + loss.asJson.noSpaces + ", \"left\": "),
         left,
         Vector(", \"right\": "),
         right,
@@ -168,12 +176,10 @@ object MergeTree {
 
   def createBalancedTree[A](inputs: NonEmptyList[A]): MergeTree[A] = {
     var nodes: List[MergeTree[A]] = inputs.toList.map(a => Leaf(0.0, a))
-    var lastRank = 0
     while(nodes.size > 1) {
       nodes = nodes.grouped(2).map(_.toList).flatMap {
         case l :: r :: Nil =>
-          lastRank = lastRank + 1
-          List(Merge(lastRank, 0.0, l, r))
+          List(Merge(0.0, l, r))
         case x => x
       }.toList
     }
@@ -184,55 +190,65 @@ object MergeTree {
   //   val maxLoss = trees.map(_.loss).max
   //   trees.flatMap(_.splitByPredicate(_.loss >= maxLoss)) -> maxLoss
   // }
-  def clusterSplittings[A](trees: Vector[MergeTree[A]]) = {
-    trees #:: clusterSplittingsAux(trees, trees.map(_.loss).max)
-  }
-  private[this] def clusterSplittingsAux[A](trees: Vector[MergeTree[A]], maxLoss: Double): Stream[Vector[MergeTree[A]]] = {
-    if(trees.forall(_.isLeaf)) Stream.empty[Vector[MergeTree[A]]] else {
-      val newTrees = trees.flatMap(_.splitWhile(_.loss >= maxLoss))
-      if(newTrees.forall(_.isLeaf)) Stream(newTrees) else {
-        val newMaxLoss = newTrees.filter(_.isMerge).map(_.loss).max
-        newTrees #:: clusterSplittingsAux(newTrees, newMaxLoss)
-      }
+  def clusterSplittings[A](trees: Vector[MergeTree[A]]): Stream[Vector[MergeTree[A]]] = {
+    trees #:: trees.flatMap(_.deltaOpt).maximumOption.foldMap { maxDelta =>
+      val newTrees = trees.flatMap(t =>
+        MergeTree.merge.getOption(t)
+          .filter(_.delta >= maxDelta)
+          .fold(Vector(t))(m => Vector(m.left, m.right))
+      )
+      clusterSplittings(newTrees)
     }
   }
 
-  type Algebra[B, A] = Either[(Double, B), (Int, Double, A, A)] => A
-  type AlgebraM[F[_], B, A] = Either[(Double, B), (Int, Double, A, A)] => F[A]
+  def splitNext[A](tree: MergeTree[MergeTree[A]]): Option[MergeTree[MergeTree[A]]] = {
+    tree.values.flatMap(_.deltaOpt).maximumOption.map(maxDelta =>
+      tree.flatMap(innerTree =>
+        MergeTree.merge.getOption(innerTree)
+          .filter(_.delta >= maxDelta)
+          .fold(Leaf(0.0, innerTree): MergeTree[MergeTree[A]])(m =>
+            Merge(m.loss, Leaf(m.left.loss, m.left), Leaf(m.right.loss, m.right))
+          )
+      )
+    )
+  }
+
+  type Algebra[B, A] = Either[(Double, B), (Double, A, A)] => A
+  type AlgebraM[F[_], B, A] = Either[(Double, B), (Double, A, A)] => F[A]
   def makeAlgebra[B, A](
     leaf: (Double, B) => A,
-    merge: (Int, Double, A, A) => A
+    merge: (Double, A, A) => A
   ): Algebra[B, A] = {
-    (params: Either[(Double, B), (Int, Double, A, A)]) => params match {
+    (params: Either[(Double, B), (Double, A, A)]) => params match {
       case Left((loss, value)) => leaf(loss, value)
-      case Right((rank, loss, left, right)) => merge(rank, loss, left, right)
+      case Right((loss, left, right)) => merge(loss, left, right)
     }
   }
   def makeAlgebraM[F[_], B, A](
     leaf: (Double, B) => F[A],
-    merge: (Int, Double, A, A) => F[A]
+    merge: (Double, A, A) => F[A]
   ): AlgebraM[F, B, A] = {
-    (params: Either[(Double, B), (Int, Double, A, A)]) => params match {
+    (params: Either[(Double, B), (Double, A, A)]) => params match {
       case Left((loss, value)) => leaf(loss, value)
-      case Right((rank, loss, left, right)) => merge(rank, loss, left, right)
+      case Right((loss, left, right)) => merge(loss, left, right)
     }
   }
 
-  type Coalgebra[B, A] = A => Either[(Double, B), (Int, Double, A, A)]
-  type CoalgebraM[F[_], B, A] = A => F[Either[(Double, B), (Int, Double, A, A)]]
+  type Coalgebra[B, A] = A => Either[(Double, B), (Double, A, A)]
+  type CoalgebraM[F[_], B, A] = A => F[Either[(Double, B), (Double, A, A)]]
 
   def embed[A]: Algebra[A, MergeTree[A]] = makeAlgebra[A, MergeTree[A]](
-    Leaf(_, _), Merge(_, _, _, _)
+    Leaf(_, _), Merge(_, _, _)
   )
   def embedM[F[_]: Applicative, A]: AlgebraM[F, A, MergeTree[A]] =
     embed[A] andThen Applicative[F].pure[MergeTree[A]]
 
   def project[A]: Coalgebra[A, MergeTree[A]] = (tree: MergeTree[A]) => tree match {
     case Leaf(loss, value) => Left(loss -> value)
-    case Merge(rank, loss, left, right) => Right((rank, loss, left, right))
+    case Merge(loss, left, right) => Right((loss, left, right))
   }
   def projectM[F[_]: Applicative, A]: CoalgebraM[F, A, MergeTree[A]] = {
-    project[A] andThen Applicative[F].pure[Either[(Double, A), (Int, Double, MergeTree[A], MergeTree[A])]]
+    project[A] andThen Applicative[F].pure[Either[(Double, A), (Double, MergeTree[A], MergeTree[A])]]
   }
 
   import cats.Monad
@@ -244,22 +260,22 @@ object MergeTree {
   ): A => F[C] = (a: A) => {
     def loop( // TODO all below
       toVisit: List[A],
-      toCollect: List[Either[(Int, Double), F[C]]]
+      toCollect: List[Either[Double, F[C]]]
     ): F[C] = toCollect match {
-      case Right(rightM) :: Right(leftM) :: Left((rank, loss)) :: tail =>
+      case Right(rightM) :: Right(leftM) :: Left(loss) :: tail =>
         // eagerly merge to keep the stack size small
         val merged = for {
           left <- leftM
           right <- rightM
-          merge <- constructM(Right((rank, loss, left, right)))
+          merge <- constructM(Right((loss, left, right)))
         } yield merge
         loop(toVisit, Right(merged) :: tail)
       case _ => toVisit match {
         case a :: next => destructM(a).flatMap {
           case Left((loss, value)) =>
             loop(next, Right(constructM(Left(loss -> value))) :: toCollect)
-          case Right((rank, loss, left, right)) =>
-            loop(left :: right :: next, Left(rank -> loss) :: toCollect)
+          case Right((loss, left, right)) =>
+            loop(left :: right :: next, Left(loss) :: toCollect)
         }
         case Nil => toCollect.head.right.get // should always work
       }
@@ -281,17 +297,17 @@ object MergeTree {
     @tailrec
     def loop(
       toVisit: List[A],
-      toCollect: List[Either[(Int, Double), C]]
+      toCollect: List[Either[Double, C]]
     ): C = toCollect match {
-      case Right(right) :: Right(left) :: Left((rank, loss)) :: tail =>
+      case Right(right) :: Right(left) :: Left(loss) :: tail =>
         // eagerly merge to keep the stack size small
-        loop(toVisit, Right(construct(Right((rank, loss, left, right)))) :: tail)
+        loop(toVisit, Right(construct(Right((loss, left, right)))) :: tail)
       case _ => toVisit match {
         case a :: next => destruct(a) match {
           case Left((loss, value)) =>
             loop(next, Right(construct(Left(loss -> value))) :: toCollect)
-          case Right((rank, loss, left, right)) =>
-            loop(left :: right :: next, Left(rank -> loss) :: toCollect)
+          case Right((loss, left, right)) =>
+            loop(left :: right :: next, Left(loss) :: toCollect)
         }
         case Nil => toCollect.head.right.get
       }
@@ -313,11 +329,11 @@ object MergeTree {
     @tailrec
     def loop(
       toVisit: List[A],
-      toCollect: List[Either[(Int, Double), C]]
+      toCollect: List[Either[Double, C]]
     ): Either[E, C] = toCollect match {
-      case Right(right) :: Right(left) :: Left((rank, loss)) :: tail =>
+      case Right(right) :: Right(left) :: Left(loss) :: tail =>
         // eagerly merge to keep the stack size small
-        constructM(Right((rank, loss, left, right))) match {
+        constructM(Right((loss, left, right))) match {
           case Right(merged) => loop(toVisit, Right(merged) :: tail)
           case Left(error) => Left(error)
         }
@@ -329,8 +345,8 @@ object MergeTree {
               case Left(error) => Left(error)
               case Right(leaf) => loop(next, Right(leaf) :: toCollect)
             }
-          case Right(Right((rank, loss, left, right))) =>
-            loop(left :: right :: next, Left(rank -> loss) :: toCollect)
+          case Right(Right((loss, left, right))) =>
+            loop(left :: right :: next, Left(loss) :: toCollect)
         }
         case Nil => Right(toCollect.head.right.get) // should always work
       }
@@ -372,19 +388,18 @@ object MergeTree {
 
   @Lenses @JsonCodec case class Leaf[A](
     loss: Double, value: A) extends MergeTree[A] {
-    def rank: Int = 0
     def values: Vector[A] = Vector(value)
     def valuesWithLosses: Vector[(Double, A)] = Vector(loss -> value)
   }
   object Leaf
   @Lenses case class Merge[A](
-    rank: Int,
     loss: Double,
     left: MergeTree[A],
     right: MergeTree[A]
   ) extends MergeTree[A] {
     def values: Vector[A] = left.values ++ right.values
     def valuesWithLosses: Vector[(Double, A)] = left.valuesWithLosses ++ right.valuesWithLosses
+    def delta: Double = loss - left.loss - right.loss
   }
   object Merge
 
@@ -397,38 +412,29 @@ object MergeTree {
         leaf = (loss, value) => Json.obj(
           "loss" -> loss.asJson, "value" -> value.asJson
         ),
-        merge = (rank, loss, left, right) => Json.obj(
-          "rank" -> rank.asJson, "loss" -> loss.asJson, "left" -> left, "right" -> right
+        merge = (loss, left, right) => Json.obj(
+          "loss" -> loss.asJson, "left" -> left, "right" -> right
         )
       ))
   implicit def mergeTreeDecoder[A: Decoder]: Decoder[MergeTree[A]] = {
     Decoder.instance[MergeTree[A]](
       anaEither[DecodingFailure, ACursor, A](c =>
-        if(c.downField("rank").succeeded) {
-          for {
-            rank <- c.downField("rank").as[Int]
-            loss <- c.downField("loss").as[Double]
-          } yield Right((rank, loss, c.downField("left"), c.downField("right")))
-        } else {
+        if(c.downField("value").succeeded) {
           for {
             loss <- c.downField("loss").as[Double]
             value <- c.downField("value").as[A]
           } yield Left((loss, value))
+        } else {
+          for {
+            loss <- c.downField("loss").as[Double]
+          } yield Right((loss, c.downField("left"), c.downField("right")))
         }
       )
     )
   }
 
-  // TODO add if needed
-  // def leaf[P, A] = GenPrism[MergeTree[P, A], Leaf[P, A]]
-  // def merge[P, A] = GenPrism[MergeTree[P, A], Merge[P, A]]
-  // def param[P1, P2, A] = PLens[MergeTree[P1, A], MergeTree[P2, A], P1, P2](
-  //   _.param)(p2 => mt =>
-  //   mt match {
-  //     case Leaf(_, value) => Leaf(p2, value)
-  //     case Merge(rank, _, left, right) => Merge(rank, p2, left, right)
-  //   }
-  // )
+  def leaf[A] = GenPrism[MergeTree[A], Leaf[A]]
+  def merge[A] = GenPrism[MergeTree[A], Merge[A]]
 
   implicit val mergeTreeFoldable: UnorderedFoldable[MergeTree] = {
     new UnorderedFoldable[MergeTree] {
@@ -437,7 +443,7 @@ object MergeTree {
       // def reduceLeftTo[A, B](fa: F[A])(f: A => B)(g: (B, A) => B): B = {
       //   fa match {
       //     case Leaf(_, value) => f(value)
-      //     case Merge(_, _, left, right) =>
+      //     case Merge(_, left, right) =>
       //       foldLeft(right, reduceLeftTo(left)(f)(g))(g)
       //   }
       // }
@@ -446,26 +452,26 @@ object MergeTree {
       // def reduceRightTo[A, B](fa: F[A])(f: A => B)(g: (A, Eval[B]) => Eval[B]): Eval[B] = {
       //   fa match {
       //     case Leaf(_, value) => Eval.later(f(value))
-      //     case Merge(_, _, left, right) =>
+      //     case Merge(_, left, right) =>
       //       foldRight(left, reduceRightTo(right)(f)(g))(g)
       //   }
       // }
 
       def unorderedFoldMap[A, B: CommutativeMonoid](fa: F[A])(f: A => B): B = fa.cata[B](
         leaf = (_, value) => f(value),
-        merge = (_, _, left, right) => left |+| right
+        merge = (_, left, right) => left |+| right
       )
 
       // def foldLeft[A, B](fa: F[A], b: B)(f: (B, A) => B): B = fa match {
       //   case Leaf(_, value) => f(b, value)
-      //   case Merge(_, _, left, right) =>
+      //   case Merge(_, left, right) =>
       //     foldLeft(right, foldLeft(left, b)(f))(f)
       // }
 
       // def foldRight[A, B](fa: F[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = {
       //   fa match {
       //     case Leaf(_, value) => f(value, lb)
-      //     case Merge(_, _, left, right) =>
+      //     case Merge(_, left, right) =>
       //       foldRight(left, foldRight(right, lb)(f))(f)
       //   }
       // }
