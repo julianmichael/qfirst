@@ -81,7 +81,6 @@ trait AgglomerativeClusteringAlgorithm {
         }
     }
 
-    var nextRank = 1
     while(!stoppingCondition(currentTrees) && currentTrees.size > 1) {
       val i = queues.iterator.minBy { case (k, q) => distances(k)(q.firstKey) }._1
       val (j, newLoss) = queues(i).head
@@ -95,7 +94,7 @@ trait AgglomerativeClusteringAlgorithm {
       queues --= emptyQueues // and remove other now-empty queues
       val (leftTree, leftParam) = currentTrees(i)
       val (rightTree, rightParam) = currentTrees(j)
-      val newTree = MergeTree.Merge(nextRank, newLoss, leftTree, rightTree)
+      val newTree = MergeTree.Merge(newLoss, leftTree, rightTree)
       val newParam = mergeParams(instances, leftTree, leftParam, rightTree, rightParam)
       currentTrees --= List(i, j) // remove i and j from current trees
       // get new merge candidates before adding new cluster back in
@@ -109,7 +108,6 @@ trait AgglomerativeClusteringAlgorithm {
       }.toList
       currentTrees += (i -> (newTree -> newParam)) // now add the new merged cluster to current trees
       queues(i) ++= newMerges // throw them all into queue i. don't need the symmetric case
-      nextRank = nextRank + 1
     }
     currentTrees.values.toVector
   }

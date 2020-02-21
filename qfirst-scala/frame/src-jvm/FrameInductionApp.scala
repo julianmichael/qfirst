@@ -155,9 +155,9 @@ object FrameInductionApp extends CommandIOApp(
         val verbLabel = renderVerbType(verbType)
         val clustering = verbSenseConfig match {
           case VerbSenseConfig.SingleCluster =>
-            NonEmptyList.fromList(verbIds.toList).get.zipWithIndex
-              .reduceLeftTo(p => MergeTree.Leaf(0.0, p._1): MergeTree[VerbId]) {
-                case (tree, (next, newRank)) => MergeTree.Merge(newRank, 0.0, tree, MergeTree.Leaf(0.0, next))
+            NonEmptyList.fromList(verbIds.toList).get
+              .reduceLeftTo(id => MergeTree.Leaf(0.0, id): MergeTree[VerbId]) {
+                case (tree, next) => MergeTree.Merge(0.0, tree, MergeTree.Leaf(0.0, next))
               }
           case VerbSenseConfig.EntropyOnly =>
             runVerbWiseAgglomerative(new MinEntropyClustering(clauseVocab.size))(
@@ -199,9 +199,8 @@ object FrameInductionApp extends CommandIOApp(
       structure -> MergeTree.createBalancedTree(NonEmptyList.fromList(qids.toList).get)
     }
     val clauseTemplates = qidsByStructure.keySet
-    val rankIncrement = baseTrees.unorderedFoldMap(_.rank)
     val structureTree = Coindexing.getCoindexingTree(clauseTemplates, verbCollapsedQAOutputs)
-    structureTree.mapRank(_ + rankIncrement).flatMap(baseTrees)
+    structureTree.flatMap(baseTrees)
   }
 
   def getQuestionClustersFromAggregateQA(
@@ -956,7 +955,7 @@ object FrameInductionApp extends CommandIOApp(
         }
         val avgDepth = clusterTree.cata[DepthAcc](
           leaf = (_, _) => DepthAcc(0, 1),
-          merge = (_, _, l, r) => l.merge(r)
+          merge = (_, l, r) => l.merge(r)
         ).avgDepth
         DepthDatum(vsConfig, numInstances, avgDepth, numInstances.toDouble, avgDepth)
       }
