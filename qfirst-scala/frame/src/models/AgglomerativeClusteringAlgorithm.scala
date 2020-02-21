@@ -121,9 +121,9 @@ trait AgglomerativeClusteringAlgorithm {
 }
 
 trait CompositeAgglomerativeClusteringAlgorithm extends AgglomerativeClusteringAlgorithm {
-  val _1: ClusteringAlgorithm
+  val _1: AgglomerativeClusteringAlgorithm
   val _1Lambda: Double
-  val _2: ClusteringAlgorithm
+  val _2: AgglomerativeClusteringAlgorithm
   val _2Lambda: Double
   type ClusterParam = (_1.ClusterParam, _2.ClusterParam)
   type Instance = (_1.Instance, _2.Instance)
