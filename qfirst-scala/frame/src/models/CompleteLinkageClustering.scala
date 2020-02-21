@@ -28,6 +28,7 @@ class CompleteLinkageClustering(
   }
 
   def getSingleInstanceParameter(
+    index: Int,
     instance: Instance
   ): ClusterParam = {
     Set(instance)

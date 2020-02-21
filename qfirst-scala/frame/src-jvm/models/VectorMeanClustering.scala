@@ -30,6 +30,7 @@ object VectorMeanClustering extends ClusteringAlgorithm {
   }
 
   override def getSingleInstanceParameter(
+    index: Int,
     instance: Instance
   ): ClusterParam = ClusterParam(instance, 1)
 

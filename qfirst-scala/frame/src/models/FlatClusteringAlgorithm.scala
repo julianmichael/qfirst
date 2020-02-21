@@ -22,6 +22,7 @@ trait FlatClusteringAlgorithm {
 
   // override for efficiency
   def getSingleInstanceParameter(
+    index: Int,
     instance: Instance
   ): ClusterParam = {
     estimateParameterHard(Vector(instance))
@@ -65,8 +66,9 @@ trait FlatClusteringAlgorithm {
   ): Vector[ClusterParam] = {
     val rand = new scala.util.Random()
     assert(numClusters >= 1)
+    val firstClusterIndex = rand.nextInt(instances.size)
     val firstCluster = getSingleInstanceParameter(
-      instances(rand.nextInt(instances.size))
+      firstClusterIndex, instances(firstClusterIndex)
     )
     val uniqueInstances = instances.groupBy(x => x).keys.toVector
     val initMinLosses = DenseVector(uniqueInstances.map(getInstanceLoss(_, firstCluster)).toArray)
@@ -89,7 +91,7 @@ trait FlatClusteringAlgorithm {
         }
         newIndex
       }
-      val newCluster = getSingleInstanceParameter(instances(newCenterIndex))
+      val newCluster = getSingleInstanceParameter(newCenterIndex, instances(newCenterIndex))
       val clusterLosses = DenseVector(instances.map(getInstanceLoss(_, newCluster)).toArray)
       val newMinLosses = min(curMinLosses, clusterLosses)
       initPlusPlusAux(instances, chosenInstances + newCenterIndex, curParams ++ Vector(newCluster), numClustersLeft - 1, newMinLosses)
