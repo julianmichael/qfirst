@@ -26,6 +26,11 @@ import scala.annotation.tailrec
 
   import MergeTree._
 
+  def deltaOpt: Option[Double] = this match {
+    case Leaf(_, _) => None
+    case Merge(loss, left, right) => Some(loss - left.loss - right.loss)
+  }
+
   def map[B](f: A => B): MergeTree[B] = this match {
     case Leaf(l, a) => Leaf(l, f(a))
     case Merge(l, left, right) => Merge(l, left.map(f), right.map(f))
@@ -50,18 +55,22 @@ import scala.annotation.tailrec
 
   // TODO: cut at N?
 
-  def getLossForNClusters(n: Int) = {
-    val clusterSplittings = this.clusterSplittings
-    clusterSplittings
-      .drop(n - 1)
-      .headOption
-      .getOrElse(clusterSplittings.last)
-      .map(_.loss).min
+  // def getMinDeltaForNClusters(n: Int): Option[Double] = {
+  //   this.splitToN(scala.math.max(n, 1)).flatMap(_.deltaOpt).minimumOption
+  // }
+
+  def cutToN[B](n: Int) = {
+    var tree = Leaf(this.loss, this): MergeTree[MergeTree[A]]
+    var nextOpt = MergeTree.splitNext(tree)
+    while(nextOpt.exists(_.size <= n)) {
+      tree = nextOpt.get // ok because of exists check
+      nextOpt = MergeTree.splitNext(tree)
+    }
+    tree
   }
 
-  def cutMapAtN[B](n: Int, f: MergeTree[A] => B) = cutMap(
-    _.loss >= getLossForNClusters(n), f
-  )
+  def cutMapAtN[B](n: Int, f: MergeTree[A] => B) =
+    cutToN(n).map(f)
 
   def cut(shouldKeep: Merge[A] => Boolean): MergeTree[MergeTree[A]] =
     cutMap(shouldKeep, identity)
@@ -181,17 +190,27 @@ object MergeTree {
   //   val maxLoss = trees.map(_.loss).max
   //   trees.flatMap(_.splitByPredicate(_.loss >= maxLoss)) -> maxLoss
   // }
-  def clusterSplittings[A](trees: Vector[MergeTree[A]]) = {
-    trees #:: clusterSplittingsAux(trees, trees.map(_.loss).max)
-  }
-  private[this] def clusterSplittingsAux[A](trees: Vector[MergeTree[A]], maxLoss: Double): Stream[Vector[MergeTree[A]]] = {
-    if(trees.forall(_.isLeaf)) Stream.empty[Vector[MergeTree[A]]] else {
-      val newTrees = trees.flatMap(_.splitWhile(_.loss >= maxLoss))
-      if(newTrees.forall(_.isLeaf)) Stream(newTrees) else {
-        val newMaxLoss = newTrees.filter(_.isMerge).map(_.loss).max
-        newTrees #:: clusterSplittingsAux(newTrees, newMaxLoss)
-      }
+  def clusterSplittings[A](trees: Vector[MergeTree[A]]): Stream[Vector[MergeTree[A]]] = {
+    trees #:: trees.flatMap(_.deltaOpt).maximumOption.foldMap { maxDelta =>
+      val newTrees = trees.flatMap(t =>
+        MergeTree.merge.getOption(t)
+          .filter(_.delta >= maxDelta)
+          .fold(Vector(t))(m => Vector(m.left, m.right))
+      )
+      clusterSplittings(newTrees)
     }
+  }
+
+  def splitNext[A](tree: MergeTree[MergeTree[A]]): Option[MergeTree[MergeTree[A]]] = {
+    tree.values.flatMap(_.deltaOpt).maximumOption.map(maxDelta =>
+      tree.flatMap(innerTree =>
+        MergeTree.merge.getOption(innerTree)
+          .filter(_.delta >= maxDelta)
+          .fold(Leaf(0.0, innerTree): MergeTree[MergeTree[A]])(m =>
+            Merge(m.loss, Leaf(m.left.loss, m.left), Leaf(m.right.loss, m.right))
+          )
+      )
+    )
   }
 
   type Algebra[B, A] = Either[(Double, B), (Double, A, A)] => A
@@ -380,6 +399,7 @@ object MergeTree {
   ) extends MergeTree[A] {
     def values: Vector[A] = left.values ++ right.values
     def valuesWithLosses: Vector[(Double, A)] = left.valuesWithLosses ++ right.valuesWithLosses
+    def delta: Double = loss - left.loss - right.loss
   }
   object Merge
 
@@ -413,16 +433,8 @@ object MergeTree {
     )
   }
 
-  // TODO add if needed
-  // def leaf[P, A] = GenPrism[MergeTree[P, A], Leaf[P, A]]
-  // def merge[P, A] = GenPrism[MergeTree[P, A], Merge[P, A]]
-  // def param[P1, P2, A] = PLens[MergeTree[P1, A], MergeTree[P2, A], P1, P2](
-  //   _.param)(p2 => mt =>
-  //   mt match {
-  //     case Leaf(_, value) => Leaf(p2, value)
-  //     case Merge(_, left, right) => Merge(p2, left, right)
-  //   }
-  // )
+  def leaf[A] = GenPrism[MergeTree[A], Leaf[A]]
+  def merge[A] = GenPrism[MergeTree[A], Merge[A]]
 
   implicit val mergeTreeFoldable: UnorderedFoldable[MergeTree] = {
     new UnorderedFoldable[MergeTree] {
