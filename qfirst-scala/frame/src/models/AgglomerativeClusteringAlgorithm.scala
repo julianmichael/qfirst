@@ -14,32 +14,29 @@ import scala.collection.immutable.Vector
 
 trait AgglomerativeClusteringAlgorithm {
   type ClusterParam
-  type Instance
+  type Index
 
   def getSingleInstanceParameter(
-    index: Int,
-    instance: Instance
+    index: Index,
   ): ClusterParam
 
   // gets loss for an instance wrt a cluster.
   def getInstanceLoss(
-    instance: Instance,
+    index: Index,
     param: ClusterParam
   ): Double
 
   def mergeParams(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): ClusterParam
 
   def mergeLoss(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): Double
 
@@ -50,19 +47,79 @@ trait AgglomerativeClusteringAlgorithm {
     rightLoss: Double
   ) = newLoss - leftLoss - rightLoss
 
-  def runAgglomerativeClustering(
-    instances: Vector[Instance],
-    stoppingCondition: Map[Int, (MergeTree[Int], ClusterParam)] => Boolean = _ => false
-  ): Vector[(MergeTree[Int], ClusterParam)] = {
-    require(instances.size > 0)
+  def runPartialAgglomerativeClustering(
+    initTrees: Vector[(MergeTree[Index], ClusterParam)]
+  ): Vector[(MergeTree[Index], ClusterParam)] = {
+    val indices = trees.indices.toVector
+    var currentTrees = trees.zipWithIndex.map(_.swap).toMap
 
-    val distances = Array.ofDim[Double](instances.size, instances.size)
+    val distances = Array.ofDim[Double](initTrees.size, initTrees.size)
+
+    import scala.collection.mutable
+    def simOrdering(i: Int) = Ordering.by[Int, (Double, Int)](j => distances(i)(j) -> j)
+    // omit the last instance index because it's covered by all of the other queues
+    val queues = mutable.Map(
+      (0 until instances.size).map(i => i -> mutable.SortedMap.empty[Int, Double](simOrdering(i))): _*
+    )
+    currentTrees.toList.tails.toVector.foreach {
+      case Nil => ()
+      case (leftIndex, (left, leftParam)) :: rights =>
+        if(rights.isEmpty) queues -= leftIndex // remove empty queue
+        else rights.foreach { case (rightIndex, (right, rightParam)) =>
+          val loss = mergeLoss(instances, left, leftParam, right, rightParam)
+          val delta = getLossChangePriority(loss, left.loss, right.loss)
+          distances(leftIndex)(rightIndex) = delta
+          distances(rightIndex)(leftIndex) = delta
+          queues(leftIndex) += (rightIndex -> loss)
+        }
+    }
+
+    var nextRank = 1
+    while(!stoppingCondition(currentTrees) && currentTrees.size > 1) {
+      val i = queues.iterator.minBy { case (k, q) => distances(k)(q.firstKey) }._1
+      val (j, newLoss) = queues(i).head
+
+      queues -= j // remove j from consideration
+      queues(i).clear() // clear i's queue since we'll refresh it
+      val emptyQueues = queues.iterator.flatMap { case (k, q) =>
+        q --= List(i, j)  // remove stale entries for i and j from all queues
+        if(q.isEmpty && k != i) Some(k) else None // track which queues are now empty
+      }
+      queues --= emptyQueues // and remove other now-empty queues
+      val (leftTree, leftParam) = currentTrees(i)
+      val (rightTree, rightParam) = currentTrees(j)
+      val newTree = MergeTree.Merge(nextRank, newLoss, leftTree, rightTree)
+      val newParam = mergeParams(instances, leftTree, leftParam, rightTree, rightParam)
+      currentTrees --= List(i, j) // remove i and j from current trees
+      // get new merge candidates before adding new cluster back in
+      val newMerges = currentTrees.iterator.map { case (k, (right, rightParam)) =>
+        val loss = mergeLoss(instances, newTree, newParam, right, rightParam)
+        val delta = getLossChangePriority(loss, newTree.loss, right.loss)
+        // update distances before inserting anything into queues to keep things consistent
+        distances(i)(k) = delta
+        distances(k)(i) = delta
+        k -> loss
+      }.toList
+      currentTrees += (i -> (newTree -> newParam)) // now add the new merged cluster to current trees
+      queues(i) ++= newMerges // throw them all into queue i. don't need the symmetric case
+      nextRank = nextRank + 1
+    }
+    currentTrees.values.toVector
+  }
+
+  def runAgglomerativeClustering(
+    indices: Vector[Index],
+    stoppingCondition: Map[Int, (MergeTree[Index], ClusterParam)] => Boolean = _ => false
+  ): Vector[(MergeTree[Index], ClusterParam)] = {
+    require(instances.size > 0)
 
     var currentTrees = instances.zipWithIndex.map { case (instance, index) =>
       val param = getSingleInstanceParameter(index, instance)
       val loss = getInstanceLoss(instances(index), param)
       index -> ((MergeTree.Leaf(loss, index): MergeTree[Int]) -> param)
     }.toMap
+
+    val distances = Array.ofDim[Double](instances.size, instances.size)
 
     import scala.collection.mutable
     def simOrdering(i: Int) = Ordering.by[Int, (Double, Int)](j => distances(i)(j) -> j)
