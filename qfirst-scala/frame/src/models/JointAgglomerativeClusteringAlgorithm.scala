@@ -6,7 +6,7 @@ import cats.data.NonEmptyVector
 import cats.implicits._
 
 class JointAgglomerativeClusteringAlgorithm[I, InnerIndex](
-  val innerAlgorithm: ClusteringAlgorithm { type Index = InnerIndex },
+  val innerAlgorithm: AgglomerativeClusteringAlgorithm { type Index = InnerIndex },
   getSubInstances: I => NonEmptyVector[InnerIndex],
   getLossPenalty: Int => Double // should grow monotonically
 ) extends AgglomerativeClusteringAlgorithm {
@@ -25,10 +25,12 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex](
     index: Index,
   ): ClusterParam = {
     val innerIndices = getSubInstances(index)
-    innerAlgorithm.runAgglomerativeClustering(
+    val res = innerAlgorithm.runAgglomerativeClustering(
       innerIndices,
       innerStoppingCondition
     )
+    // println(s"INIT  - ${innerIndices.size}: ${res.size}")
+    res
   }
 
   def getInstanceLoss(
@@ -44,9 +46,11 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex](
     right: MergeTree[Index],
     rightParam: ClusterParam
   ): ClusterParam = {
-    innerAlgorithm.runPartialAgglomerativeClustering(
+    val res = innerAlgorithm.runPartialAgglomerativeClustering(
       leftParam |+| rightParam, innerStoppingCondition
     )
+    // println(s"MERGE - ${leftParam.size + rightParam.size}: ${res.size}")
+    res
   }
 
   def mergeLoss(

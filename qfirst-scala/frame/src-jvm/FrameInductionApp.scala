@@ -114,8 +114,129 @@ object FrameInductionApp extends CommandIOApp(
     )
   }
 
+  def runJointClustering(
+    instances: Instances[InflectedForms, QAPairs],
+    verbVectors: Instances[InflectedForms, DenseVector[Float]],
+    dataset: Dataset)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[InflectedForms, (MergeTree[VerbId], MergeTree[QuestionId])]] = {
+
+    val questionQEntLambda = 2.0
+    val questionTokEntLambda = 1.0
+
+    val getLossPenalty = (numClusters: Int) => scala.math.pow(numClusters, 2.0) / 2.0
+
+    val verbEntLambda: Double = 1.0
+    val verbVecLambda: Double = 1.0
+    val verbNestedLambda: Double = 1.0
+
+    val verbs = instances.values.map { case (verbType, sentMap) =>
+      verbType -> sentMap.toVector.flatMap { case (sid, verbIndices) =>
+        verbIndices.keys.toVector.filter(vi =>
+          instances.values.get(verbType).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty &&
+            verbVectors.values.get(verbType).flatMap(_.get(sid)).flatMap(_.get(vi)).nonEmpty
+        ).map(vi => VerbId(sid, vi))
+      }
+    }.filter(_._2.nonEmpty)
+
+    verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
+      Log.trace(verbType.stem) >> IO {
+        val verbIds = NonEmptyVector.fromVector(_verbIds.take(50)).get
+
+        val verbInstances = instances.values(verbType)
+        val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
+        val verbClauseInstances = verbIds.map { verbId =>
+          val questions = verbInstances(verbId.sentenceId)(verbId.verbIndex).keySet.toList
+          val clauseCounts = ClauseResolution
+            .getResolvedStructures(questions).map(_._1)
+            .foldMap(c => Map(clauseVocab.getIndex(c) -> 1.0))
+          verbId -> clauseCounts
+        }.toVector.toMap
+
+        val verbVectorInstances = verbIds.map { verbId =>
+          verbId -> verbVectors.values(verbType)(verbId.sentenceId)(verbId.verbIndex)
+        }.toVector.toMap
+
+        val questionFeatures = instances.values(verbType).toList.flatMap { case (sid, verbs) =>
+          verbs.toList.flatMap { case (verbIndex, qaPairs) =>
+            val verbId = VerbId(sid, verbIndex)
+            if(!verbIds.exists(_ == verbId)) List() else {
+              val qaPairList = qaPairs.toList
+              ClauseResolution.getResolvedFramePairs(verbType, qaPairList.map(_._1))
+                .zip(qaPairList.map(_._2)).map { case ((frame, slot), answerSpans) =>
+                  val qid = QuestionId(verbId, frame, slot)
+                  val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
+                  val sentenceTokens = dataset.sentences(sid).sentenceTokens
+                  val tokenCounts = answerSpans.map(
+                    _.foldMap(span =>
+                      sentenceTokens.slice(span.begin, span.endExclusive)
+                        .map(_.lowerCase)
+                        .filter(t => !tokensToSkip.contains(t))
+                        .foldMap(t => Map(t -> 1))
+                    )
+                  )
+                  (qid, clauseTemplate -> slot, tokenCounts)
+                }
+            }
+          }
+        }
+
+        val verbIdToQuestionIds = questionFeatures
+          .groupByNel(_._1.verbId)
+          .map { case (verbId, tups) => verbId -> NonEmptyVector.of(tups.head._1, tups.tail.map(_._1): _*) }
+
+        val questionTemplateVocab = Vocab.make(questionFeatures.map(_._2).toSet)
+        val tokenVocab = Vocab.make(questionFeatures.foldMap(_._3.foldMap(_.keySet)))
+
+        val questionClauseInstances = questionFeatures.map { case (qid, questionTemplate, tokenCounts) =>
+          val questionTemplateCounts = Map(
+            questionTemplateVocab.getIndex(questionTemplate) -> 1.0
+          )
+          qid -> questionTemplateCounts
+        }.toMap
+
+        val questionTokenInstances = questionFeatures.map { case (qid, questionTemplate, tokenCounts) =>
+          val tokenDists = tokenCounts.foldMap(
+            _.map { case (tok, count) =>
+              tokenVocab.getIndex(tok) -> (count.toDouble / tokenCounts.size)
+            }
+          )
+          qid -> tokenDists
+        }.toMap
+
+        val questionAlgorithm = new CompositeAgglomerativeClusteringAlgorithm {
+          val _1 = new MinEntropyClustering(questionClauseInstances, questionTemplateVocab.size)
+          val _1Lambda = questionQEntLambda
+          val _2 = new MinEntropyClustering(questionTokenInstances, tokenVocab.size)
+          val _2Lambda = questionTokEntLambda
+        }
+
+        val verbAlgorithm = new CompositeAgglomerativeClusteringAlgorithm {
+          val _1 = new CompositeAgglomerativeClusteringAlgorithm {
+            val _1 = new MinEntropyClustering(verbClauseInstances, clauseVocab.size)
+            val _1Lambda = verbEntLambda
+            val _2 = new VectorMeanClustering(verbVectorInstances)
+            val _2Lambda = verbVecLambda
+          }
+          val _1Lambda = 1.0
+
+          val _2 = new JointAgglomerativeClusteringAlgorithm(
+            questionAlgorithm,
+            verbIdToQuestionIds,
+            getLossPenalty
+          )
+          val _2Lambda = verbNestedLambda
+        }
+        val (verbClustering, verbParam) = verbAlgorithm.runFullAgglomerativeClustering(verbIds)
+        val questionClustering = verbAlgorithm._2.innerAlgorithm
+          .runPartialAgglomerativeClustering(verbParam._2).head._1
+        verbType -> (verbClustering, questionClustering)
+      }
+    }.map(_.toMap)
+  }
+
   def runVerbSenseAgglomerativeClustering[VerbType](
-    verbSenseConfig: VerbSenseConfig,
+    verbSenseConfig: VerbSenseConfig.NonJoint,
     instances: Instances[VerbType, QAPairs],
     elmoVecs: Instances[VerbType, DenseVector[Float]],
     renderVerbType: VerbType => String)(
@@ -310,18 +431,25 @@ object FrameInductionApp extends CommandIOApp(
       for {
         instances <- config.fullInstances.get
         elmoVecs <- config.fullElmo.get
-        verbClusters <- runVerbSenseAgglomerativeClustering(
-          verbSenseConfig = verbSenseConfig,
-          instances = instances,
-          elmoVecs = elmoVecs,
-          renderVerbType = (forms: InflectedForms) => forms.stem
-        )
         dataset <- config.full.get
-        // collapsedQAOutputs <- config.collapsedQAOutputs.get
-        questionClusterTreesByVerb <- getQuestionClusters(
-          instances, verbClusters, dataset
-        )
-        verbClusterModels = verbClusters.map { case (verbInflectedForms, clusterTree) =>
+        verbClusters <- verbSenseConfig match {
+          case VerbSenseConfig.Joint => runJointClustering(instances, elmoVecs, dataset)
+          case vsc: VerbSenseConfig.NonJoint => for {
+            verbClusters <- runVerbSenseAgglomerativeClustering(
+              verbSenseConfig = vsc,
+              instances = instances,
+              elmoVecs = elmoVecs,
+              renderVerbType = (forms: InflectedForms) => forms.stem
+            )
+            // collapsedQAOutputs <- config.collapsedQAOutputs.get
+            questionClusters <- getQuestionClusters(
+              instances, verbClusters, dataset
+            )
+          } yield (
+            verbClusters.keySet intersect questionClusters.keySet
+          ).toList.map(v => v -> (verbClusters(v), questionClusters(v))).toMap
+        }
+        verbClusterModels = verbClusters.map { case (verbInflectedForms, (verbClusterTree, questionClusterTree)) =>
           val clauseSets = instances.values(verbInflectedForms).iterator.flatMap { case (sid, verbMap) =>
             verbMap.iterator.map { case (vi, qas) =>
               val questions = qas.keySet.toList
@@ -333,8 +461,8 @@ object FrameInductionApp extends CommandIOApp(
           }.toMap
           verbInflectedForms -> VerbClusterModel(
             verbInflectedForms,
-            clusterTree,
-            questionClusterTreesByVerb(verbInflectedForms)
+            verbClusterTree,
+            questionClusterTree
             // clauseSets,
             // collapsedQAOutputs(verbInflectedForms).toList
           )
@@ -352,7 +480,7 @@ object FrameInductionApp extends CommandIOApp(
         instances <- config.propBankFullInstances.get
         elmoVecs <- config.propBankFullElmo.get
         verbClusters <- runVerbSenseAgglomerativeClustering(
-          verbSenseConfig = verbSenseConfig,
+          verbSenseConfig = verbSenseConfig.asInstanceOf[VerbSenseConfig.NonJoint], // TODO
           instances = instances,
           elmoVecs = elmoVecs,
           renderVerbType = identity[String]

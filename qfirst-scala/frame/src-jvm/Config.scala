@@ -32,6 +32,7 @@ import freelog.implicits._
 @JsonCodec sealed trait VerbSenseConfig {
   import VerbSenseConfig._
   def modelName = this match {
+    case Joint => "joint"
     case SingleCluster => "single"
     case EntropyOnly => "entropy"
     case ELMoOnly => "elmo"
@@ -40,13 +41,15 @@ import freelog.implicits._
   }
 }
 object VerbSenseConfig {
-  case object SingleCluster extends VerbSenseConfig
-  case object EntropyOnly extends VerbSenseConfig
-  case object ELMoOnly extends VerbSenseConfig
+  case object Joint extends VerbSenseConfig
+  sealed trait NonJoint extends VerbSenseConfig
+  case object SingleCluster extends NonJoint
+  case object EntropyOnly extends NonJoint
+  case object ELMoOnly extends NonJoint
   // case object SetOnly extends VerbSenseConfig
   case class Interpolated(
     entropyLambda: Double
-  ) extends VerbSenseConfig {
+  ) extends NonJoint {
     val elmoLambda: Double = 1.0 - entropyLambda
     def lambdas = List(entropyLambda, elmoLambda)
     assert(lambdas.forall(l => 0.0 < l && l < 1.0))
@@ -55,6 +58,7 @@ object VerbSenseConfig {
     def unapply(s: String) = scala.util.Try(s.toDouble).toOption
   }
   def fromString(s: String) = s match {
+    case "joint" => Some(Joint)
     case "single" => Some(SingleCluster)
     case "entropy" => Some(EntropyOnly)
     case "elmo" => Some(ELMoOnly)

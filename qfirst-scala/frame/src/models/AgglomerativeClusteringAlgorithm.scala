@@ -50,7 +50,7 @@ trait AgglomerativeClusteringAlgorithm {
 
   def runPartialAgglomerativeClustering(
     initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)],
-    stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean
+    stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean = (_, _, _, _) => false
   ): NonEmptyVector[(MergeTree[Index], ClusterParam)] = {
     val indices = initTrees.toVector.indices
     var currentTrees = initTrees.zipWithIndex.map(_.swap).toVector.toMap
