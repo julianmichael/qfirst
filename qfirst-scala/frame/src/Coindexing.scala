@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import cats.data.NonEmptyVector
+
 import qfirst.clause.ArgStructure
 import qfirst.frame.models.CompleteLinkageClustering
 
@@ -30,7 +32,8 @@ object Coindexing {
       )
       fuzzyEquivMatrix(i)(j) = score
     }
-    val (mergeTree, _) = new CompleteLinkageClustering(fuzzyEquivMatrix).runFullAgglomerativeClustering(indices)
+    val (mergeTree, _) = new CompleteLinkageClustering(fuzzyEquivMatrix)
+      .runFullAgglomerativeClustering(NonEmptyVector.fromVector(indices).get)
     val coindexingTree = mergeTree.map(clausalQVocab.getItem)
     coindexingTree
   }

@@ -14,7 +14,7 @@ import scala.collection.immutable.Vector
 
 trait ClusteringAlgorithm extends AgglomerativeClusteringAlgorithm with FlatClusteringAlgorithm {
   type ClusterParam
-  type Instance
+  type Index
 
   // override eg for max
   def aggregateLosses(
@@ -23,30 +23,26 @@ trait ClusteringAlgorithm extends AgglomerativeClusteringAlgorithm with FlatClus
 
   // should be overridden for efficiency, if possible
   def mergeParams(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): ClusterParam = {
     val indices = left.values ++ right.values
-    val theseInstances = indices.map(instances.apply)
-    val param = estimateParameterHard(theseInstances)
+    val param = estimateParameterHard(indices)
     param
   }
 
   // should be overridden for efficiency, if possible
   def mergeLoss(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): Double = {
     val indices = left.values ++ right.values
-    val theseInstances = indices.map(instances.apply)
-    val param = estimateParameterHard(theseInstances)
-    val loss = aggregateLosses(theseInstances.map(getInstanceLoss(_, param)))
+    val param = estimateParameterHard(indices)
+    val loss = aggregateLosses(indices.map(getInstanceLoss(_, param)))
     if(!(loss >= left.loss && loss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")
       println(left)

@@ -15,47 +15,48 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
-object VectorMeanClustering extends ClusteringAlgorithm {
+class VectorMeanClustering[I](
+  getInstance: I => DenseVector[Float]
+) extends ClusteringAlgorithm {
   // cluster means keep track of size too so they can be added and for loss calculation
   case class ClusterParam(mean: DenseVector[Float], size: Double)
-  type Instance = DenseVector[Float]
+  type Index = I
 
   // k-means loss: sum of square distances from mean
   def getInstanceLoss(
-    instance: Instance,
+    index: Index,
     param: ClusterParam
   ): Double = {
-    val displacement = instance - param.mean
+    val displacement = getInstance(index) - param.mean
     (displacement dot displacement).toDouble / 175.0 // adjust so interpolation is reasonable
   }
 
   override def getSingleInstanceParameter(
-    index: Int,
-    instance: Instance
-  ): ClusterParam = ClusterParam(instance, 1)
+    index: Index
+  ): ClusterParam = ClusterParam(getInstance(index), 1)
 
   // just take the mean of all of the elements in the cluster (in expectation)
   def estimateParameterSoft(
-    instances: Vector[Instance],
+    indices: Vector[Index],
     assignmentProbabilities: Vector[Double]
   ): ClusterParam = {
     val size = assignmentProbabilities.sum
-    val mean = DenseVector.zeros[Float](instances.head.length)
-    instances.iterator.zip(assignmentProbabilities.iterator)
-      .foreach { case (instance, prob) =>
-        mean :+= (instance *:* prob.toFloat)
+    val mean = DenseVector.zeros[Float](getInstance(indices.head).length)
+    indices.iterator.zip(assignmentProbabilities.iterator)
+      .foreach { case (index, prob) =>
+        mean :+= (getInstance(index) *:* prob.toFloat)
       }
     mean :/= size.toFloat
     ClusterParam(mean, size)
   }
 
   override def estimateParameterHard(
-    instances: Vector[Instance]
+    indices: Vector[Index]
   ): ClusterParam = {
-    val size = instances.size
-    val mean = DenseVector.zeros[Float](instances.head.length)
-    instances.iterator.foreach { instance =>
-        mean :+= instance
+    val size = indices.size
+    val mean = DenseVector.zeros[Float](getInstance(indices.head).length)
+    indices.iterator.foreach { index =>
+        mean :+= getInstance(index)
       }
     mean :/= size.toFloat
     ClusterParam(mean, size)
@@ -63,10 +64,9 @@ object VectorMeanClustering extends ClusteringAlgorithm {
 
   // can efficiently merge by weighing each mean by its cluster size
   override def mergeParams(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): ClusterParam = {
     val size = leftParam.size + rightParam.size
@@ -77,15 +77,14 @@ object VectorMeanClustering extends ClusteringAlgorithm {
 
   // can efficiently merge by weighing each mean by its cluster size
   override def mergeLoss(
-    instances: Vector[Instance],
-    left: MergeTree[Int],
+    left: MergeTree[Index],
     leftParam: ClusterParam,
-    right: MergeTree[Int],
+    right: MergeTree[Index],
     rightParam: ClusterParam
   ): Double = {
-    val param = mergeParams(instances, left, leftParam, right, rightParam)
+    val param = mergeParams(left, leftParam, right, rightParam)
     val newLoss = (left.values ++ right.values)
-      .foldMap(i => getInstanceLoss(instances(i), param))
+      .foldMap(i => getInstanceLoss(i, param))
     newLoss
   }
 }

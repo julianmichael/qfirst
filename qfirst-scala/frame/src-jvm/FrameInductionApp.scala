@@ -10,6 +10,7 @@ import qfirst.metrics.HasMetrics.ops._
 import cats.Monoid
 import cats.Show
 import cats.data.NonEmptyList
+import cats.data.NonEmptyVector
 import cats.data.Validated
 import cats.implicits._
 
@@ -113,17 +114,6 @@ object FrameInductionApp extends CommandIOApp(
     )
   }
 
-  def runVerbWiseAgglomerative(
-    algorithm: AgglomerativeClusteringAlgorithm)(
-    verbLabel: String,
-    verbIds: Vector[VerbId],
-    makeInstance: VerbId => algorithm.Instance)(
-    implicit Log: TreeLogger[IO, String]
-  ): MergeTree[VerbId] = {
-    val instances = verbIds.map(makeInstance)
-    algorithm.runFullAgglomerativeClustering(instances)._1.map(verbIds)
-  }
-
   def runVerbSenseAgglomerativeClustering[VerbType](
     verbSenseConfig: VerbSenseConfig,
     instances: Instances[VerbType, QAPairs],
@@ -141,7 +131,9 @@ object FrameInductionApp extends CommandIOApp(
     }.filter(_._2.nonEmpty)
     verbs.toList.sortBy(-_._2.size).infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
       Log.trace(renderVerbType(verbType)) >> IO {
-        val verbIds = _verbIds.take(50) // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        // hack to make it possible to even do the clustering on the really common words. need to generalize later
+        val verbIds = NonEmptyVector.fromVector(_verbIds.take(50)).get
+
         val verbInstances = instances.values(verbType)
         val clauseVocab = makeVerbSpecificClauseVocab(verbInstances)
         val makeInstance = (verbId: VerbId) => {
@@ -153,26 +145,32 @@ object FrameInductionApp extends CommandIOApp(
           clauseCounts -> vector
         }
         val verbLabel = renderVerbType(verbType)
+        val indices = verbIds.zipWithIndex.map(_._2)
         val clustering = verbSenseConfig match {
           case VerbSenseConfig.SingleCluster =>
-            NonEmptyList.fromList(verbIds.toList).get
-              .reduceLeftTo(id => MergeTree.Leaf(0.0, id): MergeTree[VerbId]) {
-                case (tree, next) => MergeTree.Merge(0.0, tree, MergeTree.Leaf(0.0, next))
-              }
-          case VerbSenseConfig.EntropyOnly =>
-            runVerbWiseAgglomerative(new MinEntropyClustering(clauseVocab.size))(
-              verbLabel, verbIds, (v => makeInstance(v)._1)
-            )
-          case VerbSenseConfig.ELMoOnly =>
-            runVerbWiseAgglomerative(VectorMeanClustering)(
-              verbLabel, verbIds, (v => makeInstance(v)._2)
-            )
-          case VerbSenseConfig.Interpolated(lambda) =>
-            val algorithm = new CompositeAgglomerativeClusteringAlgorithm {
-              val _1 = new MinEntropyClustering(clauseVocab.size); val _2 = VectorMeanClustering;
-              val _1Lambda = lambda                              ; val _2Lambda = 1.0 - lambda
+            verbIds.reduceLeftTo(id => MergeTree.Leaf(0.0, id): MergeTree[VerbId]) {
+              case (tree, next) => MergeTree.Merge(0.0, tree, MergeTree.Leaf(0.0, next))
             }
-            runVerbWiseAgglomerative(algorithm)(verbLabel, verbIds, makeInstance)
+          case VerbSenseConfig.EntropyOnly =>
+            val instances = verbIds.map(v => makeInstance(v)._1)
+            new MinEntropyClustering(
+              instances.getUnsafe(_), clauseVocab.size
+            ).runFullAgglomerativeClustering(indices)._1.map(verbIds.getUnsafe)
+          case VerbSenseConfig.ELMoOnly =>
+            val instances = verbIds.map(v => makeInstance(v)._2)
+            new VectorMeanClustering(instances.getUnsafe(_))
+              .runFullAgglomerativeClustering(indices)._1.map(verbIds.getUnsafe)
+          case VerbSenseConfig.Interpolated(lambda) =>
+            val entropyInstances = verbIds.map(makeInstance).map(_._1)
+            val vectorInstances = verbIds.map(makeInstance).map(_._2)
+            val algorithm = new CompositeAgglomerativeClusteringAlgorithm {
+              val _1 = new MinEntropyClustering(entropyInstances.getUnsafe(_), clauseVocab.size)
+              val _2 = new VectorMeanClustering(vectorInstances.getUnsafe(_))
+
+              val _1Lambda = lambda
+              val _2Lambda = 1.0 - lambda
+            }
+            algorithm.runFullAgglomerativeClustering(indices)._1.map(verbIds.getUnsafe(_))
         }
         verbType -> clustering
       }
@@ -265,15 +263,19 @@ object FrameInductionApp extends CommandIOApp(
       questionTemplateCounts -> tokenDists
     }.toVector
 
+    val indices = NonEmptyVector.fromVector(indexedInstances.zipWithIndex.map(_._2)).get
+    val qInstances = indexedInstances.map(_._1)
+    val tokInstances = indexedInstances.map(_._2)
+
     val algorithm = new CompositeAgglomerativeClusteringAlgorithm {
-      val _1 = new MinEntropyClustering(questionTemplateVocab.size)
+      val _1 = new MinEntropyClustering(qInstances, questionTemplateVocab.size)
       val _1Lambda = interpolationFactor
-      val _2 = new MinEntropyClustering(tokenVocab.size)
+      val _2 = new MinEntropyClustering(tokInstances, tokenVocab.size)
       val _2Lambda = 1.0 - interpolationFactor
     }
 
     IO {
-      algorithm.runFullAgglomerativeClustering(indexedInstances)._1.map(
+      algorithm.runFullAgglomerativeClustering(indices)._1.map(
         i => featurefulInstances(i)._1
       )
     }

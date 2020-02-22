@@ -18,31 +18,30 @@ import breeze.numerics._
 
 trait FlatClusteringAlgorithm {
   type ClusterParam
-  type Instance
+  type Index
 
   // override for efficiency
   def getSingleInstanceParameter(
-    index: Int,
-    instance: Instance
+    index: Index,
   ): ClusterParam = {
-    estimateParameterHard(Vector(instance))
+    estimateParameterHard(Vector(index))
   }
 
   def getInstanceLoss(
-    instance: Instance,
+    index: Index,
     param: ClusterParam
   ): Double
 
   def estimateParameterSoft(
-    instances: Vector[Instance],
+    indices: Vector[Index],
     assignmentProbabilities: Vector[Double],
   ): ClusterParam
 
   // override for efficiency
   def estimateParameterHard(
-    instances: Vector[Instance],
+    indices: Vector[Index],
   ): ClusterParam = {
-    estimateParameterSoft(instances, instances.as(1.0))
+    estimateParameterSoft(indices, indices.as(1.0))
   }
 
   // // override eg for max
@@ -61,48 +60,47 @@ trait FlatClusteringAlgorithm {
   // TODO: perhaps make matrices out of getInstanceLoss for more efficiency
 
   def initPlusPlus(
-    instances: Vector[Instance],
+    indices: Vector[Index],
     numClusters: Int
   ): Vector[ClusterParam] = {
     val rand = new scala.util.Random()
     assert(numClusters >= 1)
-    val firstClusterIndex = rand.nextInt(instances.size)
-    val firstCluster = getSingleInstanceParameter(
-      firstClusterIndex, instances(firstClusterIndex)
-    )
-    val uniqueInstances = instances.groupBy(x => x).keys.toVector
+    val firstClusterIndex = rand.nextInt(indices.size)
+    val firstCluster = getSingleInstanceParameter(indices(firstClusterIndex))
+    // TODO: maybe not do unique instances? maybe take them as an input? idk
+    val uniqueInstances = indices.groupBy(x => x).keys.toVector
     val initMinLosses = DenseVector(uniqueInstances.map(getInstanceLoss(_, firstCluster)).toArray)
 
     initPlusPlusAux(uniqueInstances, Set(), Vector(firstCluster), numClusters - 1, initMinLosses)
   }
 
   private[this] def initPlusPlusAux(
-    instances: Vector[Instance],
-    chosenInstances: Set[Int], curParams: Vector[ClusterParam], numClustersLeft: Int, curMinLosses: DenseVector[Double]
+    indices: Vector[Index],
+    chosenInstances: Set[Index], curParams: Vector[ClusterParam], numClustersLeft: Int, curMinLosses: DenseVector[Double]
   ): Vector[ClusterParam] = {
     if(numClustersLeft <= 0) curParams else {
       // println(s"cur min losses: $curMinLosses")
       // instances.foreach(i => println(i.toString.take(200)))
       val newCenterProbs = Multinomial(curMinLosses)
       val newCenterIndex = {
-        var newIndex = newCenterProbs.draw
+        var newIndex = indices(newCenterProbs.draw)
         while(chosenInstances.contains(newIndex)) {
-          newIndex = newCenterProbs.draw
+          newIndex = indices(newCenterProbs.draw)
         }
         newIndex
       }
-      val newCluster = getSingleInstanceParameter(newCenterIndex, instances(newCenterIndex))
-      val clusterLosses = DenseVector(instances.map(getInstanceLoss(_, newCluster)).toArray)
+      val newCluster = getSingleInstanceParameter(newCenterIndex)
+      val clusterLosses = DenseVector(indices.map(getInstanceLoss(_, newCluster)).toArray)
       val newMinLosses = min(curMinLosses, clusterLosses)
-      initPlusPlusAux(instances, chosenInstances + newCenterIndex, curParams ++ Vector(newCluster), numClustersLeft - 1, newMinLosses)
+      initPlusPlusAux(indices, chosenInstances + newCenterIndex, curParams ++ Vector(newCluster), numClustersLeft - 1, newMinLosses)
     }
   }
 
   def softEStep(
-    instances: Vector[Instance],
+    indices: Vector[Index],
     model: Vector[ClusterParam]
   ): (Vector[DenseMultinomial], Vector[Double]) = {
-    val allLosses = instances.map(i => model.map(p => getInstanceLoss(i, p)))
+    val allLosses = indices.map(i => model.map(p => getInstanceLoss(i, p)))
     val assignments = allLosses.map { v =>
       val vec = DenseVector(v.toArray) *:* -1.0 // from unnormalized neg log likelihoods to unnorm log likelihoods
       val probs = exp(vec - logSumExp(vec)) // normalized likelihoods
@@ -114,29 +112,29 @@ trait FlatClusteringAlgorithm {
 
   def softMStep(
     numClusters: Int,
-    instances: Vector[Instance],
+    indices: Vector[Index],
     assignments: Vector[DenseMultinomial]
   ): Vector[ClusterParam] = {
     (0 until numClusters).toVector.map { clusterIndex =>
       val clusterProbs = assignments.map(_.probabilityOf(clusterIndex))
-      estimateParameterSoft(instances, clusterProbs)
+      estimateParameterSoft(indices, clusterProbs)
     }
   }
 
   def runSoftEM(
     initModel: Vector[ClusterParam],
-    instances: Vector[Instance],
+    indices: Vector[Index],
     stoppingThreshold: Double,
     shouldLog: Boolean = true
   ): (Vector[ClusterParam], Vector[DenseMultinomial], Double) = {
-    var (assignments, stepLosses) = softEStep(instances, initModel)
+    var (assignments, stepLosses) = softEStep(indices, initModel)
     var losses: List[Double] = List(mean(stepLosses))
     var model: Vector[ClusterParam] = initModel
     def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
     def shouldContinue = getDelta.forall(_ > stoppingThreshold)
     while(shouldContinue) {
-      model = softMStep(model.size, instances, assignments)
-      val p = softEStep(instances, model)
+      model = softMStep(model.size, indices, assignments)
+      val p = softEStep(indices, model)
       assignments = p._1
       stepLosses = p._2
       val loss = mean(stepLosses)

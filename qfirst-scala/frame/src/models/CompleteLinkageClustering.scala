@@ -16,26 +16,24 @@ class CompleteLinkageClustering(
   distances: Array[Array[Double]] // fuzzy eq neg log probs
 ) extends AgglomerativeClusteringAlgorithm {
   type ClusterParam = Set[Int] // DenseVector[Double] // boolean sets
-  type Instance = Int // DenseVector[Double] // fuzzy eq neg log probs
+  type Index = Int // DenseVector[Double] // fuzzy eq neg log probs
   // case class Hyperparams(vocabSize: Int)
 
   // loss of a cluster is max distance between any two elements
   def getInstanceLoss(
-    instance: Instance,
+    index: Index,
     param: ClusterParam,
   ): Double = {
-    param.map(i => distances(i)(instance)).max
+    param.map(i => distances(i)(index)).max
   }
 
   def getSingleInstanceParameter(
     index: Int,
-    instance: Instance
   ): ClusterParam = {
-    Set(instance)
+    Set(index)
   }
 
   override def mergeParams(
-    instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
@@ -46,7 +44,6 @@ class CompleteLinkageClustering(
 
   // only need to consider pairs that cross between clusters to find the new max pairwise distance
   override def mergeLoss(
-    instances: Vector[Instance],
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],
