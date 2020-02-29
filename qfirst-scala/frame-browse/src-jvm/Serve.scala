@@ -49,19 +49,19 @@ object Serve extends CommandIOApp(
   def _run(
     jsDepsPath: Path, jsPath: Path,
     mode: RunMode,
-    verbSenseConfig: VerbSenseConfig,
+    modelConfig: ModelConfig,
     domain: String,
     port: Int
   ): IO[ExitCode] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.create().flatMap { implicit Log =>
-      val config = Config(mode)
-      config.qasrlBank.get.flatMap { data =>
+      val features = new GoldQasrlFeatures(mode)
+      features.qasrlBank.get.flatMap { data =>
         val docApiSuffix = "doc"
         val verbApiSuffix = "verb"
         val pageService = StaticPageService.makeService(
           domain,
           docApiSuffix, verbApiSuffix,
-          config.mode,
+          mode,
           jsDepsPath, jsPath, port
         )
 
@@ -74,11 +74,13 @@ object Serve extends CommandIOApp(
         )
 
         for {
-          fullSet <- config.full.get
+          fullSet <- features.dataset.full.get
           inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-          verbModels <- config.getCachedVerbModels(verbSenseConfig).map(_.get)
-          goldParaphrases <- config.readGoldParaphrases
-          evaluationItems <- config.evaluationItems.get
+          verbModels <- FrameInductionApp.getVerbClusterModels[InflectedForms](
+            features, modelConfig, _.allForms.mkString(", ")
+          ).flatMap(_.read.map(_.get))
+          goldParaphrases <- features.readGoldParaphrases
+          evaluationItems <- features.evaluationItems.get
           goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
           annotationService = HttpUtil.makeHttpPostServer(
             VerbFrameService.basicIOService(
@@ -87,7 +89,7 @@ object Serve extends CommandIOApp(
               fullSet,
               evaluationItems.apply,
               goldParaphraseDataRef,
-              config.saveGoldParaphrases(_))
+              features.saveGoldParaphrases(_))
           )
           app = Router(
             "/" -> pageService,
@@ -121,10 +123,10 @@ object Serve extends CommandIOApp(
         .map(Validated.valid)
         .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test."))
     }
-    val verbSenseConfigO = Opts.option[String](
+    val modelConfigO = Opts.option[String](
       "model", metavar = "entropy|elmo|<float>", help = "Verb sense model configuration."
     ).mapValidated { string =>
-      VerbSenseConfig.fromString(string)
+      ModelConfig.fromString(string)
         .map(Validated.valid)
         .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
     }
@@ -142,6 +144,6 @@ object Serve extends CommandIOApp(
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, modeO, verbSenseConfigO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, modeO, modelConfigO, domainO, portO).mapN(_run)
   }
 }

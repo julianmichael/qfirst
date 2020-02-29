@@ -125,7 +125,7 @@ object VerbAnnUI {
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
   val VerbLocal = new LocalState[InflectedForms]
-  val VerbModelLocal = new LocalState[Option[VerbClusterModel]]
+  val VerbModelLocal = new LocalState[Option[VerbClusterModel[InflectedForms]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]
@@ -1705,7 +1705,7 @@ object VerbAnnUI {
                                   }
                                   val currentVerbIndicesOpt = curSentenceOpt.value.map(
                                     _.verbEntries.values
-                                      .filter(v => curModel.value.exists(_.verbInflectedForms == v.verbInflectedForms))
+                                      .filter(v => curModel.value.exists(_.verbType == v.verbInflectedForms))
                                       .map(_.verbIndex).toSet
                                   )
                                   val goldStructureRelationOpt = curSentenceOpt.value.map(sentence =>
@@ -1852,7 +1852,7 @@ object VerbAnnUI {
                         case DocFetch.Loading => <.div(S.loadingNotice)("Loading document...")
                         case DocFetch.Loaded(document) =>
                           val sentence = document.sentences.find(_.sentenceId == sentenceId).get
-                          val verb = verbModel.verbInflectedForms
+                          val verb = verbModel.verbType
                           val verbCount = verbCounts(verb)
                           val linkPath = s"/$evalItemIndex"
                           val makeQid = makeQidMap(sentenceId, goldVerb)

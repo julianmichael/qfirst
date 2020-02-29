@@ -81,7 +81,7 @@ object FrameInductionApp extends CommandIOApp(
         features.verbIdsByType.full.get >>= (
           _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
           // hack to make it possible to even do the clustering on the really common words. need to generalize later
-          val verbIds = NonEmptyVector.fromVector(_verbIds.take(50)).get
+          val verbIds = NonEmptyVector.fromVector(_verbIds.toVector.take(50)).get
           Log.trace(renderVerbType(verbType)) >> {
             modelConfig match {
               case ModelConfig.Joint =>

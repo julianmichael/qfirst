@@ -16,9 +16,9 @@ class FileCached[A](
   write: (Path, A) => IO[Unit])(
   compute: IO[A]
 ) {
-  def read(implicit Log: TreeLogger[IO, String]) =
+  def read(implicit Log: TreeLogger[IO, String]): IO[Option[A]] =
     IO(Files.exists(path)).ifM(
-      Log.infoBranch(s"$name: reading cached data from $path")(_read(path)),
+      Log.infoBranch(s"$name: reading cached data from $path")(_read(path).map(Some(_))),
       Log.warn(s"$name: no cached data found at $path.").as(None)
     )
 

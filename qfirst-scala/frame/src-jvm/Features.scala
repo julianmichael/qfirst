@@ -64,7 +64,7 @@ abstract class Features[VerbType](
   lazy val verbIdsByType = instances.get.map(
     _.map { case (verbType, sentences) =>
       verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-        verbs.value.keySet.map(vi => VerbId(sid, vi)).toVector
+        verbs.value.keySet.map(vi => VerbId(sid, vi)).toSet
       }
     }
   ).toCell("Verb IDs")
@@ -210,12 +210,20 @@ class GoldQasrlFeatures(
 
   val qasrlBankPath = Paths.get("../qasrl-bank/data/qasrl-v2_1")
 
+
   private[this] def readQasrlDataset(name: String) =
     Log.infoBranch(s"Reading QA-SRL dataset $name")(
       readDataset(qasrlBankPath.resolve(name + ".jsonl.gz"))
     )
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+
+  val qasrlBank = new Cell(
+    "QA-SRL Bank",
+    Log.infoBranch("Reading QA-SRL Bank")(
+      IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get)
+    )
+  )
 
   val dataset: RunDataCell[Dataset] = RunData(
     train = "expanded/train",
