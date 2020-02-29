@@ -9,16 +9,25 @@ import io.circe.generic.JsonCodec
     case Dev => "dev"
     case Test => "test"
   }
-  def devOrTest: String = this match {
+  def input: String = this match {
+    case Sanity => "dev"
+    case Dev => "train"
+    case Test => "train"
+  }
+  def eval: String = this match {
     case Sanity => "dev"
     case Dev => "dev"
     case Test => "test"
   }
-  def sanity = this match {
+  def isSanity = this match {
     case Sanity => true
     case _ => false
   }
-  def test = this match {
+  def isDev = this match {
+    case Dev => true
+    case _ => false
+  }
+  def isTest = this match {
     case Test => true
     case _ => false
   }

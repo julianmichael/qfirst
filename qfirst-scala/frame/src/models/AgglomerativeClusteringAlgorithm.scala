@@ -50,7 +50,7 @@ trait AgglomerativeClusteringAlgorithm {
 
   def runPartialAgglomerativeClustering(
     initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)],
-    stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean = (_, _, _, _) => false
+    stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean
   ): NonEmptyVector[(MergeTree[Index], ClusterParam)] = {
     val indices = initTrees.toVector.indices
     var currentTrees = initTrees.zipWithIndex.map(_.swap).toVector.toMap
@@ -110,6 +110,15 @@ trait AgglomerativeClusteringAlgorithm {
     }
     // guaranteed to have at least 1 elt from clustering process
     NonEmptyVector.fromVector(currentTrees.values.toVector).get
+  }
+
+  def finishAgglomerativeClustering(
+    initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)]
+  ): (MergeTree[Index], ClusterParam) = {
+    runPartialAgglomerativeClustering(
+      initTrees,
+      (_, _, _, _) => false
+    ).head
   }
 
   def runAgglomerativeClustering(

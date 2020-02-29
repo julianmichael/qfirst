@@ -66,17 +66,14 @@ object QuestionId {
 }
 object PropBankVerbClusterModel
 
-@JsonCodec case class VerbClusterModel(
-  verbInflectedForms: InflectedForms,
+@JsonCodec case class VerbClusterModel[VerbType](
+  verbType: VerbType,
   verbClusterTree: MergeTree[VerbId],
   questionClusterTree: MergeTree[QuestionId]
-  // clauseSets: Map[VerbId, Set[ArgStructure]],
-  // coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
 ) {
   val clauseSets = questionClusterTree.unorderedFoldMap(qid =>
     Map(qid.verbId -> Set(ArgStructure(qid.clause.args, qid.clause.isPassive).forgetAnimacy))
   )
-  // val coindexingScores = coindexingScoresList.toMap
   val numVerbInstances = verbClusterTree.size
 }
 object VerbClusterModel
@@ -105,7 +102,7 @@ object ClusterSplittingCriterion {
   )
 }
 
-class LazyFramesets(model: VerbClusterModel, initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
+class LazyFramesets(model: VerbClusterModel[InflectedForms], initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
   case class FrameInputInfo(
     verbIds: Set[VerbId],
     clauseCounts: Map[ArgStructure, Int])
@@ -164,7 +161,7 @@ class LazyFramesets(model: VerbClusterModel, initialCriterion: ClusterSplittingC
       val (losses, frameInfos) = aggTree.valuesWithLosses.unzip
       val maxLoss = losses.max
       val frames = getFrames(frameInfos.toVector)
-      val frameset = VerbFrameset(model.verbInflectedForms, frames)
+      val frameset = VerbFrameset(model.verbType, frames)
       resList = (maxLoss -> frameset) :: resList
       aggTree = aggTree.cutMapAtN(nextSize, _.unorderedFold) // should do exactly one merge
       nextSize = nextSize - 1
@@ -302,7 +299,6 @@ object FrameClause
   verbIds: Set[VerbId],
   clauseTemplates: List[FrameClause],
   questionClusterTree: MergeTree[QuestionId],
-  // coindexingTree: MergeTree[(ArgStructure, ArgumentSlot)],
   probability: Double) {
 
   // // TODO shim for current functionality

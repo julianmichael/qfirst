@@ -11,17 +11,20 @@ import io.circe.generic.JsonCodec
 
 import breeze.linalg._
 import breeze.numerics._
-import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
 // same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
 // can also be regarded as "MLE clustering"
+object MinEntropyClustering {
+  case class ClusterMixture(counts: DenseVector[Double], total: Double)
+}
 class MinEntropyClustering[I](
   getInstance: I => Map[Int, Double],
   vocabSize: Int
 ) extends ClusteringAlgorithm {
-  case class ClusterParam(counts: DenseVector[Double], total: Double)
+  import MinEntropyClustering._
+  type ClusterParam = ClusterMixture
   type Index = I
 
   // loss is entropy * num elements (same as likelihood under MLE in our case)
@@ -53,7 +56,7 @@ class MinEntropyClustering[I](
           total = total + pcount
         }
       }
-    ClusterParam(DenseVector(arr), total)
+    ClusterMixture(DenseVector(arr), total)
   }
 
   // can do efficient merge by summing counts
@@ -65,7 +68,7 @@ class MinEntropyClustering[I](
   ): ClusterParam = {
     val counts = leftParam.counts + rightParam.counts
     val total = leftParam.total + rightParam.total
-    ClusterParam(counts, total)
+    ClusterMixture(counts, total)
   }
 
   override def mergeLoss(

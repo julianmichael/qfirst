@@ -41,7 +41,7 @@ trait ClusteringAlgorithm extends AgglomerativeClusteringAlgorithm with FlatClus
     rightParam: ClusterParam
   ): Double = {
     val indices = left.values ++ right.values
-    val param = estimateParameterHard(indices)
+    val param = mergeParams(left, leftParam, right, rightParam)
     val loss = aggregateLosses(indices.map(getInstanceLoss(_, param)))
     if(!(loss >= left.loss && loss >= right.loss)) {
       println("WARNING: clusters seem to be incorrectly merged")

@@ -1,7 +1,11 @@
 package qfirst
 
+import jjm.ling.ESpan
+import jjm.ling.en.InflectedForms
+
 import qfirst.clause.ArgStructure
 import qasrl.ArgumentSlot
+import qasrl.Frame
 
 import freelog.LogLevel
 import freelog.ProgressSpec
@@ -9,6 +13,24 @@ import freelog.ProgressSpec
 package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
   implicit val progressSpec = ProgressSpec.simple(barLength = 50)
+
+  type TemplateQ = (ArgStructure, ArgumentSlot)
+  type ClausalQ = (Frame, ArgumentSlot)
+  type QAPairs = Map[ClausalQ, List[List[ESpan]]]
+
+  type Instances[VerbType, A] = Map[
+    VerbType, Map[String, NonMergingMap[Int, A]]
+  ]
+  object Instances {
+    type Qasrl = Instances[InflectedForms, QAPairs]
+    type PropBank = Instances[String, QAPairs]
+  }
+
+  // type PropBank = Instances[String, QAPairs]
+  // type PropBankElmo = Instances[String, DenseVector[Float]]
+  // type PropBankLabels = Instances[String, String]
+  // type Qasrl = Instances[InflectedForms, QAPairs]
+  // type QasrlElmo = Instances[InflectedForms, DenseVector[Float]]
 
   def getArgumentSlotsForClauseTemplate(clauseTemplate: ArgStructure): Set[ArgumentSlot] = {
     (clauseTemplate.args.keys.toList: List[ArgumentSlot]).filter {

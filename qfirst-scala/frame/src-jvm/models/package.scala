@@ -13,6 +13,8 @@ import scala.collection.immutable.Vector
 
 package object models {
 
+  case class ClusterMean[A](mean: DenseVector[A], total: Double)
+
   type DenseMultinomial = Multinomial[DenseVector[Double], Int]
 
   def mean[F[_]: Foldable](fa: F[Double]) = {

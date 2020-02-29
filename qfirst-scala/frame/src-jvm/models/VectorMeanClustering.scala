@@ -15,11 +15,15 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
+object VectorMeanClustering {
+  case class ClusterMean(mean: DenseVector[Float], size: Double)
+}
 class VectorMeanClustering[I](
   getInstance: I => DenseVector[Float]
 ) extends ClusteringAlgorithm {
+  import VectorMeanClustering.ClusterMean
   // cluster means keep track of size too so they can be added and for loss calculation
-  case class ClusterParam(mean: DenseVector[Float], size: Double)
+  type ClusterParam = ClusterMean
   type Index = I
 
   // k-means loss: sum of square distances from mean
@@ -33,7 +37,7 @@ class VectorMeanClustering[I](
 
   override def getSingleInstanceParameter(
     index: Index
-  ): ClusterParam = ClusterParam(getInstance(index), 1)
+  ): ClusterParam = ClusterMean(getInstance(index), 1)
 
   // just take the mean of all of the elements in the cluster (in expectation)
   def estimateParameterSoft(
@@ -47,7 +51,7 @@ class VectorMeanClustering[I](
         mean :+= (getInstance(index) *:* prob.toFloat)
       }
     mean :/= size.toFloat
-    ClusterParam(mean, size)
+    ClusterMean(mean, size)
   }
 
   override def estimateParameterHard(
@@ -59,7 +63,7 @@ class VectorMeanClustering[I](
         mean :+= getInstance(index)
       }
     mean :/= size.toFloat
-    ClusterParam(mean, size)
+    ClusterMean(mean, size)
   }
 
   // can efficiently merge by weighing each mean by its cluster size
@@ -72,7 +76,7 @@ class VectorMeanClustering[I](
     val size = leftParam.size + rightParam.size
     val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
       (rightParam.mean *:* (rightParam.size / size).toFloat)
-    ClusterParam(mean, size)
+    ClusterMean(mean, size)
   }
 
   // can efficiently merge by weighing each mean by its cluster size

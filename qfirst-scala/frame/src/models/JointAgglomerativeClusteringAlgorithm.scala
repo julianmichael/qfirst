@@ -5,16 +5,16 @@ import qfirst.frame.MergeTree
 import cats.data.NonEmptyVector
 import cats.implicits._
 
-class JointAgglomerativeClusteringAlgorithm[I, InnerIndex](
-  val innerAlgorithm: AgglomerativeClusteringAlgorithm { type Index = InnerIndex },
+class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
+  val innerAlgorithm: AgglomerativeClusteringAlgorithm { type Index = InnerIndex; type ClusterParam = InnerParam },
   getSubInstances: I => NonEmptyVector[InnerIndex],
   getLossPenalty: Int => Double // should grow monotonically
 ) extends AgglomerativeClusteringAlgorithm {
   type Index = I
-  type ClusterParam = NonEmptyVector[(MergeTree[innerAlgorithm.Index], innerAlgorithm.ClusterParam)]
+  type ClusterParam = NonEmptyVector[(MergeTree[InnerIndex], InnerParam)]
 
   val innerStoppingCondition = (
-    trees: Map[Int, (MergeTree[InnerIndex], innerAlgorithm.ClusterParam)], i: Int, j: Int, newLoss: Double
+    trees: Map[Int, (MergeTree[InnerIndex], InnerParam)], i: Int, j: Int, newLoss: Double
   ) => {
     val lossBefore = trees.values.map(_._1.loss).sum + getLossPenalty(trees.size)
     val lossAfter = (trees - i - j).values.map(_._1.loss).sum + newLoss + getLossPenalty(trees.size - 1)
