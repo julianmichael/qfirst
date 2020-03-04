@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import io.circe.{Encoder, Decoder}
+
 class Vocab[A] private (
   indexToItem: Vector[A],
   itemToIndex: Map[A, Int]
@@ -15,4 +17,14 @@ object Vocab {
     val itemsVec = items.toVector
     new Vocab(itemsVec, itemsVec.zipWithIndex.toMap)
   }
+  def fromSet[A](items: Set[A]): Vocab[A] = make(items)
+
+  def fromVector[A](items: Vector[A]): Vocab[A] = {
+    new Vocab(items, items.zipWithIndex.toMap)
+  }
+
+  implicit def vocabEncoder[A: Encoder] =
+    implicitly[Encoder[Vector[A]]].contramap[Vocab[A]](_.items)
+  implicit def vocabDecoder[A: Decoder] =
+    implicitly[Decoder[Vector[A]]].map(fromVector[A])
 }

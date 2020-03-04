@@ -77,14 +77,7 @@ object QuestionEntropy extends FrameInductionModel[QuestionId, MinEntropyCluster
     features: Features[VerbType], verbType: VerbType
   ) = for {
     questions <- features.instancesByQuestionId.full.get.map(
-      _.apply(verbType).map {
-        case (qid, _) => qid -> (
-          ArgStructure(
-            qid.clause.args,
-            qid.clause.isPassive
-          ).forgetAnimacy -> qid.slot
-        )
-      }
+      _.apply(verbType).map { case (qid, _) => qid -> qid.question  }
     )
     questionVocab = Vocab.make(questions.values.toSet)
     // TODO add tf-idf transform?
@@ -101,9 +94,8 @@ object VerbClauseEntropy extends FrameInductionModel[VerbId, MinEntropyClusterin
     clauseCounts <- features.instancesByVerbId.full.get.map(
       _.apply(verbType).map {
         case (verbId, qaPairs) =>
-          verbId -> qaPairs.keys.toList.foldMap { case (frame, _) =>
-            val clause = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
-            Map(clause -> 1.0)
+          verbId -> qaPairs.keys.toList.foldMap { question =>
+            Map(question.clauseTemplate -> 1.0)
           }
       }
     )

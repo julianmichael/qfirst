@@ -149,7 +149,7 @@ object VerbAnnUI {
     val questionToQid = questionSlotsWithStrings.map(_._2).zip(
       qfirst.clause.ClauseResolution.getResolvedFramePairs(
         verb.verbInflectedForms, questionSlotsWithStrings.map(_._1)
-      ).map { case (frame, slot) => QuestionId(VerbId(sentenceId, verb.verbIndex), frame, slot) }
+      ).map { case (frame, slot) => QuestionId(VerbId(sentenceId, verb.verbIndex), ClausalQuestion(frame, slot)) }
     ).toMap
     questionToQid
   }
@@ -1208,9 +1208,8 @@ object VerbAnnUI {
           // clause -> slot -> role -> sorted qids
           val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[QuestionId]]]] = {
             roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
-              tree.unorderedFoldMap { case qid @ QuestionId(_, clause, slot) =>
-                val argStructure = ArgStructure(clause.args, clause.isPassive).forgetAnimacy
-                Map(argStructure -> Map(slot -> Map(roleIndex -> SortedSet(qid))))
+              tree.unorderedFoldMap { case qid @ QuestionId(_, question) =>
+                Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
               }
             }
           }

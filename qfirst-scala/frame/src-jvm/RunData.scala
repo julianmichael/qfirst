@@ -87,6 +87,10 @@ class RunDataCell[A](
     s"$name (full)",
     for(i <- input.get; e <- eval.get) yield i |+| e
   )
+  val all = new Cell(
+    s"$name (all)",
+    for(tr <- train.get; de <- dev.get; te <- test.get) yield tr |+| de |+| te
+  )
 
   def get = RunData(train.get, dev.get, test.get)
 }

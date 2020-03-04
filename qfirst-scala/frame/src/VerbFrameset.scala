@@ -21,37 +21,6 @@ import jjm.ling.en.VerbForm
 
 import monocle.macros._
 
-@Lenses @JsonCodec case class VerbId(
-  sentenceId: String, verbIndex: Int
-)
-object VerbId {
-  import io.circe._
-  implicit val verbIdKeyEncoder = KeyEncoder.instance[VerbId](vid =>
-    s"${vid.sentenceId}:${vid.verbIndex}"
-  )
-  implicit val verbIdKeyDecoder = KeyDecoder.instance[VerbId](s =>
-    scala.util.Try(VerbId(s.reverse.dropWhile(_ != ':').tail.reverse, s.reverse.takeWhile(_ != ':').reverse.toInt)).toOption
-  )
-  implicit val verbIdOrder = Order.whenEqual(
-    Order.by[VerbId, String](_.sentenceId),
-    Order.by[VerbId, Int](_.verbIndex)
-  )
-}
-
-@Lenses @JsonCodec case class QuestionId(
-  verbId: VerbId, clause: Frame, slot: ArgumentSlot
-)
-object QuestionId {
-  implicit val questionIdOrder =
-    Order.whenEqual(
-      Order.by[QuestionId, VerbId](_.verbId),
-      Order.whenEqual(
-        Order.by[QuestionId, String](_.clause.toString),
-        Order.by[QuestionId, String](_.slot.toString)
-      )
-    )
-}
-
 @JsonCodec case class PropBankVerbClusterModel(
   verbLemma: String,
   clusterTree: MergeTree[VerbId],
@@ -72,7 +41,7 @@ object PropBankVerbClusterModel
   questionClusterTree: MergeTree[QuestionId]
 ) {
   val clauseSets = questionClusterTree.unorderedFoldMap(qid =>
-    Map(qid.verbId -> Set(ArgStructure(qid.clause.args, qid.clause.isPassive).forgetAnimacy))
+    Map(qid.verbId -> Set(qid.question.clauseTemplate))
   )
   val numVerbInstances = verbClusterTree.size
 }
@@ -215,7 +184,7 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms], initialCriterion: C
     questionClusterTree: MergeTree[QuestionId]
   ): Set[(ArgStructure, ArgumentSlot)] = {
     val structureCounts = questionClusterTree.unorderedFoldMap(qid =>
-      Map((ArgStructure(qid.clause.args, qid.clause.isPassive).forgetAnimacy -> qid.slot) -> 1)
+      Map(qid.question.template -> 1)
     )
     val total = structureCounts.values.sum
     structureCounts.collect {
