@@ -13,6 +13,12 @@ case class RunData[A](
   dev: IO[A],
   test: IO[A]) {
 
+  def apply(split: RunData.BaseSplit): IO[A] = split match {
+    case RunData.Train => train
+    case RunData.Dev => dev
+    case RunData.Test => test
+  }
+
   def map[B](f: A => B) = RunData(
     train map f,
     dev map f,
@@ -42,7 +48,7 @@ case class RunData[A](
   )
 
   def toFileCachedCell(
-    name: String, getCachePath: String => Path)(
+    name: String, getCachePath: String => IO[Path])(
     read: Path => IO[A], write: (Path, A) => IO[Unit])(
     implicit mode: RunMode,
     monoid: Monoid[A],
@@ -50,10 +56,13 @@ case class RunData[A](
     def doCache(runName: String, a: IO[A]) = {
       new Cell(
         s"$name ($runName)",
-        fileCached[A](s"$name ($runName)")(
-          path = getCachePath(runName),
-          read = read, write = write)(
-          a
+        getCachePath(runName) >>= (path =>
+          fileCached[A](s"$name ($runName)")(
+            path = path,
+            read = read,
+            write = write)(
+            a
+          )
         )
       )
     }
@@ -72,6 +81,19 @@ object RunData {
   def apply[A](train: A, dev: A, test: A): RunData[A] = RunData(
     IO.pure(train), IO.pure(dev), IO.pure(test)
   )
+  def splits = RunData[BaseSplit](
+    IO.pure(Train), IO.pure(Dev), IO.pure(Test)
+  )
+
+  sealed trait Split
+  case object Input extends Split
+  case object Eval extends Split
+  case object Full extends Split
+  case object All extends Split
+  sealed trait BaseSplit extends Split
+  case object Train extends BaseSplit
+  case object Dev extends BaseSplit
+  case object Test extends BaseSplit
 }
 
 class RunDataCell[A](
@@ -81,6 +103,17 @@ class RunDataCell[A](
   test: Cell[A])(
   implicit mode: RunMode, monoid: Monoid[A], Log: TreeLogger[IO, String]
 ) {
+
+  def apply(split: RunData.Split): IO[A] = split match {
+    case RunData.Train => train.get
+    case RunData.Dev => dev.get
+    case RunData.Test => test.get
+    case RunData.Input => input.get
+    case RunData.Eval => eval.get
+    case RunData.Full => full.get
+    case RunData.All => all.get
+  }
+
   def input = if(mode.isSanity) dev else train
   def eval = if(mode.isTest) test else dev
   val full = new Cell(

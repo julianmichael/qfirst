@@ -90,6 +90,10 @@ object QAInputApp extends CommandIOApp(
     slot: String
   ) {
     val clauseTemplate = io.circe.parser.decode[ArgStructure](clause).right.get
+    if(clauseTemplate.forgetAnimacy != clauseTemplate) {
+      println("AHHH! " + clauseTemplate)
+      ???
+    }
     val answerSlot = ArgumentSlot.fromString(slot).get
     def clausalQ = (clauseTemplate, answerSlot)
   }

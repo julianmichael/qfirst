@@ -86,12 +86,15 @@ object FrameInductionApp extends CommandIOApp(
             modelConfig match {
               case ModelConfig.Joint =>
                 val questionModel = Composite(
-                  QuestionEntropy -> 1.0,
-                  AnswerEntropy -> 1.0
+                  Composite(
+                    QuestionEntropy -> 1.0,
+                    AnswerEntropy -> 2.0
+                  ) -> 1.0,
+                  AnswerNLL -> 2.0
                 )
                 val model = Composite(
                   Composite(
-                    VerbClauseEntropy -> 1.0,
+                    VerbClauseEntropy -> 2.0,
                     VerbSqDist -> (1.0 / 175),
                   ) -> 1.0,
                   Joint(questionModel) -> 1.0
