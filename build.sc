@@ -28,6 +28,8 @@ val scalaCsvVersion = "1.3.6"
 
 // non-cats
 // val upickleVersion = "0.5.1"
+val fastparseVersion = "0.4.4"
+val macmemoVersion = "0.4"
 
 // jvm webby libs
 val scalatagsVersion = "0.6.7"
@@ -370,6 +372,32 @@ object qfirst extends Module {
     }
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(metrics.jvm, `clause-ext`.js)
+    }
+  }
+
+  object ontonotes extends Module {
+    object js extends JsModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
+    }
+    object jvm extends JvmModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.softwaremill.macmemo::macros::$macmemoVersion",
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
+      object test extends Tests {
+        override def millSourcePath = ontonotes.this.millSourcePath / "test"
+        override def scalaVersion = jvm.this.scalaVersion
+        // def platformSegment = jvm.this.platformSegment
+        override def ivyDeps = Agg(
+          ivy"org.scalatest::scalatest:$scalatestVersion",
+          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
+          ivy"org.typelevel::discipline-core:$disciplineVersion"
+            // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
+        )
+        def testFrameworks = Seq("org.scalatest.tools.Framework")
+      }
     }
   }
 
