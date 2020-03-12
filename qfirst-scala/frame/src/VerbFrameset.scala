@@ -21,31 +21,19 @@ import jjm.ling.en.VerbForm
 
 import monocle.macros._
 
-@JsonCodec case class PropBankVerbClusterModel(
-  verbLemma: String,
-  clusterTree: MergeTree[VerbId],
-  clauseSets: Map[VerbId, Set[ArgStructure]]
-  // TODO add coindexing scores after sentence indexing issue has been fixed
-  // coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
-) {
-  // val coindexingScores = coindexingScoresList.toMap
-  val numInstances = clusterTree.size
-  import io.circe.syntax._
-  def toJsonStringSafe = "{\"verbLemma\": " + verbLemma.asJson.noSpaces + ", \"clusterTree\": " + clusterTree.toJsonStringSafe + ", \"clauseSets\": " + clauseSets.asJson.noSpaces + "}"
-}
-object PropBankVerbClusterModel
-
-@JsonCodec case class VerbClusterModel[VerbType](
-  verbType: VerbType,
-  verbClusterTree: MergeTree[VerbId],
-  questionClusterTree: MergeTree[QuestionId]
-) {
-  val clauseSets = questionClusterTree.unorderedFoldMap(qid =>
-    Map(qid.verbId -> Set(qid.question.clauseTemplate))
-  )
-  val numVerbInstances = verbClusterTree.size
-}
-object VerbClusterModel
+// @JsonCodec case class PropBankVerbClusterModel(
+//   verbLemma: String,
+//   clusterTree: MergeTree[VerbId],
+//   clauseSets: Map[VerbId, Set[ArgStructure]]
+//   // TODO add coindexing scores after sentence indexing issue has been fixed
+//   // coindexingScoresList: List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)]
+// ) {
+//   // val coindexingScores = coindexingScoresList.toMap
+//   val numInstances = clusterTree.size
+//   import io.circe.syntax._
+//   def toJsonStringSafe = "{\"verbLemma\": " + verbLemma.asJson.noSpaces + ", \"clusterTree\": " + clusterTree.toJsonStringSafe + ", \"clauseSets\": " + clauseSets.asJson.noSpaces + "}"
+// }
+// object PropBankVerbClusterModel
 
 @JsonCodec sealed trait ClusterSplittingCriterion {
   import ClusterSplittingCriterion._

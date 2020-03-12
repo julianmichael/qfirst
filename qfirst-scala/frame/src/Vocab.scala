@@ -3,8 +3,8 @@ package qfirst.frame
 import io.circe.{Encoder, Decoder}
 
 class Vocab[A] private (
-  indexToItem: Vector[A],
-  itemToIndex: Map[A, Int]
+  val indexToItem: Vector[A],
+  val itemToIndex: Map[A, Int]
 ) {
   def items = indexToItem
   def indices = indexToItem.indices.toVector

@@ -7,7 +7,10 @@ import io.circe.generic.JsonCodec
 import jjm.DependentMap
 import jjm.ling.en.InflectedForms
 
-import qasrl._
+import qasrl.ArgumentSlot
+import qasrl.Frame
+import qasrl.{Subj, Obj, Obj2}
+import qasrl.{Noun, Prep, Adv}
 
 import monocle.macros._
 
@@ -32,6 +35,18 @@ import monocle.macros._
     }
     this.copy(args = newArgs)
   }
+
+  def getValidArgumentSlots: Set[ArgumentSlot] = {
+    (this.args.keys.toList: List[ArgumentSlot]).filter {
+      case Obj2 => this.args.get(Obj2) match {
+        case Some(Prep(_, None)) => false
+        case _ => true
+      }
+      case _ => true
+    }.toSet
+  }
+
+
   override def toString = Frame(
     InflectedForms.generic, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
   ).clauses.head

@@ -153,7 +153,7 @@ object AnswerNLL extends FrameInductionModel[QuestionId, MixtureOfStatesClusteri
   ) = for {
     answerNLLInfo <- features.answerNLLs.full.get.map(_.apply(verbType))
     templateQVocab = Vocab.make(answerNLLInfo.values.flatten.map(_._1).toSet)
-    templateQVectorsByQid <- answerNLLInfo.map { case (qid, qsWithNLLs) =>
+    templateQVectorsByQid = answerNLLInfo.map { case (qid, qsWithNLLs) =>
       val qsWithNLLsMap = qsWithNLLs.toMap
       qid -> MixtureOfStatesClustering.StateInstance(
         templateQVocab.getIndex(qid.question.template),

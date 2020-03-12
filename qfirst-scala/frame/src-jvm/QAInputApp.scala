@@ -48,41 +48,6 @@ object QAInputApp extends CommandIOApp(
 
   import fs2.Stream
 
-  def getJsonInputsForQA[F[_]: Applicative](dataset: Dataset): Stream[F, Json] = {
-    val verbToClauseTemplates = dataset.sentences.values.toList.foldMap { sentence =>
-      sentence.verbEntries.values.toList.foldMap { verb =>
-        val structures: Set[ArgStructure] = ClauseResolution.getResolvedStructures(
-          filterGoldNonDense(verb)._2.values.toList.map(_.questionSlots)
-        ).map(_._1).toSet
-        Map(verb.verbInflectedForms -> structures)
-      }
-    }
-    dataset.sentences.toList
-      .foldMap(x => Stream.eval(Applicative[F].pure(x)))
-      .map { case (sentenceId, sentence) =>
-      Json.obj(
-        "sentenceId" -> sentenceId.asJson,
-        "sentenceTokens" -> sentence.sentenceTokens.asJson,
-        "verbs" -> sentence.verbEntries.values.toList.map { verb =>
-          val clauses = verbToClauseTemplates(verb.verbInflectedForms).toList.flatMap { clauseTemplate =>
-            val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
-            val argSlots = getArgumentSlotsForClauseTemplate(clauseTemplate).map(ArgumentSlot.toString)
-            argSlots.map(slot =>
-              Json.obj(
-                "clause" -> clauseTemplateString.asJson,
-                "slot" -> slot.asJson
-              )
-            )
-          }.toList
-          Json.obj(
-            "verbIndex" -> verb.verbIndex.asJson,
-            "clauses" -> clauses.asJson
-          )
-        }.asJson
-      )
-    }
-  }
-
   type ClausalQ = (ArgStructure, ArgumentSlot)
 
   @JsonCodec case class ClauseQAQuestion(
@@ -92,7 +57,7 @@ object QAInputApp extends CommandIOApp(
     val clauseTemplate = io.circe.parser.decode[ArgStructure](clause).right.get
     if(clauseTemplate.forgetAnimacy != clauseTemplate) {
       println("AHHH! " + clauseTemplate)
-      ???
+        ???
     }
     val answerSlot = ArgumentSlot.fromString(slot).get
     def clausalQ = (clauseTemplate, answerSlot)
@@ -119,132 +84,219 @@ object QAInputApp extends CommandIOApp(
     verbs: Map[String, List[ClauseQAOutput]]
   )
 
-  import qfirst.metrics.ExpectedCount
 
-  def getUnsymmetrizedFuzzyArgumentEquivalences(
-    dataset: Dataset,
-    framesets: Map[InflectedForms, VerbFrameset],
-    sentenceQAs: SentenceQAOutput,
-  ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
-    dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
-      sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
-        val verbIndex = verbIndexStr.toInt
-        val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
-        val frameset = framesets(verbForms)
-        val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
-        frameset.frames.zip(frameset.frames.indices).toList
-          .filter(_._1.verbIds.contains(verbId))
-          .foldMap { case (frame, frameIndex) =>
-              val adjacencyExpectations = verbQAs.tails.toList.flatMap {
-                case Nil => Nil
-                case fst :: tail => tail.map { snd =>
-                  val adjProb = adjacencyProb(fst.spans, snd.spans)
-                  val qPair = fst.question.clausalQ -> snd.question.clausalQ
-                  val expectedCount = ExpectedCount(adjProb, 1.0)
-                  Map(qPair -> expectedCount)
-                }
-              }.combineAll
-              Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
-          }
+  def getJsonInputsForQA[F[_]: Applicative](dataset: Dataset): Stream[F, Json] = {
+    val verbToQuestionTemplates = dataset.sentences.values.toList.foldMap { sentence =>
+      sentence.verbEntries.values.toList.foldMap { verb =>
+        val templateQs: Set[(ArgStructure, ArgumentSlot)] = ClauseResolution.getResolvedStructures(
+          filterGoldNonDense(verb)._2.values.toList.map(_.questionSlots)
+        ).toSet
+        Map(verb.verbInflectedForms -> templateQs)
       }
     }
-  }
-
-  def symmetrizeArgumentEquivalences(
-    equivalences: Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]]
-  ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
-    equivalences.transform { case (_, frameEqs) =>
-      frameEqs.transform { case (_, equivalence) =>
-        equivalence.transform { case (qPair, ec) =>
-          ec |+| equivalence.get(qPair.swap).combineAll
-        }
-      }
-    }
-  }
-
-  def getFuzzyArgumentEquivalences(
-    dataset: Dataset,
-    framesets: Map[InflectedForms, VerbFrameset],
-    allSentenceQAs: Stream[IO, SentenceQAOutput]
-  ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
-    allSentenceQAs.map { sentenceQAs =>
-      getUnsymmetrizedFuzzyArgumentEquivalences(
-        dataset, framesets, sentenceQAs
-      )
-    }.compile.foldMonoid.map(symmetrizeArgumentEquivalences)
-      .map(
-        _.transform { case (_, frameRels) =>
-          frameRels.transform { case (_, frameRel) =>
-            frameRel.transform { case (_, ec) =>
-              ec.expectationPerInstance
-            }
-          }
-        }
-      )
-  }
-
-  def getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
-    dataset: Dataset,
-    sentenceQAs: SentenceQAOutput)(
-    implicit Log: TreeLogger[IO, String]
-  ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
-    dataset.sentences.get(sentenceQAs.sentenceId).foldMapM { sentence =>
-      Log.debug(jjm.ling.Text.render(sentence.sentenceTokens)) >> {
-        IO(
-          sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
-            sentence.verbEntries.get(verbIndexStr.toInt).foldMap { verbEntry =>
-              val verbForms = verbEntry.verbInflectedForms
-              val adjacencyExpectations = verbQAs.tails.toList.flatMap {
-                case Nil => Nil
-                case fst :: tail => tail.map { snd =>
-                  val adjProb = adjacencyProb(fst.spans, snd.spans)
-                  val qPair = fst.question.clausalQ -> snd.question.clausalQ
-                  Map(qPair -> ExpectedCount(adjProb, 1.0))
-                }
-              }.combineAll
-              Map(verbForms -> adjacencyExpectations)
-            }
-          }
-        )
-      }
-    }
-  }
-
-  def symmetrizeCollapsedArgumentEquivalences(
-    equivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]
-  ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]] = {
-    equivalences.transform { case (_, equivalence) =>
-      equivalence.transform { case (qPair, ec) =>
-        ec |+| equivalence.get(qPair.swap).combineAll
-      }
-    }
-  }
-
-  def getCollapsedFuzzyArgumentEquivalences(
-    dataset: Dataset,
-    allSentenceQAs: Stream[IO, SentenceQAOutput])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]] = {
-    Log.infoBranch("Getting collapsed fuzzy argument equivalences")(
-      allSentenceQAs.evalMap { sentenceQAs =>
-        getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
-          dataset, sentenceQAs
-        )
-      }.infoCompile("Aggregating counts from predictions", dataset.sentences.size)(_.foldMonoid)
-        .flatMap(x =>
-          Log.infoBranch("Symmetrizing equivalence counts")(
-            IO(symmetrizeCollapsedArgumentEquivalences(x))
+    dataset.sentences.toList
+      .foldMap(x => Stream.eval(Applicative[F].pure(x)))
+      .map { case (sentenceId, sentence) =>
+      Json.obj(
+        "sentenceId" -> sentenceId.asJson,
+        "sentenceTokens" -> sentence.sentenceTokens.asJson,
+        "verbs" -> sentence.verbEntries.values.toList.map { verb =>
+          val questions = verbToQuestionTemplates(verb.verbInflectedForms).toList.map { case (clauseTemplate, slot) =>
+            val clauseTemplateString = io.circe.Printer.noSpaces.pretty(clauseTemplate.asJson)
+            Json.obj(
+              "clause" -> clauseTemplateString.asJson,
+              "slot" -> slot.asJson
+            )
+            // val argSlots = getArgumentSlotsForClauseTemplate(clauseTemplate).map(ArgumentSlot.toString)
+            // argSlots.map(slot =>
+            //   Json.obj(
+            //     "clause" -> clauseTemplateString.asJson,
+            //     "slot" -> slot.asJson
+            //   )
+            // )
+          }.toList
+          Json.obj(
+            "verbIndex" -> verb.verbIndex.asJson,
+            "clauses" -> questions.asJson
           )
-        )
-        .map(
-          _.transform { case (_, verbRel) =>
-            verbRel.transform { case (_, ec) =>
-              ec.expectationPerInstance
-            }
-          }
-        )
+        }.asJson
+      )
+    }
+  }
+
+  def writeQAInputDataForDataset(
+    outDir: NIOPath, splitName: String, dataset: Dataset)(
+    implicit Log: TreeLogger[IO, String]
+  ): IO[Unit] = {
+    val outPath = outDir.resolve(s"qa-input-$splitName.jsonl.gz")
+    Log.infoBranch(s"Writing QA-SRL $splitName QA input data to $outPath")(
+      FileUtil.writeJsonLinesStreaming(
+        outPath, io.circe.Printer.noSpaces
+      )(getJsonInputsForQA[IO](dataset))
     )
   }
+
+  def writeQAInputDataForDataSplit(
+    goldPath: NIOPath, outDir: NIOPath, splitPath: String, splitName: String)(
+    implicit Log: TreeLogger[IO, String]
+  ): IO[Unit] = {
+    Log.infoBranch(s"Reading QA-SRL $splitPath")(
+      readDataset(goldPath.resolve(s"$splitPath.jsonl.gz"))
+    ) >>= (dataset =>
+      writeQAInputDataForDataset(outDir, splitName, dataset)
+    )
+  }
+
+  implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
+
+  def program(goldPath: NIOPath, outDir: NIOPath): IO[ExitCode] = for {
+    implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.EphemeralTreeConsoleLogger.create()
+    _ <- writeQAInputDataForDataSplit(goldPath, outDir, "expanded/train", "train")
+    _ <- writeQAInputDataForDataSplit(goldPath, outDir, "expanded/dev", "dev")
+    _ <- writeQAInputDataForDataSplit(goldPath, outDir, "orig/test", "test")
+  } yield ExitCode.Success
+
+  def main: Opts[IO[ExitCode]] = {
+    val goldPath = Opts.option[NIOPath](
+      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank."
+    )
+    val outDir = Opts.option[NIOPath](
+      "out", metavar = "path", help = "Relative path to the output directory."
+    )
+
+    (goldPath, outDir).mapN(program)
+  }
+}
+
+
+  // XXXXXXXXX
+
+  // import qfirst.metrics.ExpectedCount
+
+  // def getUnsymmetrizedFuzzyArgumentEquivalences(
+  //   dataset: Dataset,
+  //   framesets: Map[InflectedForms, VerbFrameset],
+  //   sentenceQAs: SentenceQAOutput,
+  // ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+  //   dataset.sentences.get(sentenceQAs.sentenceId).foldMap { sentence =>
+  //     sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
+  //       val verbIndex = verbIndexStr.toInt
+  //       val verbForms = sentence.verbEntries(verbIndexStr.toInt).verbInflectedForms
+  //       val frameset = framesets(verbForms)
+  //       val verbId = VerbId(sentenceQAs.sentenceId, verbIndex)
+  //       frameset.frames.zip(frameset.frames.indices).toList
+  //         .filter(_._1.verbIds.contains(verbId))
+  //         .foldMap { case (frame, frameIndex) =>
+  //             val adjacencyExpectations = verbQAs.tails.toList.flatMap {
+  //               case Nil => Nil
+  //               case fst :: tail => tail.map { snd =>
+  //                 val adjProb = adjacencyProb(fst.spans, snd.spans)
+  //                 val qPair = fst.question.clausalQ -> snd.question.clausalQ
+  //                 val expectedCount = ExpectedCount(adjProb, 1.0)
+  //                 Map(qPair -> expectedCount)
+  //               }
+  //             }.combineAll
+  //             Map(verbForms -> Map(frameIndex -> adjacencyExpectations))
+  //         }
+  //     }
+  //   }
+  // }
+
+  // def symmetrizeArgumentEquivalences(
+  //   equivalences: Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]]
+  // ): Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+  //   equivalences.transform { case (_, frameEqs) =>
+  //     frameEqs.transform { case (_, equivalence) =>
+  //       equivalence.transform { case (qPair, ec) =>
+  //         ec |+| equivalence.get(qPair.swap).combineAll
+  //       }
+  //     }
+  //   }
+  // }
+
+  // def getFuzzyArgumentEquivalences(
+  //   dataset: Dataset,
+  //   framesets: Map[InflectedForms, VerbFrameset],
+  //   allSentenceQAs: Stream[IO, SentenceQAOutput]
+  // ): IO[Map[InflectedForms, Map[Int, Map[(ClausalQ, ClausalQ), Double]]]] = {
+  //   allSentenceQAs.map { sentenceQAs =>
+  //     getUnsymmetrizedFuzzyArgumentEquivalences(
+  //       dataset, framesets, sentenceQAs
+  //     )
+  //   }.compile.foldMonoid.map(symmetrizeArgumentEquivalences)
+  //     .map(
+  //       _.transform { case (_, frameRels) =>
+  //         frameRels.transform { case (_, frameRel) =>
+  //           frameRel.transform { case (_, ec) =>
+  //             ec.expectationPerInstance
+  //           }
+  //         }
+  //       }
+  //     )
+  // }
+
+  // def getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
+  //   dataset: Dataset,
+  //   sentenceQAs: SentenceQAOutput)(
+  //   implicit Log: TreeLogger[IO, String]
+  // ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]] = {
+  //   dataset.sentences.get(sentenceQAs.sentenceId).foldMapM { sentence =>
+  //     Log.debug(jjm.ling.Text.render(sentence.sentenceTokens)) >> {
+  //       IO(
+  //         sentenceQAs.verbs.toList.foldMap { case (verbIndexStr, verbQAs) =>
+  //           sentence.verbEntries.get(verbIndexStr.toInt).foldMap { verbEntry =>
+  //             val verbForms = verbEntry.verbInflectedForms
+  //             val adjacencyExpectations = verbQAs.tails.toList.flatMap {
+  //               case Nil => Nil
+  //               case fst :: tail => tail.map { snd =>
+  //                 val adjProb = adjacencyProb(fst.spans, snd.spans)
+  //                 val qPair = fst.question.clausalQ -> snd.question.clausalQ
+  //                 Map(qPair -> ExpectedCount(adjProb, 1.0))
+  //               }
+  //             }.combineAll
+  //             Map(verbForms -> adjacencyExpectations)
+  //           }
+  //         }
+  //       )
+  //     }
+  //   }
+  // }
+
+  // def symmetrizeCollapsedArgumentEquivalences(
+  //   equivalences: Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]]
+  // ): Map[InflectedForms, Map[(ClausalQ, ClausalQ), ExpectedCount]] = {
+  //   equivalences.transform { case (_, equivalence) =>
+  //     equivalence.transform { case (qPair, ec) =>
+  //       ec |+| equivalence.get(qPair.swap).combineAll
+  //     }
+  //   }
+  // }
+
+  // def getCollapsedFuzzyArgumentEquivalences(
+  //   dataset: Dataset,
+  //   allSentenceQAs: Stream[IO, SentenceQAOutput])(
+  //   implicit Log: EphemeralTreeLogger[IO, String]
+  // ): IO[Map[InflectedForms, Map[(ClausalQ, ClausalQ), Double]]] = {
+  //   Log.infoBranch("Getting collapsed fuzzy argument equivalences")(
+  //     allSentenceQAs.evalMap { sentenceQAs =>
+  //       getUnsymmetrizedCollapsedFuzzyArgumentEquivalences(
+  //         dataset, sentenceQAs
+  //       )
+  //     }.infoCompile("Aggregating counts from predictions", dataset.sentences.size)(_.foldMonoid)
+  //       .flatMap(x =>
+  //         Log.infoBranch("Symmetrizing equivalence counts")(
+  //           IO(symmetrizeCollapsedArgumentEquivalences(x))
+  //         )
+  //       )
+  //       .map(
+  //         _.transform { case (_, verbRel) =>
+  //           verbRel.transform { case (_, ec) =>
+  //             ec.expectationPerInstance
+  //           }
+  //         }
+  //       )
+  //   )
+  // }
 
   // def getFuzzyArgumentEquivalences(
   //   dataset: Dataset,
@@ -278,36 +330,4 @@ object QAInputApp extends CommandIOApp(
   //   }
   // }
 
-  implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
-
-  def program(goldPath: NIOPath, outDir: NIOPath, test: Boolean): IO[ExitCode] = for {
-    Log <- freelog.loggers.EphemeralTreeConsoleLogger.create()
-    inputSet <- Log.infoBranch("Reading QA-SRL expanded/train")(
-      readDataset(goldPath.resolve("expanded/train.jsonl.gz"))
-    )
-    evalSet <- {
-      if(test) Log.infoBranch("Reading QA-SRL orig/test")(readDataset(goldPath.resolve("orig/test.jsonl.gz")))
-      else Log.infoBranch("Reading QA-SRL orig/dev")(readDataset(goldPath.resolve("orig/dev.jsonl.gz")))
-    }
-    fullDataset <- Log.infoBranch("Constructing full dataset")(IO(inputSet |+| evalSet))
-    _ <- Log.infoBranch("Writing QA input file")(
-      FileUtil.writeJsonLinesStreaming(
-        outDir.resolve(if(test) "qa-input-test.jsonl.gz" else "qa-input-dev.jsonl.gz"), io.circe.Printer.noSpaces)(
-        getJsonInputsForQA[IO](fullDataset))
-    )
-  } yield ExitCode.Success
-
-  def main: Opts[IO[ExitCode]] = {
-    val goldPath = Opts.option[NIOPath](
-      "qasrl-gold", metavar = "path", help = "Path to the QA-SRL Bank."
-    )
-    val outDir = Opts.option[NIOPath](
-      "out", metavar = "path", help = "Relative path to the output directory."
-    )
-    val test = Opts.flag(
-      "test", help = "Whether to use test data for QA inputs"
-    ).orFalse
-
-    (goldPath, outDir, test).mapN(program)
-  }
-}
+  // END XXXXXXXXX
