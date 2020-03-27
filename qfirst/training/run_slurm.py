@@ -21,7 +21,7 @@ def main():
     parser.add_argument("initial_batch_size", metavar = "n", type = int, help = "Batch size to start with before cutting as necessary")
     args = parser.parse_args()
 
-    serialization_directory = "/checkpoint/jmichael/" + args.models_branch
+    serialization_directory = "/gscratch/cse/julianjm/qasrl-models/" + args.models_branch
     current_batch_size = args.initial_batch_size
     done = False
     while not done:
