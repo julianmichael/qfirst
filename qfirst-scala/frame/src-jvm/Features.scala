@@ -160,14 +160,14 @@ abstract class Features[VerbType  : Encoder : Decoder](
       )
   }.toCell("Verb ELMo vectors")
 
-  def templateQVocabsCachePath = cacheDir.map(_.resolve("clausal-question-vocabs.jsonl.gz"))
-  lazy val templateQVocabsByVerb = new Cell(
-    "Clausal question vocabularies",
-    templateQVocabsCachePath >>= (path =>
-      fileCached[Map[VerbType, Vocab[TemplateQ]]]("Clausal question vocabularies")(
+  val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
+  lazy val questionTemplateVocabsByVerb = new Cell(
+    "Question template vocabularies",
+    questionTemplateVocabsCachePath >>= (path =>
+      fileCached[Map[VerbType, Vocab[QuestionTemplate]]]("Question template vocabularies")(
         path = path,
         read = path => (
-          FileUtil.readJsonLines[(VerbType, Vocab[TemplateQ])](path)
+          FileUtil.readJsonLines[(VerbType, Vocab[QuestionTemplate])](path)
             .infoCompile("Reading lines")(_.toList).map(_.toMap)
         ),
         write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
@@ -177,12 +177,12 @@ abstract class Features[VerbType  : Encoder : Decoder](
           _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
             case (verbType, sentences) =>
               Log.trace(verbType.toString) >> IO {
-                val templateQSet = sentences.unorderedFoldMap(verbs =>
+                val qTemplateSet = sentences.unorderedFoldMap(verbs =>
                   verbs.value.unorderedFoldMap(qaPairs =>
-                    qaPairs.keySet.map(_.template)
+                    qaPairs.keySet.map(QuestionTemplate.fromClausalQuestion)
                   )
                 )
-                verbType -> Vocab.make(templateQSet)
+                verbType -> Vocab.make(qTemplateSet)
               }
           }.map(_.toMap)
         )
@@ -281,33 +281,6 @@ abstract class Features[VerbType  : Encoder : Decoder](
   )
 
   // XXXXXXXXX
-
-
-  // val collapsedQAOutputs = {
-  //   new Cell(
-  //     "Collapsed QA outputs",
-  //     fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
-  //       "Collapsed QA outputs")(
-  //       path = collapsedQAOutputPath,
-  //       read = path => (
-  //         FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
-  //           .map { case (k, v) => k -> v.toMap }.infoCompile("Reading lines")(_.toList).map(_.toMap)
-  //       ),
-  //       write = (path, collapsedQAOutputs) => FileUtil.writeJsonLines(
-  //         collapsedQAOutputPath, io.circe.Printer.noSpaces)(
-  //         collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
-  //     )( // compute
-  //       for {
-  //         trainSet <- train.get
-  //         evalSet <- eval.get
-  //         collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
-  //           trainSet |+| evalSet,
-  //           FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-  //         )
-  //       } yield collapsedQAOutputs
-  //     )
-  //   )
-  // }
 
   // just for clauses
   // def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, QAPairs]]): Vocab[ArgStructure] = {
