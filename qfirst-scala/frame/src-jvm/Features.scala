@@ -221,11 +221,17 @@ abstract class Features[VerbType  : Encoder : Decoder](
   // )
 
   // inputs sent to a QA model
-  def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
+  // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
 
-  // TODO change / separate into train, dev and test
   // outputs of a QA model, read back in to construct features
-  def qaOutputPath(split: String) = inputDir.resolve(s"qa/qa-output-dev.jsonl.gz")
+  def qaOutputPath(split: String) =
+    IO.pure(inputDir.resolve("qa"))
+      .flatTap(createDir)
+      .map(_.resolve(s"qa-output-$split.jsonl.gz"))
+  def qaFeaturesPath(split: String) =
+    cacheDir.map(_.resolve("qa"))
+      .flatTap(createDir)
+      .map(_.resolve(s"qa-features-$split.jsonl.gz"))
 
   lazy val answerNLLs = RunData.splits.flatMap { split =>
     import QAInputApp.{SentenceQAOutput, ClauseQAOutput}
@@ -233,8 +239,9 @@ abstract class Features[VerbType  : Encoder : Decoder](
       insts <- instances(split)
       vidToType <- verbIdToType(split)
       splitName <- RunData.strings(split)
+      qaOutPath <- qaOutputPath(splitName)
       res <- FileUtil.readJsonLines[SentenceQAOutput](
-        qaOutputPath(splitName)
+        qaOutPath
       ).map { case SentenceQAOutput(sid, verbs) =>
         verbs.toList.foldMap { case (verbIndexStr, clausalQAs) =>
           val verbIndex = verbIndexStr.toInt
@@ -247,7 +254,13 @@ abstract class Features[VerbType  : Encoder : Decoder](
                 val goldSpans = spans.flatten.toSet
                 QuestionId(verbId, cq) -> clausalQAs.map {
                   case ClauseQAOutput(question, spans) =>
-                    question.clausalQ -> spans.filter(p => goldSpans.contains(p._1)).foldMap(_._2)
+                    val marginalAnswerProb = spans
+                      .filter(p => goldSpans.contains(p._1))
+                      .foldMap(_._2)
+                    // smoothed prob chosen here bc it's 1/2 of the bottom decoding threshold for the QA model
+                    val smoothedMarginalAnswerProb =
+                      scala.math.max(marginalAnswerProb, 0.0025)
+                    question.clausalQ -> -scala.math.log(smoothedMarginalAnswerProb)
                 }
               }
             )
@@ -255,9 +268,7 @@ abstract class Features[VerbType  : Encoder : Decoder](
         }
       }.infoCompile("Compiling QA NLL features from sentence predictions")(_.foldMonoid)
     } yield res
-  }.toFileCachedCell(
-    "QA NLL features",
-    split => cacheDir.map(_.resolve(s"qa/qa-features-$split.jsonl.gz")))(
+  }.toFileCachedCell("QA NLL features", qaFeaturesPath)(
     read = path => (
       FileUtil.readJsonLines[(VerbType, List[(QuestionId, List[(TemplateQ, Double)])])](path)
         .map { case (k, v) => k -> v.toMap }
