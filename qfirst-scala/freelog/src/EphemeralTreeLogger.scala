@@ -4,6 +4,7 @@ import freelog.implicits._
 import cats.Applicative
 import cats.Monad
 import cats.Traverse
+import cats.effect.Sync
 import cats.implicits._
 
 // contract might be subject to change later...?
@@ -43,5 +44,22 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
   ): F[Unit] = {
     val renderProgress = progress.renderProgress(None, sizeHint)
     log(renderProgress(total), logLevel)
+  }
+}
+object EphemeralTreeLogger {
+  def noop[F[_], Msg](implicit F: Sync[F]): EphemeralTreeLogger[F, Msg] = new EphemeralTreeLogger[F, Msg] {
+    def emit(msg: Msg, level: LogLevel): F[Unit] = F.delay(())
+
+    def emitBranch[A](
+      msg: Msg, logLevel: LogLevel)(
+      body: F[A])(
+      implicit ambientLevel: LogLevel
+    ): F[A] = body
+
+    def block[A](fa: F[A]): F[A] = fa
+
+    def rewind: F[Unit] = F.delay(())
+
+    def flush: F[Unit] = F.delay(())
   }
 }

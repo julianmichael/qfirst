@@ -160,7 +160,7 @@ abstract class Features[VerbType  : Encoder : Decoder](
       )
   }.toCell("Verb ELMo vectors")
 
-  val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
+  lazy val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
   lazy val questionTemplateVocabsByVerb = new Cell(
     "Question template vocabularies",
     questionTemplateVocabsCachePath >>= (path =>
