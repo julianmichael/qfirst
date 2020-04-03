@@ -27,7 +27,7 @@ import scala.util.Random
 import jjm.io.FileUtil
 
 object ModelVariants extends CommandIOApp(
-  name = "mill qfirst.jvm.runHyperparams",
+  name = "mill qfirst.jvm.model-gen.run",
   header = "Generate hyperparam configurations.")  {
 
   case class Hyperparams[F[_]: Monad](
