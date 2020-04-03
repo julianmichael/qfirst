@@ -43,13 +43,17 @@ trait ClusteringAlgorithm extends AgglomerativeClusteringAlgorithm with FlatClus
     val indices = left.values ++ right.values
     val param = mergeParams(left, leftParam, right, rightParam)
     val loss = aggregateLosses(indices.map(getInstanceLoss(_, param)))
-    if(!(loss >= left.loss && loss >= right.loss)) {
-      println("WARNING: clusters seem to be incorrectly merged")
-      println(left)
-      println(right)
-      println(loss)
-      ???
-    }
+    // if(!(loss >= left.loss && loss >= right.loss)) {
+    //   println("WARNING: clusters seem to be incorrectly merged")
+    //   println(left)
+    //   println(leftParam)
+    //   println(aggregateLosses(indices.map(getInstanceLoss(_, leftParam))))
+    //   println(right)
+    //   println(rightParam)
+    //   println(aggregateLosses(indices.map(getInstanceLoss(_, rightParam))))
+    //   println(loss)
+    //   ???
+    // }
     loss
   }
 }
