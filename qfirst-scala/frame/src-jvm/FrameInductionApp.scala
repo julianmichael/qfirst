@@ -71,10 +71,10 @@ object FrameInductionApp extends CommandIOApp(
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType]]]] = {
-    features.outDir map (outDir =>
+    features.modelDir.map (modelDir =>
       FileCached[Map[VerbType, VerbClusterModel[VerbType]]](
         s"QA-SRL cluster model: $modelConfig")(
-        path = outDir.resolve(s"models/$modelConfig.jsonl.gz"),
+        path = modelDir.resolve(s"$modelConfig.jsonl.gz"),
         read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType])](path)
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {

@@ -51,8 +51,8 @@ abstract class Features[VerbType  : Encoder : Decoder](
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
   // for use by frame induction etc.
-  def modelDir = IO.pure(
-    rootDir.resolve("models").resolve(mode.toString)
+  def modelDir = outDir.map(
+    _.resolve("models").resolve(mode.toString)
   ).flatTap(createDir)
 
   // for inputs to feature computation
@@ -356,7 +356,7 @@ class GoldQasrlFeatures(
 
   val dataset: RunDataCell[Dataset] = RunData(
     train = "expanded/train",
-    dev = "orig/dev",
+    dev = "expanded/dev",
     test = "orig/test").flatMap(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
   ).toCell("QA-SRL dataset")
