@@ -57,7 +57,7 @@ case class RunData[A](
       new Cell(
         s"$name ($runName)",
         getCachePath(runName) >>= (path =>
-          fileCached[A](s"$name ($runName)")(
+          FileCached.get[A](s"$name ($runName)")(
             path = path,
             read = read,
             write = write)(

@@ -19,6 +19,9 @@ import cats.effect.IO
 import freelog.EphemeralTreeLogger
 
 trait AgglomerativeClusteringAlgorithm {
+
+  private implicit val logLevel = freelog.LogLevel.Info
+
   type ClusterParam
   type Index
 

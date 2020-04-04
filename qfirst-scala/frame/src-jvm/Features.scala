@@ -164,7 +164,7 @@ abstract class Features[VerbType  : Encoder : Decoder](
   lazy val questionTemplateVocabsByVerb = new Cell(
     "Question template vocabularies",
     questionTemplateVocabsCachePath >>= (path =>
-      fileCached[Map[VerbType, Vocab[QuestionTemplate]]]("Question template vocabularies")(
+      FileCached.get[Map[VerbType, Vocab[QuestionTemplate]]]("Question template vocabularies")(
         path = path,
         read = path => (
           FileUtil.readJsonLines[(VerbType, Vocab[QuestionTemplate])](path)
@@ -189,36 +189,6 @@ abstract class Features[VerbType  : Encoder : Decoder](
       )
     )
   )
-
-  // def globalTemplateQVocabCachePath = cacheDir.map(_.resolve("clausal-question-vocabs.jsonl.gz"))
-  // lazy val templateQVocabsByVerb = new Cell(
-  //   "Clausal question vocabularies",
-  //   templateQVocabsCachePath >>= (path =>
-  //     fileCached[Map[VerbType, Vocab[TemplateQ]]]("Clausal question vocabularies")(
-  //       path = path,
-  //       read = path => (
-  //         FileUtil.readJsonLines[(VerbType, Vocab[TemplateQ])](path)
-  //           .infoCompile("Reading lines")(_.toList).map(_.toMap)
-  //       ),
-  //       write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
-  //         path, io.circe.Printer.noSpaces)(
-  //         clausalQVocabs.toList))(
-  //       instances.all.get >>= (
-  //         _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
-  //           case (verbType, sentences) =>
-  //             Log.trace(verbType.toString) >> IO {
-  //               val templateQSet = sentences.unorderedFoldMap(verbs =>
-  //                 verbs.value.unorderedFoldMap(qaPairs =>
-  //                   qaPairs.keySet.map(_.template)
-  //                 )
-  //               )
-  //               verbType -> Vocab.make(templateQSet)
-  //             }
-  //         }.map(_.toMap)
-  //       )
-  //     )
-  //   )
-  // )
 
   // inputs sent to a QA model
   // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
@@ -384,7 +354,7 @@ class GoldQasrlFeatures(
       new Cell(
         "Evaluation items",
         evaluationItemsPath >>= (evalItemsPath =>
-          fileCached[Vector[(InflectedForms, String, Int)]](
+          FileCached.get[Vector[(InflectedForms, String, Int)]](
             "Evaluation Items")(
             path = evalItemsPath,
             read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
