@@ -20,6 +20,7 @@ object Proportion {
 
     def getTree: MapTree[String, Metric] = MapTree.fromPairs(
       "total" -> Metric.int(total),
+      "included" -> Metric.int(included),
       "proportion" -> Metric.double(proportion)
     )
   }

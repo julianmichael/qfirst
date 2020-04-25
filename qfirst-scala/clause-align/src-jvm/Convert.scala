@@ -1,6 +1,7 @@
 package qfirst.clause.align
 
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Paths
 import java.nio.file.{Path => NIOPath}
 
@@ -23,16 +24,16 @@ import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
 import qasrl._
-// import qasrl.PresentTense
-import qasrl.labeling.SlotBasedLabel
 import qasrl.bank.Data
+import qasrl.data.Dataset
+import qasrl.labeling.SlotBasedLabel
 
 import qfirst.clause._
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
 object Convert extends CommandIOApp(
-  name = "qfirst.clause-align.Convert",
+  name = "mill -i qfirst.clause-align.jvm.run",
   header = "Runs clause resolution on CSV inputs and reports results.") {
 
   def main: Opts[IO[ExitCode]] = {
@@ -48,8 +49,9 @@ object Convert extends CommandIOApp(
   val qasrlBankPath = Paths.get("../qasrl-bank/data/qasrl-v2_1")
 
   def readCSV[A](path: NIOPath)(f: (List[String], Stream[IO, Map[String, String]]) => IO[A]): IO[A] = {
+    val format = if(path.toString.endsWith(".tsv")) new TSVFormat{} else new DefaultCSVFormat {}
     Bracket[IO, Throwable].bracket(
-      acquire = IO(CSVReader.open(new File(path.toString))))(
+      acquire = IO(CSVReader.open(new File(path.toString))(format)))(
       use = reader => {
         IO(reader.readNext.get) >>= (headers =>
           f(headers,
@@ -92,7 +94,18 @@ object Convert extends CommandIOApp(
   def getMetricsString[M: HasMetrics](m: M) =
     m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-  val newHeaders = List("clause+arg", "templated_clause+arg", "aligned_question")
+  val newHeaders = List(
+    "aligned_question",
+    "arg_slot",
+    "clause",
+    "templated_clause",
+    "ng_clause",
+    "neg_flipped_ng_clause",
+    "to_clause",
+    "inv_clause",
+    "inv_neg_would_clause"
+  )
+
 
   case class VerbInfo(
     sentenceId: String,
@@ -176,6 +189,15 @@ object Convert extends CommandIOApp(
         )
       )
 
+    val recapitalize = (s: String) => {
+      if(s.isEmpty) s
+      else if(
+        s.tail.headOption.exists(_.isUpper) ||
+          (s.dropWhile(_ != ' ').nonEmpty &&
+             s.dropWhile(_ != ' ').tail.headOption.exists(_.isUpper))) s
+      else s.updated(0, s.charAt(0).toLower)
+    }
+
     def removeObj2(structure: ArgStructure): ArgStructure = {
       ArgStructure.args.modify(_ remove Obj2)(structure)
     }
@@ -185,7 +207,7 @@ object Convert extends CommandIOApp(
       queries.map(q =>
         resolvedQAPairsByStructure.get(q._1).flatMap(
           _.find(_._1._2 == q._2).map(_._2).map(
-            _.split("~!~").toList.map(clausalQ._2 -> _)
+            _.split("~!~").toList.map(recapitalize).map(clausalQ._2 -> _)
           )
         )
       ).foldK.orElse {
@@ -195,7 +217,7 @@ object Convert extends CommandIOApp(
           obj2lessQueries.map(q =>
             resolvedQAPairsByObj2lessStructure.get(q._1).flatMap(
               _.find(_._1._2 == q._2).map(_._2).map(
-                _.split("~!~").toList.map(Subj -> _)
+                _.split("~!~").toList.map(recapitalize).map(Subj -> _)
               )
             )
           ).foldK
@@ -222,26 +244,70 @@ object Convert extends CommandIOApp(
 
     val newLines = (originalLines, resolvedQAPairs).zipped.map {
       case (fields, ((frame, slot), answer)) =>
+        val frame2 = Frame2.fromFrame(frame)
         val templatedFrame = frame.copy(
           tense = PresentTense, isPerfect = false,
           isProgressive = false, isNegated = false
         )
         val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
-        val argMappings = clauseTemplate.args.keys.toList.filter(_ != slot).flatMap { (slot: ArgumentSlot) =>
+        val argMappings = clauseTemplate.args.keys.toList.flatMap { (slot: ArgumentSlot) =>
           getAlignedAnswers(clauseTemplate -> slot)
         }.sequence.map(_.toMap)
 
+        val tenseLens = Frame2.tense
+        val negLens = Frame2.isNegated
+
         // val argMappings = resolvedQAPairsByStructure(clauseTemplate)
-        // .map { case ((_, slot), answer) =>
-        //   answer.split("~!~").toList.map(slot -> _)
-        // }.sequence.map(_.toMap)
+        //   .map { case ((_, slot), answer) =>
+        //     answer.split("~!~").toList.map(slot -> _)
+        //   }.sequence.map(_.toMap)
+
+        def renderFrameStrings(getString: Map[ArgumentSlot, String] => String) =
+          argMappings.map(getString).toSet.mkString("~!~")
+
+        val decl = renderFrameStrings(
+          argValues => frame2.clausesWithArgs(argValues).head
+        )
+
+        val ngClause = renderFrameStrings(
+          argValues => tenseLens
+            .set(Tense2.NonFinite.Gerund)(frame2)
+            .clausesWithArgs(argValues).head
+        )
+        val negFlippedNgClause = renderFrameStrings(
+          argValues => tenseLens
+            .set(Tense2.NonFinite.Gerund)(
+              negLens.modify(!_)(frame2)
+            ).clausesWithArgs(argValues).head
+        )
+        val toClause = renderFrameStrings(
+          argValues => tenseLens
+            .set(Tense2.NonFinite.To)(frame2)
+            .clausesWithArgs(argValues).head
+        )
+        val invClause = renderFrameStrings(
+          argValues => frame2
+            .questionsForSlotWithArgs(None, argValues).head.init
+        )
+        val invNegWouldClause = renderFrameStrings(
+          argValues => tenseLens
+            .set(Tense2.Finite.Modal("would".lowerCase))(
+              negLens.set(true)(frame2)
+            )
+            .questionsForSlotWithArgs(None, argValues).head.init
+        )
 
         fields +
-          ("clause+arg" -> s"${frame.clauses.head}: $slot") +
-          ("templated_clause+arg" -> s"${templatedFrame.clauses.head}: $slot") +
-          ("aligned_question" -> argMappings.map(argMapping =>
-             frame.questionsForSlotWithArgs(slot, argMapping).head
-           ).toSet.mkString("~!~"))
+          ("aligned_question" -> renderFrameStrings(argMapping =>
+             frame.questionsForSlotWithArgs(slot, argMapping).head)) +
+          ("arg_slot" -> slot.toString) +
+          ("clause" -> decl) +
+          ("templated_clause" -> templatedFrame.clauses.head) +
+          ("ng_clause" -> ngClause) +
+          ("neg_flipped_ng_clause" -> negFlippedNgClause) +
+          ("to_clause" -> toClause) +
+          ("inv_clause" -> invClause) +
+          ("inv_neg_would_clause" -> invNegWouldClause)
     }
 
     val metrics = {
@@ -269,8 +335,7 @@ object Convert extends CommandIOApp(
     }
   }
 
-  def run(inPath: NIOPath, outPath: NIOPath): IO[ExitCode] = for {
-    qasrlData <- IO(Data.readFromQasrlBank(qasrlBankPath).get).map(_.all)
+  def runForFile(qasrlData: Dataset, inPath: NIOPath, outPath: NIOPath) = for {
     (verbs, headers) <- readCSV(inPath)(
       (headers, lines) => lines
         .groupAdjacentBy(fields => fields("qasrl_id") -> fields("verb_idx"))
@@ -284,9 +349,25 @@ object Convert extends CommandIOApp(
             chunk.toList)
         }.compile.toList.map(_ -> headers)
     )
-    _ <- IO(println(getMetricsString(verbs.foldMap(_.metrics))))
     _ <- writeCSV(outPath, headers ++ newHeaders)(
       Stream.emits(verbs.flatMap(_.newLines))
     )
+  } yield verbs.foldMap(_.metrics)
+
+  def run(inPath: NIOPath, outPath: NIOPath): IO[ExitCode] = for {
+    qasrlData <- IO(Data.readFromQasrlBank(qasrlBankPath).get).map(_.all)
+    metrics <- IO(Files.isDirectory(inPath)).ifM(
+      IO(new File(inPath.toString).listFiles.toList.map(f => Paths.get(f.getPath))) >>= (paths =>
+        paths.filter(_.toString.endsWith(".silver.csv")).foldMapM { inPath =>
+          val newName = inPath.getFileName.toString.replaceAll("\\.[^.]*$", ".aligned.csv")
+          val newPath = outPath.resolve(newName)
+          runForFile(qasrlData, inPath, newPath) <* IO(
+            println(s"Wrote alignments of $inPath to $newPath")
+          )
+        }
+      ),
+      runForFile(qasrlData, inPath, outPath)
+    )
+    _ <- IO(println(getMetricsString(metrics)))
   } yield ExitCode.Success
 }
