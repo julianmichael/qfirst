@@ -15,6 +15,7 @@
 #SBATCH --open-mode=append
 #SBATCH --time=16:00:00
 #SBATCH --gres=gpu:4
+#SBATCH --exclude=n2445
 
 ## Comment
 ###SBATCH --comment="ACL deadline Mar 4"
