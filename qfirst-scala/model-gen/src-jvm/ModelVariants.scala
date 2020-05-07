@@ -27,7 +27,7 @@ import scala.util.Random
 import jjm.io.FileUtil
 
 object ModelVariants extends CommandIOApp(
-  name = "mill qfirst.jvm.model-gen.run",
+  name = "mill qfirst.model-gen.jvm.run",
   header = "Generate hyperparam configurations.")  {
 
   case class Hyperparams[F[_]: Monad](
@@ -660,7 +660,7 @@ object ModelVariants extends CommandIOApp(
     )
 
     def spanToQuestion(slotNames: List[String]) = new Model(
-      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_qas")),
+      datasetReader = DatasetReader(QasrlFilter.allQuestions, QasrlInstanceReader("verb_qas", slotNames = Some(slotNames))),
       model = new Component[Unit] {
         def genConfigs[F[_]](implicit H: Hyperparams[F]) = for {
           _ <- param("type", H.pure("qasrl_span_to_question"))
@@ -816,6 +816,7 @@ object ModelVariants extends CommandIOApp(
 
   val fullSlots = List("wh", "aux", "subj", "verb", "obj", "prep", "obj2")
   val noTanSlots = List("wh", "subj", "abst-verb", "obj", "prep", "obj2")
+  val noTanOrAnimSlots = List("abst-wh", "abst-subj", "abst-verb", "abst-obj", "prep", "abst-obj2")
   val clauseSlots = List("clause-subj", "clause-aux", "clause-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
   val clauseNoAnimSlots = List("clause-abst-subj", "clause-aux", "clause-verb", "clause-abst-obj", "clause-prep1", "clause-abst-prep1-obj", "clause-prep2", "clause-abst-prep2-obj", "clause-abst-misc", "clause-qarg")
   val clauseNoTanSlots = List("clause-subj", "clause-abst-verb", "clause-obj", "clause-prep1", "clause-prep1-obj", "clause-prep2", "clause-prep2-obj", "clause-misc", "clause-qarg")
@@ -829,11 +830,14 @@ object ModelVariants extends CommandIOApp(
       "density_softmax" -> Model.span(SetDensityClassifier(objective = "softmax_with_null")),
       // "density_sparsemax" -> Model.span(SetDensityClassifier(objective = "sparsemax")),
     ),
-    "clause_answering" -> MapTree.leaf[String](Model.clauseAnswering)
+    "clause_answering" -> MapTree.leaf[String](Model.clauseAnswering),
     // "clause_frame" -> MapTree.fromPairs(
     //   "plain_100" -> Model.clauseFrame(numFrames = 100)
     // )
-    // "span_to_question" -> MapTree.leaf[String](Model.spanToQuestion(fullSlots)),
+    "span_to_question" -> MapTree.fromPairs(
+      "full" -> Model.spanToQuestion(fullSlots),
+      "no_tan_or_anim" -> Model.spanToQuestion(noTanOrAnimSlots)
+    ),
     // "question" -> MapTree.fromPairs(
     //   "full" -> Model.question(fullSlots),
     //   "no_tan" -> Model.question(noTanSlots),
@@ -842,14 +846,15 @@ object ModelVariants extends CommandIOApp(
     //   "clausal_no_anim" -> Model.question(clauseNoAnimSlots, includeClauseData = true),
     //   "clausal_no_tan_or_anim" -> Model.question(clauseNoTanOrAnimSlots, includeClauseData = true),
     // ),
-    // "question_to_span" -> MapTree.fromPairs(
-    //   "full" -> Model.questionToSpan(fullSlots, true),
-    //   "no_tan" -> Model.questionToSpan(noTanSlots, true),
-    //   "clausal" -> Model.questionToSpan(clauseSlots, true, includeClauseData = true),
-    //   "clausal_no_tan" -> Model.questionToSpan(clauseNoTanSlots, true, includeClauseData = true),
-    //   "clausal_no_anim" -> Model.questionToSpan(clauseNoAnimSlots, true, includeClauseData = true),
-    //   "clausal_no_tan_or_anim" -> Model.questionToSpan(clauseNoTanOrAnimSlots, true, includeClauseData = true),
-    // ),
+    "question_to_span" -> MapTree.fromPairs(
+      "no_tan_or_anim" -> Model.questionToSpan(noTanOrAnimSlots, true),
+      // "full" -> Model.questionToSpan(fullSlots, true),
+      // "no_tan" -> Model.questionToSpan(noTanSlots, true),
+      // "clausal" -> Model.questionToSpan(clauseSlots, true, includeClauseData = true),
+      // "clausal_no_tan" -> Model.questionToSpan(clauseNoTanSlots, true, includeClauseData = true),
+      // "clausal_no_anim" -> Model.questionToSpan(clauseNoAnimSlots, true, includeClauseData = true),
+      // "clausal_no_tan_or_anim" -> Model.questionToSpan(clauseNoTanOrAnimSlots, true, includeClauseData = true),
+    ),
     // "animacy" -> MapTree.leaf[String](Model.animacy),
     // "tan" -> MapTree.leaf[String](Model.tan),
     // "span_to_tan" -> MapTree.leaf[String](Model.spanToTan),
