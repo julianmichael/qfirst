@@ -22,8 +22,6 @@ object MixtureOfStatesClustering {
   case class StateCounts(counts: DenseVector[Double], total: Double)
 }
 
-// same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
-// can also be regarded as "MLE clustering"
 class MixtureOfStatesClustering[I](
   getInstance: I => MixtureOfStatesClustering.StateInstance,
   vocabSize: Int

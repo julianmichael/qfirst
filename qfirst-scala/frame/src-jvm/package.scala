@@ -1,5 +1,6 @@
 package qfirst.frame
 
+import cats.Id
 import cats.effect.IO
 import cats.implicits._
 
@@ -25,27 +26,6 @@ trait PackagePlatformExtensions {
   def readDataset(path: Path): IO[Dataset] = IO.fromTry(
     qasrl.bank.Data.readDataset(path)
   )
-
-  import java.nio.file._
-
-  // TODO deprecate this
-  def fileCached[A](
-    name: String)(
-    path: Path,
-    read: Path => IO[A],
-    write: (Path, A) => IO[Unit])(
-    compute: IO[A])(
-    implicit Log: TreeLogger[IO, String]
-  ): IO[A] = FileCached(name)(path, read, write)(compute).get
-
-  // def optionFromFile[A](
-  //   path: Path,
-  //   read: Path => IO[A]
-  // ): IO[Option[A]] = fileCached[Option[A]](
-  //   path,
-  //   read = path => read(path).map(Some(_)),
-  //   write = (_, _) => IO.unit
-  // )(compute = None)
 
   import qfirst.metrics._
 

@@ -51,8 +51,8 @@ abstract class Features[VerbType  : Encoder : Decoder](
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
   // for use by frame induction etc.
-  def modelDir = IO.pure(
-    rootDir.resolve("models").resolve(mode.toString)
+  def modelDir = outDir.map(
+    _.resolve("models").resolve(mode.toString)
   ).flatTap(createDir)
 
   // for inputs to feature computation
@@ -160,14 +160,14 @@ abstract class Features[VerbType  : Encoder : Decoder](
       )
   }.toCell("Verb ELMo vectors")
 
-  def templateQVocabsCachePath = cacheDir.map(_.resolve("clausal-question-vocabs.jsonl.gz"))
-  lazy val templateQVocabsByVerb = new Cell(
-    "Clausal question vocabularies",
-    templateQVocabsCachePath >>= (path =>
-      fileCached[Map[VerbType, Vocab[TemplateQ]]]("Clausal question vocabularies")(
+  lazy val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
+  lazy val questionTemplateVocabsByVerb = new Cell(
+    "Question template vocabularies",
+    questionTemplateVocabsCachePath >>= (path =>
+      FileCached.get[Map[VerbType, Vocab[QuestionTemplate]]]("Question template vocabularies")(
         path = path,
         read = path => (
-          FileUtil.readJsonLines[(VerbType, Vocab[TemplateQ])](path)
+          FileUtil.readJsonLines[(VerbType, Vocab[QuestionTemplate])](path)
             .infoCompile("Reading lines")(_.toList).map(_.toMap)
         ),
         write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
@@ -177,12 +177,12 @@ abstract class Features[VerbType  : Encoder : Decoder](
           _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
             case (verbType, sentences) =>
               Log.trace(verbType.toString) >> IO {
-                val templateQSet = sentences.unorderedFoldMap(verbs =>
+                val qTemplateSet = sentences.unorderedFoldMap(verbs =>
                   verbs.value.unorderedFoldMap(qaPairs =>
-                    qaPairs.keySet.map(_.template)
+                    qaPairs.keySet.map(QuestionTemplate.fromClausalQuestion)
                   )
                 )
-                verbType -> Vocab.make(templateQSet)
+                verbType -> Vocab.make(qTemplateSet)
               }
           }.map(_.toMap)
         )
@@ -190,42 +190,18 @@ abstract class Features[VerbType  : Encoder : Decoder](
     )
   )
 
-  // def globalTemplateQVocabCachePath = cacheDir.map(_.resolve("clausal-question-vocabs.jsonl.gz"))
-  // lazy val templateQVocabsByVerb = new Cell(
-  //   "Clausal question vocabularies",
-  //   templateQVocabsCachePath >>= (path =>
-  //     fileCached[Map[VerbType, Vocab[TemplateQ]]]("Clausal question vocabularies")(
-  //       path = path,
-  //       read = path => (
-  //         FileUtil.readJsonLines[(VerbType, Vocab[TemplateQ])](path)
-  //           .infoCompile("Reading lines")(_.toList).map(_.toMap)
-  //       ),
-  //       write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
-  //         path, io.circe.Printer.noSpaces)(
-  //         clausalQVocabs.toList))(
-  //       instances.all.get >>= (
-  //         _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
-  //           case (verbType, sentences) =>
-  //             Log.trace(verbType.toString) >> IO {
-  //               val templateQSet = sentences.unorderedFoldMap(verbs =>
-  //                 verbs.value.unorderedFoldMap(qaPairs =>
-  //                   qaPairs.keySet.map(_.template)
-  //                 )
-  //               )
-  //               verbType -> Vocab.make(templateQSet)
-  //             }
-  //         }.map(_.toMap)
-  //       )
-  //     )
-  //   )
-  // )
-
   // inputs sent to a QA model
-  def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
+  // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
 
-  // TODO change / separate into train, dev and test
   // outputs of a QA model, read back in to construct features
-  def qaOutputPath(split: String) = inputDir.resolve(s"qa/qa-output-dev.jsonl.gz")
+  def qaOutputPath(split: String) =
+    IO.pure(inputDir.resolve("qa"))
+      .flatTap(createDir)
+      .map(_.resolve(s"qa-output-$split.jsonl.gz"))
+  def qaFeaturesPath(split: String) =
+    cacheDir.map(_.resolve("qa"))
+      .flatTap(createDir)
+      .map(_.resolve(s"qa-features-$split.jsonl.gz"))
 
   lazy val answerNLLs = RunData.splits.flatMap { split =>
     import QAInputApp.{SentenceQAOutput, ClauseQAOutput}
@@ -233,8 +209,9 @@ abstract class Features[VerbType  : Encoder : Decoder](
       insts <- instances(split)
       vidToType <- verbIdToType(split)
       splitName <- RunData.strings(split)
+      qaOutPath <- qaOutputPath(splitName)
       res <- FileUtil.readJsonLines[SentenceQAOutput](
-        qaOutputPath(splitName)
+        qaOutPath
       ).map { case SentenceQAOutput(sid, verbs) =>
         verbs.toList.foldMap { case (verbIndexStr, clausalQAs) =>
           val verbIndex = verbIndexStr.toInt
@@ -247,7 +224,13 @@ abstract class Features[VerbType  : Encoder : Decoder](
                 val goldSpans = spans.flatten.toSet
                 QuestionId(verbId, cq) -> clausalQAs.map {
                   case ClauseQAOutput(question, spans) =>
-                    question.clausalQ -> spans.filter(p => goldSpans.contains(p._1)).foldMap(_._2)
+                    val marginalAnswerProb = spans
+                      .filter(p => goldSpans.contains(p._1))
+                      .foldMap(_._2)
+                    // smoothed prob chosen here bc it's 1/2 of the bottom decoding threshold for the QA model
+                    val smoothedMarginalAnswerProb =
+                      scala.math.max(marginalAnswerProb, 0.0025)
+                    question.clausalQ -> -scala.math.log(smoothedMarginalAnswerProb)
                 }
               }
             )
@@ -255,9 +238,7 @@ abstract class Features[VerbType  : Encoder : Decoder](
         }
       }.infoCompile("Compiling QA NLL features from sentence predictions")(_.foldMonoid)
     } yield res
-  }.toFileCachedCell(
-    "QA NLL features",
-    split => cacheDir.map(_.resolve(s"qa/qa-features-$split.jsonl.gz")))(
+  }.toFileCachedCell("QA NLL features", qaFeaturesPath)(
     read = path => (
       FileUtil.readJsonLines[(VerbType, List[(QuestionId, List[(TemplateQ, Double)])])](path)
         .map { case (k, v) => k -> v.toMap }
@@ -270,33 +251,6 @@ abstract class Features[VerbType  : Encoder : Decoder](
   )
 
   // XXXXXXXXX
-
-
-  // val collapsedQAOutputs = {
-  //   new Cell(
-  //     "Collapsed QA outputs",
-  //     fileCached[Map[InflectedForms, Map[((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double]]](
-  //       "Collapsed QA outputs")(
-  //       path = collapsedQAOutputPath,
-  //       read = path => (
-  //         FileUtil.readJsonLines[(InflectedForms, List[(((ArgStructure, ArgumentSlot), (ArgStructure, ArgumentSlot)), Double)])](path)
-  //           .map { case (k, v) => k -> v.toMap }.infoCompile("Reading lines")(_.toList).map(_.toMap)
-  //       ),
-  //       write = (path, collapsedQAOutputs) => FileUtil.writeJsonLines(
-  //         collapsedQAOutputPath, io.circe.Printer.noSpaces)(
-  //         collapsedQAOutputs.toList.map { case (k, v) => k -> v.toList })
-  //     )( // compute
-  //       for {
-  //         trainSet <- train.get
-  //         evalSet <- eval.get
-  //         collapsedQAOutputs <- QAInputApp.getCollapsedFuzzyArgumentEquivalences(
-  //           trainSet |+| evalSet,
-  //           FileUtil.readJsonLines[QAInputApp.SentenceQAOutput](qaOutputPath)
-  //         )
-  //       } yield collapsedQAOutputs
-  //     )
-  //   )
-  // }
 
   // just for clauses
   // def makeVerbSpecificClauseVocab(instances: Map[String, Map[Int, QAPairs]]): Vocab[ArgStructure] = {
@@ -356,7 +310,7 @@ class GoldQasrlFeatures(
 
   val dataset: RunDataCell[Dataset] = RunData(
     train = "expanded/train",
-    dev = "orig/dev",
+    dev = "expanded/dev",
     test = "orig/test").flatMap(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
   ).toCell("QA-SRL dataset")
@@ -400,7 +354,7 @@ class GoldQasrlFeatures(
       new Cell(
         "Evaluation items",
         evaluationItemsPath >>= (evalItemsPath =>
-          fileCached[Vector[(InflectedForms, String, Int)]](
+          FileCached.get[Vector[(InflectedForms, String, Int)]](
             "Evaluation Items")(
             path = evalItemsPath,
             read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,

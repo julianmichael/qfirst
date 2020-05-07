@@ -149,6 +149,7 @@ object QAInputApp extends CommandIOApp(
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
+  // TODO: combine question vocabularies for all splits
   def program(goldPath: NIOPath, outDir: NIOPath): IO[ExitCode] = for {
     implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.EphemeralTreeConsoleLogger.create()
     _ <- writeQAInputDataForDataSplit(goldPath, outDir, "expanded/train", "train")

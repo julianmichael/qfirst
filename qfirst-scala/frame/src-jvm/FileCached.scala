@@ -43,4 +43,13 @@ object FileCached {
     compute: IO[A])(
     implicit Log: TreeLogger[IO, String]
   ): FileCached[A] = new FileCached(name)(path, read, write)(compute)
+
+  def get[A](
+    name: String)(
+    path: Path,
+    read: Path => IO[A],
+    write: (Path, A) => IO[Unit])(
+    compute: IO[A])(
+    implicit Log: TreeLogger[IO, String]
+  ): IO[A] = new FileCached(name)(path, read, write)(compute).get
 }

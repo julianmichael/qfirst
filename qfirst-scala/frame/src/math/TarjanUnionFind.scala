@@ -1,4 +1,4 @@
-package qfirst
+package qfirst.math
 
 import scala.collection.mutable
 
@@ -20,6 +20,7 @@ class TarjanUnionFind[A] private (
     this.cells.get(a).map(ufA => findCellAux(ufA, Nil))
   }
   private[this] def findCellAux(a: UFCell[A], prevCells: List[UFCell[A]]): UFCell[A] = {
+    // path compression
     if(a.parent == a) {
       prevCells.foreach(_.parent = a)
       a
@@ -30,6 +31,7 @@ class TarjanUnionFind[A] private (
 
   def union(a: A, b: A): Option[A] = {
     (findCell(a), findCell(b)).mapN { (x, y) =>
+      // union-by-rank
       if(x.rank < y.rank) {
         x.parent = y
         y.value

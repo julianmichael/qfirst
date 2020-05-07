@@ -23,9 +23,6 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
   implicit val progressSpec = ProgressSpec.simple(barLength = 50)
 
-  // XXX obsolete
-  type ClausalQ = (Frame, ArgumentSlot)
-
   type TemplateQ = (ArgStructure, ArgumentSlot)
   type QAPairs = Map[ClausalQuestion, List[List[ESpan]]]
 

@@ -505,7 +505,8 @@ object VerbAnnUI {
     label: QuestionLabel
   ): Boolean = {
     val includedJudgments = label.answerJudgments.filter(aj =>
-      !(aj.sourceId.endsWith("-expansion") || aj.sourceId.endsWith("-eval"))
+      // !(aj.sourceId.endsWith("-expansion") || aj.sourceId.endsWith("-eval"))
+      !aj.sourceId.endsWith("-eval")
     )
     val numValidJudgments = includedJudgments.count(_.judgment.isAnswer)
     numValidJudgments.toDouble / includedJudgments.size > (4.99 / 6.0)
@@ -520,7 +521,8 @@ object VerbAnnUI {
     qid: QuestionId
   ) = {
     val answerJudgments = label.answerJudgments.filter(aj =>
-      !(aj.sourceId.endsWith("-expansion") || aj.sourceId.endsWith("-eval"))
+      // !(aj.sourceId.endsWith("-expansion") || aj.sourceId.endsWith("-eval"))
+      !aj.sourceId.endsWith("-eval")
     )
     val qSource = label.questionSources.map(s => scala.util.Try(QuestionSource.fromString(s): QuestionSource).toOption).min
     val roundIndicatorStyle = qSource match {
@@ -639,8 +641,8 @@ object VerbAnnUI {
       val goldTable = <.table(S.verbQAsTable)(
         <.tbody(S.verbQAsTableBody) {
           val allQuestionLabels = verb.questionLabels.toList.map(_._2)
-            .filter(l => l.questionSources.exists(_.startsWith("turk-qasrl2.0-")))
             .sorted
+          // .filter(l => l.questionSources.exists(_.startsWith("turk-qasrl2.0-")))
           val allQuestionStructures = ClauseResolution.getResolvedStructures(allQuestionLabels.map(_.questionSlots))
           val questionLabelsWithStructures = allQuestionLabels.zip(allQuestionStructures)
             .filter(p => showInvalidQuestions || isQuestionValid(p._1))

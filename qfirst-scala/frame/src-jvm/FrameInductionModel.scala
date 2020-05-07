@@ -10,6 +10,7 @@ import cats.data.NonEmptyVector
 import cats.implicits._
 
 sealed trait FrameInductionModel[I, P] {
+  def init[VerbType](features: Features[VerbType]): IO[Unit]
   def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ): IO[AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = P }]
@@ -19,6 +20,8 @@ case class Composite[I, P1, P2](
   spec1: (FrameInductionModel[I, P1], Double),
   spec2: (FrameInductionModel[I, P2], Double)
 ) extends FrameInductionModel[I, (P1, P2)] {
+  override def init[VerbType](features: Features[VerbType]) =
+    spec1._1.init(features) >> spec2._1.init(features)
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
@@ -35,6 +38,7 @@ case class Composite[I, P1, P2](
 case class Joint[P](
   innerModel: FrameInductionModel[QuestionId, P]
 ) extends FrameInductionModel[VerbId, NonEmptyVector[(MergeTree[QuestionId], P)]] {
+  override def init[VerbType](features: Features[VerbType]) = innerModel.init(features)
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = {
@@ -57,6 +61,7 @@ case class Joint[P](
 }
 
 object VerbSqDist extends FrameInductionModel[VerbId, VectorMeanClustering.ClusterMean] {
+  override def init[VerbType](features: Features[VerbType]) = features.elmoVecs.full.get.as(())
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
@@ -73,6 +78,7 @@ object VerbSqDist extends FrameInductionModel[VerbId, VectorMeanClustering.Clust
 }
 
 object QuestionEntropy extends FrameInductionModel[QuestionId, MinEntropyClustering.ClusterMixture] {
+  override def init[VerbType](features: Features[VerbType]) = features.instancesByQuestionId.full.get.as(())
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
@@ -88,6 +94,7 @@ object QuestionEntropy extends FrameInductionModel[QuestionId, MinEntropyCluster
 }
 
 object VerbClauseEntropy extends FrameInductionModel[VerbId, MinEntropyClustering.ClusterMixture] {
+  override def init[VerbType](features: Features[VerbType]) = features.instancesByVerbId.full.get.as(())
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
@@ -109,6 +116,11 @@ object VerbClauseEntropy extends FrameInductionModel[VerbId, MinEntropyClusterin
 }
 
 object AnswerEntropy extends FrameInductionModel[QuestionId, MinEntropyClustering.ClusterMixture] {
+  override def init[VerbType](features: Features[VerbType]) = for {
+    sentences <- features.sentences.full.get
+    tokenCounts <- features.instancesByQuestionId.full.get
+  } yield ()
+
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
@@ -148,15 +160,40 @@ object AnswerEntropy extends FrameInductionModel[QuestionId, MinEntropyClusterin
 import breeze.linalg.DenseVector
 
 object AnswerNLL extends FrameInductionModel[QuestionId, MixtureOfStatesClustering.StateCounts] {
+  override def init[VerbType](features: Features[VerbType]) = for {
+    answerNLLInfo <- features.answerNLLs.full.get
+  } yield ()
+
+  import jjm.ling.en.InflectedForms
+  import qasrl.ArgumentSlot
+  import qasrl.Frame
+  def getQuestionTemplate(templateQ: (ArgStructure, ArgumentSlot)): String = {
+    val frame = Frame(
+      verbInflectedForms = InflectedForms.generic,
+      args = templateQ._1.args,
+      tense = qasrl.PresentTense,
+      isPerfect = false,
+      isPassive = templateQ._1.isPassive,
+      isNegated = false, isProgressive = false)
+    frame.questionsForSlot(templateQ._2).head
+  }
+
   override def create[VerbType](
     features: Features[VerbType], verbType: VerbType
   ) = for {
     answerNLLInfo <- features.answerNLLs.full.get.map(_.apply(verbType))
-    templateQVocab = Vocab.make(answerNLLInfo.values.flatten.map(_._1).toSet)
+    templateQVocab = Vocab.make(
+      answerNLLInfo.values.flatten
+        .map(_._1)
+        .map(getQuestionTemplate)
+        .toSet
+    )
     templateQVectorsByQid = answerNLLInfo.map { case (qid, qsWithNLLs) =>
-      val qsWithNLLsMap = qsWithNLLs.toMap
+      val qsWithNLLsMap = qsWithNLLs
+        .groupBy(p => getQuestionTemplate(p._1))
+        .map { case (k, nlls) => k -> nlls.map(_._2).min }
       qid -> MixtureOfStatesClustering.StateInstance(
-        templateQVocab.getIndex(qid.question.template),
+        templateQVocab.getIndex(getQuestionTemplate(qid.question.template)),
         DenseVector.tabulate(templateQVocab.size)(i =>
           qsWithNLLsMap(templateQVocab.getItem(i))
         )

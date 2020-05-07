@@ -71,49 +71,46 @@ object FrameInductionApp extends CommandIOApp(
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType]]]] = {
-    features.outDir map (outDir =>
+    features.modelDir.map (modelDir =>
       FileCached[Map[VerbType, VerbClusterModel[VerbType]]](
         s"QA-SRL cluster model: $modelConfig")(
-        path = outDir.resolve(s"models/$modelConfig.jsonl.gz"),
+        path = modelDir.resolve(s"$modelConfig.jsonl.gz"),
         read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType])](path)
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-        features.verbIdsByType.full.get >>= (
-          _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
-          // hack to make it possible to even do the clustering on the really common words. need to generalize later
-          val verbIds = NonEmptyVector.fromVector(_verbIds.toVector.take(50)).get
-          Log.trace(renderVerbType(verbType)) >> {
-            modelConfig match {
-              case ModelConfig.Joint =>
-                val questionModel = Composite(
-                  Composite(
-                    QuestionEntropy -> 1.0,
-                    AnswerEntropy -> 2.0
-                  ) -> 1.0,
-                  AnswerNLL -> 2.0
-                )
-                val model = Composite(
-                  Composite(
-                    VerbClauseEntropy -> 2.0,
-                    VerbSqDist -> (1.0 / 175),
-                  ) -> 1.0,
-                  Joint(questionModel) -> 1.0
-                )
+        val questionModel = Composite(
+          Composite(
+            QuestionEntropy -> 1.0,
+            AnswerEntropy -> 2.0
+          ) -> 1.0,
+          AnswerNLL -> 2.0
+        )
+        val model = Composite(
+          Composite(
+            VerbClauseEntropy -> 2.0,
+            VerbSqDist -> (1.0 / 175),
+            ) -> 1.0,
+          Joint(questionModel) -> 1.0
+        )
+        Log.infoBranch("Initializing model features")(model.init(features)) >>
+          features.verbIdsByType.full.get >>= (
+            _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
+              // hack to make it possible to even do the clustering on the really common words. need to generalize later
+              val verbIds = NonEmptyVector.fromVector(_verbIds.toVector.take(50)).get
+              Log.trace(renderVerbType(verbType)) >> {
                 for {
                   questionAlgorithm <- questionModel.create(features, verbType)
                   algorithm <- model.create(features, verbType)
-                  (verbClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(verbIds)
+                                           (verbClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(verbIds)
                   questionClusterTree = questionAlgorithm.finishAgglomerativeClustering(finalParams._2)._1
                 } yield verbType -> VerbClusterModel(
                   verbType,
                   verbClusterTree,
                   questionClusterTree
                 )
-              case _ => ???
-            }
-          }
-        }.map(_.toMap)
-        )
+              }
+            }.map(_.toMap)
+          )
       }
     )
   }
