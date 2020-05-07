@@ -161,7 +161,8 @@ class QasrlVerbQAsReader(QasrlInstanceReader):
 
             all_slots_dict = {**question_slots_dict, **abstract_slots_dict, **clause_slots_dict}
             included_slot_fields = { k: v for k, v in all_slots_dict.items() if k in self._slot_names }
-            for span in set(get_answer_spans(question_label)):
+            new_answer_spans, _ = get_answer_spans([question_label])
+            for span in new_answer_spans:
                 answer_spans.append(span)
                 for k, v in included_slot_fields.items():
                     if k not in question_slot_field_lists:
@@ -230,7 +231,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
 
             metadata = {
                 "question_label": question_label,
-                "gold_spans": set(get_answer_spans(question_label))
+                "gold_spans": set(get_answer_spans([question_label]))
             }
 
             yield {
@@ -258,7 +259,7 @@ class QasrlQuestionReader(QasrlInstanceReader):
             invalid_index = len(question_with_sentence_tokens) - 1
 
             num_invalids = get_num_invalids(question_label)
-            answer_spans = get_answer_spans(question_label)
+            answer_spans = get_answer_spans([question_label])
             offset_answer_spans = [
                 Span(s.start() + span_index_offset, s.end() + span_index_offset)
                 for s in answer_spans
@@ -302,7 +303,7 @@ class QasrlAnimacyReader(QasrlInstanceReader):
             if question_label["questionSlots"]["wh"] in { "who", "what" }:
                 is_animate = question_label["questionSlots"]["wh"] == "who"
                 animacy_label = 1 if is_animate else 0
-                for span in get_answer_spans(question_label):
+                for span in get_answer_spans([question_label]):
                     if span not in animacy_label_map:
                         animacy_label_map[span] = []
                     animacy_label_map[span].append(animacy_label)
@@ -337,7 +338,7 @@ class QasrlSpanTanReader(QasrlInstanceReader):
         tan_label_map = {}
         for question_label in question_labels:
             tan_string = get_tan_string(question_label)
-            for span in get_answer_spans(question_label):
+            for span in get_answer_spans([question_label]):
                 if span not in tan_label_map:
                     tan_label_map[span] = []
                 tan_label_map[span].append(tan_string)
