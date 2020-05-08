@@ -74,7 +74,7 @@ object SyntaxTreeParsing {
       case (symbol, childrenState) => for {
         children <- childrenState.toList.sequence
       } yield SyntaxTreeNode(symbol, NonEmptyList.fromList(children).get): SyntaxTree[CoNLLToken]
-    } | P("*").map { _ =>
+    } | (P("*") | P("-")).map { _ =>
       for {
         words <- State.get
         _ <- State.set(words.tail)

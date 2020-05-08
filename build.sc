@@ -387,6 +387,7 @@ object qfirst extends Module {
         ivy"com.lihaoyi::fastparse::$fastparseVersion"
       )
       object test extends Tests {
+        def moduleDeps = super.moduleDeps ++ Seq(freelog.jvm)
         override def millSourcePath = ontonotes.this.millSourcePath / "test"
         override def scalaVersion = jvm.this.scalaVersion
         // def platformSegment = jvm.this.platformSegment
