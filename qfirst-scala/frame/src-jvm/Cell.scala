@@ -22,3 +22,10 @@ class Cell[A](name: String, create: IO[A])(implicit Log: TreeLogger[IO, String])
   )
   val isPresent = value.get.map(_.nonEmpty)
 }
+object Cell {
+  def apply[A](
+    name: String)(
+    create: IO[A])(
+    implicit Log: TreeLogger[IO, String]
+  ) = new Cell(name, create)
+}

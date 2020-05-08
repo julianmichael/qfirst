@@ -51,16 +51,16 @@ object PredicateArgumentStructureParsing {
       } yield arg
     }
 
-  private[this] val allArgsP: P[TokenState[Map[String, ESpan]]] =
+  private[this] val allArgsP: P[TokenState[List[(String, ESpan)]]] =
     P(wordsAndArgP.rep ~ wordsP).map {
       case (argStates, finalWords) => for {
         args <- argStates.toList.sequence
-        // TODO return an informative error if finalWords aren't all used up by the end
+        // TODO return an informative error if finalWords aren't all used up by the end?
         _ <- finalWords
-      } yield args.toMap
+      } yield args
     }
 
-  def readArgumentSpans(s: String): Map[String, ESpan] =
+  def readArgumentSpans(s: String): List[(String, ESpan)] =
     allArgsP.parse(s).get.value.runA(0).value
 }
 

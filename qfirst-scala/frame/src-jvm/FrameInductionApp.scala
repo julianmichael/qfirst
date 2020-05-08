@@ -121,8 +121,14 @@ object FrameInductionApp extends CommandIOApp(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     val modelConfigs = modelOpt.map(List(_)).getOrElse(allModelConfigs)
-    // TODO read in tuned thresholds (in case of test)
     for {
+      // vocabs <- Log.infoBranch(s"Initializing question template vocabularies")(
+      //   features.questionTemplateVocabsByVerb.get
+      // )
+      // _ <- Log.info(s"Total question templates: " + vocabs.unorderedFoldMap(_.items.toSet).size)
+      // _ <- vocabs.toList.sortBy(-_._2.size).take(30).reverse.traverse { case (verb, vocab) =>
+      //   Log.info(vocab.size + " " + verb.allForms.mkString(", "))
+      // }
       _ <- Log.info(s"Running frame induction on QA-SRL. Models: ${modelConfigs.mkString(", ")}")
       verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
         Log.infoBranch(s"Clustering for model: $vsConfig") {
@@ -139,38 +145,51 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
-  // def runPropBankFrameInduction(
-  //   features: PropBankFeatures, modelOpt: Option[ModelConfig])(
-  //   implicit Log: EphemeralTreeLogger[IO, String]
-  // ): IO[Unit] = {
-  //   val modelConfigs = modelOpt.map(List(_)).getOrElse(allModelConfigs)
-  //   // TODO read in tuned threshold (in case of test)
-  //   val chosenThresholds = Option(
-  //     Map[ModelConfig, Double](
-  //       ModelConfig.SingleCluster -> 0.0,
-  //       ModelConfig.EntropyOnly -> 1.115,
-  //       ModelConfig.ELMoOnly -> 0.718,
-  //       ModelConfig.Interpolated(0.5) -> 1.105
-  //     )
-  //   )
-  //   for {
-  //     verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
-  //       getPropBankVerbClusterModels(config, vsConfig).map(vsConfig -> _)
-  //     ).map(_.toMap)
-  //     evalSenseLabels <- config.propBankEvalLabels.get
-  //     tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
-  //       evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
-  //     )
-  //     fullSenseLabels <- config.propBankFullLabels.get
-  //     _ <- chosenThresholds.foldMapM(thresholds =>
-  //       Log.infoBranch("Printing debuggy stuff")(
-  //         doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
-  //       )
-  //     )
-  //   } yield ()
-  // }
+  def runPropBankGoldSpanFrameInduction(
+    features: PropBankGoldSpanFeatures, modelOpt: Option[ModelConfig])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Unit] = {
+    val modelConfigs = modelOpt.map(List(_)).getOrElse(allModelConfigs)
+    // TODO read in tuned threshold (in case of test)
+    // val chosenThresholds = Option(
+    //   Map[ModelConfig, Double](
+    //     ModelConfig.SingleCluster -> 0.0,
+    //     ModelConfig.EntropyOnly -> 1.115,
+    //     ModelConfig.ELMoOnly -> 0.718,
+    //     ModelConfig.Interpolated(0.5) -> 1.105
+    //   )
+    // )
+    for {
+      _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
+      _ <- Log.infoBranch("Running setup steps.")(
+        features.writeQGInputs
+      )
+      _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
+      verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
+        Log.infoBranch(s"Clustering for model: $vsConfig") {
+          getVerbClusterModels[String](features, vsConfig, identity[String]) >>= (
+            _.get.map(vsConfig -> _)
+          )
+        }
+      ).map(_.toMap)
+      // evalSenseLabels <- config.propBankEvalLabels.get
+      // tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
+      //   evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
+      // )
+      // fullSenseLabels <- config.propBankFullLabels.get
+      // _ <- chosenThresholds.foldMapM(thresholds =>
+      //   Log.infoBranch("Printing debuggy stuff")(
+      //     doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
+      //   )
+      // )
+    } yield ()
+  }
 
   def main: Opts[IO[ExitCode]] = {
+    val dataO = Opts.option[String](
+      "data", metavar = "qasrl|propbank-span", help = "Data setting to run in."
+    )
+
     val modeO = Opts.option[String](
       "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
     ).mapValidated { string =>
@@ -186,19 +205,16 @@ object FrameInductionApp extends CommandIOApp(
         .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
     }.orNone
 
-    val isPropbankO = Opts.flag(
-      "propbank", help = "run the PropBank verb sense evaluation."
-    ).orFalse
-
-
-    (modeO, modelConfigOptO, isPropbankO).mapN { (mode, modelConfigOpt, isPropbank) =>
+    (dataO, modeO, modelConfigOptO).mapN { (data, mode, modelConfigOpt) =>
       for {
         implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.create()
+        _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Mode: $mode")
-        _ <- logger.info(s"Specified verb sense config: $modelConfigOpt")
-        _ <- {
-          if(isPropbank) ??? // runPropBankFrameInduction(new PropbankFeatures(mode), modelConfigOpt)
-          else runQasrlFrameInduction(new GoldQasrlFeatures(mode), modelConfigOpt)
+        _ <- logger.info(s"Model configuration: $modelConfigOpt")
+        _ <- data match {
+          case "qasrl" => runQasrlFrameInduction(new GoldQasrlFeatures(mode), modelConfigOpt)
+          case "propbank-span" => runPropBankGoldSpanFrameInduction(new PropBankGoldSpanFeatures(mode), modelConfigOpt)
+          case _ => ???
         }
       } yield ExitCode.Success
     }

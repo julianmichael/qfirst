@@ -71,3 +71,14 @@ case class CoNLLSentencePath(
 ) {
   override def toString = s"${filePath.suffix}:$sentenceNum"
 }
+object CoNLLSentencePath {
+  def fromString(s: String): Option[CoNLLSentencePath] = {
+    val entries = s.split(":")
+    require(entries.length == 2)
+    CoNLLPath.fromPathSuffix(entries(0)).flatMap(filePath =>
+      scala.util.Try(entries(1).toInt).toOption.map(sentenceNum =>
+        CoNLLSentencePath(filePath, sentenceNum)
+      )
+    )
+  }
+}

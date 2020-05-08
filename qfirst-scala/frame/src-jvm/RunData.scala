@@ -13,6 +13,8 @@ case class RunData[A](
   dev: IO[A],
   test: IO[A]) {
 
+  def run: IO[Unit] = train >> dev >> test >> IO.unit
+
   def apply(split: RunData.BaseSplit): IO[A] = split match {
     case RunData.Train => train
     case RunData.Dev => dev

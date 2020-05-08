@@ -13,7 +13,7 @@ import jjm.ling.ESpan
   */
 case class PredicateArgumentStructure(
   predicate: Predicate,
-  arguments: Map[String, ESpan])
+  arguments: List[(String, ESpan)])
 
 /** Represents the predicate of a predicate--argument structure. */
 case class Predicate(
