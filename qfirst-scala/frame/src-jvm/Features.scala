@@ -34,14 +34,14 @@ import qfirst.clause.ClauseResolution
 import freelog._
 import freelog.implicits._
 
-abstract class Features[VerbType : Encoder : Decoder, VerbInstance](
+abstract class Features[VerbType : Encoder : Decoder, Instance](
   mode: RunMode)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
   implicit protected val runMode = mode
 
-  val instances: RunDataCell[Instances[VerbType, VerbInstance]]
+  val instances: RunDataCell[Instances[VerbType, Set[Instance]]]
 
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
@@ -92,8 +92,8 @@ abstract class Features[VerbType : Encoder : Decoder, VerbInstance](
   lazy val instancesByVerbId = instances.get.map(
     _.map { case (verbType, sentences) =>
       verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-        verbs.value.toList.foldMap { case (verbIndex, verbInstance) =>
-          NonMergingMap(VerbId(sid, verbIndex) -> verbInstance)
+        verbs.value.toList.foldMap { case (verbIndex, instanceIds) =>
+          NonMergingMap(VerbId(sid, verbIndex) -> instanceIds)
         }
       }
     }
@@ -186,7 +186,7 @@ class GoldQasrlFeatures(
   mode: RunMode)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
-) extends Features[InflectedForms, QAPairs](mode)(implicitly[Encoder[InflectedForms]], implicitly[Decoder[InflectedForms]], cs, Log) {
+) extends Features[InflectedForms, QuestionId](mode)(implicitly[Encoder[InflectedForms]], implicitly[Decoder[InflectedForms]], cs, Log) {
 
   override val rootDir = Paths.get("frame-induction/qasrl")
 
@@ -213,7 +213,7 @@ class GoldQasrlFeatures(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
   ).toCell("QA-SRL dataset")
 
-  def getGoldInstances(dataset: Dataset): Instances[InflectedForms, QAPairs] = {
+  def getQAPairs(dataset: Dataset): Instances[InflectedForms, QAPairs] = {
     dataset.sentences
       .iterator.flatMap { case (sid, sentence) => sentence.verbEntries.values.map(sid -> _) }.toList
       .groupBy(_._2.verbInflectedForms).map { case (verbInflectedForms, pairs) =>
@@ -235,118 +235,145 @@ class GoldQasrlFeatures(
       }
   }
 
-  override val instances = dataset.get
-    .map(getGoldInstances)
-    .toCell("QA-SRL instances")
+  val qidToSpans: RunDataCell[Map[QuestionId, List[List[ESpan]]]] = dataset.get
+    .map(getQAPairs)
+    .map(
+      _.toList.foldMap { case (_, sentences) =>
+        sentences.toList.foldMap { case (sid, verbs) =>
+          verbs.value.toList.foldMap { case (verbIndex, qaPairs) =>
+            qaPairs.map { case (cq, spanLists) =>
+              QuestionId(VerbId(sid, verbIndex), cq) -> spanLists
+            }
+          }
+        }
+      }
+    ).toCell("QA-SRL QuestionId to spans")
+
+  override val instances: RunDataCell[Instances[InflectedForms, Set[QuestionId]]] =
+    dataset.get
+      .map(getQAPairs)
+      .map(
+        _.transform { case (_, sentences) =>
+          sentences.transform { case (sid, verbs) =>
+            NonMergingMap(
+              verbs.value.transform { case (verbIndex, qaPairs) =>
+                qaPairs.keySet.map { cq =>
+                  QuestionId(VerbId(sid, verbIndex), cq)
+                }
+              }
+            )
+          }
+        }
+      ).toCell("QA-SRL QuestionId instances")
 
   override val sentences = dataset.get
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
     .map(NonMergingMap.apply[String, Vector[String]])
     .toCell("QA-SRL sentences")
 
-  lazy val instancesByQuestionId = instances.get.map(
-    _.map { case (verbType, sentences) =>
-      verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-        verbs.value.toList.foldMap { case (vi, questions) =>
-          val verbId = VerbId(sid, vi)
-          questions.map { case (question, spanLists) =>
-            QuestionId(verbId, question) -> spanLists
-          }.toMap
-        }
-      }
-    }
-  ).toCell("Instances by question ID")
+  // lazy val instancesByQuestionId = instances.get.map(
+  //   _.map { case (verbType, sentences) =>
+  //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
+  //       verbs.value.toList.foldMap { case (vi, questions) =>
+  //         val verbId = VerbId(sid, vi)
+  //         questions.map { case (question, spanLists) =>
+  //           QuestionId(verbId, question) -> spanLists
+  //         }.toMap
+  //       }
+  //     }
+  //   }
+  // ).toCell("Instances by question ID")
 
 
-  lazy val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
-  lazy val questionTemplateVocabsByVerb = new Cell(
-    "Question template vocabularies",
-    questionTemplateVocabsCachePath >>= (path =>
-      FileCached.get[Map[InflectedForms, Vocab[QuestionTemplate]]]("Question template vocabularies")(
-        path = path,
-        read = path => (
-          FileUtil.readJsonLines[(InflectedForms, Vocab[QuestionTemplate])](path)
-            .infoCompile("Reading lines")(_.toList).map(_.toMap)
-        ),
-        write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
-          path, io.circe.Printer.noSpaces)(
-          clausalQVocabs.toList))(
-        instances.all.get >>= (
-          _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
-            case (verbType, sentences) =>
-              Log.trace(verbType.toString) >> IO {
-                val qTemplateSet = sentences.unorderedFoldMap(verbs =>
-                  verbs.value.unorderedFoldMap(qaPairs =>
-                    qaPairs.keySet.map(QuestionTemplate.fromClausalQuestion)
-                  )
-                )
-                verbType -> Vocab.make(qTemplateSet)
-              }
-          }.map(_.toMap)
-        )
-      )
-    )
-  )
+  // lazy val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
+  // lazy val questionTemplateVocabsByVerb = new Cell(
+  //   "Question template vocabularies",
+  //   questionTemplateVocabsCachePath >>= (path =>
+  //     FileCached.get[Map[InflectedForms, Vocab[QuestionTemplate]]]("Question template vocabularies")(
+  //       path = path,
+  //       read = path => (
+  //         FileUtil.readJsonLines[(InflectedForms, Vocab[QuestionTemplate])](path)
+  //           .infoCompile("Reading lines")(_.toList).map(_.toMap)
+  //       ),
+  //       write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
+  //         path, io.circe.Printer.noSpaces)(
+  //         clausalQVocabs.toList))(
+  //       instances.all.get >>= (
+  //         _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
+  //           case (verbType, sentences) =>
+  //             Log.trace(verbType.toString) >> IO {
+  //               val qTemplateSet = sentences.unorderedFoldMap(verbs =>
+  //                 verbs.value.unorderedFoldMap(qaPairs =>
+  //                   qaPairs.keySet.map(QuestionTemplate.fromClausalQuestion)
+  //                 )
+  //               )
+  //               verbType -> Vocab.make(qTemplateSet)
+  //             }
+  //         }.map(_.toMap)
+  //       )
+  //     )
+  //   )
+  // )
 
-  // inputs sent to a QA model
-  // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
+  // // inputs sent to a QA model
+  // // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
 
-  // outputs of a QA model, read back in to construct features
-  def qaOutputPath(split: String) =
-    IO.pure(inputDir.resolve("qa"))
-      .flatTap(createDir)
-      .map(_.resolve(s"qa-output-$split.jsonl.gz"))
-  def qaFeaturesPath(split: String) =
-    cacheDir.map(_.resolve("qa"))
-      .flatTap(createDir)
-      .map(_.resolve(s"qa-features-$split.jsonl.gz"))
+  // // outputs of a QA model, read back in to construct features
+  // def qaOutputPath(split: String) =
+  //   IO.pure(inputDir.resolve("qa"))
+  //     .flatTap(createDir)
+  //     .map(_.resolve(s"qa-output-$split.jsonl.gz"))
+  // def qaFeaturesPath(split: String) =
+  //   cacheDir.map(_.resolve("qa"))
+  //     .flatTap(createDir)
+  //     .map(_.resolve(s"qa-features-$split.jsonl.gz"))
 
-  lazy val answerNLLs = RunData.splits.flatMap { split =>
-    import QAInputApp.{SentenceQAOutput, ClauseQAOutput}
-    for {
-      insts <- instances(split)
-      vidToType <- verbIdToType(split)
-      splitName <- RunData.strings(split)
-      qaOutPath <- qaOutputPath(splitName)
-      res <- FileUtil.readJsonLines[SentenceQAOutput](
-        qaOutPath
-      ).map { case SentenceQAOutput(sid, verbs) =>
-        verbs.toList.foldMap { case (verbIndexStr, clausalQAs) =>
-          val verbIndex = verbIndexStr.toInt
-          val verbId = VerbId(sid, verbIndex)
-          val verbTypeOpt = vidToType.value.get(verbId)
-          verbTypeOpt.foldMap { verbType =>
-            val verbInstances = insts(verbType)(sid).value(verbIndex)
-            Map(
-              verbType -> verbInstances.map { case (cq, spans) =>
-                val goldSpans = spans.flatten.toSet
-                QuestionId(verbId, cq) -> clausalQAs.map {
-                  case ClauseQAOutput(question, spans) =>
-                    val marginalAnswerProb = spans
-                      .filter(p => goldSpans.contains(p._1))
-                      .foldMap(_._2)
-                    // smoothed prob chosen here bc it's 1/2 of the bottom decoding threshold for the QA model
-                    val smoothedMarginalAnswerProb =
-                      scala.math.max(marginalAnswerProb, 0.0025)
-                    question.clausalQ -> -scala.math.log(smoothedMarginalAnswerProb)
-                }
-              }
-            )
-          }
-        }
-      }.infoCompile("Compiling QA NLL features from sentence predictions")(_.foldMonoid)
-    } yield res
-  }.toFileCachedCell("QA NLL features", qaFeaturesPath)(
-    read = path => (
-      FileUtil.readJsonLines[(InflectedForms, List[(QuestionId, List[(TemplateQ, Double)])])](path)
-        .map { case (k, v) => k -> v.toMap }
-        .infoCompile("Reading lines")(_.toList)
-        .map(_.toMap)
-    ),
-    write = (path, qaFeatures) => FileUtil.writeJsonLines(
-      path, io.circe.Printer.noSpaces)(
-      qaFeatures.toList.map { case (k, v) => k -> v.toList })
-  )
+  // lazy val answerNLLs = RunData.splits.flatMap { split =>
+  //   import QAInputApp.{SentenceQAOutput, ClauseQAOutput}
+  //   for {
+  //     insts <- instances(split)
+  //     vidToType <- verbIdToType(split)
+  //     splitName <- RunData.strings(split)
+  //     qaOutPath <- qaOutputPath(splitName)
+  //     res <- FileUtil.readJsonLines[SentenceQAOutput](
+  //       qaOutPath
+  //     ).map { case SentenceQAOutput(sid, verbs) =>
+  //       verbs.toList.foldMap { case (verbIndexStr, clausalQAs) =>
+  //         val verbIndex = verbIndexStr.toInt
+  //         val verbId = VerbId(sid, verbIndex)
+  //         val verbTypeOpt = vidToType.value.get(verbId)
+  //         verbTypeOpt.foldMap { verbType =>
+  //           val verbInstances = insts(verbType)(sid).value(verbIndex)
+  //           Map(
+  //             verbType -> verbInstances.map { case (cq, spans) =>
+  //               val goldSpans = spans.flatten.toSet
+  //               QuestionId(verbId, cq) -> clausalQAs.map {
+  //                 case ClauseQAOutput(question, spans) =>
+  //                   val marginalAnswerProb = spans
+  //                     .filter(p => goldSpans.contains(p._1))
+  //                     .foldMap(_._2)
+  //                   // smoothed prob chosen here bc it's 1/2 of the bottom decoding threshold for the QA model
+  //                   val smoothedMarginalAnswerProb =
+  //                     scala.math.max(marginalAnswerProb, 0.0025)
+  //                   question.clausalQ -> -scala.math.log(smoothedMarginalAnswerProb)
+  //               }
+  //             }
+  //           )
+  //         }
+  //       }
+  //     }.infoCompile("Compiling QA NLL features from sentence predictions")(_.foldMonoid)
+  //   } yield res
+  // }.toFileCachedCell("QA NLL features", qaFeaturesPath)(
+  //   read = path => (
+  //     FileUtil.readJsonLines[(InflectedForms, List[(QuestionId, List[(TemplateQ, Double)])])](path)
+  //       .map { case (k, v) => k -> v.toMap }
+  //       .infoCompile("Reading lines")(_.toList)
+  //       .map(_.toMap)
+  //   ),
+  //   write = (path, qaFeatures) => FileUtil.writeJsonLines(
+  //     path, io.circe.Printer.noSpaces)(
+  //     qaFeatures.toList.map { case (k, v) => k -> v.toList })
+  // )
 
 
   val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
@@ -400,13 +427,35 @@ class GoldQasrlFeatures(
 
 import qfirst.ontonotes._
 
-// verb type is either lemma or sense, depending on useGoldVerbSense value (false/true resp.).
+import cats.Order
+
+// import io.circe.generic.JsonCodec
+
+import monocle.macros.Lenses
+
+@Lenses @JsonCodec case class ArgumentId(
+  verbId: VerbId, span: ESpan
+)
+object ArgumentId {
+  implicit val argumentIdOrder =
+    Order.whenEqual(
+      Order.by[ArgumentId, VerbId](_.verbId),
+      Order.by[ArgumentId, ESpan](_.span)
+    )
+}
+
+case class PropBankRoleLabel(
+  framesetId: String,
+  role: String
+)
+
+// verb type is either lemma or sense, depending on assumeGoldVerbSense value (false/true resp.).
 class PropBankGoldSpanFeatures(
   mode: RunMode,
-  useGoldVerbSense: Boolean)(
+  assumeGoldVerbSense: Boolean)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
-) extends Features[String, Map[ESpan, String]](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
+) extends Features[String, ArgumentId](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
   override val rootDir = Paths.get("frame-induction/propbank")
 
@@ -414,40 +463,75 @@ class PropBankGoldSpanFeatures(
 
   val ontonotesService = new CoNLLFileSystemService(ontonotesPath)
 
-  val index = Cell("OntoNotes Index")(
+  val fullIndex = Cell("OntoNotes Index")(
     Log.infoBranch("Reading OntoNotes file paths")(
       ontonotesService.getAllPaths
     )
   )
 
-  val dataset: RunDataCell[List[CoNLLPath]] = RunData(
+  val index: RunDataCell[List[CoNLLPath]] = RunData(
     train = "train",
     dev = "development",
     test = "test").flatMap(
-    spec => index.get.map(_.filter(_.split == spec))
-  ).toCell("OntoNotes Dataset")
+    spec => fullIndex.get.map(_.filter(_.split == spec))
+  ).toCell("OntoNotes Index")
 
-  def getGoldInstances(filePaths: List[CoNLLPath]): IO[Instances[String, Map[ESpan, String]]] = {
+  val dataset: RunDataCell[Instances[String, (String, Map[ESpan, String])]] = index.get.flatMap(filePaths =>
     filePaths.infoBarFoldMapM("Reading PropBank files to construct instances") { path =>
       Log.trace(path.suffix) >> ontonotesService.getFile(path) >>= { file =>
         file.sentences.traceBarFoldMapM("Sentences") { sentence =>
           val sentenceId = sentence.path.toString
           sentence.predicateArgumentStructures.foldMap { pas =>
             val verbLemma = pas.predicate.lemma
-            val verbType = if(useGoldVerbSense) s"$verbLemma.${pas.predicate.sense}" else verbLemma
-            IO.pure(Map(verbType -> Map(sentenceId -> NonMergingMap(pas.predicate.index -> pas.arguments.map(_.swap).toMap))))
+            val verbSense = s"$verbLemma.${pas.predicate.sense}"
+            val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
+            IO.pure(
+              Map(
+                verbType -> Map(
+                  sentenceId -> NonMergingMap(
+                    pas.predicate.index ->
+                      (verbSense -> pas.arguments.map(_.swap).toMap)
+                  )
+                )
+              )
+            )
           }
         }
       }
     }
-  }
+  ).toCell("PropBank dataset")
+  //   (filePaths: List[CoNLLPath]): IO[] = {
 
-  override val instances = dataset.get
-    .flatMap(getGoldInstances)
-    .toCell("PropBank gold span instances")
+  override val instances = dataset.get.map(
+    _.transform { case (_, sentences) =>
+      sentences.transform { case (sid, verbs) =>
+        NonMergingMap(
+          verbs.value.transform { case (verbIndex, (_, labels)) =>
+            labels.keySet.map(span =>
+              ArgumentId(VerbId(sid, verbIndex), span)
+            )
+          }
+        )
+      }
+    }
+  ).toCell("PropBank gold span instances")
+
+  val spanIdToRoleLabel = dataset.get.map(
+    _.toList.foldMap { case (_, sentences) =>
+      sentences.toList.foldMap { case (sid, verbs) =>
+        verbs.value.toList.foldMap { case (verbIndex, (framesetId, arguments)) =>
+          NonMergingMap(
+            arguments.map { case (span, label) =>
+              ArgumentId(VerbId(sid, verbIndex), span) -> PropBankRoleLabel(framesetId, label)
+            }
+          )
+        }
+      }
+    }.value
+  ).toCell("PropBank span to role label mapping")
 
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
-    dataset.get.flatMap(
+    index.get.flatMap(
       _.infoBarFoldMapM("Constructing sentence index") { path =>
         ontonotesService.getFile(path).map(
           _.sentences.foldMap(s => NonMergingMap(s.path.toString -> s.tokens.map(_.token).toVector))
@@ -464,7 +548,7 @@ class PropBankGoldSpanFeatures(
     argumentSpans: Set[ESpan]
   )
 
-  val qgInputs = dataset.get.map { paths =>
+  val qgInputs = index.get.map { paths =>
     Stream.emits[IO, CoNLLPath](paths) >>= { path =>
       Stream.eval(ontonotesService.getFile(path)) >>= { file =>
         Stream.emits[IO, PropBankQGInput](
@@ -485,6 +569,7 @@ class PropBankGoldSpanFeatures(
   def getQGInputOutPath(split: String) = outDir
     .map(_.resolve(s"qg-inputs")).flatTap(createDir)
     .map(_.resolve(s"$split.jsonl.gz"))
+
   val writeQGInputs = RunData.strings.zip(qgInputs).flatMap { case (split, inputStream) =>
     getQGInputOutPath(split) >>= (outPath =>
       IO(Files.exists(outPath)).ifM(
