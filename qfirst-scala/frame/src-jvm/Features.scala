@@ -48,9 +48,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
   // val instances: RunDataCell[ArgInstances[VerbType, Set[Instance]]]
-  val instancesByVerbId: RunDataCell[VerbFeats[Set[Arg]]]
+  val verbArgSets: RunDataCell[VerbFeats[Set[Arg]]]
 
-  val instanceToQuestionDist: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
+  val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
 
   protected val rootDir: Path
 
@@ -72,7 +72,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // question and verb IDs
 
-  lazy val instances: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = instancesByVerbId.get.map(
+  lazy val instances: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.get.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, args) =>
         args.map(arg => ArgumentId(verbId, arg))
@@ -80,15 +80,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   ).toCell("Argument ID instances")
 
-  // lazy val verbIdsByType = instances.get.map(
-  //   _.map { case (verbType, sentences) =>
-  //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-  //       verbs.value.keySet.map(vi => VerbId(sid, vi)).toSet
-  //     }
-  //   }
-  // ).toCell("Verb IDs")
-
-  lazy val verbIdToType = instancesByVerbId.get
+  lazy val verbIdToType = verbArgSets.get
     .map(
       _.toList.foldMap { case (verbType, verbs) =>
         NonMergingMap(
@@ -99,16 +91,6 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
     )
     .toCell("Verb ID to verb type mapping")
-
-  // lazy val instancesByVerbId = instances.get.map(
-  //   _.map { case (verbType, sentences) =>
-  //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-  //       verbs.value.toList.foldMap { case (verbIndex, instanceIds) =>
-  //         NonMergingMap(VerbId(sid, verbIndex) -> instanceIds)
-  //       }
-  //     }
-  //   }
-  // ).toCell("Instances by verb ID")
 
   // Verb vectors
 
@@ -262,7 +244,7 @@ class GoldQasrlFeatures(
       }
     ).toCell("QA-SRL ArgumentId to spans")
 
-  override val instancesByVerbId: RunDataCell[VerbFeats[Set[ClausalQuestion]]] =
+  override val verbArgSets: RunDataCell[VerbFeats[Set[ClausalQuestion]]] =
     dataset.get
       .map(getQAPairs)
       .map(
@@ -281,7 +263,7 @@ class GoldQasrlFeatures(
     .toCell("QA-SRL sentences")
 
   // TODO temp before we have distribution results from the models
-  override val instanceToQuestionDist: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
     argIdToSpans.get.map(
       _.transform { case (_, args) =>
         NonMergingMap(
@@ -504,7 +486,17 @@ class PropBankGoldSpanFeatures(
     }
   ).toCell("PropBank dataset")
 
-  override val instancesByVerbId = dataset.get.map(
+  // TODO eliminate redundant traversal of propbank
+  override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
+    index.get.flatMap(
+      _.infoBarFoldMapM("Constructing sentence index") { path =>
+        ontonotesService.getFile(path).map(
+          _.sentences.foldMap(s => NonMergingMap(s.path.toString -> s.tokens.map(_.token).toVector))
+        )
+      }
+    ).toCell("Sentence index")
+
+  override val verbArgSets = dataset.get.map(
     _.transform { case (_, verbs) =>
       NonMergingMap(
         verbs.value.map { case (verbId, (_, labels)) =>
@@ -514,7 +506,7 @@ class PropBankGoldSpanFeatures(
     }
   ).toCell("PropBank gold span instances")
 
-  val spanIdToRoleLabel: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
+  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -526,16 +518,7 @@ class PropBankGoldSpanFeatures(
     }
   ).toCell("PropBank span to role label mapping")
 
-  override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
-    index.get.flatMap(
-      _.infoBarFoldMapM("Constructing sentence index") { path =>
-        ontonotesService.getFile(path).map(
-          _.sentences.foldMap(s => NonMergingMap(s.path.toString -> s.tokens.map(_.token).toVector))
-        )
-      }
-    ).toCell("Sentence index")
-
-  override val instanceToQuestionDist: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
     ??? // TODO
   }
 

@@ -96,7 +96,7 @@ object FrameInductionApp extends CommandIOApp(
         //   Joint(questionModel) -> 1.0
         // )
         Log.infoBranch("Initializing model features")(model.init(features)) >>
-          features.instancesByVerbId.full.get >>= (
+          features.verbArgSets.full.get >>= (
             _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbs) =>
               // hack to make it possible to even do the clustering on the really common words. need to generalize later
               val verbIds = NonEmptyVector.fromVector(_verbs.value.keySet.toVector.take(50)).get
@@ -104,11 +104,7 @@ object FrameInductionApp extends CommandIOApp(
                 for {
                   argumentAlgorithm <- argumentModel.create(features, verbType)
                   algorithm <- model.create(features, verbType)
-                  (verbClusterTree, finalParams) = {
-                    val (x, y) = algorithm.runFullAgglomerativeClustering(verbIds)
-                    val y2: NonEmptyVector[(MergeTree[ArgumentId[Arg]], MinEntropyClustering.ClusterMixture)] = y
-                    x -> y
-                  }
+                  (verbClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(verbIds)
                   argumentClusterTree = argumentAlgorithm.finishAgglomerativeClustering(finalParams)._1
                 } yield verbType -> VerbClusterModel(
                   verbType,

@@ -68,7 +68,7 @@ object ClusteringModel {
 
       for {
         argumentAlgorithm <- innerModel.create(features, verbType)
-        verbIdToArgIds <- features.instancesByVerbId.full.get.map(
+        verbIdToArgIds <- features.verbArgSets.full.get.map(
           _.apply(verbType).value.map { case (verbId, argIds) =>
             // TODO: maybe do something to handle the case of no args for a verb...
             // what should the clustering do in this case?
@@ -84,12 +84,12 @@ object ClusteringModel {
   }
 
   object QuestionEntropy extends ArgumentModel[MinEntropyClustering.ClusterMixture] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.instanceToQuestionDist.full.get.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.full.get.as(())
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
       // TODO
-      questionDists <- features.instanceToQuestionDist.full.get.map(_.apply(verbType))
+      questionDists <- features.argQuestionDists.full.get.map(_.apply(verbType))
       questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
       // TODO add tf-idf transform?
       indexedInstances = questionDists.value.map { case (argId, questionDist) =>
@@ -118,11 +118,11 @@ object ClusteringModel {
 // }
 
 // object VerbClauseEntropy extends FrameInductionModel[MinEntropyClustering.ClusterMixture] {
-//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.instancesByVerbId.full.get.as(())
+//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.verbArgSets.full.get.as(())
 //   override def create[VerbType, Instance](
 //     features: Features[VerbType, Instance], verbType: VerbType
 //   ) = for {
-//     clauseCounts <- features.instancesByVerbId.full.get.map(
+//     clauseCounts <- features.verbArgSets.full.get.map(
 //       _.apply(verbType).map {
 //         case (verbId, qaPairs) =>
 //           verbId -> qaPairs.keys.toList.foldMap { question =>
