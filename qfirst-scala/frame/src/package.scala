@@ -26,6 +26,13 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   type TemplateQ = (ArgStructure, ArgumentSlot)
   type QAPairs = Map[ClausalQuestion, List[List[ESpan]]]
 
+  type VerbFeatures[VerbType, A] = Map[
+    VerbType, NonMergingMap[VerbId, A]
+  ]
+  type ArgFeatures[VerbType, A, B] = Map[
+    VerbType, NonMergingMap[ArgumentId[A], B]
+  ]
+
   type Instances[VerbType, A] = Map[
     VerbType, Map[String, NonMergingMap[Int, A]]
   ]

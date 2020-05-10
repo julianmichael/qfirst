@@ -59,7 +59,7 @@ object ClusterSplittingCriterion {
   )
 }
 
-class LazyFramesets(model: VerbClusterModel[InflectedForms], initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
+class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
   case class FrameInputInfo(
     verbIds: Set[VerbId],
     clauseCounts: Map[ArgStructure, Int])
@@ -77,7 +77,7 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms], initialCriterion: C
 
   private[this] def getFrames(infos: Vector[FrameInputInfo]) = {
     val infosWithIndex = infos.zipWithIndex
-    val questionClusterTrees = model.questionClusterTree.groupBy(qid =>
+    val questionClusterTrees = model.argumentClusterTree.groupBy(qid =>
       infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
     )
     infos.indices.toList.map { index =>
@@ -95,13 +95,18 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms], initialCriterion: C
     }
   }
 
+  val clauseSets = model.argumentClusterTree
+    .unorderedFoldMap(qid =>
+      Map(qid.verbId -> Set(qid.argument.clauseTemplate))
+    )
+
   private[this] def makeFramesets(criterion: ClusterSplittingCriterion) = {
     val aggFrameInfo = (childTree: MergeTree[VerbId]) => {
       val verbIds = childTree.values
       FrameInputInfo(
         verbIds.toSet,
         verbIds.foldMap(vid =>
-          model.clauseSets(vid).iterator.map(_ -> 1).toMap
+          clauseSets(vid).iterator.map(_ -> 1).toMap
         )
       )
     }
@@ -255,7 +260,7 @@ object FrameClause
 @Lenses @JsonCodec case class VerbFrame(
   verbIds: Set[VerbId],
   clauseTemplates: List[FrameClause],
-  questionClusterTree: MergeTree[QuestionId],
+  questionClusterTree: MergeTree[ArgumentId[ClausalQuestion]],
   probability: Double) {
 
   // // TODO shim for current functionality

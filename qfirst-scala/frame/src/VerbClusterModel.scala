@@ -4,14 +4,11 @@ import cats.implicits._
 
 import io.circe.generic.JsonCodec
 
-@JsonCodec case class VerbClusterModel[VerbType](
+@JsonCodec case class VerbClusterModel[VerbType, Arg](
   verbType: VerbType,
   verbClusterTree: MergeTree[VerbId],
-  questionClusterTree: MergeTree[QuestionId]
+  argumentClusterTree: MergeTree[ArgumentId[Arg]]
 ) {
-  val clauseSets = questionClusterTree.unorderedFoldMap(qid =>
-    Map(qid.verbId -> Set(qid.question.clauseTemplate))
-  )
   val numVerbInstances = verbClusterTree.size
 }
 object VerbClusterModel

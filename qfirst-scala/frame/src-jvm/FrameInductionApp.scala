@@ -66,47 +66,54 @@ object FrameInductionApp extends CommandIOApp(
     // (1 to 9).map(_.toDouble / 10.0).toList.map(ModelConfig.Interpolated(_))
   }
 
-  def getVerbClusterModels[VerbType: Encoder : Decoder](
-    features: Features[VerbType], modelConfig: ModelConfig,
+  def getVerbClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
+    features: Features[VerbType, Arg], modelConfig: ModelConfig,
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType]]]] = {
+  ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
     features.modelDir.map (modelDir =>
-      FileCached[Map[VerbType, VerbClusterModel[VerbType]]](
+      FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]](
         s"QA-SRL cluster model: $modelConfig")(
         path = modelDir.resolve(s"$modelConfig.jsonl.gz"),
-        read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType])](path)
+        read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType, Arg])](path)
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-        val questionModel = Composite(
-          Composite(
-            QuestionEntropy -> 1.0,
-            AnswerEntropy -> 2.0
-          ) -> 1.0,
-          AnswerNLL -> 2.0
-        )
-        val model = Composite(
-          Composite(
-            VerbClauseEntropy -> 2.0,
-            VerbSqDist -> (1.0 / 175),
-            ) -> 1.0,
-          Joint(questionModel) -> 1.0
-        )
+        import ClusteringModel._
+        val argumentModel = QuestionEntropy
+        val model = Joint(argumentModel)
+        // val questionModel = Composite(
+        //   Composite(
+        //     QuestionEntropy -> 1.0,
+        //     AnswerEntropy -> 2.0
+        //   ) -> 1.0,
+        //   AnswerNLL -> 2.0
+        // )
+        // val model = Composite(
+        //   Composite(
+        //     VerbClauseEntropy -> 2.0,
+        //     VerbSqDist -> (1.0 / 175),
+        //     ) -> 1.0,
+        //   Joint(questionModel) -> 1.0
+        // )
         Log.infoBranch("Initializing model features")(model.init(features)) >>
-          features.verbIdsByType.full.get >>= (
-            _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbIds) =>
+          features.instancesByVerbId.full.get >>= (
+            _.toList.infoBarTraverse("Clustering verbs") { case (verbType, _verbs) =>
               // hack to make it possible to even do the clustering on the really common words. need to generalize later
-              val verbIds = NonEmptyVector.fromVector(_verbIds.toVector.take(50)).get
+              val verbIds = NonEmptyVector.fromVector(_verbs.value.keySet.toVector.take(50)).get
               Log.trace(renderVerbType(verbType)) >> {
                 for {
-                  questionAlgorithm <- questionModel.create(features, verbType)
+                  argumentAlgorithm <- argumentModel.create(features, verbType)
                   algorithm <- model.create(features, verbType)
-                                           (verbClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(verbIds)
-                  questionClusterTree = questionAlgorithm.finishAgglomerativeClustering(finalParams._2)._1
+                  (verbClusterTree, finalParams) = {
+                    val (x, y) = algorithm.runFullAgglomerativeClustering(verbIds)
+                    val y2: NonEmptyVector[(MergeTree[ArgumentId[Arg]], MinEntropyClustering.ClusterMixture)] = y
+                    x -> y
+                  }
+                  argumentClusterTree = argumentAlgorithm.finishAgglomerativeClustering(finalParams)._1
                 } yield verbType -> VerbClusterModel(
                   verbType,
                   verbClusterTree,
-                  questionClusterTree
+                  argumentClusterTree
                 )
               }
             }.map(_.toMap)
@@ -132,7 +139,7 @@ object FrameInductionApp extends CommandIOApp(
       _ <- Log.info(s"Running frame induction on QA-SRL. Models: ${modelConfigs.mkString(", ")}")
       verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
         Log.infoBranch(s"Clustering for model: $vsConfig") {
-          getVerbClusterModels[InflectedForms](features, vsConfig, _.allForms.mkString(", ")) >>= (
+          getVerbClusterModels[InflectedForms, ClausalQuestion](features, vsConfig, _.allForms.mkString(", ")) >>= (
             _.get.map(vsConfig -> _)
           )
         }
@@ -167,7 +174,7 @@ object FrameInductionApp extends CommandIOApp(
       _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
       verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
         Log.infoBranch(s"Clustering for model: $vsConfig") {
-          getVerbClusterModels[String](features, vsConfig, identity[String]) >>= (
+          getVerbClusterModels[String, ESpan](features, vsConfig, identity[String]) >>= (
             _.get.map(vsConfig -> _)
           )
         }
@@ -213,7 +220,7 @@ object FrameInductionApp extends CommandIOApp(
         _ <- logger.info(s"Model configuration: $modelConfigOpt")
         _ <- data match {
           case "qasrl" => runQasrlFrameInduction(new GoldQasrlFeatures(mode), modelConfigOpt)
-          case "propbank-span" => runPropBankGoldSpanFrameInduction(new PropBankGoldSpanFeatures(mode), modelConfigOpt)
+          case "propbank-span" => runPropBankGoldSpanFrameInduction(new PropBankGoldSpanFeatures(mode, assumeGoldVerbSense = false), modelConfigOpt)
           case _ => ???
         }
       } yield ExitCode.Success
