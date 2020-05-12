@@ -50,7 +50,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // val instances: RunDataCell[ArgInstances[VerbType, Set[Instance]]]
   val verbArgSets: RunDataCell[VerbFeats[Set[Arg]]]
 
-  val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
+  def argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
 
   protected val rootDir: Path
 
@@ -208,30 +208,32 @@ class GoldQasrlFeatures(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
   ).toCell("QA-SRL dataset")
 
-  def getQAPairs(dataset: Dataset): VerbFeats[QAPairs] = {
-    dataset.sentences
-      .iterator.flatMap { case (sid, sentence) => sentence.verbEntries.values.map(sid -> _) }.toList
-      .groupBy(_._2.verbInflectedForms).map { case (verbInflectedForms, pairs) =>
-        verbInflectedForms -> pairs.groupBy(_._1).toList.foldMap { case (sid, pairs) =>
-          NonMergingMap(
-            pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
-              val qLabels = verb.questionLabels.values.toList
-              val resolvedQs = ClauseResolution.getResolvedFramePairs(
-                verbInflectedForms, qLabels.map(_.questionSlots)
-              ).map(Function.tupled(ClausalQuestion(_, _)))
-              VerbId(sid, verbIndex) -> qLabels.zip(resolvedQs).map { case (qLabel, clausalQ) =>
-                clausalQ -> (
-                  qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).map(_.spans.toList)
-                )
-              }.toMap
-            }
-          )
-        }
+  val qaPairs: RunDataCell[VerbFeats[QAPairs]] = {
+    dataset.get.map(
+      _.sentences.iterator.flatMap { case (sid, sentence) =>
+        sentence.verbEntries.values.map(sid -> _)
+      }.toList.groupBy(_._2.verbInflectedForms).map {
+        case (verbInflectedForms, pairs) =>
+          verbInflectedForms -> pairs.groupBy(_._1).toList.foldMap { case (sid, pairs) =>
+            NonMergingMap(
+              pairs.map(_._2).map(v => v.verbIndex -> v).toMap.map { case (verbIndex, verb) =>
+                val qLabels = verb.questionLabels.values.toList
+                val resolvedQs = ClauseResolution.getResolvedFramePairs(
+                  verbInflectedForms, qLabels.map(_.questionSlots)
+                ).map(Function.tupled(ClausalQuestion(_, _)))
+                VerbId(sid, verbIndex) -> qLabels.zip(resolvedQs).map { case (qLabel, clausalQ) =>
+                  clausalQ -> (
+                    qLabel.answerJudgments.toList.flatMap(_.judgment.getAnswer).map(_.spans.toList)
+                  )
+                }.toMap
+              }
+            )
+          }
       }
-  }
+    )
+  }.toCell("QA-SRL All QA Pairs")
 
-  val argIdToSpans: RunDataCell[ArgFeats[List[List[ESpan]]]] = dataset.get
-    .map(getQAPairs)
+  val argIdToSpans: RunDataCell[ArgFeats[List[List[ESpan]]]] = qaPairs.get
     .map(
       _.transform { case (_, verbs) =>
         verbs.value.toList.foldMap { case (verbId, qaPairs) =>
@@ -245,9 +247,7 @@ class GoldQasrlFeatures(
     ).toCell("QA-SRL ArgumentId to spans")
 
   override val verbArgSets: RunDataCell[VerbFeats[Set[ClausalQuestion]]] =
-    dataset.get
-      .map(getQAPairs)
-      .map(
+      qaPairs.get.map(
         _.transform { case (_, verbs) =>
           NonMergingMap(
             verbs.value.transform { case (verbId, qaPairs) =>
@@ -263,16 +263,93 @@ class GoldQasrlFeatures(
     .toCell("QA-SRL sentences")
 
   // TODO temp before we have distribution results from the models
+  // override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+  //   argIdToSpans.get.map(
+  //     _.transform { case (_, args) =>
+  //       NonMergingMap(
+  //         args.value.transform { case (argId, _) =>
+  //           Map(QuestionTemplate.fromClausalQuestion(argId.argument) -> 1.0)
+  //         }
+  //       )
+  //     }
+  //   ).toCell("QA-SRL question distributions for questions")
+  // }
+
+  // TODO incorporate gold question
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-    argIdToSpans.get.map(
-      _.transform { case (_, args) =>
-        NonMergingMap(
-          args.value.transform { case (argId, _) =>
-            Map(QuestionTemplate.fromClausalQuestion(argId.argument) -> 1.0)
+    RunData.strings.zip(verbIdToType.get).zip(qaPairs.get)
+      .flatMap { case ((split, vidToType), qaPairs) =>
+      val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
+      FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
+        .evalMap { case QGen.SentencePrediction(sid, sentenceTokens, verbs) =>
+          verbs.foldMapM { case QGen.VerbPrediction(vi, spanPreds) =>
+            val verbId = VerbId(sid, vi)
+            // verbId may not be present if all QAs were filtered out (ie it was a bad predicate)
+            vidToType.value.get(verbId).foldMapM { verbType =>
+              val qas = qaPairs(verbType).value(verbId)
+              // NOTE: keeping this around as a test case for freelog.
+              // Exposed two bugs:
+              //  - color of nested log ending up on continued branches inserted after explicitly logged newlines
+              //  - incorrect number of lines deleted on each rewind (wasn't due to wrap)
+              // import io.circe.syntax._
+              // Log.trace(sid) >>
+              //   Log.trace(sentenceTokens.mkString(", ")) >>
+              //   Log.trace(verbId.toString) >>
+              //   qas.toList.traverse { case (cq, spanLists) =>
+              //     Log.trace(
+              //       cq.questionString + ": " +
+              //         spanLists.map(_.mkString(", ")).mkString("; ")
+              //     )
+              //   } >>
+              //   spanPreds.traverse(sp =>
+              //     Log.trace(
+              //       f"${sp.span}%s: ${sp.spanProb}%.4f\n" +
+              //         sp.questions.toList.map { case (qt, p) =>
+              //           f"\t${qt.toTemplateString}%s\t$p%.4f"
+              //         }.mkString("\n")
+              //     )
+              //   ) >>
+              //   spanPreds.traverse(sp =>
+              //     IO(
+              //       System.err.println(
+              //         f"${sp.span}%s: ${sp.spanProb}%.4f\n" +
+              //           sp.questions.toList.map { case (qt, p) =>
+              //             f"\t${qt.toTemplateString}%s\t$p%.4f"
+              //           }.mkString("\n")
+              //       )
+              //     )
+              //   ) >>
+              IO(
+                Map(
+                  verbType -> NonMergingMap(
+                    qas.map { case (cq, spanLists) =>
+                      // We might miss a few spans, which were judged very low probability by the model
+                      // so they weren't decoded.
+                      val spanPredLists = spanLists
+                        .map(_.flatMap(s => spanPreds.find(_.span == s)))
+                        .filter(_.nonEmpty)
+                      if(spanPredLists.isEmpty) {
+                        // back off to gold question (should be rare) if ALL spans in ALL answers are missed
+                        val argId = ArgumentId(verbId, cq)
+                        val qDist = Map(QuestionTemplate.fromClausalQuestion(cq) -> 1.0)
+                        System.err.println(s"oopsie: $argId")
+                        argId -> qDist
+                      } else ArgumentId(verbId, cq) -> spanPredLists.foldMap { localPreds =>
+                        val denom = localPreds.foldMap(_.spanProb) * spanPredLists.size
+                        localPreds.foldMap(
+                          _.questions.transform { case (_, prob) =>
+                            prob / denom
+                          }
+                        )
+                      }
+                    }
+                  )
+                )
+              )
+            }
           }
-        )
-      }
-    ).toCell("QA-SRL question distributions for questions")
+        }.infoCompile(s"Processing QG Predictions ($split)")(_.foldMonoid)
+    }.toCell("Question distributions for arguments")
   }
 
   // lazy val instancesByQuestionId = instances.get.map(
@@ -519,7 +596,24 @@ class PropBankGoldSpanFeatures(
   ).toCell("PropBank span to role label mapping")
 
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-    ??? // TODO
+    RunData.strings.zip(verbIdToType.get).flatMap { case (split, vidToType) =>
+      val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
+      FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
+        .map { case QGen.SentencePrediction(sid, _, verbs) =>
+          verbs.foldMap { case QGen.VerbPrediction(vi, spans) =>
+            val verbId = VerbId(sid, vi)
+            val verbType = vidToType.value(verbId)
+            Map(
+              verbType -> NonMergingMap(
+                spans.map { case QGen.SpanPrediction(span, _, questions) =>
+                  ArgumentId(verbId, span) -> questions
+                }.toMap
+              )
+            )
+          }
+        }
+        .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
+    }.toCell("Question distributions for arguments")
   }
 
   @JsonCodec case class PropBankQGInput(
@@ -528,6 +622,7 @@ class PropBankGoldSpanFeatures(
     verbEntries: Map[Int, PropBankQGVerbInput]
   )
   @JsonCodec case class PropBankQGVerbInput(
+    verbIndex: Int,
     argumentSpans: Set[ESpan]
   )
 
@@ -540,7 +635,7 @@ class PropBankGoldSpanFeatures(
               sentence.path.toString,
               sentence.tokens.map(_.token).toVector,
               sentence.predicateArgumentStructures.map { pas =>
-                pas.predicate.index -> PropBankQGVerbInput(pas.arguments.map(_._2).toSet)
+                pas.predicate.index -> PropBankQGVerbInput(pas.predicate.index, pas.arguments.map(_._2).toSet)
               }.toMap
             )
           }
@@ -563,6 +658,8 @@ class PropBankGoldSpanFeatures(
       )
     )
   }.run
+
+  val setup = writeQGInputs
 }
 
 // class PropBankFeatures(

@@ -118,7 +118,6 @@ object FrameInductionApp extends CommandIOApp(
     )
   }
 
-
   def runQasrlFrameInduction(
     features: GoldQasrlFeatures, modelOpt: Option[ModelConfig])(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -165,7 +164,7 @@ object FrameInductionApp extends CommandIOApp(
     for {
       _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
       _ <- Log.infoBranch("Running setup steps.")(
-        features.writeQGInputs
+        features.setup
       )
       _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
       verbModelsByConfig <- modelConfigs.traverse(vsConfig =>

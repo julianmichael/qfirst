@@ -19,6 +19,7 @@ import scala.collection.immutable.Vector
 object MinEntropyClustering {
   case class ClusterMixture(counts: DenseVector[Double], total: Double)
 }
+// TODO maybe sparse vectors ... or dense, since they need to be constructed for cluster params anyway? or maybe that would just use way too much memory
 class MinEntropyClustering[I](
   getInstance: I => Map[Int, Double],
   vocabSize: Int

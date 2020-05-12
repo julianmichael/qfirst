@@ -16,6 +16,7 @@ import monocle.macros.Lenses
   frame: Frame,
   slot: ArgumentSlot
 ) {
+  def questionString = frame.questionsForSlot(slot).head
   def clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
   def template: TemplateQ = clauseTemplate -> slot
   // TODO remove need for this
