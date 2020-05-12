@@ -52,6 +52,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
 
+  def argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]]
+
   protected val rootDir: Path
 
   protected val createDir = (path: Path) => IO(!Files.exists(path))
@@ -352,6 +354,18 @@ class GoldQasrlFeatures(
     }.toCell("Question distributions for arguments")
   }
 
+  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = qaPairs.get.map(
+    _.transform { case (_, verbs) =>
+      verbs.value.toList.foldMap { case (verbId, qaPairs) =>
+        NonMergingMap(
+          qaPairs.map { case (cq, spanLists) =>
+            ArgumentId(verbId, cq) -> spanLists.foldMap(spans => spans.map(_ -> (1.0 / spans.size)).toMap)
+          }
+        )
+      }
+    }
+  ).toCell("PropBank span to role label mapping")
+
   // lazy val instancesByQuestionId = instances.get.map(
   //   _.map { case (verbType, sentences) =>
   //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
@@ -542,19 +556,17 @@ class PropBankGoldSpanFeatures(
 
   val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = index.get.flatMap(filePaths =>
     filePaths.infoBarFoldMapM("Reading PropBank files to construct instances") { path =>
-      Log.trace(path.suffix) >> ontonotesService.getFile(path) >>= { file =>
-        file.sentences.traceBarFoldMapM("Sentences") { sentence =>
+      Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
+        file.sentences.foldMap { sentence =>
           val sentenceId = sentence.path.toString
           sentence.predicateArgumentStructures.foldMap { pas =>
             val verbLemma = pas.predicate.lemma
             val verbSense = s"$verbLemma.${pas.predicate.sense}"
             val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
-            IO.pure(
-              Map(
-                verbType -> NonMergingMap(
-                  VerbId(sentenceId, pas.predicate.index) ->
-                    (verbSense -> pas.arguments.map(_.swap).toMap)
-                )
+            Map(
+              verbType -> NonMergingMap(
+                VerbId(sentenceId, pas.predicate.index) ->
+                  (verbSense -> pas.arguments.map(_.swap).toMap)
               )
             )
           }
@@ -583,18 +595,6 @@ class PropBankGoldSpanFeatures(
     }
   ).toCell("PropBank gold span instances")
 
-  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
-    _.transform { case (_, verbs) =>
-      verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
-        NonMergingMap(
-          arguments.map { case (span, label) =>
-            ArgumentId(verbId, span) -> PropBankRoleLabel(framesetId, label)
-          }
-        )
-      }
-    }
-  ).toCell("PropBank span to role label mapping")
-
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
     RunData.strings.zip(verbIdToType.get).flatMap { case (split, vidToType) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
@@ -615,6 +615,31 @@ class PropBankGoldSpanFeatures(
         .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
     }.toCell("Question distributions for arguments")
   }
+
+  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = dataset.get.map(
+    _.transform { case (_, verbs) =>
+      verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
+        NonMergingMap(
+          arguments.map { case (span, _) =>
+            ArgumentId(verbId, span) -> Map(span -> 1.0)
+          }
+        )
+      }
+    }
+  ).toCell("PropBank span to role label mapping")
+
+  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
+    _.transform { case (_, verbs) =>
+      verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
+        NonMergingMap(
+          arguments.map { case (span, label) =>
+            ArgumentId(verbId, span) -> PropBankRoleLabel(framesetId, label)
+          }
+        )
+      }
+    }
+  ).toCell("PropBank span to role label mapping")
+
 
   @JsonCodec case class PropBankQGInput(
     sentenceId: String,

@@ -55,6 +55,15 @@ object ClusteringModel {
       val _2Lambda = spec2._2
     }
   }
+  object Composite {
+    def argument[P1, P2](spec1: (ArgumentModel[P1], Double), spec2: (ArgumentModel[P2], Double)) =
+      Composite[ArgumentId, Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
+    def verb[P1, P2](spec1: (VerbModel[P1], Double), spec2: (VerbModel[P2], Double)) =
+      Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
+    def withJoint[P1, P2](spec1: (VerbModel[P1], Double), spec2: (JointModel[P2], Double)) =
+      Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => NonEmptyVector[(MergeTree[ArgumentId[A]], P2)]]](spec1, spec2)
+
+  }
 
   case class Joint[P, Arg](
     innerModel: ClusteringModel.ArgumentModel[P]
@@ -97,25 +106,56 @@ object ClusteringModel {
       }
     } yield new MinEntropyClustering(indexedInstances, questionVocab.size)
   }
+
+  object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
+    override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.full.get.as(())
+    override def create[VerbType, Instance](
+      features: Features[VerbType, Instance], verbType: VerbType
+    ) = for {
+      vectors <- features.elmoVecs.full.get.map(_.apply(verbType))
+    } yield new VectorMeanClustering(vectors.value)
+  }
+
+  object AnswerEntropy extends ArgumentModel[MinEntropyClustering.ClusterMixture] {
+    override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
+      sentences <- features.sentences.full.get
+      tokenCounts <- features.argSpans.full.get
+    } yield ()
+
+    override def create[VerbType, Instance](
+      features: Features[VerbType, Instance], verbType: VerbType
+    ) = for {
+      // val pronouns = Set(
+      //   "he", "him", "it", "she", "her", "they", "them", "we", "us"
+      // ).map(_.lowerCase)
+      // val tokensToSkip = pronouns
+
+      // TODO TF-IDF thing
+
+      sentences <- features.sentences.full.get
+      tokenProbs <- features.argSpans.full.get.map(
+        _.apply(verbType).value.toList.foldMap { case (argId, spanScores) =>
+          val sentenceTokens = sentences.value(argId.verbId.sentenceId)
+          // val numTokens = spanSets.foldMap(_.foldMap(_.length))
+          // val singleCount = 1.0 / numTokens
+          val tokenPseudocounts = spanScores.toList.foldMap { case (span, score) =>
+            sentenceTokens.slice(span.begin, span.endExclusive)
+              .map(_.lowerCase)
+              .foldMap(t => Map(t -> score))
+            // .filter(t => !tokensToSkip.contains(t))
+          }
+          val total = tokenPseudocounts.values.sum
+          val normalizedTokenCounts = tokenPseudocounts.transform { case (_, s) => s / total }
+          Map(argId -> normalizedTokenCounts)
+        }
+      )
+      tokenVocab = Vocab.make(tokenProbs.unorderedFoldMap(_.keySet))
+      indexedTokenProbs = tokenProbs.map { case (qid, qTokenProbs) =>
+        qid -> qTokenProbs.map { case (tok, pcount) => tokenVocab.getIndex(tok) -> pcount }
+      }
+    } yield new MinEntropyClustering(indexedTokenProbs, tokenVocab.size)
+  }
 }
-
-
-// object VerbSqDist extends FrameInductionModel[VectorMeanClustering.ClusterMean] {
-//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.full.get.as(())
-//   override def create[VerbType, Instance](
-//     features: Features[VerbType, Instance], verbType: VerbType
-//   ) = for {
-//     vectors <- features.elmoVecs.full.get.map(
-//       _.apply(verbType).toList.foldMap { case (sid, verbs) =>
-//         NonMergingMap(
-//           verbs.value.map { case (verbIndex, vec) =>
-//             VerbId(sid, verbIndex) -> vec
-//           }
-//         )
-//       }
-//     )
-//   } yield new VectorMeanClustering(vectors.value)
-// }
 
 // object VerbClauseEntropy extends FrameInductionModel[MinEntropyClustering.ClusterMixture] {
 //   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.verbArgSets.full.get.as(())
@@ -137,48 +177,6 @@ object ClusteringModel {
 //       }
 //     }
 //   } yield new MinEntropyClustering(indexedClauseCounts, clauseVocab.size)
-// }
-
-// object AnswerEntropy extends FrameInductionModel[MinEntropyClustering.ClusterMixture] {
-//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
-//     sentences <- features.sentences.full.get
-//     tokenCounts <- features.instancesByQuestionId.full.get
-//   } yield ()
-
-//   override def create[VerbType, Instance](
-//     features: Features[VerbType, Instance], verbType: VerbType
-//   ) = for {
-//     // val pronouns = Set(
-//     //   "he", "him", "it", "she", "her", "they", "them", "we", "us"
-//     // ).map(_.lowerCase)
-//     // val tokensToSkip = pronouns
-
-//     // TODO TF-IDF thing
-
-//     sentences <- features.sentences.full.get
-//     tokenCounts <- features.instancesByQuestionId.full.get.map(
-//       _.apply(verbType).toList.foldMap { case (qid, spanSets) =>
-//           val sentenceTokens = sentences.value(qid.verbId.sentenceId)
-//           val numTokens = spanSets.foldMap(_.foldMap(_.length))
-//           val singleCount = 1.0 / numTokens
-//           val tokenPseudocounts = spanSets.foldMap(
-//             _.foldMap(span =>
-//               sentenceTokens.slice(span.begin, span.endExclusive)
-//                 .map(_.lowerCase)
-//                 .foldMap(t => Map(t -> singleCount))
-//                 // .filter(t => !tokensToSkip.contains(t))
-//             )
-//           )
-//           Map(qid -> tokenPseudocounts)
-//         }
-//     )
-
-//     tokenVocab = Vocab.make(tokenCounts.unorderedFoldMap(_.keySet))
-
-//     indexedTokenCounts = tokenCounts.map { case (qid, qTokenCounts) =>
-//       qid -> qTokenCounts.map { case (tok, pcount) => tokenVocab.getIndex(tok) -> pcount }
-//     }
-//   } yield new MinEntropyClustering(indexedTokenCounts, tokenVocab.size)
 // }
 
 // import breeze.linalg.DenseVector

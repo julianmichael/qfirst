@@ -79,8 +79,15 @@ object FrameInductionApp extends CommandIOApp(
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
         import ClusteringModel._
-        val argumentModel = QuestionEntropy
+        val argumentModel = Composite.argument(
+          QuestionEntropy -> 1.0,
+          AnswerEntropy -> 1.0
+        )
         val model = Joint(argumentModel)
+        // val model = Composite.withJoint(
+        //   VerbSqDist -> (1.0 / 200),
+        //   Joint(argumentModel) -> 1.0
+        // )
         // val questionModel = Composite(
         //   Composite(
         //     QuestionEntropy -> 1.0,

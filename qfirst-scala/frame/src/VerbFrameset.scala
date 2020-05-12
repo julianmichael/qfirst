@@ -177,7 +177,7 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
     questionClusterTree: MergeTree[QuestionId]
   ): Set[(ArgStructure, ArgumentSlot)] = {
     val structureCounts = questionClusterTree.unorderedFoldMap(qid =>
-      Map(qid.question.template -> 1)
+      Map(qid.argument.template -> 1)
     )
     val total = structureCounts.values.sum
     structureCounts.collect {

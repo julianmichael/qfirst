@@ -125,7 +125,7 @@ object VerbAnnUI {
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
   val VerbLocal = new LocalState[InflectedForms]
-  val VerbModelLocal = new LocalState[Option[VerbClusterModel[InflectedForms]]]
+  val VerbModelLocal = new LocalState[Option[VerbClusterModel[InflectedForms, ClausalQuestion]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]

@@ -76,7 +76,7 @@ object Serve extends CommandIOApp(
         for {
           fullSet <- features.dataset.full.get
           inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-          verbModels <- FrameInductionApp.getVerbClusterModels[InflectedForms](
+          verbModels <- FrameInductionApp.getVerbClusterModels[InflectedForms, ClausalQuestion](
             features, modelConfig, _.allForms.mkString(", ")
           ).flatMap(_.read.map(_.get))
           goldParaphrases <- features.readGoldParaphrases

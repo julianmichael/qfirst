@@ -23,6 +23,12 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
   implicit val progressSpec = ProgressSpec.simple(barLength = 50)
 
+  type QuestionId = ArgumentId[ClausalQuestion]
+  object QuestionId {
+    def apply(verbId: VerbId, question: ClausalQuestion) = ArgumentId(verbId, question)
+    def unapply(argId: QuestionId): Some[(VerbId, ClausalQuestion)] = Some(argId.verbId -> argId.argument)
+  }
+
   type TemplateQ = (ArgStructure, ArgumentSlot)
   type QAPairs = Map[ClausalQuestion, List[List[ESpan]]]
 
