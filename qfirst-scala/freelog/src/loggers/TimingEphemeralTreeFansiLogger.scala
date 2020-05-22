@@ -49,43 +49,6 @@ case class TimingEphemeralTreeFansiLogger(
       }
   }
 
-  private[this] val bigUnitSpecs = {
-    import duration._
-    List[(TimeUnit, FiniteDuration => Long, String)](
-      (DAYS,         (_.toDays),    "d"),
-      (HOURS,        (_.toHours),   "h"),
-      (MINUTES,      (_.toMinutes), "m"),
-      (SECONDS,      (_.toSeconds), "s")
-    )
-  }
-
-  private[this] val smallUnitSpecs = {
-    import duration._
-    List[(TimeUnit, FiniteDuration => Long, String)](
-      (MILLISECONDS, (_.toMillis),  "ms"),
-      (NANOSECONDS, (_.toMillis),  "ns")
-    )
-  }
-
-  private[this] def getTimingString(_delta: FiniteDuration): String = {
-    var delta = _delta
-    import duration._
-    val bigRes = bigUnitSpecs.flatMap { case (unit, convert, label) => 
-      val numUnits = convert(delta)
-      if(numUnits > 0) {
-        delta = delta - FiniteDuration(numUnits, unit)
-        Some(s"${numUnits}${label}")
-      } else None
-    }.mkString(" ")
-    if(bigRes.nonEmpty) bigRes else {
-      smallUnitSpecs.map { case (unit, convert, label) =>
-        val numUnits = convert(delta)
-        if(numUnits > 0) {
-          Some(s"${numUnits}${label}")
-        } else None
-      }.foldK.getOrElse("instant")
-    }
-  }
 
   def emit(msg: String, logLevel: LogLevel) =
     justDoneMessageBuffer.set(None) >> getIndents >>= { indents =>
@@ -105,7 +68,7 @@ case class TimingEphemeralTreeFansiLogger(
     indents <- getIndents
     justDoneMsgOpt <- justDoneMessageBuffer.get
     delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
-    timingString = getTimingString(delta)
+    timingString = freelog.util.getTimingString(delta)
     _ <- {
       justDoneMsgOpt.filter(_._1 == timingString) match {
         case None =>

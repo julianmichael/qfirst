@@ -20,7 +20,7 @@ class FrameTests extends FunSuite with Matchers {
   import org.scalatest.Inside._
   import org.scalatest.AppendedClues._
 
-  def runTest1[F[_]: Monad](logger: TreeLogger[String, F]) = for {
+  def runTest1[F[_]: Monad](logger: TreeLogger[F, String]) = for {
     _ <- logger.branch("Beginning...") {
       (1 to 5).toList.traverse(i =>
         // List('a', 'b', 'c').traverse

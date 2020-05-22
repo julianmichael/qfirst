@@ -42,44 +42,6 @@ case class TimingEphemeralTreeConsoleLogger(
   //     )
   // }
 
-  private[this] val bigUnitSpecs = {
-    import duration._
-    List[(TimeUnit, FiniteDuration => Long, String)](
-      (DAYS,         (_.toDays),    "d"),
-      (HOURS,        (_.toHours),   "h"),
-      (MINUTES,      (_.toMinutes), "m"),
-      (SECONDS,      (_.toSeconds), "s")
-    )
-  }
-
-  private[this] val smallUnitSpecs = {
-    import duration._
-    List[(TimeUnit, FiniteDuration => Long, String)](
-      (MILLISECONDS, (_.toMillis),  "ms"),
-      (NANOSECONDS, (_.toMillis),  "ns")
-    )
-  }
-
-  private[this] def getTimingString(_delta: FiniteDuration): String = {
-    var delta = _delta
-    import duration._
-    val bigRes = bigUnitSpecs.flatMap { case (unit, convert, label) => 
-      val numUnits = convert(delta)
-      if(numUnits > 0) {
-        delta = delta - FiniteDuration(numUnits, unit)
-        Some(s"${numUnits}${label}")
-      } else None
-    }.mkString(" ")
-    if(bigRes.nonEmpty) bigRes else {
-      smallUnitSpecs.map { case (unit, convert, label) =>
-        val numUnits = convert(delta)
-        if(numUnits > 0) {
-          Some(s"${numUnits}${label}")
-        } else None
-      }.foldK.getOrElse("instant")
-    }
-  }
-
   def emit(msg: String, logLevel: LogLevel) = branchBeginTimesMillis.get.map(_.size)
     .flatMap { indentLevel =>
       val passiveIndent = getPassiveIndent(indentLevel)
@@ -104,7 +66,7 @@ case class TimingEphemeralTreeConsoleLogger(
     _ <- {
       val delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
       if(delta > minElapsedTimeToLog) {
-        logger.emit(indent + branchEnd + s" Done (${getTimingString(delta)})", logLevel)
+        logger.emit(indent + branchEnd + s" Done (${freelog.util.getTimingString(delta)})", logLevel)
       } else IO.unit
     }
     _ <- branchBeginTimesMillis.update {
