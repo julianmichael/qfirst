@@ -72,7 +72,7 @@ object ClusteringModel {
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = {
-      // TODO make this a parameter
+      // TODO make this a parameter // TODO actually FIX this .... see the alg. seems wrongo
       val getLossPenalty = (numClusters: Int) => scala.math.pow(numClusters, 2.0) / 2.0
 
       for {

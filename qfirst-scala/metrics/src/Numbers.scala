@@ -35,7 +35,7 @@ object Numbers {
     )
   }
 
-  implicit def numbrersMonoid[A: Numeric]: Monoid[Numbers[A]] = {
+  implicit def numbersMonoid[A: Numeric]: Monoid[Numbers[A]] = {
     import cats.derived.auto.monoid._
     cats.derived.semi.monoid
   }

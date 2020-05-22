@@ -35,7 +35,7 @@ object BinaryConf {
 
     def precision = if(tp + fp > 0) {
       tp.toDouble / (tp + fp)
-    } else 0.0
+    } else 1.0
 
     def recall = if(tp + fn > 0) {
       tp.toDouble / (tp + fn)

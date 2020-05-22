@@ -12,9 +12,9 @@ case class Quartiles(
 ) {
   def getMetrics: MapTree[String, Metric] = MapTree.fromPairs(
     "min" -> Metric.double(min),
-    "firstQuartile" -> Metric.double(firstQuartile),
+    "first quartile" -> Metric.double(firstQuartile),
     "median" -> Metric.double(median),
-    "thirdQuartile" -> Metric.double(thirdQuartile),
+    "third quartile" -> Metric.double(thirdQuartile),
     "max" -> Metric.double(max)
   )
 }

@@ -10,6 +10,7 @@ import monocle.Iso
 
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
+import jjm.implicits._
 
 import qasrl.ArgumentSlot
 import qasrl.Frame
@@ -63,4 +64,29 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   def nonEmptySetOptionIso[A: Order] = Iso[Option[NonEmptySet[A]], Set[A]](
     _.foldMap(_.toSortedSet: Set[A]))(
     s => NonEmptySet.fromSet(SortedSet(s.toSeq:_*)))
+
+  implicit class RichAny[A](val x: A) extends AnyVal {
+    def <->(y: A)(implicit o: Order[A]): Duad[A] = Duad(x, y)
+  }
+
+  object Auxiliaries {
+    final val doVerbs = Set("do", "does", "doing", "did", "done").map(_.lowerCase)
+    final val beVerbs =
+      Set("be", "being", "been", "am", "'m", "is", "'s", "ai", "are", "'re", "was", "were").map(
+        _.lowerCase
+      )
+    val willVerbs = Set("will", "'ll", "wo").map(_.lowerCase)
+
+    val haveVerbs =
+      Set("have", "having", "'ve", "has", "had", "'d").map(_.lowerCase)
+    val wouldVerbs = Set("would", "'d").map(_.lowerCase)
+
+    val modalVerbs = Set("can", "ca", "could", "may", "might", "must", "shall", "should", "ought")
+      .map(_.lowerCase) ++ wouldVerbs
+
+    val auxiliaryVerbs =
+      doVerbs ++ beVerbs ++ willVerbs ++ haveVerbs ++ modalVerbs
+
+    val negationWords = Set("no", "not", "n't").map(_.lowerCase)
+  }
 }

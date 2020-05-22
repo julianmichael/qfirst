@@ -47,7 +47,6 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
-  // val instances: RunDataCell[ArgInstances[VerbType, Set[Instance]]]
   val verbArgSets: RunDataCell[VerbFeats[Set[Arg]]]
 
   def argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
@@ -56,7 +55,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   protected val rootDir: Path
 
-  protected val createDir = (path: Path) => IO(!Files.exists(path))
+  val createDir = (path: Path) => IO(!Files.exists(path))
     .ifM(IO(Files.createDirectories(path)), IO.unit)
 
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
@@ -74,13 +73,13 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // question and verb IDs
 
-  lazy val instances: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.get.map(
+  lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.get.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, args) =>
         args.map(arg => ArgumentId(verbId, arg))
       }
     }
-  ).toCell("Argument ID instances")
+  ).toCell("Argument IDs")
 
   lazy val verbIdToType = verbArgSets.get
     .map(
@@ -257,7 +256,7 @@ class GoldQasrlFeatures(
             }
           )
         }
-      ).toCell("QA-SRL ArgumentId instances by verb ID")
+      ).toCell("QA-SRL ArgumentIds by verb ID")
 
   override val sentences = dataset.get
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
@@ -526,16 +525,37 @@ case class PropBankRoleLabel(
   framesetId: String,
   role: String
 )
+object PropBankRoleLabel {
+
+  // the pred itself, discourse markers, negations, and auxiliaries we don't care about
+  def roleLabelIsIrrelevant(l: String) = {
+    l == "V" || l.contains("DIS") || l.contains("NEG") || l.contains("MOD") ||
+      l.contains("C-") || l.contains("R-") ||
+      l == "rel"// || l == "Support"
+  }
+
+  def isArgRelevant(pred: Predicate, roleLabel: String, argSpan: ESpan) =
+    !roleLabelIsIrrelevant(roleLabel) &&
+      !Auxiliaries.auxiliaryVerbs.contains(pred.lemma.lowerCase) &&
+      !argSpan.contains(pred.index)
+}
 
 // verb type is either lemma or sense, depending on assumeGoldVerbSense value (false/true resp.).
 class PropBankGoldSpanFeatures(
   mode: RunMode,
-  assumeGoldVerbSense: Boolean)(
+  val assumeGoldVerbSense: Boolean
+  // val filterPropBankRoles: Boolean // TODO do this in a reasonable way
+)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
 ) extends Features[String, ESpan](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
   override val rootDir = Paths.get("frame-induction/propbank")
+
+  // don't store the models in the same dir, because they cluster different kinds of things
+  override def modelDir = super.modelDir.map(
+    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma").resolve(mode.toString)
+  ).flatTap(createDir)
 
   val ontonotesPath = Paths.get("data/conll-formatted-ontonotes-5.0")
 
@@ -554,26 +574,29 @@ class PropBankGoldSpanFeatures(
     spec => fullIndex.get.map(_.filter(_.split == spec))
   ).toCell("OntoNotes Index")
 
-  val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = index.get.flatMap(filePaths =>
-    filePaths.infoBarFoldMapM("Reading PropBank files to construct instances") { path =>
-      Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
-        file.sentences.foldMap { sentence =>
-          val sentenceId = sentence.path.toString
-          sentence.predicateArgumentStructures.foldMap { pas =>
-            val verbLemma = pas.predicate.lemma
-            val verbSense = s"$verbLemma.${pas.predicate.sense}"
-            val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
-            Map(
-              verbType -> NonMergingMap(
-                VerbId(sentenceId, pas.predicate.index) ->
-                  (verbSense -> pas.arguments.map(_.swap).toMap)
+  val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = RunData.strings.zip(index.get)
+    .flatMap { case (split, filePaths) =>
+      filePaths.infoBarFoldMapM(s"Reading PropBank files to construct instances ($split)") { path =>
+        Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
+          file.sentences.foldMap { sentence =>
+            val sentenceId = sentence.path.toString
+            sentence.predicateArgumentStructures.foldMap { pas =>
+              val verbLemma = pas.predicate.lemma
+              val verbSense = s"$verbLemma.${pas.predicate.sense}"
+              val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
+              Map(
+                verbType -> NonMergingMap(
+                  VerbId(sentenceId, pas.predicate.index) ->
+                    (verbSense -> pas.arguments
+                       .filter { case (label, span) => PropBankRoleLabel.isArgRelevant(pas.predicate, label, span) }
+                       .map(_.swap).toMap)
+                )
               )
-            )
+            }
           }
         }
       }
-    }
-  ).toCell("PropBank dataset")
+    }.toCell("PropBank dataset")
 
   // TODO eliminate redundant traversal of propbank
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
