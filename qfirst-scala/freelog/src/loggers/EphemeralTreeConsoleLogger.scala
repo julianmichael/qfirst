@@ -47,8 +47,7 @@ case class EphemeralTreeConsoleLogger(
 
   def emitBranch[A](
     msg: String, logLevel: LogLevel)(
-    body: IO[A])(
-    implicit ambientLevel: LogLevel
+    body: IO[A]
   ): IO[A] = {
     emit(msg, logLevel) >> distances.update(0 :: _) >> body <* distances.update {
       case Nil => Nil

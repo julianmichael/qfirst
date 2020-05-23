@@ -8,9 +8,7 @@ import cats.implicits._
 trait TreeLogger[F[_], Msg] extends Logger[F, Msg] {
   def emitBranch[A](
     msg: Msg, logLevel: LogLevel)(
-    body: F[A])(
-    implicit ambientLevel: LogLevel
-  ): F[A]
+    body: F[A]): F[A]
 
   def branch[A](
     msg: Msg, logLevel: LogLevel)(
@@ -58,8 +56,7 @@ object TreeLogger {
       def emit(msg: B, level: LogLevel): F[Unit] = fa.emit(f(msg), level)
       def emitBranch[C](
         msg: B, logLevel: LogLevel)(
-        body: F[C])(
-        implicit ambientLevel: LogLevel
+        body: F[C]
       ): F[C] = fa.emitBranch(f(msg), logLevel)(body)
     }
   }

@@ -19,8 +19,7 @@ case class IndentingLogger(
 
   def emitBranch[A](
     msg: String, logLevel: LogLevel)(
-    body: IO[A])(
-    implicit ambientLevel: LogLevel
+    body: IO[A]
   ): IO[A] = for {
     i <- indentLevel.get
     _ <- putLog(getIndent(i) + msg, logLevel)

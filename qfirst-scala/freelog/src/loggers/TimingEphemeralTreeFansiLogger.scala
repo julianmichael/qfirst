@@ -21,6 +21,8 @@ case class TimingEphemeralTreeFansiLogger(
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
 ) extends EphemeralTreeLogger[IO, String] {
+  val monad: Monad[IO] = implicitly[Monad[IO]]
+
   private[this] val branchEnd = "\u2514"
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
@@ -57,8 +59,7 @@ case class TimingEphemeralTreeFansiLogger(
 
   def emitBranch[A](
     msg: String, logLevel: LogLevel)(
-    body: IO[A])(
-    implicit ambientLevel: LogLevel
+    body: IO[A]
   ): IO[A] = for {
     _ <- emit(msg, logLevel)
     beginTime <- timer.clock.monotonic(duration.MILLISECONDS)

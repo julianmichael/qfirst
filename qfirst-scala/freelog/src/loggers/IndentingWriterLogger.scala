@@ -15,8 +15,7 @@ case class IndentingWriterLogger(
 
   def emitBranch[A](
     msg: String, logLevel: LogLevel)(
-    body: Writer[String, A])(
-    implicit ambientLevel: LogLevel
+    body: Writer[String, A]
   ): Writer[String, A] = for {
     _ <- Writer.tell(getLogMessage(msg, logLevel))
     (nestedLog, res) = body.run

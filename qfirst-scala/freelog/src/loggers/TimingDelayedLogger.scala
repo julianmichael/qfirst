@@ -38,8 +38,7 @@ case class TimingDelayedLogger(
 
   def emitBranch[A](
     msg: String, logLevel: LogLevel)(
-    body: IO[A])(
-    implicit ambientLevel: LogLevel
+    body: IO[A]
   ): IO[A] = for {
     _ <- emit(msg, logLevel)
     beginTime <- timer.clock.monotonic(duration.MILLISECONDS)

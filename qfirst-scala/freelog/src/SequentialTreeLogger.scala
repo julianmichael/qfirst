@@ -4,16 +4,15 @@ import cats.Monad
 import cats.implicits._
 
 trait SequentialTreeLogger[F[_], Msg] extends TreeLogger[F, Msg] {
-  implicit val F: Monad[F]
+  val monad: Monad[F]
   type BranchState
   def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState]
   def afterBranch(state: BranchState): F[Unit]
   def emitBranch[A](
     msg: Msg, logLevel: LogLevel)(
-    body: F[A])(
-    implicit ambientLevel: LogLevel
-  ): F[A] = beforeBranch(msg, logLevel) >>= (bs =>
-    body <* afterBranch(bs)
+    body: F[A]
+  ): F[A] = monad.flatMap(beforeBranch(msg, logLevel))(bs =>
+    monad.productL(body)(afterBranch(bs))
   )
 }
 object SequentialTreeLogger {

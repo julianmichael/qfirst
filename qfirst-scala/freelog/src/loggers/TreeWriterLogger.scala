@@ -14,8 +14,7 @@ case class TreeWriterLogger[Msg](
 
   def emitBranch[A](
     msg: Msg, logLevel: LogLevel)(
-    body: Writer[LogTree[Msg], A])(
-    implicit ambientLevel: LogLevel
+    body: Writer[LogTree[Msg], A]
   ): Writer[LogTree[Msg], A] = {
     val (logTree, res) = body.run
     val newLogTree = logTree match {
@@ -34,8 +33,7 @@ case class TreeWriterTLogger[Msg, F[_]: Applicative](
   )
   def emitBranch[A](
     msg: Msg, logLevel: LogLevel)(
-    body: WriterT[F, LogTree[Msg], A])(
-    implicit ambientLevel: LogLevel
+    body: WriterT[F, LogTree[Msg], A]
   ): WriterT[F, LogTree[Msg], A] = {
     WriterT(
       body.run.map { case (logTree, res) =>

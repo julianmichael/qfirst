@@ -11,27 +11,27 @@ trait SequentialEphemeralTreeLogger[F[_], Msg]
 
 object SequentialEphemeralTreeLogger {
 
-  def unit[F[_]: Monad, Msg](implicit _F: Monad[F]) = new SequentialEphemeralTreeLogger[F, Msg] {
-    implicit val F = _F
-    def emit(msg: Msg, level: LogLevel): F[Unit] = F.unit
+  def unit[F[_]: Monad, Msg] = new SequentialEphemeralTreeLogger[F, Msg] {
+    val monad = implicitly[Monad[F]]
+    def emit(msg: Msg, level: LogLevel): F[Unit] = monad.unit
 
     type BranchState = Unit
-    def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] = F.unit
-    def afterBranch(state: BranchState): F[Unit] = F.unit
+    def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] = monad.unit
+    def afterBranch(state: BranchState): F[Unit] = monad.unit
 
     type BlockState = Unit
-    def beforeBlock: F[BlockState] = F.unit
-    def afterBlock(state: BlockState): F[Unit] = F.unit
+    def beforeBlock: F[BlockState] = monad.unit
+    def afterBlock(state: BlockState): F[Unit] = monad.unit
 
-    def rewind: F[Unit] = F.unit
-    def flush: F[Unit] = F.unit
+    def rewind: F[Unit] = monad.unit
+    def flush: F[Unit] = monad.unit
   }
 
-  case class Tee[F[_], Msg](
+  case class Tee[F[_]: Monad, Msg](
     first: SequentialEphemeralTreeLogger[F, Msg],
-    second: SequentialEphemeralTreeLogger[F, Msg])(
-    implicit val F: Monad[F]
+    second: SequentialEphemeralTreeLogger[F, Msg]
   ) extends SequentialEphemeralTreeLogger[F, Msg] {
+    val monad = implicitly[Monad[F]]
     def emit(msg: Msg, level: LogLevel): F[Unit] = first.emit(msg, level) *> second.emit(msg, level)
 
     type BranchState = (first.BranchState, second.BranchState)

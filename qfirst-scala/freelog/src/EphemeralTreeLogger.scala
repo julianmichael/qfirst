@@ -52,8 +52,7 @@ object EphemeralTreeLogger {
 
     def emitBranch[A](
       msg: Msg, logLevel: LogLevel)(
-      body: F[A])(
-      implicit ambientLevel: LogLevel
+      body: F[A]
     ): F[A] = body
 
     def block[A](fa: F[A]): F[A] = fa
