@@ -15,7 +15,9 @@ case class TimingDelayedLogger(
   branchBeginTimesMillis: Ref[IO, List[Long]],
   emitMessage: String => IO[Unit])(
   implicit timer: Timer[IO]
-) extends EphemeralTreeLogger[IO, String] {
+) extends RewindingLogger[IO, String] with SequentialEphemeralTreeLogger[IO, String] {
+
+  val monad = implicitly[Monad[IO]]
 
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
@@ -36,14 +38,14 @@ case class TimingDelayedLogger(
     _ <- emitBareMsg(indentedMsg, logLevel)
   } yield ()
 
-  def emitBranch[A](
-    msg: String, logLevel: LogLevel)(
-    body: IO[A]
-  ): IO[A] = for {
-    _ <- emit(msg, logLevel)
-    beginTime <- timer.clock.monotonic(duration.MILLISECONDS)
-    _ <- branchBeginTimesMillis.update(beginTime :: _)
-    a <- body
+
+  type BranchState = Long
+  override def beforeBranch(msg: String, logLevel: LogLevel): IO[Long] =
+    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS).flatTap(
+      beginTime => branchBeginTimesMillis.update(beginTime :: _)
+    )
+
+  override def afterBranch(beginTime: Long, logLevel: LogLevel): IO[Unit] = for {
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     // indents <- getIndents
     delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)
@@ -57,24 +59,21 @@ case class TimingDelayedLogger(
       case Nil => Nil
       case _ :: rest => rest
     }
-  } yield a
+  } yield ()
 
-  def block[A](body: IO[A]): IO[A] =
-    buffer.update(Nil :: _) *> body <* (
-      buffer.get >>= {
-        case Nil => IO.unit // shouldn't happen
-        case head :: Nil => head.reverse.traverse(emitMessage) >> buffer.set(Nil)
-        case head :: snd :: tail => buffer.set((head ++ snd) :: tail)
-      }
-    )
-
-  /** Rewind to the state at the last containing `block`; Effectful changes to the log may be done lazily */
-  def rewind: IO[Unit] = buffer.get >>= {
+  def restore: IO[Unit] = buffer.get >>= {
     case Nil => IO.unit // nothing to rewind to
-    case head :: tail => buffer.set(Nil :: tail)
+    case head :: tail => buffer.set(tail)
   }
 
-  /** Flush the buffer to effect the last call to `rewind` */
+  def save: IO[Unit] = buffer.update(Nil :: _)
+
+  def commit: IO[Unit] = buffer.get >>= {
+    case Nil => IO.unit // shouldn't happen
+    case head :: Nil => head.reverse.traverse(emitMessage) >> buffer.set(Nil) // finally print the logs
+    case head :: snd :: tail => buffer.set((head ++ snd) :: tail) // fold into previous checkpoint
+  }
+
   def flush: IO[Unit] = IO.unit // ignore since we're "delayed"
 }
 object TimingDelayedLogger {
