@@ -2,6 +2,7 @@ package freelog
 
 // import cats.Applicative
 // import cats.Traverse
+import cats.Contravariant
 import cats.implicits._
 
 trait TreeLogger[F[_], Msg] extends Logger[F, Msg] {
@@ -49,4 +50,17 @@ trait TreeLogger[F[_], Msg] extends Logger[F, Msg] {
     body: F[A])(
     implicit ambientLevel: LogLevel
   ): F[A] = branch(msg, LogLevel.Error)(body)
+}
+object TreeLogger {
+
+  implicit def treeLoggerContravariant[F[_]]: Contravariant[TreeLogger[F, ?]] = new Contravariant[TreeLogger[F, ?]] {
+    def contramap[A, B](fa: TreeLogger[F, A])(f: B => A): TreeLogger[F, B] = new TreeLogger[F, B] {
+      def emit(msg: B, level: LogLevel): F[Unit] = fa.emit(f(msg), level)
+      def emitBranch[C](
+        msg: B, logLevel: LogLevel)(
+        body: F[C])(
+        implicit ambientLevel: LogLevel
+      ): F[C] = fa.emitBranch(f(msg), logLevel)(body)
+    }
+  }
 }
