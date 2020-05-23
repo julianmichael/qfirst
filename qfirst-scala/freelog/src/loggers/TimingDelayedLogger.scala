@@ -33,7 +33,9 @@ case class TimingDelayedLogger(
     level <- branchBeginTimesMillis.get.map(_.size)
     indentedMsg = {
       val indent = vertBranch * (level - 1)
-      s"$indent$midBranch " + msg.replaceAll("\n", s"\n$indent$vertBranch ")
+      val activeIndent = indent + ((midBranch + " ") * scala.math.min(level, 1))
+      val passiveIndent = indent + ((vertBranch + " ") * scala.math.min(level, 1))
+      activeIndent + msg.replaceAll("\n", s"\n$passiveIndent")
     }
     _ <- emitBareMsg(indentedMsg, logLevel)
   } yield ()
@@ -82,8 +84,8 @@ object TimingDelayedLogger {
     branchBeginTimes <- Ref[IO].of(List.empty[Long])
   } yield TimingDelayedLogger(buffer, branchBeginTimes, x => IO(println(x)))
 
-  def file[A](path: java.nio.file.Path)(implicit t: Timer[IO]): (TimingDelayedLogger => IO[A]) => IO[A] =
-    (run: TimingDelayedLogger => IO[A]) => for {
+  def file[A](path: java.nio.file.Path)(run: TimingDelayedLogger => IO[A])(implicit t: Timer[IO]): IO[A] =
+    for {
       buffer <- Ref[IO].of(List.empty[List[String]])
       branchBeginTimes <- Ref[IO].of(List.empty[Long])
       res <- IO(

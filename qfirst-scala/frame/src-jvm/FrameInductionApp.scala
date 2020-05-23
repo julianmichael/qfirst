@@ -300,12 +300,176 @@ object FrameInductionApp extends CommandIOApp(
     }
   }
 
+  def runClusterTuning(
+    modelName: String,
+    bCubedResults: Map[String, NonEmptyList[ConfStatsPoint]],
+    resultsDir: NIOPath)(
+    implicit logger: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = {
+    freelog.loggers.TimingDelayedLogger.file[Unit](resultsDir.resolve("results.txt")) { fileLogger =>
+      val Log = logger |+| fileLogger
+      for {
+        allTuningResults <- Ref[IO].of(Map.empty[String, List[(Double, WeightedPR)]])
+        _ <- Log.infoBranch("Oracle tuning") {
+          val oracleResults = getTunedWeightedBCubedStats(bCubedResults, _.toList.maxBy(_.conf.f1))
+          Log.info(s"Oracle F1: ${getMetricsString(oracleResults)}") >>
+            allTuningResults.update(_ + ("oracle" -> List(0.0 -> oracleResults)))
+
+        }
+        _ <- Log.infoBranch("Loss-per-item tuning") {
+          val lossPerItemAll = bCubedResults.toList.foldMap { case (verbType, results) =>
+            results.foldMap(s => Numbers(s.lossPerItem))
+          }
+          val lossPerItemBest = bCubedResults.toList.foldMap { case (verbType, results) =>
+            val bestF1 = results.map(_.conf.f1).maximum
+            results.filter(_.conf.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
+          }
+          val interval = 0.05
+          val stats = lossPerItemAll.stats
+          val lossThresholds = (
+            scala.math.round(stats.quartiles.min / interval).toInt to scala.math.round(stats.quartiles.max / interval).toInt
+          ).map(_ * interval).toList
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              lossThresholds, bCubedResults)(
+              t => stats => {
+                val sortedStats = stats.sortBy(-_.lossPerItem)
+                val qualified = sortedStats.toList.takeWhile(_.lossPerItem > t)
+                qualified.lastOption.getOrElse(sortedStats.head)
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Loss per item (all): ${getMetricsString(lossPerItemAll)}")
+            _ <- Log.info(s"Loss per item (best): ${getMetricsString(lossPerItemBest)}")
+            _ <- Log.info(s"Tuned results (best loss per item): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("loss per item" -> tuningResults))
+          } yield ()
+        }
+        _ <- Log.infoBranch("Constant num clusters tuning") {
+          val thresholds = (1 to 50).toList.map(_.toDouble)
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              thresholds, bCubedResults)(
+              t => stats => {
+                val sortedStats = stats.sortBy(_.numClusters)
+                val qualified = sortedStats.toList.dropWhile(_.numClusters < t)
+                qualified.headOption.getOrElse(sortedStats.last)
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Tuned results (best num clusters): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("constant num clusters" -> tuningResults))
+          } yield ()
+        }
+        _ <- Log.infoBranch("Square num clusters penalty tuning") {
+          val coeffs = (0 to 50).map(_.toDouble / 10).toList
+          val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+            s.loss + (t * scala.math.pow(s.numClusters, 2.0))
+          }
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              coeffs, bCubedResults)(
+              t => stats => {
+                val getLoss = getTotalLoss(t)
+                stats.toList.minBy(getLoss)
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Tuned results (sq num cluster penalty): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("sq num clusters penalty" -> tuningResults))
+          } yield tuningResults
+        }
+        _ <- Log.infoBranch("Total entropy loss tuning") {
+          val coeffs = (0 to 40).map(_.toDouble / 20).toList
+          val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+            val numItems = s.numItems
+            s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
+          }
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              coeffs, bCubedResults)(
+              t => stats => {
+                val getLoss = getTotalLoss(t)
+                stats.toList.minBy(getLoss)
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Tuned results (cluster dist entropy loss coeff): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("total entropy loss" -> tuningResults))
+          } yield tuningResults
+        }
+        tuningResults <- allTuningResults.get
+        _ <- Log.infoBranch("Plotting tuning results") {
+          import com.cibo.evilplot._
+          import com.cibo.evilplot.colors._
+          import com.cibo.evilplot.geometry._
+          import com.cibo.evilplot.numeric._
+          import com.cibo.evilplot.plot._
+          import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+          import com.cibo.evilplot.plot.renderers.PointRenderer
+          import com.cibo.evilplot.plot.renderers.PathRenderer
+
+          case class PRPoint(
+            category: String,
+            value: Double,
+            isBestF1: Boolean,
+            recall: Double,
+            precision: Double) extends Datum2d[PRPoint] {
+            val x = recall
+            val y = precision
+            def f1 = harmonicMean(precision, recall)
+
+            def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
+          }
+
+          // val rand = new scala.util.Random(2643642L)
+          // def noise = scala.math.abs(rand.nextGaussian / 200.0)
+          def makePoints(category: String, prs: List[(Double, WeightedPR)]) = {
+            val bestF1 = prs.map(_._2.f1).max
+            prs.map { case (t, pr) => PRPoint(category, t, pr.f1 == bestF1, pr.recall, pr.precision) }
+          }
+
+          val allData = tuningResults.map { case (cat, items) =>
+            cat -> makePoints(cat, items)
+          }
+
+          // val maxNumClusters = allData.flatMap(_.toList).filter(_.isBestF1).map(_.numClusters).max
+          // val maxNumInstances = allData.values.toList.map(_.head.numItems).max
+          val colors = Color.getDefaultPaletteSeq(allData.size)
+
+          val plot = Overlay.fromSeq(
+            colors.zip(allData).map { case (color, (category, data)) =>
+              LinePlot.series(data, category, color, strokeWidth = Some(1.0))
+            } ++
+              colors.zip(allData).map { case (color, (category, data)) =>
+                ScatterPlot(
+		              data.toList.filter(_.isBestF1),
+                  pointRenderer = Some(
+                    PointRenderer.default[PRPoint](
+                      color = Some(color), pointSize = Some(2.0)
+                    )
+                  )
+	              )
+              }
+          ).title(s"PropBank argument clustering ($modelName)")
+            .xLabel("B^3 Recall")
+            .yLabel("B^3 Precision")
+            .xAxis().yAxis()
+            .frame().rightLegend()
+
+          val path = resultsDir.resolve("tuning-strategies.png")
+          IO(plot.render().write(new java.io.File(path.toString)))
+        }
+      } yield ()
+    }
+  }
+
   def evaluateArgumentClusters(
     modelName: String,
     features: PropBankGoldSpanFeatures,
     argTrees: Map[String, MergeTree[ArgumentId[ESpan]]],
     useSenseSpecificRoles: Boolean)(
-    implicit Log: EphemeralTreeLogger[IO, String]
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     _ <- Log.info("Initializing eval features")
     verbIds <- features.verbArgSets.eval.get
@@ -317,157 +481,13 @@ object FrameInductionApp extends CommandIOApp(
     _ <- plotAllBCubedVerbwise(
       modelName,
       bCubedResults,
-      resultsDir.resolve("bcubed-trends-by-verb.png")
+      resultsDir.resolve("bcubed-all-by-verb.png")
     )
-    _ <- {
-      val oracleResults = getTunedWeightedBCubedStats(bCubedResults, _.toList.maxBy(_.conf.f1))
-      Log.info(s"Oracle F1: ${getMetricsString(oracleResults)}")
-    }
-    lossPerItemTuning <- Log.infoBranch("Loss-per-item tuning") {
-      val lossPerItemAll = bCubedResults.toList.foldMap { case (verbType, results) =>
-        results.foldMap(s => Numbers(s.lossPerItem))
-      }
-      val lossPerItemBest = bCubedResults.toList.foldMap { case (verbType, results) =>
-        val bestF1 = results.map(_.conf.f1).maximum
-        results.filter(_.conf.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
-      }
-      val interval = 0.05
-      val stats = lossPerItemAll.stats
-      val lossThresholds = (
-        scala.math.round(stats.quartiles.min / interval).toInt to scala.math.round(stats.quartiles.max / interval).toInt
-      ).map(_ * interval).toList
-      for {
-        tuningResults <- tuneWeightedBCubedStats(
-          lossThresholds, bCubedResults)(
-          t => stats => {
-            val sortedStats = stats.sortBy(-_.lossPerItem)
-            val qualified = sortedStats.toList.takeWhile(_.lossPerItem > t)
-            qualified.lastOption.getOrElse(sortedStats.head)
-          }
-        )
-        tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-        // _ <- Log.info(s"Loss per item (all): ${getMetricsString(lossPerItemAll)}")
-        // _ <- Log.info(s"Loss per item (best): ${getMetricsString(lossPerItemBest)}")
-        _ <- Log.info(s"Tuned results (best loss per item): ${getMetricsString(tunedBest)}")
-      } yield tuningResults
-    }
-    constantNumClustersTuning <- Log.infoBranch("Constant num clusters tuning") {
-      val thresholds = (1 to 50).toList.map(_.toDouble)
-      for {
-        tuningResults <- tuneWeightedBCubedStats(
-          thresholds, bCubedResults)(
-          t => stats => {
-            val sortedStats = stats.sortBy(_.numClusters)
-            val qualified = sortedStats.toList.dropWhile(_.numClusters < t)
-            qualified.headOption.getOrElse(sortedStats.head)
-          }
-        )
-        tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-        _ <- Log.info(s"Tuned results (best num clusters): ${getMetricsString(tunedBest)}")
-      } yield tuningResults
-    }
-    // Remaining Tuning methods:  overall-entropy, num clusters polynomial,
-    squareNumClustersPenaltyTuning <- Log.infoBranch("Square num clusters penalty tuning") {
-      val coeffs = (0 to 50).map(_.toDouble / 10).toList
-      val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
-        s.loss + (t * scala.math.pow(s.numClusters, 2.0))
-      }
-      for {
-        tuningResults <- tuneWeightedBCubedStats(
-          coeffs, bCubedResults)(
-          t => stats => {
-            val getLoss = getTotalLoss(t)
-            stats.toList.minBy(getLoss)
-          }
-        )
-        tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-        _ <- Log.info(s"Tuned results (sq num cluster penalty): ${getMetricsString(tunedBest)}")
-      } yield tuningResults
-    }
-    totalEntropyLossTuning <- Log.infoBranch("Total entropy loss tuning") {
-      val coeffs = (0 to 40).map(_.toDouble / 20).toList
-      val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
-        val numItems = s.numItems
-        s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
-      }
-      for {
-        tuningResults <- tuneWeightedBCubedStats(
-          coeffs, bCubedResults)(
-          t => stats => {
-            val getLoss = getTotalLoss(t)
-            stats.toList.minBy(getLoss)
-          }
-        )
-        tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-        _ <- Log.info(s"Tuned results (cluster dist entropy loss coeff): ${getMetricsString(tunedBest)}")
-      } yield tuningResults
-    }
-    _ <- Log.infoBranch("Plotting tuning results") {
-      import com.cibo.evilplot._
-      import com.cibo.evilplot.colors._
-      import com.cibo.evilplot.geometry._
-      import com.cibo.evilplot.numeric._
-      import com.cibo.evilplot.plot._
-      import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-      import com.cibo.evilplot.plot.renderers.PointRenderer
-      import com.cibo.evilplot.plot.renderers.PathRenderer
-
-      case class PRPoint(
-        category: String,
-        value: Double,
-        isBestF1: Boolean,
-        recall: Double,
-        precision: Double) extends Datum2d[PRPoint] {
-        val x = recall
-        val y = precision
-        def f1 = harmonicMean(precision, recall)
-
-        def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
-      }
-
-      // val rand = new scala.util.Random(2643642L)
-      // def noise = scala.math.abs(rand.nextGaussian / 200.0)
-      def makePoints(category: String, prs: List[(Double, WeightedPR)]) = {
-        val bestF1 = prs.map(_._2.f1).max
-        prs.map { case (t, pr) => PRPoint(category, t, pr.f1 == bestF1, pr.recall, pr.precision) }
-      }
-
-      val allData = List(
-        "loss per item" -> lossPerItemTuning,
-        "constant num clusters" -> constantNumClustersTuning,
-        "square num clusters penalty" -> squareNumClustersPenaltyTuning,
-        "total entropy loss" -> totalEntropyLossTuning
-      ).map { case (cat, items) =>
-          cat -> makePoints(cat, items)
-      }.toMap
-
-      // val maxNumClusters = allData.flatMap(_.toList).filter(_.isBestF1).map(_.numClusters).max
-      // val maxNumInstances = allData.values.toList.map(_.head.numItems).max
-      val colors = Color.getDefaultPaletteSeq(allData.size)
-
-      val plot = Overlay.fromSeq(
-        colors.zip(allData).map { case (color, (category, data)) =>
-          LinePlot.series(data, category, color, strokeWidth = Some(1.0))
-        } ++
-          colors.zip(allData).map { case (color, (category, data)) =>
-            ScatterPlot(
-		          data.toList.filter(_.isBestF1),
-              pointRenderer = Some(
-                PointRenderer.default[PRPoint](
-                  color = Some(color), pointSize = Some(2.0)
-                )
-              )
-	          )
-          }
-      ).title(s"PropBank argument clustering ($modelName)")
-        .xLabel("B^3 Recall")
-        .yLabel("B^3 Precision")
-        .xAxis().yAxis()
-        .frame().rightLegend()
-
-      val path = resultsDir.resolve("tuning-strategies.png")
-      IO(plot.render().write(new java.io.File(path.toString)))
-    }
+    _ <- runClusterTuning(
+      modelName,
+      bCubedResults,
+      resultsDir
+    )
   } yield ()
 
   def getVerbClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
@@ -599,7 +619,7 @@ object FrameInductionApp extends CommandIOApp(
 
   def runPropBankArgumentRoleInduction(
     features: PropBankGoldSpanFeatures)(
-    implicit Log: EphemeralTreeLogger[IO, String]
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     val modelName = "test"
     for {
@@ -659,7 +679,7 @@ object FrameInductionApp extends CommandIOApp(
 
     (dataO, modeO, modelConfigOptO).mapN { (data, mode, modelConfigOpt) =>
       for {
-        implicit0(logger: EphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.create()
+        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.create()
         _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Model configuration: $modelConfigOpt")
