@@ -17,7 +17,7 @@ object SequentialEphemeralTreeLogger {
 
     type BranchState = Unit
     def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] = monad.unit
-    def afterBranch(state: BranchState): F[Unit] = monad.unit
+    def afterBranch(state: BranchState, logLevel: LogLevel): F[Unit] = monad.unit
 
     type BlockState = Unit
     def beforeBlock: F[BlockState] = monad.unit
@@ -37,8 +37,8 @@ object SequentialEphemeralTreeLogger {
     type BranchState = (first.BranchState, second.BranchState)
     def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] =
       first.beforeBranch(msg, logLevel).product(second.beforeBranch(msg, logLevel))
-    def afterBranch(state: BranchState): F[Unit] =
-      first.afterBranch(state._1) *> (second.afterBranch(state._2))
+    def afterBranch(state: BranchState, logLevel: LogLevel): F[Unit] =
+      first.afterBranch(state._1, logLevel) *> (second.afterBranch(state._2, logLevel))
 
     type BlockState = (first.BlockState, second.BlockState)
     def beforeBlock: F[BlockState] =

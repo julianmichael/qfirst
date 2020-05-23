@@ -1,6 +1,6 @@
 package freelog
 
-trait RewindingLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
+trait RewindingLogger[F[_], Msg] extends SequentialEphemeralLogger[F, Msg] {
   /** Save a new checkpoint. */
   def save: F[Unit]
 
@@ -16,7 +16,9 @@ trait RewindingLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
   def flush: F[Unit]
 
   /** Restore to last checkpoint without deleting it. */
-  def rewind: F[Unit]// = restore >> save
+  def rewind: F[Unit] = monad.productR(restore)(save)
 
-  def block[A](fa: F[A]): F[A]// = save >> fa <* commit
+  type BlockState = Unit
+  override def beforeBlock: F[Unit] = save
+  override def afterBlock(state: Unit): F[Unit] = commit
 }

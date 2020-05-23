@@ -20,7 +20,7 @@ case class TimingEphemeralTreeFansiLogger(
   timingAttr: Attr,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
-) extends EphemeralTreeLogger[IO, String] {
+) extends SequentialEphemeralTreeLogger[IO, String] {
   val monad: Monad[IO] = implicitly[Monad[IO]]
 
   private[this] val branchEnd = "\u2514"
@@ -57,14 +57,13 @@ case class TimingEphemeralTreeFansiLogger(
       logger.emit(indents.active + getLogLevelAttr(logLevel)(msg.replaceAll("\n", "\n" + indents.passive)).toString, logLevel)
     }
 
-  def emitBranch[A](
-    msg: String, logLevel: LogLevel)(
-    body: IO[A]
-  ): IO[A] = for {
-    _ <- emit(msg, logLevel)
-    beginTime <- timer.clock.monotonic(duration.MILLISECONDS)
-    _ <- branchBeginTimesMillisAndLevels.update((beginTime -> logLevel) :: _)
-    a <- block(body)
+  type BranchState = Long
+  override def beforeBranch(msg: String, logLevel: LogLevel): IO[Long] =
+    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS).flatTap(
+      beginTime => branchBeginTimesMillisAndLevels.update((beginTime -> logLevel) :: _)
+    )
+
+  override def afterBranch(beginTime: Long, logLevel: LogLevel): IO[Unit] = for {
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     indents <- getIndents
     justDoneMsgOpt <- justDoneMessageBuffer.get
@@ -93,15 +92,14 @@ case class TimingEphemeralTreeFansiLogger(
       case Nil => Nil
       case _ :: rest => rest
     }
-  } yield a
+  } yield ()
 
-  // No weirdness needs to happen here because branches are guaranteed to block
-  def block[A](fa: IO[A]): IO[A] = logger.block(fa)
+  type BlockState = Unit
+  override def beforeBlock: IO[Unit] = logger.beforeBlock
+  override def afterBlock(state: Unit): IO[Unit] = logger.afterBlock(state)
 
-  /** Rewind to the state at the last containing `block`; Effectful changes to the log may be done lazily */
   def rewind: IO[Unit] = logger.rewind
 
-  /** Flush the buffer to effect the last call to `rewind` */
   def flush: IO[Unit] = logger.flush
 }
 object TimingEphemeralTreeFansiLogger {
