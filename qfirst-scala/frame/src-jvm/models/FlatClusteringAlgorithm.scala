@@ -151,4 +151,58 @@ trait FlatClusteringAlgorithm {
     }
     (model, assignments, losses.head)
   }
+
+  def hardEStep(
+    indices: Vector[Index],
+    model: Vector[ClusterParam]
+  ): (Vector[Int], Vector[Double]) = {
+    indices.map { i =>
+      val clusterLosses = model.map(p => getInstanceLoss(i, p))
+      clusterLosses.zipWithIndex.maxBy(_._1).swap
+    }.unzip
+  }
+
+  def hardMStep(
+    numClusters: Int,
+    indices: Vector[Index],
+    assignments: Vector[Int]
+  ): Vector[ClusterParam] = {
+    (0 until numClusters).toVector.map { clusterIndex =>
+      estimateParameterHard(
+        assignments.zipWithIndex.filter(_._1 == clusterIndex).map(p => indices(p._2))
+      )
+    }
+  }
+
+  def runHardEM(
+    initModel: Vector[ClusterParam],
+    indices: Vector[Index],
+    stoppingThreshold: Double,
+    shouldLog: Boolean = true
+  ): (Vector[ClusterParam], Vector[Int], Double) = {
+    var (assignments, stepLosses) = hardEStep(indices, initModel)
+    var losses: List[Double] = List(mean(stepLosses))
+    var model: Vector[ClusterParam] = initModel
+    def getDelta() = (losses.get(1), losses.get(0)).mapN(_ - _)
+    def shouldContinue() = getDelta().forall(_ > stoppingThreshold)
+    while(shouldContinue()) {
+      model = hardMStep(model.size, indices, assignments)
+      val p = hardEStep(indices, model)
+      assignments = p._1
+      stepLosses = p._2
+      val loss = mean(stepLosses)
+      losses = loss :: losses
+      if(shouldLog) {
+        println("=== Stepping ===")
+        // TODO
+        // val prior = assignments.map(a => a.params / a.sum).reduce(_ + _) / assignments.size.toDouble
+        // println(s"Prior: " + prior.toScalaVector.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
+        println(s"Loss: $loss")
+      }
+    }
+    if(shouldLog) {
+      println("=== Stopped ===")
+    }
+    (model, assignments, losses.head)
+  }
 }
