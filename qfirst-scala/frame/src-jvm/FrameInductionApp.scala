@@ -362,7 +362,7 @@ object FrameInductionApp extends CommandIOApp(
           } yield ()
         }
         _ <- Log.infoBranch("Square num clusters penalty tuning") {
-          val coeffs = (0 to 50).map(_.toDouble / 10).toList
+          val coeffs = (0 to 100).map(_.toDouble / 5).toList
           val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
             s.loss + (t * scala.math.pow(s.numClusters, 2.0))
           }
@@ -377,6 +377,26 @@ object FrameInductionApp extends CommandIOApp(
             tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
             _ <- Log.info(s"Tuned results (sq num cluster penalty): ${getMetricsString(tunedBest)}")
             _ <- allTuningResults.update(_ + ("sq num clusters penalty" -> tuningResults))
+          } yield tuningResults
+        }
+        _ <- Log.infoBranch("Cutting delta tuning") {
+          val deltasPerItem = (0 to 100).map(_.toDouble / 10).toList
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              deltasPerItem, bCubedResults)(
+              t => stats => {
+                val deltaThreshold = t * stats.head.numItems
+                val sortedStats = stats.sortBy(_.loss)
+                sortedStats.toList.sliding(2)
+                  .filter(_.size == 2)
+                  .takeWhile(w => w(1).loss - w(0).loss < deltaThreshold)
+                  .toList.lastOption
+                  .fold(sortedStats.head)(_(0))
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Tuned results (per-item cutting delta): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("cutting delta" -> tuningResults))
           } yield tuningResults
         }
         _ <- Log.infoBranch("Total entropy loss tuning") {
