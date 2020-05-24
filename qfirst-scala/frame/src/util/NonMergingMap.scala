@@ -1,4 +1,4 @@
-package qfirst.frame
+package qfirst.frame.util
 
 import cats.Monoid
 

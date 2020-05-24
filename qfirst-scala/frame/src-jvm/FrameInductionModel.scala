@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import qfirst.frame.util.Vocab
+
 import jjm.implicits._
 
 import qfirst.frame.models._

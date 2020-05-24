@@ -1,4 +1,4 @@
-package qfirst.frame
+package qfirst.frame.util
 
 import java.nio.file.Path
 import java.nio.file.Files
@@ -8,6 +8,7 @@ import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import freelog.TreeLogger
+import qfirst.frame.logLevel
 
 class FileCached[A](
   name: String)(

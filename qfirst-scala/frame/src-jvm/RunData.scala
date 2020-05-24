@@ -1,5 +1,8 @@
 package qfirst.frame
 
+import qfirst.frame.util.Cell
+import qfirst.frame.util.FileCached
+
 import cats.Monoid
 import cats.effect.IO
 import cats.implicits._

@@ -1,12 +1,14 @@
 package qfirst.frame
+
 import qfirst.frame.models._
+import qfirst.frame.util.Duad
+import qfirst.frame.util.FileCached
+import qfirst.frame.util.NonMergingMap
+
 import qfirst.clause.ArgStructure
 import qfirst.clause.ClauseResolution
-// import qfirst.frame.browse._
-// import qfirst.model.eval.protocols.SimpleQAs
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
-import QAInputApp.{SentenceQAOutput, ClauseQAOutput, ClauseQAQuestion}
 
 import cats.Monoid
 import cats.Order
@@ -34,11 +36,6 @@ import jjm.ling.en.VerbForm
 import jjm.io.FileUtil
 import jjm.implicits._
 
-import qasrl.ArgumentSlot
-import qasrl.bank._
-import qasrl.data._
-import qasrl.labeling.SlotBasedLabel
-
 import fs2.Stream
 
 import io.circe.{Encoder, Decoder}
@@ -47,9 +44,6 @@ import io.circe.syntax._
 
 import scala.util.Random
 
-import breeze.linalg._
-import scala.collection.immutable.Vector
-import scala.collection.immutable.Map
 import scala.annotation.tailrec
 
 import freelog._
@@ -159,8 +153,6 @@ object FrameInductionApp extends CommandIOApp(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating B-Cubed metrics") { case (verbType, tree) =>
       Log.trace(verbType) >> IO {
-        import qfirst.metrics._
-        // import metrics.implicits.__
         val args = tree.values.toSet
         val labels = argRoleLabels(verbType).value.filter { case (k, _) => args.contains(k) }
         val argsByGoldLabel = labels.toList

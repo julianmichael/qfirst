@@ -1,4 +1,4 @@
-package qfirst.math
+package qfirst.frame.util
 
 import scala.collection.mutable
 

@@ -1,4 +1,4 @@
-package qfirst.frame
+package qfirst.frame.util
 
 import cats.implicits._
 import cats.data.NonEmptyList
@@ -14,6 +14,8 @@ import scala.concurrent.ExecutionContextExecutorService
 
 import freelog.Logger
 import freelog.LogLevel
+
+import qfirst.frame.logLevel
 
 object VectorFileUtil {
 

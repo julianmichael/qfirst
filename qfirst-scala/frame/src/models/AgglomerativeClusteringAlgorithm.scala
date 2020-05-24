@@ -1,9 +1,10 @@
 package qfirst.frame.models
 
-import qfirst.frame.SplayTreeQueue
 import qfirst.frame.logLevel
-import qfirst.math.TarjanUnionFind
 import qfirst.frame.MergeTree
+
+import qfirst.frame.util.TarjanUnionFind
+import qfirst.frame.util.SplayTreeQueue
 
 import cats.Foldable
 import cats.Order

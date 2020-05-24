@@ -1,5 +1,8 @@
 package qfirst
 
+import qfirst.frame.util.Duad
+import qfirst.frame.util.NonMergingMap
+
 import qfirst.clause.ArgStructure
 
 import cats.Order

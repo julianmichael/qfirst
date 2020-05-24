@@ -1,5 +1,7 @@
 package qfirst.frame.math
 
+import qfirst.frame.util.SetUnionFind
+
 import cats.kernel.CommutativeMonoid
 import cats.implicits._
 

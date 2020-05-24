@@ -1,10 +1,11 @@
-package qfirst.frame
+package qfirst.frame.util
 
 import cats.effect.IO
 import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import freelog.TreeLogger
+import qfirst.frame.logLevel
 
 // TODO remove logger dependency
 // circumvent side-effect of ref creation

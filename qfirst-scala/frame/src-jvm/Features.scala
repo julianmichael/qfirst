@@ -1,6 +1,11 @@
 package qfirst.frame
 import qfirst.model.eval.protocols.SimpleQAs
 
+import qfirst.frame.util.Cell
+import qfirst.frame.util.FileCached
+import qfirst.frame.util.NonMergingMap
+import qfirst.frame.util.VectorFileUtil
+
 import java.nio.file._
 
 import qasrl.data.Dataset
