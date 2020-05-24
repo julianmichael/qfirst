@@ -41,9 +41,9 @@ object BinaryConf {
       tp.toDouble / (tp + fn)
     } else 0.0
 
-    def f1 = if((precision + recall) > 0.0) {
-      2 * (precision * recall) / (precision + recall)
-    } else 0.0
+    def f1 = Functions.harmonicMean(precision, recall)
+
+    def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
 
     def metrics: MapTree[String, Metric] = MapTree.fromPairs(
       "num gold" -> Metric.int(numGold),

@@ -241,8 +241,6 @@ object FrameInductionApp extends CommandIOApp(
       IO(plot.render().write(new java.io.File(path.toString)))
     }
 
-  def harmonicMean(x: Double, y: Double) = 2 * x * y / (x + y)
-
   case class WeightedPR(
     precisions: WeightedNumbers[Double],
     recalls: WeightedNumbers[Double]
@@ -250,7 +248,8 @@ object FrameInductionApp extends CommandIOApp(
     def pseudocount = precisions.stats.pseudocount
     def precision = precisions.stats.weightedMean
     def recall = recalls.stats.weightedMean
-    def f1 = harmonicMean(precision, recall)
+    def f1 = Functions.harmonicMean(precision, recall)
+    def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
   }
   object WeightedPR {
     implicit val weightedPRMonoid: Monoid[WeightedPR] = {
@@ -303,10 +302,19 @@ object FrameInductionApp extends CommandIOApp(
       for {
         allTuningResults <- Ref[IO].of(Map.empty[String, List[(Double, WeightedPR)]])
         _ <- Log.infoBranch("Oracle tuning") {
-          val oracleResults = getTunedWeightedBCubedStats(bCubedResults, _.toList.maxBy(_.conf.f1))
-          Log.info(s"Oracle F1: ${getMetricsString(oracleResults)}") >>
-            allTuningResults.update(_ + ("oracle" -> List(0.0 -> oracleResults)))
-
+          val logBound = 10
+          val betas = (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
+          for {
+            tuningResults <- tuneWeightedBCubedStats(
+              betas, bCubedResults)(
+              t => stats => {
+                stats.toList.maxBy(_.conf.fMeasure(t))
+              }
+            )
+            tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+            _ <- Log.info(s"Tuned results (oracle): ${getMetricsString(tunedBest)}")
+            _ <- allTuningResults.update(_ + ("oracle" -> tuningResults))
+          } yield ()
         }
         _ <- Log.infoBranch("Loss-per-item tuning") {
           val lossPerItemAll = bCubedResults.toList.foldMap { case (verbType, results) =>
@@ -429,7 +437,7 @@ object FrameInductionApp extends CommandIOApp(
             precision: Double) extends Datum2d[PRPoint] {
             val x = recall
             val y = precision
-            def f1 = harmonicMean(precision, recall)
+            def f1 = Functions.harmonicMean(precision, recall)
 
             def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
           }
