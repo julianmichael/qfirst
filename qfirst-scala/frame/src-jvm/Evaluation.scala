@@ -7,6 +7,7 @@ import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
 import jjm.ling.ESpan
+import jjm.implicits._
 
 import freelog.EphemeralTreeLogger
 import freelog.SequentialEphemeralTreeLogger
@@ -27,21 +28,60 @@ import scala.annotation.tailrec
 
 object Evaluation {
 
-  case class ConfStatsPoint(loss: Double, clusterSizes: Vector[Int], conf: BinaryConf.Stats) {
+  case class ConfStatsPoint(loss: Double, clusterSizes: Vector[Int], precision: Double, recall: Double) {
     def numClusters = clusterSizes.size
     def numItems = clusterSizes.sum
     def lossPerItem = loss / numItems
+    def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
+    def f1 = Functions.harmonicMean(precision, recall)
   }
 
-  // TODO
-  // def getAllClusteringPurCollConfs(trues: Set[Duad[A]], tree: MergeTree[A]): NonEmptyList[ConfStatsPoint]
+  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[A]): NonEmptyList[ConfStatsPoint] = {
+    val goldClusterSizes = goldLabelTree.values.counts
+    NonEmptyList.fromList(
+      goldLabelTree.clusterSplittings.map { clusters =>
+        val clusterLabelCounts = clusters.map(_.values.counts)
+        val purity = clusterLabelCounts.foldMap { counts =>
+          val primaryLabelCount = counts.values.max
+          val total = counts.values.sum
+          Proportion.Stats(
+            included = primaryLabelCount,
+            excluded = total - primaryLabelCount
+          )
+        }
+        val collocation = goldClusterSizes.toList.foldMap { case (goldLabel, numLabels) =>
+          val numInPrimaryCluster = clusterLabelCounts.map(_.getOrElse(goldLabel, 0)).max
+          Proportion.Stats(
+            included = numInPrimaryCluster,
+            excluded = numLabels - numInPrimaryCluster
+          )
+        }
+        val loss = clusters.foldMap(_.loss)
+        val clusterSizes = clusters.map(_.size.toInt)
+        ConfStatsPoint(loss, clusterSizes, purity.proportion, collocation.proportion)
+      }.toList
+    ).get
+  }
+
+  def getAllPurityCollocationStats(
+    argTrees: Map[String, MergeTree[ArgumentId[ESpan]]],
+    argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
+    useSenseSpecificRoles: Boolean)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, tree) =>
+      Log.trace(verbType) >> IO {
+        val labels = argRoleLabels(verbType).value
+        verbType -> getAllClusteringPurityCollocationConfs(tree.map(labels))
+      }
+    }.map(_.toMap)
 
   def getAllClusteringBCubedConfs[A: Order](trues: Set[Duad[A]], tree: MergeTree[A]): NonEmptyList[ConfStatsPoint] = {
     val numArgs = tree.size.toInt
     val numPairs = numArgs * (numArgs + 1) / 2
-    val initStats = ConfStatsPoint(tree.loss, Vector(numArgs), BinaryConf.Stats(tp = trues.size, fp = numPairs - trues.size))
+    val initConf = BinaryConf.Stats(tp = trues.size, fp = numPairs - trues.size)
+    val initStats = ConfStatsPoint(tree.loss, Vector(numArgs), initConf.precision, initConf.recall)
     @tailrec
-    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], trees: Vector[MergeTree[A]]): NonEmptyList[ConfStatsPoint] = {
+    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[A]]): NonEmptyList[ConfStatsPoint] = {
       trees.flatMap(_.deltaOpt).maximumOption match {
         case None => acc
         case Some(maxDelta) =>
@@ -51,7 +91,7 @@ object Evaluation {
               case Some(m) => Right(m)
             }
           ).separate
-          val newConf = acc.head.conf |+| treesToSplit.foldMap { (m: MergeTree.Merge[A]) =>
+          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[A]) =>
             val positivesBeingLost = for {
               l <- m.left.values.toSet: Set[A]
               r <- m.right.values.toSet
@@ -67,10 +107,10 @@ object Evaluation {
           }
           val newTrees = oldTrees ++ treesToSplit.flatMap(m => Vector(m.left, m.right))
           val newLoss = newTrees.foldMap(_.loss)
-          recurseConfs(ConfStatsPoint(newLoss, newTrees.map(_.size.toInt), newConf) :: acc, newTrees)
+          recurseConfs(ConfStatsPoint(newLoss, newTrees.map(_.size.toInt), newConf.precision, newConf.recall) :: acc, newConf, newTrees)
       }
     }
-    recurseConfs(NonEmptyList.of(initStats), Vector(tree))
+    recurseConfs(NonEmptyList.of(initStats), initConf, Vector(tree))
   }
 
   def getAllBCubedStats(
@@ -78,7 +118,7 @@ object Evaluation {
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating B-Cubed metrics") { case (verbType, tree) =>
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, tree) =>
       Log.trace(verbType) >> IO {
         val args = tree.values.toSet
         val labels = argRoleLabels(verbType).value.filter { case (k, _) => args.contains(k) }
@@ -136,9 +176,9 @@ object Evaluation {
 
       val allData = allStats.transform { case (verbType, allStats) =>
 
-        val bestF1 = allStats.map(_.conf.f1).maximum
-        allStats.map { case ConfStatsPoint(loss, clusterSizes, conf) =>
-          PRPoint(verbType, loss, clusterSizes.sum, clusterSizes.size, conf.f1 == bestF1, conf.recall, conf.precision)
+        val bestF1 = allStats.map(_.f1).maximum
+        allStats.map { case p @ ConfStatsPoint(loss, clusterSizes, precision, recall) =>
+          PRPoint(verbType, loss, clusterSizes.sum, clusterSizes.size, p.f1 == bestF1, recall, precision)
         }
       }
 
@@ -168,7 +208,9 @@ object Evaluation {
       ).title(s"PropBank argument clustering ($modelName)")
         .xLabel(recallAxisLabel)
         .yLabel(precisionAxisLabel)
-        .xAxis().yAxis().frame().rightLegend()
+        .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
+        .xAxis().yAxis()
+        .frame().rightLegend()
 
       IO(plot.render().write(new java.io.File(path.toString)))
     }
@@ -206,8 +248,8 @@ object Evaluation {
       val result = choose(results)
       val weight = results.head.numItems
       WeightedPR(
-        precisions = WeightedNumbers(result.conf.precision, weight = weight),
-        recalls = WeightedNumbers(result.conf.recall, weight = weight),
+        precisions = WeightedNumbers(result.precision, weight = weight),
+        recalls = WeightedNumbers(result.recall, weight = weight),
       )
     }
   }
@@ -226,6 +268,8 @@ object Evaluation {
   def runClusterTuning(
     modelName: String,
     allStats: Map[String, NonEmptyList[ConfStatsPoint]],
+    precisionAxisLabel: String,
+    recallAxisLabel: String,
     resultsDir: NIOPath)(
     implicit logger: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = {
@@ -240,7 +284,7 @@ object Evaluation {
             tuningResults <- tuneWeightedStats(
               betas, allStats)(
               t => stats => {
-                stats.toList.maxBy(_.conf.fMeasure(t))
+                stats.toList.maxBy(_.fMeasure(t))
               }
             )
             tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
@@ -253,8 +297,8 @@ object Evaluation {
             results.foldMap(s => Numbers(s.lossPerItem))
           }
           val lossPerItemBest = allStats.toList.foldMap { case (verbType, results) =>
-            val bestF1 = results.map(_.conf.f1).maximum
-            results.filter(_.conf.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
+            val bestF1 = results.map(_.f1).maximum
+            results.filter(_.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
           }
           val interval = 0.05
           val stats = lossPerItemAll.stats
@@ -404,8 +448,9 @@ object Evaluation {
 	              )
               }
           ).title(s"PropBank argument clustering ($modelName)")
-            .xLabel("B^3 Recall")
-            .yLabel("B^3 Precision")
+            .xLabel(recallAxisLabel)
+            .yLabel(precisionAxisLabel)
+            .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
             .xAxis().yAxis()
             .frame().rightLegend()
 
@@ -431,17 +476,39 @@ object Evaluation {
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
         bCubedResults <- getAllBCubedStats(argTrees, argRoleLabels, useSenseSpecificRoles)
-        resultsDir <- features.modelDir.map(_.resolve(modelName)).flatTap(features.createDir)
+        resultsDir <- features.modelDir.map(_.resolve(s"$modelName/b-cubed")).flatTap(features.createDir)
         _ <- plotAllStatsVerbwise(
           modelName,
           bCubedResults,
           "B^3 Precision",
           "B^3 Recall",
-          resultsDir.resolve("bcubed-all-by-verb.png")
+          resultsDir.resolve("all-by-verb.png")
         )
         _ <- runClusterTuning(
           modelName,
           bCubedResults,
+          "B^3 Precision",
+          "B^3 Recall",
+          resultsDir
+        )
+      } yield ()
+    }
+    _ <- Log.infoBranch("Calculating Purity/Collocation metrics") {
+      for {
+        allStats <- getAllPurityCollocationStats(argTrees, argRoleLabels, useSenseSpecificRoles)
+        resultsDir <- features.modelDir.map(_.resolve(s"$modelName/pur-coll")).flatTap(features.createDir)
+        _ <- plotAllStatsVerbwise(
+          modelName,
+          allStats,
+          "Purity",
+          "Collocation",
+          resultsDir.resolve("all-by-verb.png")
+        )
+        _ <- runClusterTuning(
+          modelName,
+          allStats,
+          "Purity",
+          "Collocation",
           resultsDir
         )
       } yield ()

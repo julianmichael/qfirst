@@ -559,7 +559,7 @@ class PropBankGoldSpanFeatures(
 
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(
-    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma").resolve(mode.toString)
+    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
   ).flatTap(createDir)
 
   val ontonotesPath = Paths.get("data/conll-formatted-ontonotes-5.0")
