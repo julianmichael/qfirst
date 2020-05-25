@@ -1,6 +1,8 @@
 package freelog
 package loggers
 
+import freelog.instances.fansi._
+
 import cats._
 import cats.data._
 import cats.effect._
@@ -21,7 +23,7 @@ case class TimingEphemeralTreeFansiLogger(
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
 ) extends SequentialEphemeralTreeLogger[IO, String] {
-  val monad: Monad[IO] = implicitly[Monad[IO]]
+  val F: Monad[IO] = implicitly[Monad[IO]]
 
   private[this] val branchEnd = "\u2514"
   private[this] val lastBranch = "\u2514"
@@ -54,16 +56,23 @@ case class TimingEphemeralTreeFansiLogger(
 
   def emit(msg: String, logLevel: LogLevel) =
     justDoneMessageBuffer.set(None) >> getIndents >>= { indents =>
-      logger.emit(indents.active + getLogLevelAttr(logLevel)(msg.replaceAll("\n", "\n" + indents.passive)).toString, logLevel)
+      logger.emit(
+        indents.active + (
+          msg.split("\n").map(getLogLevelAttr(logLevel).apply(_: String))
+            .toList
+            .intercalate(fansi.Str("\n") ++ indents.passive)
+        ).toString,
+        logLevel
+      )
     }
 
-  type BranchState = Long
-  override def beforeBranch(msg: String, logLevel: LogLevel): IO[Long] =
-    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS).flatTap(
+  override def beginBranch(msg: String, logLevel: LogLevel): IO[Unit] =
+    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS) >>= (
       beginTime => branchBeginTimesMillisAndLevels.update((beginTime -> logLevel) :: _)
     )
 
-  override def afterBranch(beginTime: Long, logLevel: LogLevel): IO[Unit] = for {
+  override def endBranch(logLevel: LogLevel): IO[Unit] = for {
+    beginTime <- branchBeginTimesMillisAndLevels.get.map(_.head._1)
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     indents <- getIndents
     justDoneMsgOpt <- justDoneMessageBuffer.get
@@ -94,9 +103,8 @@ case class TimingEphemeralTreeFansiLogger(
     }
   } yield ()
 
-  type BlockState = Unit
-  override def beforeBlock: IO[Unit] = logger.beforeBlock
-  override def afterBlock(state: Unit): IO[Unit] = logger.afterBlock(state)
+  override def beginBlock: IO[Unit] = logger.beginBlock
+  override def endBlock: IO[Unit] = logger.endBlock
 
   def rewind: IO[Unit] = logger.rewind
 

@@ -17,7 +17,7 @@ case class TimingDelayedLogger(
   implicit timer: Timer[IO]
 ) extends RewindingLogger[IO, String] with SequentialEphemeralTreeLogger[IO, String] {
 
-  val monad = implicitly[Monad[IO]]
+  val F = implicitly[Monad[IO]]
 
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
@@ -41,13 +41,13 @@ case class TimingDelayedLogger(
   } yield ()
 
 
-  type BranchState = Long
-  override def beforeBranch(msg: String, logLevel: LogLevel): IO[Long] =
-    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS).flatTap(
+  override def beginBranch(msg: String, logLevel: LogLevel): IO[Unit] =
+    emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS) >>= (
       beginTime => branchBeginTimesMillis.update(beginTime :: _)
     )
 
-  override def afterBranch(beginTime: Long, logLevel: LogLevel): IO[Unit] = for {
+  override def endBranch(logLevel: LogLevel): IO[Unit] = for {
+    beginTime <- branchBeginTimesMillis.get.map(_.head)
     endTime <- timer.clock.monotonic(duration.MILLISECONDS)
     // indents <- getIndents
     delta = FiniteDuration(endTime - beginTime, duration.MILLISECONDS)

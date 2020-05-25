@@ -30,7 +30,7 @@ object emitters {
   val fansiColor: Emitter[String] = (x, level) => level match {
     case LogLevel.Debug => fansi.Color.Green(x).toString
     case LogLevel.Trace => fansi.Color.Cyan(x).toString
-    case LogLevel.Info  => x
+    case LogLevel.Info  => fansi.Attr.Reset(x).toString
     case LogLevel.Warn  => fansi.Color.Yellow(x).toString
     case LogLevel.Error => fansi.Color.Red(x).toString
   }

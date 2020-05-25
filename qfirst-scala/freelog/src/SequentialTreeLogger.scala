@@ -1,18 +1,17 @@
 package freelog
 
-import cats.Monad
+import cats.Apply
 import cats.implicits._
 
 trait SequentialTreeLogger[F[_], Msg] extends TreeLogger[F, Msg] {
-  val monad: Monad[F]
-  type BranchState
-  def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState]
-  def afterBranch(state: BranchState, logLevel: LogLevel): F[Unit]
+  val F: Apply[F]
+  def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit]
+  def endBranch(logLevel: LogLevel): F[Unit]
   def emitBranch[A](
     msg: Msg, logLevel: LogLevel)(
     body: F[A]
-  ): F[A] = monad.flatMap(beforeBranch(msg, logLevel))(bs =>
-    monad.productL(body)(afterBranch(bs, logLevel))
+  ): F[A] = F.productR(beginBranch(msg, logLevel))(
+    F.productL(body)(endBranch(logLevel))
   )
 }
 object SequentialTreeLogger {

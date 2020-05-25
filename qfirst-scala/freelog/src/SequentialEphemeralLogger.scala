@@ -1,15 +1,14 @@
 package freelog
 
-import cats.Monad
+import cats.Apply
 
 trait SequentialEphemeralLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
-  val monad: Monad[F]
-  type BlockState
-  def beforeBlock: F[BlockState]
-  def afterBlock(state: BlockState): F[Unit]
+  val F: Apply[F]
+  def beginBlock: F[Unit]
+  def endBlock: F[Unit]
   override def block[A](fa: F[A]): F[A] =
-    monad.flatMap(beforeBlock)(bs =>
-      monad.productL(fa)(afterBlock(bs))
+    F.productR(beginBlock)(
+      F.productL(fa)(endBlock)
     )
 }
 object SequentialEphemeralLogger

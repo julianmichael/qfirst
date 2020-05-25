@@ -16,9 +16,9 @@ trait RewindingLogger[F[_], Msg] extends SequentialEphemeralLogger[F, Msg] {
   def flush: F[Unit]
 
   /** Restore to last checkpoint without deleting it. */
-  def rewind: F[Unit] = monad.productR(restore)(save)
+  def rewind: F[Unit] = F.productR(restore)(save)
 
-  type BlockState = Unit
-  override def beforeBlock: F[Unit] = save
-  override def afterBlock(state: Unit): F[Unit] = commit
+  override def beginBlock: F[Unit] = save
+
+  override def endBlock: F[Unit] = commit
 }

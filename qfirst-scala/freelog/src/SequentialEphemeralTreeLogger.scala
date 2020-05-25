@@ -12,39 +12,35 @@ trait SequentialEphemeralTreeLogger[F[_], Msg]
 object SequentialEphemeralTreeLogger {
 
   def unit[F[_]: Monad, Msg] = new SequentialEphemeralTreeLogger[F, Msg] {
-    val monad = implicitly[Monad[F]]
-    def emit(msg: Msg, level: LogLevel): F[Unit] = monad.unit
+    val F = implicitly[Monad[F]]
+    def emit(msg: Msg, level: LogLevel): F[Unit] = F.unit
 
-    type BranchState = Unit
-    def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] = monad.unit
-    def afterBranch(state: BranchState, logLevel: LogLevel): F[Unit] = monad.unit
+    def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit] = F.unit
+    def endBranch(logLevel: LogLevel): F[Unit] = F.unit
 
-    type BlockState = Unit
-    def beforeBlock: F[BlockState] = monad.unit
-    def afterBlock(state: BlockState): F[Unit] = monad.unit
+    def beginBlock: F[Unit] = F.unit
+    def endBlock: F[Unit] = F.unit
 
-    def rewind: F[Unit] = monad.unit
-    def flush: F[Unit] = monad.unit
+    def rewind: F[Unit] = F.unit
+    def flush: F[Unit] = F.unit
   }
 
   case class Tee[F[_]: Monad, Msg](
     first: SequentialEphemeralTreeLogger[F, Msg],
     second: SequentialEphemeralTreeLogger[F, Msg]
   ) extends SequentialEphemeralTreeLogger[F, Msg] {
-    val monad = implicitly[Monad[F]]
+    val F = implicitly[Monad[F]]
     def emit(msg: Msg, level: LogLevel): F[Unit] = first.emit(msg, level) *> second.emit(msg, level)
 
-    type BranchState = (first.BranchState, second.BranchState)
-    def beforeBranch(msg: Msg, logLevel: LogLevel): F[BranchState] =
-      first.beforeBranch(msg, logLevel).product(second.beforeBranch(msg, logLevel))
-    def afterBranch(state: BranchState, logLevel: LogLevel): F[Unit] =
-      first.afterBranch(state._1, logLevel) *> (second.afterBranch(state._2, logLevel))
+    def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit] =
+      first.beginBranch(msg, logLevel) *> second.beginBranch(msg, logLevel)
+    def endBranch(logLevel: LogLevel): F[Unit] =
+      first.endBranch(logLevel) *> second.endBranch(logLevel)
 
-    type BlockState = (first.BlockState, second.BlockState)
-    def beforeBlock: F[BlockState] =
-      first.beforeBlock.product(second.beforeBlock)
-    def afterBlock(state: BlockState): F[Unit] =
-      second.afterBlock(state._2) *> first.afterBlock(state._1)
+    def beginBlock: F[Unit] =
+      first.beginBlock *> second.beginBlock
+    def endBlock: F[Unit] =
+      second.endBlock *> first.endBlock
 
     def rewind: F[Unit] = first.rewind *> second.rewind
     def flush: F[Unit] = first.flush *> second.flush

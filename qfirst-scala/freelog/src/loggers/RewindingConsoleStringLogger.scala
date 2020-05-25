@@ -13,7 +13,7 @@ case class RewindingConsoleStringLogger(
   putStr: String => IO[Unit] = x => IO(print(x)),
   getLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
-  val monad = implicitly[Monad[IO]]
+  val F = implicitly[Monad[IO]]
   import RewindingConsoleStringLogger.{CheckpointState, ConsoleCheckpoint}
   private[this] def getCheckpointRestorationStr = {
     pendingCheckpoint.get.flatMap {

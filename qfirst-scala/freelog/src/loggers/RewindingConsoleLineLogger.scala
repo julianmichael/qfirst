@@ -13,7 +13,7 @@ case class RewindingConsoleLineLogger(
   putStr: String => IO[Unit] = x => IO(print(x)),
   createLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
-  val monad = implicitly[Monad[IO]]
+  val F = implicitly[Monad[IO]]
   private[this] def flushWithMessage(msg: String) = for {
     backtrackingStr <- pendingCheckpoint.get.flatMap {
       case None => IO.pure("")
