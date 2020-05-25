@@ -292,7 +292,7 @@ object FrameInductionApp extends CommandIOApp(
 
     (dataO, modeO, modelConfigOptO).mapN { (data, mode, modelConfigOpt) =>
       for {
-        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.create()
+        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
         _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Model configuration: $modelConfigOpt")

@@ -115,10 +115,23 @@ object TimingEphemeralTreeFansiLogger {
     putStr: String => IO[Unit] = x => IO(print(x)),
     getLogLevelAttr: LogLevel => Attr = freelog.emitters.fansiColorMap,
     timingAttr: Attr = fansi.Color.Blue,
-    minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS)
-  )(implicit timer: Timer[IO]) = for {
+    minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
+    implicit timer: Timer[IO]
+  ) = for {
     lineLogger <- RewindingConsoleLineLogger.create(putStr)
     timings <- Ref[IO].of(List.empty[(Long, LogLevel)])
     justDoneMessageBuffer <- Ref[IO].of[Option[(String, NonEmptyList[LogLevel])]](None)
   } yield TimingEphemeralTreeFansiLogger(lineLogger, timings, justDoneMessageBuffer, getLogLevelAttr, timingAttr, minElapsedTimeToLog)
+
+  def debounced(
+    putStr: String => IO[Unit] = x => IO(print(x)),
+    getLogLevelAttr: LogLevel => Attr = freelog.emitters.fansiColorMap,
+    timingAttr: Attr = fansi.Color.Blue,
+    minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS),
+    debounceTime: FiniteDuration = FiniteDuration(20, duration.MILLISECONDS))(
+    implicit cs: ContextShift[IO], timer: Timer[IO]
+  ) = for {
+    baseLogger <- create(putStr, getLogLevelAttr, timingAttr, minElapsedTimeToLog)
+    messageQueue <-  Ref[IO].of[List[List[Debounced.LogCommand[String]]]](Nil)
+  } yield Debounced(messageQueue, baseLogger, debounceTime)
 }
