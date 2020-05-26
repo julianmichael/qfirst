@@ -36,11 +36,11 @@ object Evaluation {
     def f1 = Functions.harmonicMean(precision, recall)
   }
 
-  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[A]): NonEmptyList[ConfStatsPoint] = {
-    val goldClusterSizes = goldLabelTree.values.counts
+  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[Vector[A]]): NonEmptyList[ConfStatsPoint] = {
+    val goldClusterSizes = goldLabelTree.unorderedFoldMap(_.counts)
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittings.map { clusters =>
-        val clusterLabelCounts = clusters.map(_.values.counts)
+        val clusterLabelCounts = clusters.map(_.unorderedFoldMap(_.counts))
         val purity = clusterLabelCounts.foldMap { counts =>
           val primaryLabelCount = counts.values.max
           val total = counts.values.sum
@@ -57,31 +57,31 @@ object Evaluation {
           )
         }
         val loss = clusters.foldMap(_.loss)
-        val clusterSizes = clusters.map(_.size.toInt)
+        val clusterSizes = clusters.map(_.values.map(_.size).sum)
         ConfStatsPoint(loss, clusterSizes, purity.proportion, collocation.proportion)
       }.toList
     ).get
   }
 
   def getAllPurityCollocationStats(
-    argTrees: Map[String, MergeTree[ArgumentId[ESpan]]],
+    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, tree) =>
       Log.trace(verbType) >> IO {
         val labels = argRoleLabels(verbType).value
-        verbType -> getAllClusteringPurityCollocationConfs(tree.map(labels))
+        verbType -> getAllClusteringPurityCollocationConfs(tree.map(_.toVector.map(labels)))
       }
     }.map(_.toMap)
 
-  def getAllClusteringBCubedConfs[A: Order](trues: Set[Duad[A]], tree: MergeTree[A]): NonEmptyList[ConfStatsPoint] = {
-    val numArgs = tree.size.toInt
+  def getAllClusteringBCubedConfs[A: Order](trues: Set[Duad[A]], tree: MergeTree[Set[A]]): NonEmptyList[ConfStatsPoint] = {
+    val numArgs = tree.unorderedFoldMap(_.size)
     val numPairs = numArgs * (numArgs + 1) / 2
     val initConf = BinaryConf.Stats(tp = trues.size, fp = numPairs - trues.size)
     val initStats = ConfStatsPoint(tree.loss, Vector(numArgs), initConf.precision, initConf.recall)
     @tailrec
-    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[A]]): NonEmptyList[ConfStatsPoint] = {
+    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[Set[A]]]): NonEmptyList[ConfStatsPoint] = {
       trees.flatMap(_.deltaOpt).maximumOption match {
         case None => acc
         case Some(maxDelta) =>
@@ -91,10 +91,10 @@ object Evaluation {
               case Some(m) => Right(m)
             }
           ).separate
-          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[A]) =>
+          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[Set[A]]) =>
             val positivesBeingLost = for {
-              l <- m.left.values.toSet: Set[A]
-              r <- m.right.values.toSet
+              l <- m.left.unorderedFold: Set[A]
+              r <- m.right.unorderedFold
             } yield l <-> r
             val numTPsLost = positivesBeingLost.filter(trues.contains).size
             val numFPsLost = positivesBeingLost.size - numTPsLost
@@ -107,20 +107,20 @@ object Evaluation {
           }
           val newTrees = oldTrees ++ treesToSplit.flatMap(m => Vector(m.left, m.right))
           val newLoss = newTrees.foldMap(_.loss)
-          recurseConfs(ConfStatsPoint(newLoss, newTrees.map(_.size.toInt), newConf.precision, newConf.recall) :: acc, newConf, newTrees)
+          recurseConfs(ConfStatsPoint(newLoss, newTrees.map(_.unorderedFoldMap(_.size)), newConf.precision, newConf.recall) :: acc, newConf, newTrees)
       }
     }
     recurseConfs(NonEmptyList.of(initStats), initConf, Vector(tree))
   }
 
   def getAllBCubedStats(
-    argTrees: Map[String, MergeTree[ArgumentId[ESpan]]],
+    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, tree) =>
       Log.trace(verbType) >> IO {
-        val args = tree.values.toSet
+        val args = tree.unorderedFold
         val labels = argRoleLabels(verbType).value.filter { case (k, _) => args.contains(k) }
         val argsByGoldLabel = labels.toList
           .groupBy(p => if(useSenseSpecificRoles) p._2 else p._2.role)
@@ -144,76 +144,101 @@ object Evaluation {
     allStats: Map[String, NonEmptyList[ConfStatsPoint]],
     precisionAxisLabel: String,
     recallAxisLabel: String,
-    path: NIOPath)(
+    makePath: String => NIOPath)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Unit] = Log.infoBranch(s"Plotting metrics for all verbs ($precisionAxisLabel / $recallAxisLabel)") {
-      import com.cibo.evilplot._
-      import com.cibo.evilplot.colors._
-      import com.cibo.evilplot.geometry._
-      import com.cibo.evilplot.numeric._
-      import com.cibo.evilplot.plot._
-      import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-      import com.cibo.evilplot.plot.renderers.PointRenderer
-      import com.cibo.evilplot.plot.renderers.PathRenderer
+    import com.cibo.evilplot._
+    import com.cibo.evilplot.colors._
+    import com.cibo.evilplot.geometry._
+    import com.cibo.evilplot.numeric._
+    import com.cibo.evilplot.plot._
+    import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+    import com.cibo.evilplot.plot.renderers.PointRenderer
+    import com.cibo.evilplot.plot.renderers.PathRenderer
 
-      case class PRPoint(
-        verbType: String,
-        loss: Double,
-        numItems: Int,
-        numClusters: Int,
-        isBestF1: Boolean,
-        recall: Double,
-        precision: Double) extends Datum2d[PRPoint] {
-        val x = recall
-        val y = precision
-        def f1 = 2 * precision * recall / (precision + recall)
+    case class PRPoint(
+      verbType: String,
+      loss: Double,
+      numItems: Int,
+      numClusters: Int,
+      isBestF1: Boolean,
+      recall: Double,
+      precision: Double) extends Datum2d[PRPoint] {
+      val x = recall
+      val y = precision
+      def f1 = 2 * precision * recall / (precision + recall)
 
-        def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
-      }
-
-      // val rand = new scala.util.Random(2643642L)
-      // def noise = scala.math.abs(rand.nextGaussian / 200.0)
-
-      val allData = allStats.transform { case (verbType, allStats) =>
-
-        val bestF1 = allStats.map(_.f1).maximum
-        allStats.map { case p @ ConfStatsPoint(loss, clusterSizes, precision, recall) =>
-          PRPoint(verbType, loss, clusterSizes.sum, clusterSizes.size, p.f1 == bestF1, recall, precision)
-        }
-      }
-
-      val maxNumClusters = allData.values.toList.flatMap(_.toList).filter(_.isBestF1).map(_.numClusters).max
-      val maxNumInstances = allData.values.toList.map(_.head.numItems).max
-
-      val plot = Overlay.fromSeq(
-        allData.toList.map { case (verbType, data) =>
-          val propMaxInstances = data.head.numItems.toDouble / maxNumInstances
-          LinePlot(
-		        data.toList,
-            pathRenderer = Some(PathRenderer.default[PRPoint](strokeWidth = Some(0.2), color = Some(RGBA(0, 0, 0, propMaxInstances))))
-	        )
-        } ++
-          allData.toList.map { case (verbType, data) =>
-            ScatterPlot(
-		          data.toList.filter(_.isBestF1),
-              pointRenderer = Some(
-                PointRenderer.depthColor[PRPoint](
-                  depth = _.numClusters.toDouble,
-                  size = Some(2.0), min = 1.0, max = maxNumClusters,
-                  coloring = Some(ContinuousColoring.gradient(start = RGBA(0, 0, 0, 1.0), end = RGBA(255, 0, 0, 1.0)))
-                )
-              )
-	          )
-          }
-      ).title(s"PropBank argument clustering ($modelName)")
-        .xLabel(recallAxisLabel)
-        .yLabel(precisionAxisLabel)
-        .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
-        .xAxis().yAxis()
-        .frame().rightLegend()
-
-      IO(plot.render().write(new java.io.File(path.toString)))
+      def withXY(x: Double = this.recall, y: Double = this.precision) = this.copy(recall = x, precision = y)
     }
+
+    // val rand = new scala.util.Random(2643642L)
+    // def noise = scala.math.abs(rand.nextGaussian / 200.0)
+
+    val allData = allStats.transform { case (verbType, allStats) =>
+
+      val bestF1 = allStats.map(_.f1).maximum
+      allStats.map { case p @ ConfStatsPoint(loss, clusterSizes, precision, recall) =>
+        PRPoint(verbType, loss, clusterSizes.sum, clusterSizes.size, p.f1 == bestF1, recall, precision)
+      }
+    }
+
+    val maxNumClusters = allData.values.toList.flatMap(_.toList).filter(_.isBestF1).map(_.numClusters).max
+    val maxNumInstances = allData.values.toList.map(_.head.numItems).max
+
+    val linePlot = allData.toList.map { case (verbType, data) =>
+      val propMaxInstances = data.head.numItems.toDouble / maxNumInstances
+      LinePlot(
+		    data.toList,
+        pathRenderer = Some(PathRenderer.default[PRPoint](strokeWidth = Some(0.2), color = Some(RGBA(0, 0, 0, propMaxInstances))))
+	    )
+    }
+    val bestF1Scatter = allData.toList.map { case (verbType, data) =>
+      ScatterPlot(
+		    data.toList.filter(_.isBestF1),
+        pointRenderer = Some(
+          PointRenderer.depthColor[PRPoint](
+            depth = _.numClusters.toDouble,
+            size = Some(2.0), min = 1.0, max = maxNumClusters,
+            coloring = Some(ContinuousColoring.gradient(start = RGBA(0, 0, 0, 1.0), end = RGBA(255, 0, 0, 1.0)))
+          )
+        )
+	    )
+    }
+
+    val maxNumClustersScatter = allData.toList.map { case (verbType, data) =>
+      ScatterPlot(
+		    data.toList.maximaBy(_.numClusters),
+        pointRenderer = Some(
+          PointRenderer.depthColor[PRPoint](
+            depth = _.numClusters.toDouble,
+            size = Some(2.0), min = 1.0, max = 20,
+            coloring = Some(ContinuousColoring.gradient(start = RGBA(0, 0, 255, 1.0), end = RGBA(0, 255, 0, 1.0)))
+          )
+        )
+	    )
+    }
+
+    val plot1 = Overlay.fromSeq(
+      linePlot ++ bestF1Scatter
+    ).title(s"PropBank argument clustering ($modelName)")
+      .xLabel(recallAxisLabel)
+      .yLabel(precisionAxisLabel)
+      .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
+      .xAxis().yAxis()
+      .frame().rightLegend()
+
+    val plot2 = Overlay.fromSeq(
+      linePlot ++ maxNumClustersScatter
+    ).title(s"PropBank argument clustering ($modelName)")
+      .xLabel(recallAxisLabel)
+      .yLabel(precisionAxisLabel)
+      .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
+      .xAxis().yAxis()
+      .frame().rightLegend()
+
+    IO(plot1.render().write(new java.io.File(makePath("best").toString))) >>
+      IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
+  }
 
   case class WeightedPR(
     precisions: WeightedNumbers[Double],
@@ -464,7 +489,7 @@ object Evaluation {
   def evaluateArgumentClusters(
     modelName: String,
     features: PropBankGoldSpanFeatures,
-    argTrees: Map[String, MergeTree[ArgumentId[ESpan]]],
+    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
@@ -482,7 +507,7 @@ object Evaluation {
           bCubedResults,
           "B^3 Precision",
           "B^3 Recall",
-          resultsDir.resolve("all-by-verb.png")
+          name => resultsDir.resolve(s"by-verb-$name.png")
         )
         _ <- runClusterTuning(
           modelName,
@@ -502,7 +527,7 @@ object Evaluation {
           allStats,
           "Purity",
           "Collocation",
-          resultsDir.resolve("all-by-verb.png")
+          name => resultsDir.resolve(s"by-verb-$name.png")
         )
         _ <- runClusterTuning(
           modelName,

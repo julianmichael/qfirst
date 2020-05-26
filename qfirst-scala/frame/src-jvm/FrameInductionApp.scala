@@ -61,17 +61,25 @@ object FrameInductionApp extends CommandIOApp(
     // (1 to 9).map(_.toDouble / 10.0).toList.map(ModelConfig.Interpolated(_))
   }
 
+  val numFlatClusters = 100 // TODO small for testing. make big.
+  val flatClusteringSoftStoppingDelta = 0.00000001
+  val flatClusteringHardStoppingDelta = 0.00000001
+  val flatClusteringTempSched = (x: Int) => {
+    if(x <= 3) 1.0
+    else scala.math.pow(0.8, x - 3)
+  }
+
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
     name: String, features: Features[VerbType, Arg],
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, MergeTree[ArgumentId[Arg]]]]] = {
+  ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
     // TODO organize models into subdirs
     features.modelDir.map(modelDir =>
-      FileCached[Map[VerbType, MergeTree[ArgumentId[Arg]]]](
+      FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
         s"Argument cluster model: $name")(
         path = modelDir.resolve(s"$name.jsonl.gz"),
-        read = path => FileUtil.readJsonLines[(VerbType, MergeTree[ArgumentId[Arg]])](path)
+        read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
         import ClusteringModel._
@@ -84,16 +92,35 @@ object FrameInductionApp extends CommandIOApp(
           features.verbArgSets.full.get >>= (
             _.toList
               .infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-              // hack to make it possible to even do the clustering on the really common words. need to generalize later
-              val verbIds = NonEmptyVector.fromVector(verbs.value.keySet.toVector).get
-              val verbIdSet = verbIds.toVector.toSet
               Log.trace(renderVerbType(verbType)) >> {
-                features.args.full.get.map(_.apply(verbType)) >>= { argIds =>
+                features.args.full.get.map(_.apply(verbType)) >>= { argIdSet =>
                   model.create(features, verbType).map { algorithm =>
-                    NonEmptyVector
-                      .fromVector(argIds.filter(arg => verbIdSet.contains(arg.verbId)).toVector)
-                      .map(algorithm.runFullAgglomerativeClustering(_))
-                      .map { case (argClusterTree, finalParams) => verbType -> argClusterTree }
+                    // some of them arg empty, gotta skip
+                    NonEmptyVector.fromVector(argIdSet.toVector).map { nonEmptyArgIds =>
+                      val argIds = nonEmptyArgIds.toVector
+                      if(argIds.size <= numFlatClusters) { // we can immediately do agglom. clustering
+                        val (argClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(
+                          NonEmptyVector.fromVector(argIds).get
+                        )
+                        verbType -> argClusterTree.map(Set(_))
+                      } else { // we need a flat pre-clustering step
+                        val initParams = algorithm.initPlusPlus(argIds, numFlatClusters)
+                        // val (postSoftEMParams, _, _) = algorithm.runSoftEM(
+                        //   initParams, argIds, flatClusteringSoftStoppingDelta, flatClusteringTempSched
+                        // )
+                        val (postHardEMParams, hardEMAssignments, _) = algorithm.runHardEM(
+                          initParams, argIds, flatClusteringHardStoppingDelta
+                        )
+                        val hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
+                          case (_, indices) => indices.map(i => argIds(i._2)).toSet
+                        }
+                        val setClusteringAlg = new SetClustering(algorithm)
+                        val (argSetClusterTree, finalParams) = setClusteringAlg.runFullAgglomerativeClustering(
+                          NonEmptyVector.fromVector(hardEMClusters).get
+                        )
+                        verbType -> argSetClusterTree
+                      }
+                    }
                   }
                 }
               }

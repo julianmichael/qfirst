@@ -25,47 +25,54 @@ import cats.implicits._
 //   ): IO[AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = P }]
 // }
 
-sealed trait ClusteringModel[I[_], P[_]] {
+sealed trait ClusteringModel[Alg[_]] {
   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
   def create[VerbType, Arg](
     features: Features[VerbType, Arg], verbType: VerbType
-  ): IO[AgglomerativeClusteringAlgorithm { type Index = I[Arg]; type ClusterParam = P[Arg] }]
+  ): IO[Alg[Arg]]
 }
 object ClusteringModel {
-  type VerbModel[P] = ClusteringModel[Lambda[A => VerbId], Lambda[A => P]]
-  type ArgumentModel[P] = ClusteringModel[ArgumentId, Lambda[A => P]]
+  type ArgumentModel[P] = ClusteringModel[Lambda[A =>
+      ClusteringAlgorithm { type Index = ArgumentId[A]; type ClusterParam = P }
+    ]]
+  type VerbModel[P] = ClusteringModel[
+    Lambda[A =>
+      AgglomerativeClusteringAlgorithm { type Index = VerbId; type ClusterParam = P }
+    ]]
   type JointModel[P] = ClusteringModel[
-    Lambda[A => VerbId],
-    Lambda[A => NonEmptyVector[(MergeTree[ArgumentId[A]], P)]]
-  ]
+    Lambda[A =>
+      AgglomerativeClusteringAlgorithm {
+        type Index = VerbId;
+        type ClusterParam = NonEmptyVector[(MergeTree[ArgumentId[A]], P)]
+      }]]
 
-  case class Composite[F[_], P1[_], P2[_]](
-    spec1: (ClusteringModel[F, P1], Double),
-    spec2: (ClusteringModel[F, P2], Double)
-  ) extends ClusteringModel[F, Lambda[A => (P1[A], P2[A])]] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) =
-      spec1._1.init(features) >> spec2._1.init(features)
-    override def create[VerbType, Arg](
-      features: Features[VerbType, Arg], verbType: VerbType
-    ) = for {
-      alg1 <- spec1._1.create(features, verbType)
-      alg2 <- spec2._1.create(features, verbType)
-    } yield new CompositeAgglomerativeClusteringAlgorithm {
-      val _1 = alg1
-      val _1Lambda = spec1._2
-      val _2 = alg2
-      val _2Lambda = spec2._2
-    }
-  }
-  object Composite {
-    def argument[P1, P2](spec1: (ArgumentModel[P1], Double), spec2: (ArgumentModel[P2], Double)) =
-      Composite[ArgumentId, Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
-    def verb[P1, P2](spec1: (VerbModel[P1], Double), spec2: (VerbModel[P2], Double)) =
-      Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
-    def withJoint[P1, P2](spec1: (VerbModel[P1], Double), spec2: (JointModel[P2], Double)) =
-      Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => NonEmptyVector[(MergeTree[ArgumentId[A]], P2)]]](spec1, spec2)
+  // case class Composite[F[_], P1[_], P2[_]](
+  //   spec1: (ClusteringModel[F, P1], Double),
+  //   spec2: (ClusteringModel[F, P2], Double)
+  // ) extends ClusteringModel[F, Lambda[A => (P1[A], P2[A])]] {
+  //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) =
+  //     spec1._1.init(features) >> spec2._1.init(features)
+  //   override def create[VerbType, Arg](
+  //     features: Features[VerbType, Arg], verbType: VerbType
+  //   ) = for {
+  //     alg1 <- spec1._1.create(features, verbType)
+  //     alg2 <- spec2._1.create(features, verbType)
+  //   } yield new CompositeAgglomerativeClusteringAlgorithm {
+  //     val _1 = alg1
+  //     val _1Lambda = spec1._2
+  //     val _2 = alg2
+  //     val _2Lambda = spec2._2
+  //   }
+  // }
+  // object Composite {
+  //   def argument[P1, P2](spec1: (ArgumentModel[P1], Double), spec2: (ArgumentModel[P2], Double)) =
+  //     Composite[ArgumentId, Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
+  //   def verb[P1, P2](spec1: (VerbModel[P1], Double), spec2: (VerbModel[P2], Double)) =
+  //     Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => P2]](spec1, spec2)
+  //   def withJoint[P1, P2](spec1: (VerbModel[P1], Double), spec2: (JointModel[P2], Double)) =
+  //     Composite[Lambda[A => VerbId], Lambda[A => P1], Lambda[A => NonEmptyVector[(MergeTree[ArgumentId[A]], P2)]]](spec1, spec2)
 
-  }
+  // }
 
   case class Joint[P, Arg](
     innerModel: ClusteringModel.ArgumentModel[P]

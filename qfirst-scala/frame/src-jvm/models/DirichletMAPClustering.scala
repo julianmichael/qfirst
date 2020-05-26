@@ -14,11 +14,16 @@ import breeze.stats.distributions.Multinomial
 
 import scala.collection.immutable.Vector
 
+// This can't be used for agglomerative clustering in my setup,
+// because the loss of a combined cluster can be less than the summed losses of the two,
+// breaking monotonicity thanks to the smoothing and concentration effects of the Dirichlet prior.
+// In particular, combining identical indices will reduce the total loss
+// (instead of keeping it constant, as with MinEntropyClustering).
 class DirichletMAPClustering(
   instances: Vector[Map[Int, Int]],
   vocabSize: Int,
   clusterConcentrationParameter: Double
-) extends ClusteringAlgorithm {
+) extends FlatClusteringAlgorithm {
 
   type Index = Int
   type ClusterParam = DenseMultinomial
@@ -46,6 +51,4 @@ class DirichletMAPClustering(
       pseudoCounts, vocabSize, clusterConcentrationParameter
     )
   }
-
-  // TODO efficient merges for params/loss
 }
