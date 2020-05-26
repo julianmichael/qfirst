@@ -61,29 +61,21 @@ class MinEntropyClustering[I](
   }
 
   // can do efficient merge by summing counts
-  override def mergeParams(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): ClusterParam = {
-    val counts = leftParam.counts + rightParam.counts
-    val total = leftParam.total + rightParam.total
-    ClusterMixture(counts, total)
-  }
+  override val mergeParamsEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      val counts = left.counts + right.counts
+      val total = left.total + right.total
+      ClusterMixture(counts, total)
+    }
+  )
 
-  override def mergeLoss(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): Double = {
-    val param = mergeParams(left, leftParam, right, rightParam)
-    val newLoss = param.counts.activeValuesIterator
-      .filter(_ > 0.0) // prevent log of 0
-      .map(c => c * log(c / param.total)) // count * log probability = log likelihood
-      .sum * -1.0
-    newLoss
-  }
-
+  override val mergeLossEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      val param = mergeParamsEfficient.get(left, right)
+      param.counts.activeValuesIterator
+        .filter(_ > 0.0) // prevent log of 0
+        .map(c => c * log(c / param.total)) // count * log probability = log likelihood
+        .sum * -1.0
+    }
+  )
 }

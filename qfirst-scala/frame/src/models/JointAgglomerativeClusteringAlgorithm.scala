@@ -46,28 +46,21 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
     param.foldMap(_._1.loss) + getLossPenalty(param.size.toInt)
   }
 
-  def mergeParams(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): ClusterParam = {
-    val res = innerAlgorithm.runPartialAgglomerativeClustering(
-      leftParam |+| rightParam, innerStoppingCondition
-    )
-    // println(s"MERGE - ${leftParam.size + rightParam.size}: ${res.size}")
-    res
-  }
+  override val mergeParamsEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      // println(s"MERGE - ${left.size + right.size}: ${res.size}")
+      innerAlgorithm.runPartialAgglomerativeClustering(
+        left |+| right, innerStoppingCondition
+      )
+    }
+  )
 
-  def mergeLoss(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): Double = {
-    val mergedParam = innerAlgorithm.runPartialAgglomerativeClustering(
-      leftParam |+| rightParam, innerStoppingCondition
-    )
-    mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.size.toInt)
-  }
+  override val mergeLossEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      val mergedParam = innerAlgorithm.runPartialAgglomerativeClustering(
+        left |+| right, innerStoppingCondition
+      )
+      mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.size.toInt)
+    }
+  )
 }

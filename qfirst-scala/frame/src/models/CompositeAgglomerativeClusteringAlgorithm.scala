@@ -28,7 +28,7 @@ trait CompositeAgglomerativeClusteringAlgorithm extends AgglomerativeClusteringA
       (_2Lambda * _2.getInstanceLoss(index, param._2))
   }
 
-  def mergeParams(
+  override def mergeParamsFallback(
     left: MergeTree[Index],
     leftParam: ClusterParam,
     right: MergeTree[Index],
@@ -38,7 +38,7 @@ trait CompositeAgglomerativeClusteringAlgorithm extends AgglomerativeClusteringA
       _2.mergeParams(left, leftParam._2, right, rightParam._2)
   }
 
-  def mergeLoss(
+  override def mergeLossFallback(
     left: MergeTree[Index],
     leftParam: ClusterParam,
     right: MergeTree[Index],

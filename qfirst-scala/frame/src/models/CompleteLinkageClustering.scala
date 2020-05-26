@@ -33,17 +33,14 @@ class CompleteLinkageClustering(
     Set(index)
   }
 
-  override def mergeParams(
-    left: MergeTree[Int],
-    leftParam: ClusterParam,
-    right: MergeTree[Int],
-    rightParam: ClusterParam
-  ): ClusterParam = {
-    leftParam union rightParam
-  }
+  override val mergeParamsEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      left union right
+    }
+  )
 
   // only need to consider pairs that cross between clusters to find the new max pairwise distance
-  override def mergeLoss(
+  override def mergeLossFallback(
     left: MergeTree[Int],
     leftParam: ClusterParam,
     right: MergeTree[Int],

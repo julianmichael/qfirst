@@ -38,19 +38,10 @@ trait AgglomerativeClusteringAlgorithm {
     param: ClusterParam
   ): Double
 
-  def mergeParams(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): ClusterParam
-
-  def mergeLoss(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): Double
+  // override eg for max
+  def aggregateLosses(
+    losses: Vector[Double]
+  ): Double = losses.sum
 
   // override eg for max
   def getLossChangePriority(
@@ -58,6 +49,49 @@ trait AgglomerativeClusteringAlgorithm {
     leftLoss: Double,
     rightLoss: Double
   ) = newLoss - leftLoss - rightLoss
+
+  def mergeParamsEfficient: Option[(ClusterParam, ClusterParam) => ClusterParam] = None
+
+  // TODO formalize this better so I don't need this.
+  def mergeParamsFallback(
+    left: MergeTree[Index],
+    leftParam: ClusterParam,
+    right: MergeTree[Index],
+    rightParam: ClusterParam
+  ): ClusterParam = ???
+
+  def mergeParams(
+    left: MergeTree[Index],
+    leftParam: ClusterParam,
+    right: MergeTree[Index],
+    rightParam: ClusterParam
+  ): ClusterParam = mergeParamsEfficient match {
+    case Some(merge) => merge(leftParam, rightParam)
+    case None => mergeParamsFallback(left, leftParam, right, rightParam)
+  }
+
+  def mergeLossEfficient: Option[(ClusterParam, ClusterParam) => Double] = None
+
+  def mergeLossFallback(
+    left: MergeTree[Index],
+    leftParam: ClusterParam,
+    right: MergeTree[Index],
+    rightParam: ClusterParam
+  ): Double = {
+    val indices = left.values ++ right.values
+    val param = mergeParams(left, leftParam, right, rightParam)
+    aggregateLosses(indices.map(getInstanceLoss(_, param)))
+  }
+
+  def mergeLoss(
+    left: MergeTree[Index],
+    leftParam: ClusterParam,
+    right: MergeTree[Index],
+    rightParam: ClusterParam
+  ): Double = mergeLossEfficient match {
+    case Some(merge) => merge(leftParam, rightParam)
+    case None => mergeLossFallback(left, leftParam, right, rightParam)
+  }
 
   // more efficient implementation! possibly MUCH more efficient for good distance functions
   // easily adaptable into an n^2 logn algorithm for single and complete linkage.

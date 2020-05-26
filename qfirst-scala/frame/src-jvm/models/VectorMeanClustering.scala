@@ -67,28 +67,12 @@ class VectorMeanClustering[I](
   }
 
   // can efficiently merge by weighing each mean by its cluster size
-  override def mergeParams(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): ClusterParam = {
-    val size = leftParam.size + rightParam.size
-    val mean = (leftParam.mean *:* (leftParam.size.toFloat / size).toFloat) +
-      (rightParam.mean *:* (rightParam.size / size).toFloat)
-    ClusterMean(mean, size)
-  }
-
-  // can efficiently merge by weighing each mean by its cluster size
-  override def mergeLoss(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): Double = {
-    val param = mergeParams(left, leftParam, right, rightParam)
-    val newLoss = (left.values ++ right.values)
-      .foldMap(i => getInstanceLoss(i, param))
-    newLoss
-  }
+  override val mergeParamsEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      val size = left.size + right.size
+      val mean = (left.mean *:* (left.size.toFloat / size).toFloat) +
+        (right.mean *:* (right.size / size).toFloat)
+      ClusterMean(mean, size)
+    }
+  )
 }

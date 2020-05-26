@@ -59,15 +59,13 @@ class MixtureOfStatesClustering[I](
     StateCounts(DenseVector(arr), total)
   }
 
-  // can do efficient merge by summing counts
-  override def mergeParams(
-    left: MergeTree[Index],
-    leftParam: ClusterParam,
-    right: MergeTree[Index],
-    rightParam: ClusterParam
-  ): ClusterParam = {
-    val counts = leftParam.counts + rightParam.counts
-    val total = leftParam.total + rightParam.total
-    StateCounts(counts, total)
-  }
+  override val mergeParamsEfficient = Some(
+    (left: ClusterParam, right: ClusterParam) => {
+      val counts = left.counts + right.counts
+      val total = left.total + right.total
+      StateCounts(counts, total)
+    }
+  )
+
+  // TODO mergeLossEfficient
 }

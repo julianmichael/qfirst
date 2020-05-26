@@ -46,4 +46,6 @@ class DirichletMAPClustering(
       pseudoCounts, vocabSize, clusterConcentrationParameter
     )
   }
+
+  // TODO efficient merges for params/loss
 }
