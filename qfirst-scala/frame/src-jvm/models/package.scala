@@ -75,6 +75,22 @@ package object models {
     )
   }
 
+  def invertOdds(d: DenseMultinomial): DenseMultinomial = {
+    val negLogits = -log(d.params)
+    val normalizer = logSumExp(negLogits)
+    Multinomial(exp(negLogits - normalizer))
+  }
+
+  import cats.effect.concurrent.Ref
+  // import cats.effect.IO
+
+  // shim for until i upgrade cats-effect version
+  implicit class RichRef[F[_], A](val ref: Ref[F, A]) extends AnyVal {
+    def updateAndGet(f: A => A): F[A] = ref.modify { a =>
+      val newA = f(a)
+      (newA, newA)
+    }
+  }
 
   import scala.collection.mutable
   implicit class RichMutablePriorityQueue[A](val q: mutable.PriorityQueue[A]) extends AnyVal {

@@ -16,6 +16,14 @@ trait ClusteringAlgorithm extends AgglomerativeClusteringAlgorithm with FlatClus
   type ClusterParam
   type Index
 
+  // default to flat clustering algorithm's method, which should be at least as efficient
+  // override for efficiency
+  override def estimateParameterHard(
+    indices: Vector[Index]
+  ): ClusterParam = {
+    estimateParameterSoft(indices, indices.as(1.0))
+  }
+
   override def mergeParamsFallback(
     left: MergeTree[Index],
     leftParam: ClusterParam,

@@ -189,7 +189,7 @@ object Evaluation {
       val propMaxInstances = data.head.numItems.toDouble / maxNumInstances
       LinePlot(
 		    data.toList,
-        pathRenderer = Some(PathRenderer.default[PRPoint](strokeWidth = Some(0.2), color = Some(RGBA(0, 0, 0, propMaxInstances))))
+        pathRenderer = Some(PathRenderer.default[PRPoint](strokeWidth = Some(0.2), color = Some(RGBA(0, 0, 0, 1.0))))
 	    )
     }
     val bestF1Scatter = allData.toList.map { case (verbType, data) =>
@@ -211,7 +211,7 @@ object Evaluation {
         pointRenderer = Some(
           PointRenderer.depthColor[PRPoint](
             depth = _.numClusters.toDouble,
-            size = Some(2.0), min = 1.0, max = 20,
+            size = Some(2.0), min = 1.0, max = 5,
             coloring = Some(ContinuousColoring.gradient(start = RGBA(0, 0, 255, 1.0), end = RGBA(0, 255, 0, 1.0)))
           )
         )

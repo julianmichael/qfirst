@@ -29,7 +29,7 @@ trait AgglomerativeClusteringAlgorithm {
   type Index
 
   def getSingleInstanceParameter(
-    index: Index,
+    index: Index
   ): ClusterParam
 
   // gets loss for an instance wrt a cluster.
@@ -49,6 +49,23 @@ trait AgglomerativeClusteringAlgorithm {
     leftLoss: Double,
     rightLoss: Double
   ) = newLoss - leftLoss - rightLoss
+
+  // override for efficiency
+  def estimateParameterHard(
+    indices: Vector[Index]
+  ): ClusterParam = {
+    indices.iterator.map { index =>
+      val param = getSingleInstanceParameter(index)
+      val loss = getInstanceLoss(index, param)
+      val tree: MergeTree[Index] = MergeTree.Leaf(loss, index)
+      tree -> param
+    }.reduce { (left, right) =>
+      val param = mergeParams(left._1, left._2, right._1, right._2)
+      val loss = mergeLoss(left._1, left._2, right._1, right._2)
+      val tree: MergeTree[Index] = MergeTree.Merge(loss, left._1, right._1)
+      tree -> param
+    }._2
+  }
 
   def mergeParamsEfficient: Option[(ClusterParam, ClusterParam) => ClusterParam] = None
 

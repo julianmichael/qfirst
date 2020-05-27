@@ -32,8 +32,10 @@ sealed trait ClusteringModel[Alg[_]] {
   ): IO[Alg[Arg]]
 }
 object ClusteringModel {
-  type ArgumentModel[P] = ClusteringModel[Lambda[A =>
-      ClusteringAlgorithm { type Index = ArgumentId[A]; type ClusterParam = P }
+  type ArgumentModel[FP, AP] = ClusteringModel[
+    Lambda[A =>
+      (FlatClusteringAlgorithm { type Index = ArgumentId[A]; type ClusterParam = FP },
+       AgglomerativeClusteringAlgorithm { type Index = ArgumentId[A]; type ClusterParam = AP })
     ]]
   type VerbModel[P] = ClusteringModel[
     Lambda[A =>
@@ -74,34 +76,34 @@ object ClusteringModel {
 
   // }
 
-  case class Joint[P, Arg](
-    innerModel: ClusteringModel.ArgumentModel[P]
-  ) extends ClusteringModel.JointModel[P] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = innerModel.init(features)
-    override def create[VerbType, Arg](
-      features: Features[VerbType, Arg], verbType: VerbType
-    ) = {
-      // TODO make this a parameter // TODO actually FIX this .... see the alg. seems wrongo
-      val getLossPenalty = (numClusters: Int) => scala.math.pow(numClusters, 2.0) / 2.0
+  // case class Joint[P, Arg](
+  //   innerModel: ClusteringModel.ArgumentModel[P]
+  // ) extends ClusteringModel.JointModel[P] {
+  //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) = innerModel.init(features)
+  //   override def create[VerbType, Arg](
+  //     features: Features[VerbType, Arg], verbType: VerbType
+  //   ) = {
+  //     // TODO make this a parameter // TODO actually FIX this .... see the alg. seems wrongo
+  //     val getLossPenalty = (numClusters: Int) => scala.math.pow(numClusters, 2.0) / 2.0
 
-      for {
-        argumentAlgorithm <- innerModel.create(features, verbType)
-        verbIdToArgIds <- features.verbArgSets.full.get.map(
-          _.apply(verbType).value.map { case (verbId, argIds) =>
-            // TODO: maybe do something to handle the case of no args for a verb...
-            // what should the clustering do in this case?
-            verbId -> NonEmptyVector.fromVector(argIds.toVector).get.map(arg => ArgumentId(verbId, arg))
-          }
-        )
-      } yield new JointAgglomerativeClusteringAlgorithm(
-        argumentAlgorithm,
-        verbIdToArgIds,
-        getLossPenalty
-      )
-    }
-  }
+  //     for {
+  //       argumentAlgorithm <- innerModel.create(features, verbType).map(_._2)
+  //       verbIdToArgIds <- features.verbArgSets.full.get.map(
+  //         _.apply(verbType).value.map { case (verbId, argIds) =>
+  //           // TODO: maybe do something to handle the case of no args for a verb...
+  //           // what should the clustering do in this case?
+  //           verbId -> NonEmptyVector.fromVector(argIds.toVector).get.map(arg => ArgumentId(verbId, arg))
+  //         }
+  //       )
+  //     } yield new JointAgglomerativeClusteringAlgorithm(
+  //       argumentAlgorithm,
+  //       verbIdToArgIds,
+  //       getLossPenalty
+  //     )
+  //   }
+  // }
 
-  object QuestionEntropy extends ArgumentModel[MinEntropyClustering.ClusterMixture] {
+  case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClustering.ClusterMixture] {
     override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.full.get.as(())
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
@@ -113,10 +115,13 @@ object ClusteringModel {
       indexedInstances = questionDists.value.map { case (argId, questionDist) =>
         argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
       }
-    } yield new MinEntropyClustering(indexedInstances, questionVocab.size)
+    } yield (
+      new DirichletMAPClustering(indexedInstances, questionVocab.size, 0.01),
+      new MinEntropyClustering(indexedInstances, questionVocab.size)
+    )
   }
 
-  object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
+  case object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.full.get.as(())
     override def create[VerbType, Instance](
       features: Features[VerbType, Instance], verbType: VerbType
@@ -125,7 +130,7 @@ object ClusteringModel {
     } yield new VectorMeanClustering(vectors.value)
   }
 
-  object AnswerEntropy extends ArgumentModel[MinEntropyClustering.ClusterMixture] {
+  case object AnswerEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClustering.ClusterMixture] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
       sentences <- features.sentences.full.get
       tokenCounts <- features.argSpans.full.get
@@ -162,7 +167,10 @@ object ClusteringModel {
       indexedTokenProbs = tokenProbs.map { case (qid, qTokenProbs) =>
         qid -> qTokenProbs.map { case (tok, pcount) => tokenVocab.getIndex(tok) -> pcount }
       }
-    } yield new MinEntropyClustering(indexedTokenProbs, tokenVocab.size)
+    } yield (
+      new DirichletMAPClustering(indexedTokenProbs, tokenVocab.size, 0.01),
+      new MinEntropyClustering(indexedTokenProbs, tokenVocab.size)
+    )
   }
 }
 

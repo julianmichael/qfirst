@@ -8,11 +8,17 @@ import cats.implicits._
 
 import scala.collection.immutable.Vector
 
-class SetClustering[I, P](
-  innerAlg: ClusteringAlgorithm { type Index = I; type ClusterParam = P }
-) extends ClusteringAlgorithm {
+class AgglomerativeSetClustering[I, P](
+  innerAlg: AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = P }
+) extends AgglomerativeClusteringAlgorithm {
   type Index = Set[I]
   type ClusterParam = P
+
+  def getSingleInstanceParameter(
+    index: Index
+  ): ClusterParam = {
+    innerAlg.estimateParameterHard(index.toVector)
+  }
 
   def getInstanceLoss(
     index: Index,
@@ -21,16 +27,22 @@ class SetClustering[I, P](
     aggregateLosses(index.toVector.map(innerAlg.getInstanceLoss(_, param)))
   }
 
-  def estimateParameterSoft(
-    indices: Vector[Index],
-    assignmentProbabilities: Vector[Double]
+  // def estimateParameterSoft(
+  //   indices: Vector[Index],
+  //   assignmentProbabilities: Vector[Double]
+  // ): ClusterParam = {
+  //   val (allIndices, allAssignmentProbabilities) = {
+  //     indices.zip(assignmentProbabilities).flatMap { case (index, prob) =>
+  //       index.toVector.map(_ -> prob)
+  //     }.unzip
+  //   }
+  //   innerAlg.estimateParameterSoft(allIndices, allAssignmentProbabilities)
+  // }
+
+  override def estimateParameterHard(
+    indices: Vector[Index]
   ): ClusterParam = {
-    val (allIndices, allAssignmentProbabilities) = {
-      indices.zip(assignmentProbabilities).flatMap { case (index, prob) =>
-        index.toVector.map(_ -> prob)
-      }.unzip
-    }
-    innerAlg.estimateParameterSoft(allIndices, allAssignmentProbabilities)
+    innerAlg.estimateParameterHard(indices.flatten)
   }
 
   override val mergeParamsEfficient: Option[

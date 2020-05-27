@@ -62,11 +62,17 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   val numFlatClusters = 100 // TODO small for testing. make big.
-  val flatClusteringSoftStoppingDelta = 0.00000001
-  val flatClusteringHardStoppingDelta = 0.00000001
+  val flatClusteringSoftStoppingDelta = 1e-10
   val flatClusteringTempSched = (x: Int) => {
     if(x <= 3) 1.0
     else scala.math.pow(0.8, x - 3)
+  }
+  val flatClusteringHardStoppingDelta = 1e-10
+
+  // not currently in use
+  val flatClusteringPriorEstimator = (counts: Map[Int, Int], numClusters: Int) => {
+    // smoothes with dirichlet, then inverts the odds.
+    invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 10000))
   }
 
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
@@ -94,31 +100,37 @@ object FrameInductionApp extends CommandIOApp(
               .infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
               Log.trace(renderVerbType(verbType)) >> {
                 features.args.full.get.map(_.apply(verbType)) >>= { argIdSet =>
-                  model.create(features, verbType).map { algorithm =>
+                  model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
                     // some of them arg empty, gotta skip
-                    NonEmptyVector.fromVector(argIdSet.toVector).map { nonEmptyArgIds =>
+                    NonEmptyVector.fromVector(argIdSet.toVector).traverse { nonEmptyArgIds =>
                       val argIds = nonEmptyArgIds.toVector
                       if(argIds.size <= numFlatClusters) { // we can immediately do agglom. clustering
-                        val (argClusterTree, finalParams) = algorithm.runFullAgglomerativeClustering(
+                        val (argClusterTree, finalParams) = agglomAlgorithm.runFullAgglomerativeClustering(
                           NonEmptyVector.fromVector(argIds).get
                         )
-                        verbType -> argClusterTree.map(Set(_))
+                        IO.pure(verbType -> argClusterTree.map(Set(_)))
                       } else { // we need a flat pre-clustering step
-                        val initParams = algorithm.initPlusPlus(argIds, numFlatClusters)
+                        val initParams = flatAlgorithm.initPlusPlus(argIds, numFlatClusters)
                         // val (postSoftEMParams, _, _) = algorithm.runSoftEM(
                         //   initParams, argIds, flatClusteringSoftStoppingDelta, flatClusteringTempSched
                         // )
-                        val (postHardEMParams, hardEMAssignments, _) = algorithm.runHardEM(
-                          initParams, argIds, flatClusteringHardStoppingDelta
-                        )
-                        val hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
-                          case (_, indices) => indices.map(i => argIds(i._2)).toSet
-                        }
-                        val setClusteringAlg = new SetClustering(algorithm)
-                        val (argSetClusterTree, finalParams) = setClusteringAlg.runFullAgglomerativeClustering(
-                          NonEmptyVector.fromVector(hardEMClusters).get
-                        )
-                        verbType -> argSetClusterTree
+                        for {
+                          allHardEMTrials <- (1 to 3).toList.traverse(i =>
+                            Log.traceBranch(s"Flat clustering trial $i")(
+                              flatAlgorithm.runHardEM(
+                                initParams, argIds, flatClusteringHardStoppingDelta//, flatClusteringPriorEstimator
+                              )
+                            )
+                          )
+                          hardEMAssignments = allHardEMTrials.minBy(_._3)._2
+                          hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
+                            case (_, indices) => indices.map(i => argIds(i._2)).toSet
+                          }
+                          setClusteringAlg = new AgglomerativeSetClustering(agglomAlgorithm)
+                          argSetClusterTree = setClusteringAlg.runFullAgglomerativeClustering(
+                            NonEmptyVector.fromVector(hardEMClusters).get
+                          )._1
+                        } yield verbType -> argSetClusterTree
                       }
                     }
                   }
@@ -144,11 +156,15 @@ object FrameInductionApp extends CommandIOApp(
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
         import ClusteringModel._
         val argumentModel = QuestionEntropy
+
+        // val model = Joint(argumentModel)
+
+        ???
+
         // val argumentModel = Composite.argument(
         //   QuestionEntropy -> 1.0,
         //   AnswerEntropy -> 1.0
         // )
-        val model = Joint(argumentModel)
         // val model = Composite.withJoint(
         //   VerbSqDist -> (1.0 / 200),
         //   Joint(argumentModel) -> 1.0
@@ -167,24 +183,25 @@ object FrameInductionApp extends CommandIOApp(
         //     ) -> 1.0,
         //   Joint(questionModel) -> 1.0
         // )
-        Log.infoBranch("Initializing model features")(model.init(features)) >>
-          features.verbArgSets.full.get >>= (
-            _.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-              val verbIds = NonEmptyVector.fromVector(verbs.value.keySet.toVector).get
-              Log.trace(renderVerbType(verbType)) >> {
-                for {
-                  argumentAlgorithm <- argumentModel.create(features, verbType)
-                  algorithm <- model.create(features, verbType)
-                  (verbClusterTree, finalParams) <- IO(algorithm.runFullAgglomerativeClustering(verbIds))
-                  argumentClusterTree = argumentAlgorithm.finishAgglomerativeClustering(finalParams)._1
-                } yield verbType -> VerbClusterModel(
-                  verbType,
-                  verbClusterTree,
-                  argumentClusterTree
-                )
-              }
-            }.map(_.toMap)
-          )
+
+        // Log.infoBranch("Initializing model features")(model.init(features)) >>
+        //   features.verbArgSets.full.get >>= (
+        //     _.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+        //       val verbIds = NonEmptyVector.fromVector(verbs.value.keySet.toVector).get
+        //       Log.trace(renderVerbType(verbType)) >> {
+        //         for {
+        //           argumentAlgorithm <- argumentModel.create(features, verbType)
+        //           algorithm <- model.create(features, verbType)
+        //           (verbClusterTree, finalParams) <- IO(algorithm.runFullAgglomerativeClustering(verbIds))
+        //           argumentClusterTree = argumentAlgorithm.finishAgglomerativeClustering(finalParams)._1
+        //         } yield verbType -> VerbClusterModel(
+        //           verbType,
+        //           verbClusterTree,
+        //           argumentClusterTree
+        //         )
+        //       }
+        //     }.map(_.toMap)
+        //   )
       }
     )
   }

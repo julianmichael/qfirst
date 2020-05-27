@@ -19,21 +19,21 @@ import scala.collection.immutable.Vector
 // breaking monotonicity thanks to the smoothing and concentration effects of the Dirichlet prior.
 // In particular, combining identical indices will reduce the total loss
 // (instead of keeping it constant, as with MinEntropyClustering).
-class DirichletMAPClustering(
-  instances: Vector[Map[Int, Int]],
+class DirichletMAPClustering[I](
+  getInstance: I => Map[Int, Double],
   vocabSize: Int,
   clusterConcentrationParameter: Double
 ) extends FlatClusteringAlgorithm {
 
-  type Index = Int
+  type Index = I
   type ClusterParam = DenseMultinomial
 
   def getInstanceLoss(
     index: Index,
     param: ClusterParam
   ): Double = {
-    instances(index).iterator.map { case (item, count) =>
-      math.log(param.probabilityOf(item)) * count
+    getInstance(index).iterator.map { case (item, pcount) =>
+      math.log(param.probabilityOf(item)) * pcount
     }.sum * -1
   }
 
@@ -45,7 +45,7 @@ class DirichletMAPClustering(
       .zip(assignmentProbabilities.iterator)
       .filter(_._2 > 0.0) // ignore zero weights
       .map { case (index, prob) =>
-        instances(index).transform { case (_, c) => prob * c } // expected counts
+        getInstance(index).transform { case (_, c) => prob * c } // expected counts
       }.foldLeft(Map.empty[Int, Double])(_ |+| _)
     dirichletPosteriorFromSparseNew(
       pseudoCounts, vocabSize, clusterConcentrationParameter

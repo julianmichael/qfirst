@@ -20,13 +20,27 @@ object MinEntropyClustering {
   case class ClusterMixture(counts: DenseVector[Double], total: Double)
 }
 // TODO maybe sparse vectors ... or dense, since they need to be constructed for cluster params anyway? or maybe that would just use way too much memory
+// Doesn't allow for flat clustering, because assigns infinite loss to zero-probability items.
+// TODO could perhaps modify EM algorithm to account for this, but doesn't seem worth it.
 class MinEntropyClustering[I](
   getInstance: I => Map[Int, Double],
   vocabSize: Int
-) extends ClusteringAlgorithm {
+) extends AgglomerativeClusteringAlgorithm {
   import MinEntropyClustering._
   type ClusterParam = ClusterMixture
   type Index = I
+
+  def getSingleInstanceParameter(
+    index: Index
+  ): ClusterParam = {
+    val arr = new Array[Double](vocabSize)
+    var total = 0.0
+    getInstance(index).foreach { case (index, pcount) =>
+      arr(index) += pcount
+      total = total + pcount
+    }
+    ClusterMixture(DenseVector(arr), total)
+  }
 
   // loss is entropy * num elements (same as likelihood under MLE in our case)
   def getInstanceLoss(
@@ -58,6 +72,13 @@ class MinEntropyClustering[I](
         }
       }
     ClusterMixture(DenseVector(arr), total)
+  }
+
+  // could maybe make more efficient by copying code
+  override def estimateParameterHard(
+    indices: Vector[Index],
+    ): ClusterParam = {
+    estimateParameterSoft(indices, indices.as(1.0))
   }
 
   // can do efficient merge by summing counts
