@@ -47,10 +47,15 @@ package object models {
   }
 
   // alpha is TOTAL of prior counts
-  def dirichletPosteriorFromDense[A](pseudoCounts: Vector[Double], alpha: Double) = {
+  def dirichletPosteriorFromDense[A](pseudoCounts: Vector[Double], alpha: Double): Vector[Double] = {
     val priorCount = alpha / pseudoCounts.size
     val normalization = pseudoCounts.sum + alpha
     pseudoCounts.map(pc => (pc + priorCount) / normalization)
+  }
+
+  def dirichletPosteriorFromDense[A](pseudoCounts: DenseVector[Double], alpha: Double): DenseMultinomial = {
+    val priorCount = alpha / pseudoCounts.size
+    Multinomial(pseudoCounts *:* priorCount)
   }
 
   // alpha is TOTAL of prior counts
@@ -63,8 +68,6 @@ package object models {
     }
   }
 
-  import breeze.linalg._
-  import breeze.stats.distributions._
   // alpha is TOTAL of prior counts
   def dirichletPosteriorFromSparseNew[A](pseudoCounts: Map[Int, A], supportSize: Int, alpha: Double)(implicit N: Numeric[A]) = {
     val priorCount = alpha / supportSize
@@ -89,6 +92,9 @@ package object models {
     def updateAndGet(f: A => A): F[A] = ref.modify { a =>
       val newA = f(a)
       (newA, newA)
+    }
+    def getAndUpdate(f: A => A): F[A] = ref.modify { a =>
+      (f(a), a)
     }
   }
 

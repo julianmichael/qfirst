@@ -287,69 +287,35 @@ class GoldQasrlFeatures(
       .flatMap { case ((split, vidToType), qaPairs) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
       FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
-        .evalMap { case QGen.SentencePrediction(sid, sentenceTokens, verbs) =>
-          verbs.foldMapM { case QGen.VerbPrediction(vi, spanPreds) =>
+        .map { case QGen.SentencePrediction(sid, sentenceTokens, verbs) =>
+          verbs.foldMap { case QGen.VerbPrediction(vi, spanPreds) =>
             val verbId = VerbId(sid, vi)
             // verbId may not be present if all QAs were filtered out (ie it was a bad predicate)
-            vidToType.value.get(verbId).foldMapM { verbType =>
+            vidToType.value.get(verbId).foldMap { verbType =>
               val qas = qaPairs(verbType).value(verbId)
-              // NOTE: keeping this around as a test case for freelog.
-              // Exposed two bugs:
-              //  - color of nested log ending up on continued branches inserted after explicitly logged newlines
-              //  - incorrect number of lines deleted on each rewind (wasn't due to wrap)
-              // import io.circe.syntax._
-              // Log.trace(sid) >>
-              //   Log.trace(sentenceTokens.mkString(", ")) >>
-              //   Log.trace(verbId.toString) >>
-              //   qas.toList.traverse { case (cq, spanLists) =>
-              //     Log.trace(
-              //       cq.questionString + ": " +
-              //         spanLists.map(_.mkString(", ")).mkString("; ")
-              //     )
-              //   } >>
-              //   spanPreds.traverse(sp =>
-              //     Log.trace(
-              //       f"${sp.span}%s: ${sp.spanProb}%.4f\n" +
-              //         sp.questions.toList.map { case (qt, p) =>
-              //           f"\t${qt.toTemplateString}%s\t$p%.4f"
-              //         }.mkString("\n")
-              //     )
-              //   ) >>
-              //   spanPreds.traverse(sp =>
-              //     IO(
-              //       System.err.println(
-              //         f"${sp.span}%s: ${sp.spanProb}%.4f\n" +
-              //           sp.questions.toList.map { case (qt, p) =>
-              //             f"\t${qt.toTemplateString}%s\t$p%.4f"
-              //           }.mkString("\n")
-              //       )
-              //     )
-              //   ) >>
-              IO(
-                Map(
-                  verbType -> NonMergingMap(
-                    qas.map { case (cq, spanLists) =>
-                      // We might miss a few spans, which were judged very low probability by the model
-                      // so they weren't decoded.
-                      val spanPredLists = spanLists
-                        .map(_.flatMap(s => spanPreds.find(_.span == s)))
-                        .filter(_.nonEmpty)
-                      if(spanPredLists.isEmpty) {
-                        // back off to gold question (should be rare) if ALL spans in ALL answers are missed
-                        val argId = ArgumentId(verbId, cq)
-                        val qDist = Map(QuestionTemplate.fromClausalQuestion(cq) -> 1.0)
-                        System.err.println(s"oopsie: $argId")
-                        argId -> qDist
-                      } else ArgumentId(verbId, cq) -> spanPredLists.foldMap { localPreds =>
-                        val denom = localPreds.foldMap(_.spanProb) * spanPredLists.size
-                        localPreds.foldMap(
-                          _.questions.transform { case (_, prob) =>
-                            prob / denom
-                          }
-                        )
-                      }
+              Map(
+                verbType -> NonMergingMap(
+                  qas.map { case (cq, spanLists) =>
+                    // We might miss a few spans, which were judged very low probability by the model
+                    // so they weren't decoded.
+                    val spanPredLists = spanLists
+                      .map(_.flatMap(s => spanPreds.find(_.span == s)))
+                      .filter(_.nonEmpty)
+                    if(spanPredLists.isEmpty) {
+                      // back off to gold question (should be rare) if ALL spans in ALL answers are missed
+                      val argId = ArgumentId(verbId, cq)
+                      val qDist = Map(QuestionTemplate.fromClausalQuestion(cq) -> 1.0)
+                      System.err.println(s"oopsie: $argId")
+                      argId -> qDist
+                    } else ArgumentId(verbId, cq) -> spanPredLists.foldMap { localPreds =>
+                      val denom = localPreds.foldMap(_.spanProb) * spanPredLists.size
+                      localPreds.foldMap(
+                        _.questions.transform { case (_, prob) =>
+                          prob / denom
+                        }
+                      )
                     }
-                  )
+                  }
                 )
               )
             }

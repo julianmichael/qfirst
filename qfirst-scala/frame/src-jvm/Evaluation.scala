@@ -68,10 +68,10 @@ object Evaluation {
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, tree) =>
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList.infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, labels) =>
       Log.trace(verbType) >> IO {
-        val labels = argRoleLabels(verbType).value
-        verbType -> getAllClusteringPurityCollocationConfs(tree.map(_.toVector.map(labels)))
+        val tree = argTrees(verbType)
+        verbType -> getAllClusteringPurityCollocationConfs(tree.map(_.toVector.map(labels.value)))
       }
     }.map(_.toMap)
 
@@ -118,10 +118,11 @@ object Evaluation {
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argTrees.toList.infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, tree) =>
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList.infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, allLabels) =>
       Log.trace(verbType) >> IO {
+        val tree = argTrees(verbType)
         val args = tree.unorderedFold
-        val labels = argRoleLabels(verbType).value.filter { case (k, _) => args.contains(k) }
+        val labels = allLabels.value.filter { case (k, _) => args.contains(k) }
         val argsByGoldLabel = labels.toList
           .groupBy(p => if(useSenseSpecificRoles) p._2 else p._2.role)
           .map { case (label, argPairs) => label -> argPairs.map(_._1) }
@@ -302,6 +303,10 @@ object Evaluation {
       val Log = logger |+| fileLogger
       for {
         allTuningResults <- Ref[IO].of(Map.empty[String, List[(Double, WeightedPR)]])
+        _ <- Log.info {
+          val stats = getTunedWeightedStats(allStats, _.toList.maxBy(_.precision))
+          s"Max precision: ${getMetricsString(stats)}"
+        }
         _ <- Log.infoBranch("Oracle tuning") {
           val logBound = 10
           val betas = (-logBound to logBound).toList.map(scala.math.pow(1.2, _))

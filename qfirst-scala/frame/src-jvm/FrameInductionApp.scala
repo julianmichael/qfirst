@@ -61,18 +61,69 @@ object FrameInductionApp extends CommandIOApp(
     // (1 to 9).map(_.toDouble / 10.0).toList.map(ModelConfig.Interpolated(_))
   }
 
-  val numFlatClusters = 100 // TODO small for testing. make big.
-  val flatClusteringSoftStoppingDelta = 1e-10
-  val flatClusteringTempSched = (x: Int) => {
-    if(x <= 3) 1.0
-    else scala.math.pow(0.8, x - 3)
-  }
-  val flatClusteringHardStoppingDelta = 1e-10
+  import breeze.linalg.DenseVector
+  import breeze.stats.distributions.Multinomial
 
-  // not currently in use
-  val flatClusteringPriorEstimator = (counts: Map[Int, Int], numClusters: Int) => {
+  val numFlatClusters = 100 // TODO small for testing. make big.
+
+  // soft EM hyperparams
+  val flatClusteringSoftStoppingDelta = 1e-9
+  val flatClusteringTempSched = (x: Int) => scala.math.pow(0.8, x)
+  val flatClusteringPriorEstimatorDense = (counts: DenseVector[Double]) => {
     // smoothes with dirichlet, then inverts the odds.
-    invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 10000))
+    invertOdds(dirichletPosteriorFromDense(counts, 1000))
+  }
+  // hard EM hyperparams
+  val flatClusteringHardStoppingDelta = 1e-10
+  val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
+    // smoothes with dirichlet, then inverts the odds.
+    // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
+    // always assume uniform prior --- seems to work just as well if not better
+    Multinomial(DenseVector.ones[Double](numClusters))
+  }
+
+  def runCombinedClustering[I, FP, AP](
+    indices: NonEmptyVector[I],
+    flatAlgorithm: FlatClusteringAlgorithm { type Index = I; type ClusterParam = FP },
+    agglomAlgorithm: AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = AP })(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[(MergeTree[Set[I]], AP)] = {
+    if(indices.size <= numFlatClusters) { // we can immediately do agglom. clustering
+      IO {
+        val (argClusterTree, params) = agglomAlgorithm.runFullAgglomerativeClustering(indices)
+        argClusterTree.map(Set(_)) -> params
+      }
+    } else { // we need a flat pre-clustering step
+      val indicesVec = indices.toVector
+      for {
+        _ <- Log.info(s"Pre-clustering ${indices.size} items.")
+        allEMTrials <- (1 to 3).toList.traverse(i =>
+          Log.traceBranch(s"Flat clustering trial $i")(
+            for {
+              initModel <- IO(flatAlgorithm.initPlusPlus(indicesVec, numFlatClusters))
+              // softEMModel <- flatAlgorithm.runSoftEM(
+              //   initModel, argIds,
+              //   flatClusteringSoftStoppingDelta,
+              //   flatClusteringTempSched,
+              //   flatClusteringPriorEstimatorDense
+              // ).map(_._1)
+              res <- flatAlgorithm.runHardEM(
+                initModel /*softEMModel*/, indicesVec,
+                flatClusteringHardStoppingDelta,
+                flatClusteringPriorEstimatorSparse
+              )
+            } yield res
+          )
+        )
+        hardEMAssignments = allEMTrials.filterNot(_._3.isNaN).minBy(_._3)._2
+        hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
+          case (_, is) => is.map(i => indicesVec(i._2)).toSet
+        }
+        setClusteringAlg = new AgglomerativeSetClustering(agglomAlgorithm)
+      } yield setClusteringAlg.runFullAgglomerativeClustering(
+        NonEmptyVector.fromVector(hardEMClusters).get
+      )
+    }
   }
 
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
@@ -98,39 +149,13 @@ object FrameInductionApp extends CommandIOApp(
           features.verbArgSets.full.get >>= (
             _.toList
               .infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-              Log.trace(renderVerbType(verbType)) >> {
+              Log.info(renderVerbType(verbType)) >> {
                 features.args.full.get.map(_.apply(verbType)) >>= { argIdSet =>
                   model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
                     // some of them arg empty, gotta skip
                     NonEmptyVector.fromVector(argIdSet.toVector).traverse { nonEmptyArgIds =>
-                      val argIds = nonEmptyArgIds.toVector
-                      if(argIds.size <= numFlatClusters) { // we can immediately do agglom. clustering
-                        val (argClusterTree, finalParams) = agglomAlgorithm.runFullAgglomerativeClustering(
-                          NonEmptyVector.fromVector(argIds).get
-                        )
-                        IO.pure(verbType -> argClusterTree.map(Set(_)))
-                      } else { // we need a flat pre-clustering step
-                        val initParams = flatAlgorithm.initPlusPlus(argIds, numFlatClusters)
-                        // val (postSoftEMParams, _, _) = algorithm.runSoftEM(
-                        //   initParams, argIds, flatClusteringSoftStoppingDelta, flatClusteringTempSched
-                        // )
-                        for {
-                          allHardEMTrials <- (1 to 3).toList.traverse(i =>
-                            Log.traceBranch(s"Flat clustering trial $i")(
-                              flatAlgorithm.runHardEM(
-                                initParams, argIds, flatClusteringHardStoppingDelta//, flatClusteringPriorEstimator
-                              )
-                            )
-                          )
-                          hardEMAssignments = allHardEMTrials.minBy(_._3)._2
-                          hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
-                            case (_, indices) => indices.map(i => argIds(i._2)).toSet
-                          }
-                          setClusteringAlg = new AgglomerativeSetClustering(agglomAlgorithm)
-                          argSetClusterTree = setClusteringAlg.runFullAgglomerativeClustering(
-                            NonEmptyVector.fromVector(hardEMClusters).get
-                          )._1
-                        } yield verbType -> argSetClusterTree
+                      runCombinedClustering(nonEmptyArgIds, flatAlgorithm, agglomAlgorithm).map {
+                        case (argSetClusterTree, finalParams) => verbType -> argSetClusterTree
                       }
                     }
                   }

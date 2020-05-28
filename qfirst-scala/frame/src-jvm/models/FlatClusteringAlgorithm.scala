@@ -117,16 +117,22 @@ trait FlatClusteringAlgorithm {
   def softEStep(
     indices: Vector[Index],
     model: Vector[ClusterParam],
-    temperature: Double = 1.0
+    temperature: Double = 1.0,
+    clusterPrior: DenseMultinomial
   ): (Vector[DenseMultinomial], Vector[Double]) = {
-    val allLosses = indices.map(i => model.map(p => getInstanceLoss(i, p)))
-    val assignments = allLosses.map { v =>
-      val vec = DenseVector(v.toArray) *:* (-1.0 / temperature) // from unnormalized neg log likelihoods to unnorm log likelihoods
-      val probs = exp(vec - logSumExp(vec)) // normalized likelihoods
-      Multinomial(probs) // assume uniform prior -> likelihoods are assignment probabilities
-    }
-    val instanceLosses = assignments.map(_.sum)
-    (assignments, instanceLosses)
+    val clusterLogProbs = log(clusterPrior.params /:/ clusterPrior.sum)
+    indices.map { index =>
+      // compute negative log likelihood of the data under each assignment
+      val negLogLikelihoods = DenseVector(model.map(p => getInstanceLoss(index, p)).toArray) - clusterLogProbs
+      // assign to clusters using a temperature adjustment on the likelihoods
+      val probs = {
+        val logits = negLogLikelihoods *:* (-1.0 / temperature)
+        exp(logits - logSumExp(logits))
+      }
+      // compute loss by expectation of NLL over the assignment
+      val totalLoss = sum(probs *:* negLogLikelihoods)
+      Multinomial(probs) -> totalLoss
+    }.unzip
   }
 
   def softMStep(
@@ -140,94 +146,96 @@ trait FlatClusteringAlgorithm {
     }
   }
 
+  import cats.Monad
   import cats.effect.IO
-  import cats.Id
+  import cats.effect.concurrent.Ref
+
   import freelog.EphemeralTreeLogger
-
-
-  // def runSoftEMPure(
-  //   initModel: Vector[ClusterParam],
-  //   indices: Vector[Index],
-  //   stoppingThreshold: Double,
-  //   temperatureSchedule: Int => Double = (n: Int) => 1.0)(
-  //   implicit Log: EphemeralTreeLogger[IO, String]
-  // ): IO[(Vector[ClusterParam], Vector[DenseMultinomial], Double)] = IO {
-  //   val (initAssignments, initStepLosses) = softEStep(indices, initModel, temperatureSchedule(0))
-  //   for {
-  //     assignmentsAndLosses <- Ref[IO].of(initAssignments -> initStepLosses)
-  //     losses <- Ref[IO].of(List(mean(initStepLosses)))
-  //     model <- Ref[IO].of(initModel)
-  //     stepNum <- Ref[IO].of(1: Int)
-  //     shouldContinue = losses.get >>= {
-  //       case last :: secondLast :: _ => (secondLast - last) > stoppingThreshold
-  //       case _ => true
-  //     }
-  //     _ <- shouldContinue.whileM_ {
-  //       for {
-  //         curAssignments <- assignmentsAndLosses.get.map(_._1)
-  //         curModel <- model.updateAndGet(softMStep)
-  //       }
-  //     }
-  //   }
-  //   var (assignments, stepLosses) = softEStep(indices, initModel, temperatureSchedule(0))
-  //   var losses: List[Double] = List(mean(stepLosses))
-  //   var model: Vector[ClusterParam] = initModel
-  //   var stepNum = 1
-  //   def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
-  //   def shouldContinue = getDelta.forall(_ > stoppingThreshold)
-  //   while(shouldContinue) {
-  //     model = softMStep(model.size, indices, assignments)
-  //     val p = softEStep(indices, model, temperatureSchedule(stepNum))
-  //     assignments = p._1
-  //     stepLosses = p._2
-  //     val loss = mean(stepLosses)
-  //     losses = loss :: losses
-  //     stepNum = stepNum + 1
-  //     if(shouldLog) {
-  //       println("=== Stepping ===")
-  //       val prior = assignments.map(a => a.params / a.sum).reduce(_ + _) / assignments.size.toDouble
-  //       println(s"Prior: " + prior.toScalaVector.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
-  //       println(s"Loss: $loss")
-  //     }
-  //   }
-  //   if(shouldLog) {
-  //     println("=== Stopped ===")
-  //   }
-  //   (model, assignments, losses.head)
-  // }
 
   def runSoftEM(
     initModel: Vector[ClusterParam],
     indices: Vector[Index],
     stoppingThreshold: Double,
-    temperatureSchedule: Int => Double = (n: Int) => 1.0)(
+    temperatureSchedule: Int => Double = (n: Int) => 1.0,
+    estimateClusterPrior: DenseVector[Double] => DenseMultinomial = v => Multinomial(DenseVector.ones(v.size)))(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): (Vector[ClusterParam], Vector[DenseMultinomial], Double) = {
-    def sendLog(x: String) = Log.trace(x).unsafeRunSync()
-    IO {
-      var (assignments, stepLosses) = softEStep(indices, initModel, temperatureSchedule(0))
-      var losses: List[Double] = List(mean(stepLosses))
-      var model: Vector[ClusterParam] = initModel
-      var stepNum = 1
-      def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
-      def shouldContinue = getDelta.forall(_ > stoppingThreshold)
-      while(shouldContinue) {
-        model = softMStep(model.size, indices, assignments)
-        val p = softEStep(indices, model, temperatureSchedule(stepNum))
-        assignments = p._1
-        stepLosses = p._2
-        val loss = mean(stepLosses)
-        losses = loss :: losses
-        stepNum = stepNum + 1
-
-        sendLog("=== Stepping ===")
-        val prior = assignments.map(a => a.params / a.sum).reduce(_ + _) / assignments.size.toDouble
-        sendLog(s"Prior: " + prior.toScalaVector.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
-        sendLog(s"Loss: $loss")
+  ): IO[(Vector[ClusterParam], Vector[DenseMultinomial], Double)] = {
+    val numClusters = initModel.size
+    val (initAssignments, initStepLosses) = softEStep(indices, initModel, temperatureSchedule(0), estimateClusterPrior(DenseVector.ones(numClusters)))
+    for {
+      assignmentsAndLosses <- Ref[IO].of(initAssignments -> initStepLosses)
+      losses <- Ref[IO].of(List(mean(initStepLosses)))
+      model <- Ref[IO].of(initModel)
+      stepNum <- Ref[IO].of(0)
+      shouldContinue = losses.get.map {
+        case last :: secondLast :: _ => (secondLast - last) > stoppingThreshold
+        case _ => true
       }
-      (model, assignments, losses.head)
-    }.unsafeRunSync()
+      _ <- Log.traceBranch("Running Soft EM") {
+        Monad[IO].whileM_(shouldContinue) {
+          for {
+            _ <- Log.rewind
+            curStepNum <- stepNum.updateAndGet(_ + 1)
+            curAssignments <- assignmentsAndLosses.get.map(_._1)
+            curModel <- model.updateAndGet(_ => softMStep(numClusters, indices, curAssignments))
+            clusterPrior = estimateClusterPrior(
+              curAssignments.map(_.params).reduce(_ + _) /:/ curAssignments.foldMap(_.sum)
+            )
+            (newAssignments, newLosses) <- assignmentsAndLosses.updateAndGet(_ =>
+              softEStep(indices, curModel, temperatureSchedule(curStepNum), clusterPrior)
+            )
+            newLoss = mean(newLosses)
+            _ <- losses.update(newLoss :: _)
+            _ <- Log.trace {
+              val empiricalPrior = newAssignments.map(_.params).reduce(_ + _) /:/ newAssignments.foldMap(_.sum)
+              val priorString = empiricalPrior.toScalaVector.sortBy(-_).take(10).map(x => f"$x%.3f").mkString(", ") + " ..."
+              s"""Step $curStepNum
+                 |Loss: $newLoss
+                 |Prior: $priorString
+               """.trim.stripMargin
+            }
+          } yield ()
+        }
+      }
+      finalModel <- model.get
+      finalAssignments <- assignmentsAndLosses.get.map(_._1)
+      finalLoss <- losses.get.map(_.head)
+    } yield (finalModel, finalAssignments, finalLoss)
   }
+
+  // def runSoftEM(
+  //   initModel: Vector[ClusterParam],
+  //   indices: Vector[Index],
+  //   stoppingThreshold: Double,
+  //   estimateClusterPrior: (Map[Int, Int], Int) => DenseMultinomial = (_, numClusters) => Multinomial(DenseVector.ones(numClusters)))(
+  //   implicit Log: EphemeralTreeLogger[IO, String]
+  // ): (Vector[ClusterParam], Vector[DenseMultinomial], Double) = {
+  //   def sendLog(x: String) = Log.trace(x).unsafeRunSync()
+  //   IO {
+  //     var (assignments, stepLosses) = softEStep(indices, initModel, temperatureSchedule(0))
+  //     var losses: List[Double] = List(mean(stepLosses))
+  //     var model: Vector[ClusterParam] = initModel
+  //     var stepNum = 1
+  //     def getDelta = (losses.get(1), losses.get(0)).mapN(_ - _)
+  //     def shouldContinue = getDelta.forall(_ > stoppingThreshold)
+  //     while(shouldContinue) {
+  //       model = softMStep(model.size, indices, assignments)
+  //       val p = softEStep(indices, model, temperatureSchedule(stepNum))
+  //       assignments = p._1
+  //       stepLosses = p._2
+  //       val loss = mean(stepLosses)
+  //       losses = loss :: losses
+  //       stepNum = stepNum + 1
+
+  //       sendLog("=== Stepping ===")
+  //       val prior = assignments.map(a => a.params / a.sum).reduce(_ + _) / assignments.size.toDouble
+  //       sendLog(s"Prior: " + prior.toScalaVector.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
+  //       sendLog(s"Loss: $loss")
+  //     }
+  //     (model, assignments, losses.head)
+  //   }.unsafeRunSync()
+  // }
+
 
   def hardEStep(
     indices: Vector[Index],
@@ -239,9 +247,8 @@ trait FlatClusteringAlgorithm {
       val clusterLosses = model.zipWithIndex.map { case (clusterParam, clusterIndex) =>
         getInstanceLoss(i, clusterParam) - clusterPrior.logProbabilityOf(clusterIndex)
       }
-      clusterLosses.zipWithIndex.minBy(_._1).swap
-      // TODO choose randomly
-      // clusterLosses.zipWithIndex.maximaBy(_._1)
+      val best = clusterLosses.zipWithIndex.minimaBy(_._1)
+      best(rand.nextInt(best.size)).swap
     }.unzip
   }
 
@@ -256,48 +263,6 @@ trait FlatClusteringAlgorithm {
       )
     }
   }
-
-  def runHardEMImpure(
-    initModel: Vector[ClusterParam],
-    indices: Vector[Index],
-    stoppingThreshold: Double,
-    estimateClusterPrior: (Map[Int, Int], Int) => DenseMultinomial = (_, numClusters) => Multinomial(DenseVector.ones(numClusters)))(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): (Vector[ClusterParam], Vector[Int], Double) = {
-    implicit val rand = new scala.util.Random()
-    def sendLog(x: String) = Log.trace(x).unsafeRunSync()
-    IO {
-      var (assignments, stepLosses) = hardEStep(
-        indices, initModel, estimateClusterPrior(initModel.indices.map(_ -> 1).toMap, initModel.size)
-      )
-      var losses: List[Double] = List(mean(stepLosses))
-      var model: Vector[ClusterParam] = initModel
-      def getDelta() = (losses.get(1), losses.get(0)).mapN(_ - _)
-      def shouldContinue() = getDelta().forall(_ > stoppingThreshold)
-
-      while(shouldContinue()) {
-        // TODO clean up this part with better data types
-        // estimate cluster parameters
-        model = hardMStep(model.size, indices, assignments)
-        val clusterPrior = estimateClusterPrior(assignments.counts, initModel.size)
-
-        val p = hardEStep(indices, model, clusterPrior)
-        assignments = p._1
-        stepLosses = p._2
-        val loss = mean(stepLosses)
-        losses = loss :: losses
-
-        sendLog("=== Stepping ===")
-        val prior = assignments.counts.values.toVector.map(_ / assignments.size.toDouble)
-        sendLog(s"Prior: " + prior.sortBy(-_).take(30).map(x => f"$x%.3f").mkString(", "))
-        sendLog(s"Loss: $loss")
-      }
-      (model, assignments, losses.head)
-    }.unsafeRunSync()
-  }
-
-  import cats.Monad
-  import cats.effect.concurrent.Ref
 
   def runHardEM(
     initModel: Vector[ClusterParam],
@@ -318,7 +283,7 @@ trait FlatClusteringAlgorithm {
       assignmentsAndLosses <- Ref[IO].of(initAssignments -> initLosses)
       losses <- Ref[IO].of(List(mean(initLosses)))
       model <- Ref[IO].of(initModel)
-      stepNum <- Ref[IO].of(0)
+      stepNum <- Ref[IO].of(1)
       shouldContinue = losses.get.map {
         case last :: secondLast :: _ => (secondLast - last) > stoppingThreshold
         case _ => true
@@ -333,12 +298,14 @@ trait FlatClusteringAlgorithm {
             (newAssignments, newLosses) <- assignmentsAndLosses.updateAndGet(_ => hardEStep(indices, curModel, clusterPrior))
             newLoss = mean(newLosses)
             _ <- losses.update(newLoss :: _)
-            prior = newAssignments.counts.values.toVector.map(_ / newAssignments.size.toDouble)
-            curStepNum <- stepNum.updateAndGet(_ + 1)
+            curStepNum <- stepNum.getAndUpdate(_ + 1)
             _ <- Log.trace {
+              val prior = newAssignments.counts.values.toVector.map(_ / newAssignments.size.toDouble)
+              val diversity = exp(prior.foldMap(p => -p*log(p)))
               val priorString = prior.sortBy(-_).take(10).map(x => f"$x%.3f").mkString(", ") + " ..."
               s"""Step $curStepNum
                |Loss: $newLoss
+               |Diversity: $diversity
                |Prior: $priorString
              """.trim.stripMargin
             }
