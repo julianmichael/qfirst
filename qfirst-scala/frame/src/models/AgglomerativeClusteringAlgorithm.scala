@@ -524,4 +524,24 @@ trait AgglomerativeClusteringAlgorithm {
       ???
     }
   }
+
+  // TODO: could change merge trees to store ranks, and then keep the original rank in the filtered tree?
+  // maybe this is fine...
+  def filterAndReMerge(tree: MergeTree[Index], f: Index => Option[Index]): Option[MergeTree[Index]] = {
+    tree.cata[Option[(MergeTree[Index], ClusterParam)]](
+      leaf = (loss, oldI) => f(oldI).map { newI =>
+        val param = getSingleInstanceParameter(newI)
+        val loss = getInstanceLoss(newI, param)
+        MergeTree.Leaf(loss, newI) -> param
+      },
+      merge = (loss, leftOpt, rightOpt) => (leftOpt, rightOpt) match {
+        case (l, None) => l
+        case (None, r) => r
+        case (Some((leftTree, leftParam)), Some((rightTree, rightParam))) =>
+          val loss = mergeLoss(leftTree, leftParam, rightTree, rightParam)
+          val param = mergeParams(leftTree, leftParam, rightTree, rightParam)
+          Some(MergeTree.Merge(loss, leftTree, rightTree) -> param)
+      }
+    ).map(_._1)
+  }
 }

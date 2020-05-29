@@ -18,6 +18,16 @@ case class RunData[A](
 
   def run: IO[Unit] = train >> dev >> test >> IO.unit
 
+  def input(implicit mode: RunMode) = if(mode.isSanity) dev else train
+  def eval(implicit mode: RunMode) = if(mode.isTest) test else dev
+  def full(implicit mode: RunMode, m: Monoid[A]) = {
+    if(mode.isSanity) dev
+    else input |+| eval
+  }
+  def all(implicit mode: RunMode, m: Monoid[A]) = {
+    train |+| dev |+| test
+  }
+
   def apply(split: RunData.BaseSplit): IO[A] = split match {
     case RunData.Train => train
     case RunData.Dev => dev
@@ -123,7 +133,8 @@ class RunDataCell[A](
   def eval = if(mode.isTest) test else dev
   val full = new Cell(
     s"$name (full)",
-    for(i <- input.get; e <- eval.get) yield i |+| e
+    if(mode.isSanity) dev.get // don't bother with monoid, though I _think_ it shouldn't hurt.
+    else for(i <- input.get; e <- eval.get) yield i |+| e
   )
   val all = new Cell(
     s"$name (all)",

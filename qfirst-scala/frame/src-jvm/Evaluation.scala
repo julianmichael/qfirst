@@ -36,12 +36,12 @@ object Evaluation {
     def f1 = Functions.harmonicMean(precision, recall)
   }
 
-  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[Vector[A]]): NonEmptyList[ConfStatsPoint] = {
-    val goldClusterSizes = goldLabelTree.unorderedFoldMap(_.counts)
+  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[Map[A, Int]]): NonEmptyList[ConfStatsPoint] = {
+    val goldClusterSizes = goldLabelTree.unorderedFold
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittings.map { clusters =>
-        val clusterLabelCounts = clusters.map(_.unorderedFoldMap(_.counts))
-        val purity = clusterLabelCounts.foldMap { counts =>
+        val clusterLabelCounts = clusters.map(_.unorderedFold)
+        val purity = clusterLabelCounts.filter(_.nonEmpty).foldMap { counts =>
           val primaryLabelCount = counts.values.max
           val total = counts.values.sum
           Proportion.Stats(
@@ -57,31 +57,25 @@ object Evaluation {
           )
         }
         val loss = clusters.foldMap(_.loss)
-        val clusterSizes = clusters.map(_.values.map(_.size).sum)
+        val clusterSizes = clusterLabelCounts.map(_.values.sum)
         ConfStatsPoint(loss, clusterSizes, purity.proportion, collocation.proportion)
       }.toList
     ).get
   }
 
-  def getAllPurityCollocationStats(
-    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
-    argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
-    useSenseSpecificRoles: Boolean)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList.infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, labels) =>
-      Log.trace(verbType) >> IO {
-        val tree = argTrees(verbType)
-        verbType -> getAllClusteringPurityCollocationConfs(tree.map(_.toVector.map(labels.value)))
-      }
-    }.map(_.toMap)
-
-  def getAllClusteringBCubedConfs[A: Order](trues: Set[Duad[A]], tree: MergeTree[Set[A]]): NonEmptyList[ConfStatsPoint] = {
-    val numArgs = tree.unorderedFoldMap(_.size)
+  // TODO: could also do some filtering on the tree, since we only want to include the argument labels in the current gold set.
+  // this calculation seems like it'll work without that (with empty count-maps) but mayb not be efficient.
+  // so just try it first and filter if it needs a speedup.
+  def getAllClusteringBCubedConfs[A](tree: MergeTree[Map[A, Int]]): NonEmptyList[ConfStatsPoint] = {
+    val goldLabelCounts = tree.unorderedFold
+    val goldLabels = goldLabelCounts.keys.toVector
+    val numArgs = goldLabelCounts.values.sum
+    val numTruePairs = goldLabelCounts.unorderedFoldMap(i => i * (i + 1) / 2)
     val numPairs = numArgs * (numArgs + 1) / 2
-    val initConf = BinaryConf.Stats(tp = trues.size, fp = numPairs - trues.size)
+    val initConf = BinaryConf.Stats(tp = numTruePairs, fp = numPairs - numTruePairs)
     val initStats = ConfStatsPoint(tree.loss, Vector(numArgs), initConf.precision, initConf.recall)
     @tailrec
-    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[Set[A]]]): NonEmptyList[ConfStatsPoint] = {
+    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[Map[A, Int]]]): NonEmptyList[ConfStatsPoint] = {
       trees.flatMap(_.deltaOpt).maximumOption match {
         case None => acc
         case Some(maxDelta) =>
@@ -91,13 +85,12 @@ object Evaluation {
               case Some(m) => Right(m)
             }
           ).separate
-          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[Set[A]]) =>
-            val positivesBeingLost = for {
-              l <- m.left.unorderedFold: Set[A]
-              r <- m.right.unorderedFold
-            } yield l <-> r
-            val numTPsLost = positivesBeingLost.filter(trues.contains).size
-            val numFPsLost = positivesBeingLost.size - numTPsLost
+          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[Map[A, Int]]) =>
+            val leftCounts = m.left.unorderedFold
+            val rightCounts = m.right.unorderedFold
+            val numPositivesLost = leftCounts.values.sum * rightCounts.values.sum
+            val numTPsLost = goldLabels.foldMap(l => leftCounts.getOrElse(l, 0) * rightCounts.getOrElse(l, 0))
+            val numFPsLost = numPositivesLost - numTPsLost
             BinaryConf.Stats(
               tp = -numTPsLost,
               fp = -numFPsLost,
@@ -113,30 +106,49 @@ object Evaluation {
     recurseConfs(NonEmptyList.of(initStats), initConf, Vector(tree))
   }
 
+  def getAllPurityCollocationStats(
+    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
+    argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
+    useSenseSpecificRoles: Boolean)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
+    .filter(_._2.value.nonEmpty)
+    .infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, labels) =>
+      Log.trace(verbType) >> IO {
+        if(useSenseSpecificRoles) {
+          val goldCountTree = argTrees(verbType).map(
+            _.unorderedFoldMap(argId => Map(labels.value(argId) -> 1))
+          )
+          verbType -> getAllClusteringPurityCollocationConfs(goldCountTree)
+        } else {
+          val goldCountTree = argTrees(verbType).map(
+            _.unorderedFoldMap(argId => Map(labels.value(argId).role -> 1))
+          )
+          verbType -> getAllClusteringPurityCollocationConfs(goldCountTree)
+        }
+      }
+    }.map(_.toMap)
+
   def getAllBCubedStats(
     argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList.infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, allLabels) =>
-      Log.trace(verbType) >> IO {
-        val tree = argTrees(verbType)
-        val args = tree.unorderedFold
-        val labels = allLabels.value.filter { case (k, _) => args.contains(k) }
-        val argsByGoldLabel = labels.toList
-          .groupBy(p => if(useSenseSpecificRoles) p._2 else p._2.role)
-          .map { case (label, argPairs) => label -> argPairs.map(_._1) }
-        val trues = argsByGoldLabel.values.toList.foldMap { args =>
-          @tailrec def loop(
-            acc: Set[Duad[ArgumentId[ESpan]]],
-            rest: List[ArgumentId[ESpan]]
-          ): Set[Duad[ArgumentId[ESpan]]] = rest match {
-            case head :: tail => loop(acc ++ rest.map(_ <-> head).toSet, tail)
-            case Nil => acc
-          }
-          loop(Set.empty, args.toList)
+  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
+    .filter(_._2.value.nonEmpty)
+    .infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, labels) =>
+      Log.trace(s"$verbType (${labels.value.size} items)") >> IO {
+        if(useSenseSpecificRoles) {
+          val goldCountTree = argTrees(verbType).map(
+            _.unorderedFoldMap(argId => Map(labels.value(argId) -> 1))
+          )
+          verbType -> getAllClusteringBCubedConfs(goldCountTree)
+        } else {
+          val goldCountTree = argTrees(verbType).map(
+            _.unorderedFoldMap(argId => Map(labels.value(argId).role -> 1))
+          )
+          verbType -> getAllClusteringBCubedConfs(goldCountTree)
         }
-        verbType -> getAllClusteringBCubedConfs(trues, tree)
       }
     }.map(_.toMap)
 
@@ -330,36 +342,40 @@ object Evaluation {
             val bestF1 = results.map(_.f1).maximum
             results.filter(_.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
           }
-          val interval = 0.05
           val stats = lossPerItemAll.stats
+          val interval = scala.math.round(stats.quartiles.max - stats.quartiles.min) / 50.0
+          val allStatsSortedByLoss = allStats.transform { case (_, results) =>
+            results.sortBy(-_.lossPerItem)
+          }
           val lossThresholds = (
             scala.math.round(stats.quartiles.min / interval).toInt to scala.math.round(stats.quartiles.max / interval).toInt
           ).map(_ * interval).toList
           for {
             tuningResults <- tuneWeightedStats(
-              lossThresholds, allStats)(
+              lossThresholds, allStatsSortedByLoss)(
               t => stats => {
-                val sortedStats = stats.sortBy(-_.lossPerItem)
-                val qualified = sortedStats.toList.takeWhile(_.lossPerItem > t)
-                qualified.lastOption.getOrElse(sortedStats.head)
+                val qualified = stats.toList.takeWhile(_.lossPerItem > t)
+                qualified.lastOption.getOrElse(stats.head)
               }
             )
             tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-            _ <- Log.info(s"Loss per item (all): ${getMetricsString(lossPerItemAll)}")
-            _ <- Log.info(s"Loss per item (best): ${getMetricsString(lossPerItemBest)}")
+            // _ <- Log.info(s"Loss per item (all): ${getMetricsString(lossPerItemAll)}")
+            // _ <- Log.info(s"Loss per item (best): ${getMetricsString(lossPerItemBest)}")
             _ <- Log.info(s"Tuned results (best loss per item): ${getMetricsString(tunedBest)}")
             _ <- allTuningResults.update(_ + ("loss per item" -> tuningResults))
           } yield ()
         }
         _ <- Log.infoBranch("Constant num clusters tuning") {
-          val thresholds = (1 to 50).toList.map(_.toDouble)
+          val thresholds = (1 to 30).toList.map(_.toDouble)
+          val allStatsSortedByNumClusters = allStats.transform { case (_, results) =>
+            results.sortBy(_.numClusters)
+          }
           for {
             tuningResults <- tuneWeightedStats(
-              thresholds, allStats)(
+              thresholds, allStatsSortedByNumClusters)(
               t => stats => {
-                val sortedStats = stats.sortBy(_.numClusters)
-                val qualified = sortedStats.toList.dropWhile(_.numClusters < t)
-                qualified.headOption.getOrElse(sortedStats.last)
+                val qualified = stats.toList.dropWhile(_.numClusters < t)
+                qualified.headOption.getOrElse(stats.last)
               }
             )
             tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
@@ -368,7 +384,7 @@ object Evaluation {
           } yield ()
         }
         _ <- Log.infoBranch("Square num clusters penalty tuning") {
-          val coeffs = (0 to 100).map(_.toDouble / 5).toList
+          val coeffs = (0 to 50).map(_.toDouble / 2).toList
           val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
             s.loss + (t * scala.math.pow(s.numClusters, 2.0))
           }
@@ -387,17 +403,19 @@ object Evaluation {
         }
         _ <- Log.infoBranch("Cutting delta tuning") {
           val deltasPerItem = (0 to 100).map(_.toDouble / 10).toList
+          val allStatsSortedByLoss = allStats.transform { case (_, results) =>
+            results.sortBy(_.loss)
+          }
           for {
             tuningResults <- tuneWeightedStats(
-              deltasPerItem, allStats)(
+              deltasPerItem, allStatsSortedByLoss)(
               t => stats => {
                 val deltaThreshold = t * stats.head.numItems
-                val sortedStats = stats.sortBy(_.loss)
-                sortedStats.toList.sliding(2)
+                stats.toList.sliding(2)
                   .filter(_.size == 2)
                   .takeWhile(w => w(1).loss - w(0).loss < deltaThreshold)
                   .toList.lastOption
-                  .fold(sortedStats.head)(_(0))
+                  .fold(stats.head)(_(0))
               }
             )
             tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
@@ -406,7 +424,7 @@ object Evaluation {
           } yield tuningResults
         }
         _ <- Log.infoBranch("Total entropy loss tuning") {
-          val coeffs = (0 to 40).map(_.toDouble / 20).toList
+          val coeffs = (-40 to 40).map(_.toDouble / 20).toList
           val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
             val numItems = s.numItems
             s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
@@ -502,6 +520,10 @@ object Evaluation {
     verbIds <- features.verbArgSets.eval.get
     args <- features.args.eval.get
     argRoleLabels <- features.argRoleLabels.eval.get
+    // numGoldClusters = argRoleLabels.transform { case (_, labels) =>
+    //   if(useSenseSpecificRoles) labels.value.values.toSet.size
+    //   else labels.value.values.map(_.role).toSet.size
+    // }
     // calculate B^3 precision-recall curve for each verb
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
