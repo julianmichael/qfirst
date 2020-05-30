@@ -60,15 +60,27 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   protected val rootDir: Path
 
+  val splitLabels: RunDataCell.Labels = new RunDataCell.Labels(mode)
+  object splitDirnames {
+    def train = splitLabels.train
+    def dev = splitLabels.dev
+    def test = splitLabels.test
+    def input = splitLabels.input
+    def full = splitLabels.full
+    def eval = {
+      if(splitLabels.eval == splitLabels.full) splitLabels.eval
+      else s"${splitLabels.full}-filtered-${splitLabels.eval}"
+    }
+    def all = splitLabels.all
+  }
+
   val createDir = (path: Path) => IO(!Files.exists(path))
     .ifM(IO(Files.createDirectories(path)), IO.unit)
 
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
   // for use by frame induction etc.
-  def modelDir = outDir.map(
-    _.resolve("models").resolve(mode.toString)
-  ).flatTap(createDir)
+  def modelDir = outDir.map(_.resolve("models")).flatTap(createDir)
 
   // for inputs to feature computation
   protected def inputDir = rootDir.resolve("input")
@@ -444,7 +456,7 @@ class GoldQasrlFeatures(
   val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
 
   // TODO refactor into RunData framework
-  val evaluationItemsPath = liveDir.map(_.resolve(s"eval-sample-${mode.eval}.jsonl"))
+  val evaluationItemsPath = liveDir.map(_.resolve(s"eval-sample-${splitLabels.eval}.jsonl"))
   val evaluationItems = {
       new Cell(
         "Evaluation items",

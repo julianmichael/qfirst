@@ -3,6 +3,7 @@ package qfirst.frame
 import qfirst.frame.util.Cell
 import qfirst.frame.util.FileCached
 
+import cats.Monad
 import cats.Monoid
 import cats.effect.IO
 import cats.implicits._
@@ -18,15 +19,15 @@ case class RunData[A](
 
   def run: IO[Unit] = train >> dev >> test >> IO.unit
 
-  def input(implicit mode: RunMode) = if(mode.isSanity) dev else train
-  def eval(implicit mode: RunMode) = if(mode.isTest) test else dev
-  def full(implicit mode: RunMode, m: Monoid[A]) = {
-    if(mode.isSanity) dev
-    else input |+| eval
-  }
-  def all(implicit mode: RunMode, m: Monoid[A]) = {
-    train |+| dev |+| test
-  }
+  // def input(implicit mode: RunMode) = if(mode.isSanity) dev else train
+  // def eval(implicit mode: RunMode) = if(mode.isTest) test else dev
+  // def full(implicit mode: RunMode, m: Monoid[A]) = {
+  //   if(mode.isSanity) dev
+  //   else input |+| eval
+  // }
+  // def all(implicit mode: RunMode, m: Monoid[A]) = {
+  //   train |+| dev |+| test
+  // }
 
   def apply(split: RunData.BaseSplit): IO[A] = split match {
     case RunData.Train => train
@@ -129,17 +130,63 @@ class RunDataCell[A](
     case RunData.All => all.get
   }
 
-  def input = if(mode.isSanity) dev else train
-  def eval = if(mode.isTest) test else dev
+  val input = new Cell(
+    s"$name (input)",
+    RunDataCell.constructSplit(mode, RunData.Input, train.get, dev.get, test.get)
+  )
+  val eval = new Cell(
+    s"$name (eval)",
+    RunDataCell.constructSplit(mode, RunData.Eval, train.get, dev.get, test.get)
+  )
   val full = new Cell(
     s"$name (full)",
-    if(mode.isSanity) dev.get // don't bother with monoid, though I _think_ it shouldn't hurt.
-    else for(i <- input.get; e <- eval.get) yield i |+| e
+    RunDataCell.constructSplit(mode, RunData.Full, train.get, dev.get, test.get)
   )
   val all = new Cell(
     s"$name (all)",
-    for(tr <- train.get; de <- dev.get; te <- test.get) yield tr |+| de |+| te
+    RunDataCell.constructSplit(mode, RunData.All, train.get, dev.get, test.get)
   )
 
   def get = RunData(train.get, dev.get, test.get)
+}
+object RunDataCell {
+  def constructSplit[F[_]: Monad, A: Monoid](
+    mode: RunMode, split: RunData.Split,
+    train: F[A], dev: F[A], test: F[A]
+  ): F[A] = {
+    def input = if(mode.isSanity) dev else train
+    def eval = if(mode.isTest) test else dev
+    split match {
+      case RunData.Train => train
+      case RunData.Dev => dev
+      case RunData.Test => test
+      case RunData.Input => input
+      case RunData.Eval => eval
+      case RunData.Full => for(i <- input; e <- eval) yield i |+| e
+      case RunData.All => for(tr <- train; de <- dev; te <- test) yield tr |+| de |+| te
+    }
+  }
+
+  import cats.Id
+
+  private[this] val getIndex = (s: String) => s match {
+    case "train" => 0
+    case "dev" => 1
+    case "test" => 2
+  }
+
+  class Labels(mode: RunMode) {
+
+    def apply(split: RunData.Split) = constructSplit[Id, Set[String]](
+      mode, split, Set("train"), Set("dev"), Set("test")
+    ).toList.sortBy(getIndex).mkString("+")
+
+    def train = apply(RunData.Train)
+    def dev = apply(RunData.Dev)
+    def test = apply(RunData.Test)
+    def input = apply(RunData.Input)
+    def eval = apply(RunData.Eval)
+    def full = apply(RunData.Full)
+    def all  = apply(RunData.All)
+  }
 }

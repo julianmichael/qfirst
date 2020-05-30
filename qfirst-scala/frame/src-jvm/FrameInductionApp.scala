@@ -65,17 +65,17 @@ object FrameInductionApp extends CommandIOApp(
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial
 
-  val numFlatClusters = 20 // TODO small for testing. make big.
+  val numFlatClusters = 50 // TODO small for testing. make big for final runs, maybe.
 
   // soft EM hyperparams
-  val flatClusteringSoftStoppingDelta = 1e-9
+  val flatClusteringSoftStoppingDelta = 1e-8
   val flatClusteringTempSched = (x: Int) => scala.math.pow(0.8, x)
   val flatClusteringPriorEstimatorDense = (counts: DenseVector[Double]) => {
     // smoothes with dirichlet, then inverts the odds.
     invertOdds(dirichletPosteriorFromDense(counts, 1000))
   }
   // hard EM hyperparams
-  val flatClusteringHardStoppingDelta = 1e-10
+  val flatClusteringHardStoppingDelta = 1e-9
   val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
     // smoothes with dirichlet, then inverts the odds.
     // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
@@ -129,17 +129,70 @@ object FrameInductionApp extends CommandIOApp(
     }
   }
 
-  // TODO file-cache original clustering, and then _also_ file-cache eval-filtered clustering.
-  def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    name: String, features: Features[VerbType, Arg],
+  def getEvalArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    modelName: String, features: Features[VerbType, Arg],
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
-    // TODO organize models into subdirs
-    features.modelDir.map(modelDir =>
+    val fullSplit = features.splitLabels.full
+    val evalSplit = features.splitLabels.eval
+    if(fullSplit == evalSplit) getFullArgumentClusters(
+      modelName, features, renderVerbType
+    ) else features.modelDir
+      .map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
+      .flatTap(features.createDir)
+      .map(modelDir =>
       FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
-        s"Argument cluster model: $name")(
-        path = modelDir.resolve(s"$name.jsonl.gz"),
+        s"Argument cluster model $modelName, clustered over $fullSplit, filtered to $evalSplit")(
+        path = modelDir.resolve(s"model.jsonl.gz"),
+        read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
+          .infoCompile("Reading cached filtered models for verbs")(_.toList).map(_.toMap),
+        write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
+        import ClusteringModel._
+        val model = QuestionEntropy
+        for {
+          fullTrees <- getFullArgumentClusters(modelName, features, renderVerbType).flatMap(_.get)
+          _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+          _ <- model.init(features)
+          allEvalArgs <- features.args.eval.get
+          results <- fullTrees.toList.infoBarTraverse("Filtering verb cluster trees") { case (verbType, fullTree) =>
+            Log.info(renderVerbType(verbType)) >> {
+              // some of them arg empty, gotta skip
+              val proc = for {
+                evalArgs <- OptionT.fromOption[IO](Option(allEvalArgs(verbType)).filter(_.nonEmpty))
+                // if evalArgs.nonEmpty
+                (flatAlgorithm, agglomAlgorithm) <- OptionT.liftF(model.create(features, verbType))
+                setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
+                evalTree <- OptionT.fromOption[IO](
+                  setAgglomAlgorithm.filterAndReMerge(
+                    fullTree,
+                    indices => Option(indices.intersect(evalArgs)).filter(_.nonEmpty)
+                  )
+                )
+              } yield verbType -> evalTree
+
+              proc.value
+            }
+          }
+        } yield results.flatten.toMap
+      }
+    )
+  }
+
+  // TODO organize models into subdirs and cache
+  def getFullArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    modelName: String, features: Features[VerbType, Arg],
+    renderVerbType: VerbType => String)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
+    val split = features.splitLabels.full
+    features.modelDir
+      .map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
+      .flatTap(features.createDir)
+      .map(modelDir =>
+        FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
+        s"Argument cluster model: $modelName. Clustering data from $split")(
+        path = modelDir.resolve(s"model.jsonl.gz"),
         read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
@@ -152,28 +205,19 @@ object FrameInductionApp extends CommandIOApp(
         for {
           _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
           _ <- model.init(features)
-          fullVerbArgSets <- features.verbArgSets.full.get
-          allFullArgs <- features.args.full.get
-          allEvalArgs <- features.args.eval.get
-          results <- fullVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+          allVerbArgSets <- features.verbArgSets.full.get
+          allArgs <- features.args.full.get
+          results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
             Log.info(renderVerbType(verbType)) >> {
-              // some of them arg empty, gotta skip
-              val proc = for {
-                fullArgs <- OptionT.fromOption[IO](NonEmptyVector.fromVector(allFullArgs(verbType).toVector))
-                evalArgs <- OptionT.fromOption[IO](Option(allEvalArgs(verbType)).filter(_.nonEmpty))
-                // if evalArgs.nonEmpty
-                (flatAlgorithm, agglomAlgorithm) <- OptionT.liftF(model.create(features, verbType))
-                setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-                (fullClusterTree, _) <- OptionT.liftF(runCombinedClustering(fullArgs, flatAlgorithm, agglomAlgorithm))
-                evalClusterTree <- OptionT.fromOption[IO](
-                  setAgglomAlgorithm.filterAndReMerge(
-                    fullClusterTree,
-                    indices => Option(indices.intersect(evalArgs)).filter(_.nonEmpty)
-                  )
-                )
-              } yield verbType -> evalClusterTree
-
-              proc.value
+              // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+                model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
+                  val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
+                  runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+                    case (argTree, _) => verbType -> argTree
+                  }
+                }
+              }
             }
           }
         } yield results.flatten.toMap
@@ -323,22 +367,8 @@ object FrameInductionApp extends CommandIOApp(
       _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
       _ <- Log.infoBranch("Running feature setup.")(features.setup)
       _ <- Log.info(s"Model name: $modelName")
-      // TODO update and make proper idk. maybe this is what we should do anyway, reprocess the trees.
-      oldTrees <- Log.infoBranch(s"Clustering arguments") {
-        getArgumentClusters[String, ESpan](modelName, features, identity[String]).flatMap(_.get)
-      }
-      allEvalArgIds <- features.args.eval.get
-      model = ClusteringModel.QuestionEntropy
-      argTrees <- Log.warnBranch("[Temp] Reprocessing trees") {
-        oldTrees.toList.traverse { case (verbType, tree) =>
-          val res = for {
-            evalArgIds <- OptionT.fromOption[IO](allEvalArgIds.get(verbType))
-            (flatAlg, agglomAlg) <- OptionT.liftF(model.create(features, verbType))
-            setAlg = new AgglomerativeSetClustering(agglomAlg)
-            newTree <- OptionT.fromOption[IO](setAlg.filterAndReMerge(tree, ids => Option(ids.intersect(evalArgIds)).filter(_.nonEmpty)))
-          } yield verbType -> newTree
-          res.value
-        }.map(_.flatten.toMap)
+      argTrees <- Log.infoBranch(s"Clustering arguments") {
+        getEvalArgumentClusters[String, ESpan](modelName, features, identity[String]).flatMap(_.get)
       }
       _ <- {
         if(features.assumeGoldVerbSense) {

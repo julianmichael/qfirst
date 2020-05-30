@@ -525,10 +525,11 @@ object Evaluation {
     //   else labels.value.values.map(_.role).toSet.size
     // }
     // calculate B^3 precision-recall curve for each verb
+    mainResultsDir <- features.modelDir.map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
         bCubedResults <- getAllBCubedStats(argTrees, argRoleLabels, useSenseSpecificRoles)
-        resultsDir <- features.modelDir.map(_.resolve(s"$modelName/b-cubed")).flatTap(features.createDir)
+        resultsDir <- IO.pure(mainResultsDir.resolve(s"b-cubed")).flatTap(features.createDir)
         _ <- plotAllStatsVerbwise(
           modelName,
           bCubedResults,
@@ -548,7 +549,7 @@ object Evaluation {
     _ <- Log.infoBranch("Calculating Purity/Collocation metrics") {
       for {
         allStats <- getAllPurityCollocationStats(argTrees, argRoleLabels, useSenseSpecificRoles)
-        resultsDir <- features.modelDir.map(_.resolve(s"$modelName/pur-coll")).flatTap(features.createDir)
+        resultsDir <- IO.pure(mainResultsDir.resolve(s"pur-coll")).flatTap(features.createDir)
         _ <- plotAllStatsVerbwise(
           modelName,
           allStats,
