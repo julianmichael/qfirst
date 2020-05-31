@@ -28,6 +28,31 @@ import scala.annotation.tailrec
 
 object Evaluation {
 
+  case class WeightedPR(
+    precisions: WeightedNumbers[Double],
+    recalls: WeightedNumbers[Double]
+  ) {
+    def pseudocount = precisions.stats.pseudocount
+    def precision = precisions.stats.weightedMean
+    def recall = recalls.stats.weightedMean
+    def f1 = Functions.harmonicMean(precision, recall)
+    def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
+  }
+  object WeightedPR {
+    implicit val weightedPRMonoid: Monoid[WeightedPR] = {
+      import cats.derived.auto.monoid._
+      cats.derived.semi.monoid
+    }
+    implicit val weightedPRHasMetrics = new HasMetrics[WeightedPR] {
+      def getMetrics(pr: WeightedPR) = MapTree.fromPairs(
+        // "pseudocount" -> Metric.double(pr.pseudocount),
+        "precision" -> Metric.double(pr.precision),
+        "recall" -> Metric.double(pr.recall),
+        "f1" -> Metric.double(pr.f1)
+      )
+    }
+  }
+
   case class ConfStatsPoint(loss: Double, clusterSizes: Vector[Int], precision: Double, recall: Double) {
     def numClusters = clusterSizes.size
     def numItems = clusterSizes.sum
@@ -36,102 +61,78 @@ object Evaluation {
     def f1 = Functions.harmonicMean(precision, recall)
   }
 
-  def getAllClusteringPurityCollocationConfs[A](goldLabelTree: MergeTree[Map[A, Int]]): NonEmptyList[ConfStatsPoint] = {
+  trait ClusterPR {
+    def apply[A](
+      goldClusterSizes: Map[A, Int],
+      clusters: Vector[MergeTree[Map[A, Int]]]
+    ): (Double, Double)
+  }
+
+  val purityCollocation: ClusterPR = new ClusterPR {
+    def apply[A](
+      goldClusterSizes: Map[A, Int],
+      clusters: Vector[MergeTree[Map[A, Int]]]
+    ): (Double, Double) = {
+      val clusterLabelCounts = clusters.map(_.unorderedFold)
+      val purity = clusterLabelCounts.filter(_.nonEmpty).foldMap { counts =>
+        val primaryLabelCount = counts.values.max
+        val total = counts.values.sum
+        Proportion.Stats(
+          included = primaryLabelCount,
+          excluded = total - primaryLabelCount
+        )
+      }
+      val collocation = goldClusterSizes.toList.foldMap { case (goldLabel, numLabels) =>
+        val numInPrimaryCluster = clusterLabelCounts.map(_.getOrElse(goldLabel, 0)).max
+        Proportion.Stats(
+          included = numInPrimaryCluster,
+          excluded = numLabels - numInPrimaryCluster
+        )
+      }
+      purity.proportion -> collocation.proportion
+    }
+  }
+
+  val bCubed: ClusterPR = new ClusterPR {
+    def apply[A](
+      goldClusterSizes: Map[A, Int],
+      clusters: Vector[MergeTree[Map[A, Int]]]
+    ) = {
+      val clusterLabelCounts = clusters.map(_.unorderedFold)
+      val weightedPR = clusterLabelCounts.foldMap { counts =>
+        val predictedClusterSize = counts.unorderedFold
+        counts.toList.foldMap { case (goldLabel, countInCluster) =>
+          val precision = countInCluster.toDouble / predictedClusterSize
+          val recall = countInCluster.toDouble / goldClusterSizes(goldLabel)
+          WeightedPR(
+            precisions = WeightedNumbers(precision, weight = countInCluster.toDouble ),
+            recalls = WeightedNumbers(recall, weight = countInCluster.toDouble)
+          )
+        }
+      }
+      weightedPR.precision -> weightedPR.recall
+    }
+  }
+
+  def getAllClusteringConfs[A](
+    goldLabelTree: MergeTree[Map[A, Int]],
+    computePR: ClusterPR
+  ): NonEmptyList[ConfStatsPoint] = {
     val goldClusterSizes = goldLabelTree.unorderedFold
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittings.map { clusters =>
-        val clusterLabelCounts = clusters.map(_.unorderedFold)
-        val purity = clusterLabelCounts.filter(_.nonEmpty).foldMap { counts =>
-          val primaryLabelCount = counts.values.max
-          val total = counts.values.sum
-          Proportion.Stats(
-            included = primaryLabelCount,
-            excluded = total - primaryLabelCount
-          )
-        }
-        val collocation = goldClusterSizes.toList.foldMap { case (goldLabel, numLabels) =>
-          val numInPrimaryCluster = clusterLabelCounts.map(_.getOrElse(goldLabel, 0)).max
-          Proportion.Stats(
-            included = numInPrimaryCluster,
-            excluded = numLabels - numInPrimaryCluster
-          )
-        }
         val loss = clusters.foldMap(_.loss)
-        val clusterSizes = clusterLabelCounts.map(_.values.sum)
-        ConfStatsPoint(loss, clusterSizes, purity.proportion, collocation.proportion)
+        val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
+        val (precision, recall) = computePR(goldClusterSizes, clusters)
+        ConfStatsPoint(loss, clusterSizes, precision, recall)
       }.toList
     ).get
   }
 
-  // TODO: could also do some filtering on the tree, since we only want to include the argument labels in the current gold set.
-  // this calculation seems like it'll work without that (with empty count-maps) but mayb not be efficient.
-  // so just try it first and filter if it needs a speedup.
-  def getAllClusteringBCubedConfs[A](tree: MergeTree[Map[A, Int]]): NonEmptyList[ConfStatsPoint] = {
-    val goldLabelCounts = tree.unorderedFold
-    val goldLabels = goldLabelCounts.keys.toVector
-    val numArgs = goldLabelCounts.values.sum
-    val numTruePairs = goldLabelCounts.unorderedFoldMap(i => i * (i + 1) / 2)
-    val numPairs = numArgs * (numArgs + 1) / 2
-    val initConf = BinaryConf.Stats(tp = numTruePairs, fp = numPairs - numTruePairs)
-    val initStats = ConfStatsPoint(tree.loss, Vector(numArgs), initConf.precision, initConf.recall)
-    @tailrec
-    def recurseConfs(acc: NonEmptyList[ConfStatsPoint], lastConf: BinaryConf.Stats, trees: Vector[MergeTree[Map[A, Int]]]): NonEmptyList[ConfStatsPoint] = {
-      trees.flatMap(_.deltaOpt).maximumOption match {
-        case None => acc
-        case Some(maxDelta) =>
-          val (oldTrees, treesToSplit) = trees.map(t =>
-            MergeTree.merge.getOption(t).filter(_.delta >= maxDelta) match {
-              case None => Left(t)
-              case Some(m) => Right(m)
-            }
-          ).separate
-          val newConf = lastConf |+| treesToSplit.foldMap { (m: MergeTree.Merge[Map[A, Int]]) =>
-            val leftCounts = m.left.unorderedFold
-            val rightCounts = m.right.unorderedFold
-            val numPositivesLost = leftCounts.values.sum * rightCounts.values.sum
-            val numTPsLost = goldLabels.foldMap(l => leftCounts.getOrElse(l, 0) * rightCounts.getOrElse(l, 0))
-            val numFPsLost = numPositivesLost - numTPsLost
-            BinaryConf.Stats(
-              tp = -numTPsLost,
-              fp = -numFPsLost,
-              tn = numFPsLost,
-              fn = numTPsLost
-            )
-          }
-          val newTrees = oldTrees ++ treesToSplit.flatMap(m => Vector(m.left, m.right))
-          val newLoss = newTrees.foldMap(_.loss)
-          recurseConfs(ConfStatsPoint(newLoss, newTrees.map(_.unorderedFoldMap(_.size)), newConf.precision, newConf.recall) :: acc, newConf, newTrees)
-      }
-    }
-    recurseConfs(NonEmptyList.of(initStats), initConf, Vector(tree))
-  }
-
-  def getAllPurityCollocationStats(
+  def getAllPRStats(
     argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
-    useSenseSpecificRoles: Boolean)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
-    .filter(_._2.value.nonEmpty)
-    .infoBarTraverse("Calculating purity/collocation for all clusterings") { case (verbType, labels) =>
-      Log.trace(verbType) >> IO {
-        if(useSenseSpecificRoles) {
-          val goldCountTree = argTrees(verbType).map(
-            _.unorderedFoldMap(argId => Map(labels.value(argId) -> 1))
-          )
-          verbType -> getAllClusteringPurityCollocationConfs(goldCountTree)
-        } else {
-          val goldCountTree = argTrees(verbType).map(
-            _.unorderedFoldMap(argId => Map(labels.value(argId).role -> 1))
-          )
-          verbType -> getAllClusteringPurityCollocationConfs(goldCountTree)
-        }
-      }
-    }.map(_.toMap)
-
-  def getAllBCubedStats(
-    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
-    argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
+    computePR: ClusterPR,
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
@@ -142,12 +143,12 @@ object Evaluation {
           val goldCountTree = argTrees(verbType).map(
             _.unorderedFoldMap(argId => Map(labels.value(argId) -> 1))
           )
-          verbType -> getAllClusteringBCubedConfs(goldCountTree)
+          verbType -> getAllClusteringConfs(goldCountTree, computePR)
         } else {
           val goldCountTree = argTrees(verbType).map(
             _.unorderedFoldMap(argId => Map(labels.value(argId).role -> 1))
           )
-          verbType -> getAllClusteringBCubedConfs(goldCountTree)
+          verbType -> getAllClusteringConfs(goldCountTree, computePR)
         }
       }
     }.map(_.toMap)
@@ -251,31 +252,6 @@ object Evaluation {
 
     IO(plot1.render().write(new java.io.File(makePath("best").toString))) >>
       IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
-  }
-
-  case class WeightedPR(
-    precisions: WeightedNumbers[Double],
-    recalls: WeightedNumbers[Double]
-  ) {
-    def pseudocount = precisions.stats.pseudocount
-    def precision = precisions.stats.weightedMean
-    def recall = recalls.stats.weightedMean
-    def f1 = Functions.harmonicMean(precision, recall)
-    def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
-  }
-  object WeightedPR {
-    implicit val weightedPRMonoid: Monoid[WeightedPR] = {
-      import cats.derived.auto.monoid._
-      cats.derived.semi.monoid
-    }
-    implicit val weightedPRHasMetrics = new HasMetrics[WeightedPR] {
-      def getMetrics(pr: WeightedPR) = MapTree.fromPairs(
-        // "pseudocount" -> Metric.double(pr.pseudocount),
-        "precision" -> Metric.double(pr.precision),
-        "recall" -> Metric.double(pr.recall),
-        "f1" -> Metric.double(pr.f1)
-      )
-    }
   }
 
   def getTunedWeightedStats(
@@ -528,7 +504,7 @@ object Evaluation {
     mainResultsDir <- features.modelDir.map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
-        bCubedResults <- getAllBCubedStats(argTrees, argRoleLabels, useSenseSpecificRoles)
+        bCubedResults <- getAllPRStats(argTrees, argRoleLabels, bCubed, useSenseSpecificRoles)
         resultsDir <- IO.pure(mainResultsDir.resolve(s"b-cubed")).flatTap(features.createDir)
         _ <- plotAllStatsVerbwise(
           modelName,
@@ -548,7 +524,7 @@ object Evaluation {
     }
     _ <- Log.infoBranch("Calculating Purity/Collocation metrics") {
       for {
-        allStats <- getAllPurityCollocationStats(argTrees, argRoleLabels, useSenseSpecificRoles)
+        allStats <- getAllPRStats(argTrees, argRoleLabels, purityCollocation, useSenseSpecificRoles)
         resultsDir <- IO.pure(mainResultsDir.resolve(s"pur-coll")).flatTap(features.createDir)
         _ <- plotAllStatsVerbwise(
           modelName,
