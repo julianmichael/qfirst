@@ -375,6 +375,15 @@ object qfirst extends Module {
     }
   }
 
+  object conll08 extends Module {
+    object js extends JsModule {
+      def moduleDeps = Seq(freelog.js)
+    }
+    object jvm extends JvmModule {
+      def moduleDeps = Seq(freelog.jvm)
+    }
+  }
+
   object ontonotes extends Module {
     object js extends JsModule {
       override def ivyDeps = super.ivyDeps() ++ Agg(
