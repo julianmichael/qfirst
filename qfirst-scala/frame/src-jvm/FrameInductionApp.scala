@@ -319,7 +319,7 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runPropBankGoldSpanFrameInduction(
-    features: PropBankGoldSpanFeatures, modelOpt: Option[ModelConfig])(
+    features: Ontonotes5GoldSpanFeatures, modelOpt: Option[ModelConfig])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     val modelConfigs = modelOpt.map(List(_)).getOrElse(allModelConfigs)
@@ -358,7 +358,7 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runPropBankArgumentRoleInduction(
-    features: PropBankGoldSpanFeatures)(
+    features: Ontonotes5GoldSpanFeatures)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     val modelName = "test"
@@ -426,10 +426,10 @@ object FrameInductionApp extends CommandIOApp(
         _ <- data match {
           case "qasrl-gold" =>
             runQasrlFrameInduction(new GoldQasrlFeatures(mode), modelConfigOpt)
-          case "propbank-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
-            runPropBankArgumentRoleInduction(new PropBankGoldSpanFeatures(mode, assumeGoldVerbSense = true))
-          case "propbank-lemma-args" => // don't assume gold verb sense, only cluster arguments? TODO
-            runPropBankArgumentRoleInduction(new PropBankGoldSpanFeatures(mode, assumeGoldVerbSense = false))
+          case "ontonotes5-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
+            runPropBankArgumentRoleInduction(new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = true))
+          case "ontonotes5-lemma-args" => // don't assume gold verb sense, only cluster arguments
+            runPropBankArgumentRoleInduction(new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = false))
           case _ => ???
         }
       } yield ExitCode.Success

@@ -2,7 +2,9 @@ package qfirst.frame.util
 
 import cats.Monoid
 
-class NonMergingMap[A, B](val value: Map[A, B])
+class NonMergingMap[A, B](val value: Map[A, B]) {
+  def apply(a: A): B = value.apply(a)
+}
 object NonMergingMap {
   def apply[A, B](value: Map[A, B]): NonMergingMap[A, B] = new NonMergingMap(value)
   def apply[A, B](values: (A, B)*): NonMergingMap[A, B] = new NonMergingMap(Map(values: _*))

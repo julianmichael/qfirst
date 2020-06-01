@@ -46,7 +46,25 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   Log: EphemeralTreeLogger[IO, String]) {
 
   type VerbFeats[A] = VerbFeatures[VerbType, A]
+  def mapVerbFeats[A, B](f: A => B): VerbFeats[A] => VerbFeats[B] = {
+    feats => feats.transform { case (_, instances) =>
+      NonMergingMap(
+        instances.value.transform { case (verbId, feat) =>
+          f(feat)
+        }
+      )
+    }
+  }
   type ArgFeats[A] = ArgFeatures[VerbType, Arg, A]
+  def makeArgFeats[A, B](f: (VerbId, A) => List[(Arg, B)]): VerbFeats[A] => ArgFeats[B] = {
+    _.transform { case (_, verbs) =>
+      verbs.value.toList.foldMap { case (verbId, feat) =>
+        f(verbId, feat).foldMap { case (arg, argFeat) =>
+          NonMergingMap(ArgumentId(verbId, arg) -> argFeat)
+        }
+      }
+    }
+  }
 
   implicit protected val runMode = mode
 
@@ -274,6 +292,11 @@ class GoldQasrlFeatures(
           )
         }
       ).toCell("QA-SRL ArgumentIds by verb ID")
+  // TODO replace with this
+  // qaPairs
+  //   .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
+  //   .map(NonMergingMap.apply[String, Vector[String]])
+  //   .toCell("QA-SRL sentences")
 
   override val sentences = dataset.get
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
@@ -502,13 +525,12 @@ class GoldQasrlFeatures(
   }
 }
 
-import qfirst.ontonotes._
-
 case class PropBankRoleLabel(
   framesetId: String,
   role: String
 )
 object PropBankRoleLabel {
+
 
   // the pred itself, discourse markers, negations, and auxiliaries we don't care about
   def roleLabelIsIrrelevant(l: String) = {
@@ -517,14 +539,149 @@ object PropBankRoleLabel {
       l == "rel"// || l == "Support"
   }
 
+  import qfirst.ontonotes.Predicate
+
   def isArgRelevant(pred: Predicate, roleLabel: String, argSpan: ESpan) =
     !roleLabelIsIrrelevant(roleLabel) &&
       !Auxiliaries.auxiliaryVerbs.contains(pred.lemma.lowerCase) &&
       !argSpan.contains(pred.index)
 }
 
+class CoNLL08GoldDepFeatures(
+  mode: RunMode,
+  val assumeGoldVerbSense: Boolean)(
+  implicit cs: ContextShift[IO],
+  Log: EphemeralTreeLogger[IO, String]
+) extends Features[String, Int](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
+
+  import qfirst.conll08._
+
+  override val rootDir = Paths.get("frame-induction/conll08")
+
+  // don't store the models in the same dir, because they cluster different kinds of things
+  override def modelDir = super.modelDir.map(
+    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
+  ).flatTap(createDir)
+
+  val dataService = new CoNLL08FileSystemService(Paths.get("data/conll08st"))
+
+  val splits = RunData[CoNLL08Split](
+    train = CoNLL08Split.Train,
+    dev = CoNLL08Split.Dev,
+    test = CoNLL08Split.TestWSJ
+  )
+
+  val dataset: RunDataCell[NonMergingMap[String, CoNLL08Sentence]] = {
+    import scala.concurrent.ExecutionContext.Implicits.global
+    splits.flatMap(split =>
+      dataService
+        .streamSentences[IO](split)
+        .map(s => NonMergingMap(Map(s.id.toString -> s)))
+        .infoCompile(s"Reading CoNLL 2008 data ($split)")(_.foldMonoid)
+    ).toCell("CoNLL 2008 dataset")
+  }
+
+  override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
+    dataset.get.map(sents =>
+      NonMergingMap(
+        sents.value.map { case (sid, sent) =>
+          sid -> sent.tokens.map(_.token)
+        }
+      )
+    ).toCell("CoNLL 2008 sentence index")
+
+  val predArgStructures: RunDataCell[VerbFeats[PredicateArgumentStructure]] = {
+    dataset.get.map(
+      _.value.toList.foldMap { case (sid, sentence) =>
+        sentence.predicateArgumentStructures.foldMap { pas =>
+          val verbType = if(assumeGoldVerbSense) {
+            s"${pas.predicate.lemma}.${pas.predicate.sense}"
+          } else pas.predicate.lemma
+          val verbId = VerbId(sid, pas.predicate.index)
+          Map(verbType -> NonMergingMap(Map(verbId -> pas))) 
+        }
+      }
+    ).toCell("CoNLL 2008 predicate-argument structures")
+  }
+
+  override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.get.map(
+    mapVerbFeats(_.arguments.map(_._2).toSet)
+  ).toCell("CoNLL 2008 gold arg indices")
+
+  // override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.get.map(
+  //   mapVerbFeats(_.arguments.map(_._2).toSet)
+  // ).toCell("CoNLL 2008 gold arg indices")
+
+  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+    RunData.strings.map(_ => ???).toCell(
+      "[ERROR] no question distributions for CoNLL 2008 data."
+    )
+  }
+
+  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] =
+    RunData.strings.map(_ => ???).toCell(
+      "[ERROR] no spans for CoNLL 2008 data."
+    )
+
+  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
+    predArgStructures.get.map(
+    makeArgFeats { case (verbId, pas) =>
+      pas.arguments.map { case (roleLabel, index) =>
+        index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
+      }
+    }
+  ).toCell("PropBank arg to role label mapping")
+
+  // @JsonCodec case class PropBankQGInput(
+  //   sentenceId: String,
+  //   sentenceTokens: Vector[String],
+  //   verbEntries: Map[Int, PropBankQGVerbInput]
+  // )
+  // @JsonCodec case class PropBankQGVerbInput(
+  //   verbIndex: Int,
+  //   argumentSpans: Set[ESpan]
+  // )
+
+  // val qgInputs = index.get.map { paths =>
+  //   Stream.emits[IO, CoNLLPath](paths) >>= { path =>
+  //     Stream.eval(ontonotesService.getFile(path)) >>= { file =>
+  //       Stream.emits[IO, PropBankQGInput](
+  //         file.sentences.map { sentence =>
+  //           PropBankQGInput(
+  //             sentence.path.toString,
+  //             sentence.tokens.map(_.token).toVector,
+  //             sentence.predicateArgumentStructures.map { pas =>
+  //               pas.predicate.index -> PropBankQGVerbInput(pas.predicate.index, pas.arguments.map(_._2).toSet)
+  //             }.toMap
+  //           )
+  //         }
+  //       )
+  //     }
+  //   }
+  // }
+
+  // def getQGInputOutPath(split: String) = outDir
+  //   .map(_.resolve(s"qg-inputs")).flatTap(createDir)
+  //   .map(_.resolve(s"$split.jsonl.gz"))
+
+  // val writeQGInputs = RunData.strings.zip(qgInputs).flatMap { case (split, inputStream) =>
+  //   getQGInputOutPath(split) >>= (outPath =>
+  //     IO(Files.exists(outPath)).ifM(
+  //       Log.info(s"QG Inputs already found at $outPath."),
+  //       Log.infoBranch(s"Logging QG inputs to $outPath")(
+  //         FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
+  //       )
+  //     )
+  //   )
+  // }.run
+
+  // val setup = writeQGInputs
+
+}
+
+
 // verb type is either lemma or sense, depending on assumeGoldVerbSense value (false/true resp.).
-class PropBankGoldSpanFeatures(
+class Ontonotes5GoldSpanFeatures(
   mode: RunMode,
   val assumeGoldVerbSense: Boolean
   // val filterPropBankRoles: Boolean // TODO do this in a reasonable way
@@ -533,7 +690,9 @@ class PropBankGoldSpanFeatures(
   Log: EphemeralTreeLogger[IO, String]
 ) extends Features[String, ESpan](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
-  override val rootDir = Paths.get("frame-induction/propbank")
+  import qfirst.ontonotes._
+
+  override val rootDir = Paths.get("frame-induction/ontonotes5")
 
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(
@@ -692,144 +851,3 @@ class PropBankGoldSpanFeatures(
 
   val setup = writeQGInputs
 }
-
-// class PropBankFeatures(
-//   implicit mode: RunMode,
-//   cs: ContextShift[IO],
-//   Log: EphemeralTreeLogger[IO, String]
-// ) extends Features[String] {
-//   type QABeam = List[SimpleQAs.BeamItem[SlotBasedLabel[VerbForm]]]
-
-//   def getPropBankPredictedInstances(
-//     predictions: Stream[IO, PropBankSentencePrediction[QABeam]],
-//     filter: SimpleQAs.Filter
-//   ): IO[Instances.PropBank] = {
-//     val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
-//     predictions.map { sentencePred => // remove "be" since out of scope of QA-SRL
-//       sentencePred.verbs.filter(v => v.verbLemma != "be" && v.beam.nonEmpty).foldMap(
-//         verbPred => Map(
-//           verbPred.verbLemma -> Map(
-//             sentencePred.sentenceId -> Map(
-//               verbPred.verbIndex ->
-//                 protocol.filterBeam(filter, verbPred.toGenericVerbPrediction).map {
-//                   case (qString, (slots, spans)) => slots -> List(spans.toList)
-//                 }
-//             ).filter(_._2.nonEmpty)
-//           ).filter(_._2.nonEmpty)
-//         ).filter(_._2.nonEmpty)
-//       )
-//     }.infoCompile("Sentences")(_.foldMonoid).map(Instances(_))
-//   }
-
-//   def getPropBankSenseLabels(
-//     predictions: Stream[IO, PropBankSentencePrediction[QABeam]]
-//   ): IO[Instances.PropBankLabels] = {
-//     val resIO = predictions.map { sentencePred =>
-//       sentencePred.verbs.filter(_.beam.nonEmpty).foldMap(
-//         verbPred => Map(
-//           verbPred.verbLemma -> Map(
-//             sentencePred.sentenceId -> Map(
-//               verbPred.verbIndex -> Vector(verbPred.verbSense)
-//             )
-//           )
-//         )
-//       )
-//     }.compile.foldMonoid
-//     resIO.map(
-//       _.transform { case (_, verbTypeMap) =>
-//         verbTypeMap.transform { case (_, sentenceMap) =>
-//           sentenceMap.transform { case (_, verbSenseVec) =>
-//             assert(verbSenseVec.size == 1)
-//             verbSenseVec.head
-//           }
-//         }
-//       }
-//     ).map(Instances(_))
-//   }
-
-
-//   val propBankPredictionsPath = inputDir.resolve("qasrl-predictions")
-
-//   val propBankQasrlFilter = {
-//     import io.circe.generic.auto._
-//     new Cell(
-//       "PropBank QA-SRL Filter",
-//       FileUtil.readJson[SimpleQAs.Filter](
-//         propBankPredictionsPath.resolve(s"filter.json")
-//       )
-//     )
-//   }
-
-//   def readPropBankInstances(name: String) = {
-//     import io.circe.generic.auto._
-//     Log.infoBranch(s"Reading QA-SRL on PropBank $name set")(
-//       propBankQasrlFilter.get.flatMap(filter =>
-//         for {
-//           bad <- Ref[IO].of(0)
-//           total <- Ref[IO].of(0)
-//           res <- getPropBankPredictedInstances(
-//             FileUtil.readJsonLines[PropBankSentencePrediction[QABeam]](
-//               propBankPredictionsPath.resolve(s"propbank-$name-qasrl.jsonl.gz")
-//             ).flatMap { x =>
-//               import io.circe.syntax._
-//               if(x.verbs.exists(_.beam.isEmpty)) {
-//                 Stream.eval_(bad.update(_ + 1) >> total.update(_ + 1))
-//               } else Stream.eval(total.update(_ + 1).as(x))
-//             }, filter
-//           )
-//           _ <- (bad.get, total.get).mapN((b, t) =>
-//             Log.info(s"Ignored $b/$t sentences due to apparently bad verbs.")
-//           ).flatten
-//         } yield res
-//       )
-//     )
-//   }
-
-//   override val instances = RunData.strings
-//     .flatMap(readPropBankInstances)
-//     .toCell("PropBank instances")
-
-//   def readPropBankLabels(name: String) = {
-//     import io.circe.generic.auto._
-//     Log.infoBranch(s"Reading verb sense labels on PropBank $name set")(
-//       getPropBankSenseLabels(
-//         FileUtil.readJsonLines[PropBankSentencePrediction[QABeam]](
-//           propBankPredictionsPath.resolve(s"propbank-$name-qasrl.jsonl.gz")
-//         )
-//       )
-//     )
-//   }
-
-//   override val labels = RunData.strings
-//     .flatMap(readPropBankLabels)
-//     .toCell("PropBank labels")
-// }
-
-// class PredictedQasrlFeatures(
-//   implicit mode: RunMode,
-//   cs: ContextShift[IO],
-//   Log: EphemeralTreeLogger[IO, String]
-// ) extends Features[InflectedForms] {
-//   // def getPredictedInstances(
-//   //   predictions: Stream[IO, SentencePrediction[QABeam]],
-//   //   filter: SimpleQAs.Filter
-//   // ): IO[Instances] = {
-//   //   val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
-//   //   predictions.map { sentencePred =>
-//   //     sentencePred.verbs.foldMap(
-//   //       verbPred => Map(
-//   //         verbPred.verbInflectedForms -> Map(
-//   //           sentencePred.sentenceId -> Map(
-//   //             verbPred.verbIndex ->
-//   //               protocol.filterBeam(filter, verbPred).map {
-//   //                 case (qString, (slots, spans)) => slots -> spans
-//   //               }
-//   //           )
-//   //         )
-//   //       )
-//   //     )
-//   //   }.compile.foldMonoid
-//   // }
-
-// }
-

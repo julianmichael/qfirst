@@ -289,7 +289,7 @@ object qfirst extends Module {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm)
 
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")

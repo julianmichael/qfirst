@@ -485,16 +485,17 @@ object Evaluation {
     }
   }
 
+  // TODO refactor probably to be agnostic to features and gold label type
   def evaluateArgumentClusters(
     modelName: String,
-    features: PropBankGoldSpanFeatures,
+    features: Ontonotes5GoldSpanFeatures,
     argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
     _ <- Log.info("Initializing eval features")
-    verbIds <- features.verbArgSets.eval.get
-    args <- features.args.eval.get
+    // verbIds <- features.verbArgSets.eval.get
+    // args <- features.args.eval.get
     argRoleLabels <- features.argRoleLabels.eval.get
     // numGoldClusters = argRoleLabels.transform { case (_, labels) =>
     //   if(useSenseSpecificRoles) labels.value.values.toSet.size
