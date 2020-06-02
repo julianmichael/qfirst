@@ -19,10 +19,18 @@ object CoNLL08Parsing {
     val columns = rows.transpose
     val tokens = rows.map(f => CoNLL08Token(index = f(0).toInt - 1, pos = f(7), token = f(5)))
     val predicates = rows.filter(f => f(10) != "_").map { f =>
-      val lemma :: sense :: Nil = f(10).split(".").toList
+      // if(!f.contains(".")) {
+      //   System.err.println(lines.intercalate("\n"))
+      //   System.err.println("")
+      //   System.err.println(f.map(x => f"$x%15s").mkString)
+      // }
+      // System.err.println(f(10))
+      // System.err.println(f(10).split("."))
+      // System.err.println(f(10).split(".").toList)
+      val lemma :: sense :: Nil = f(10).split("\\.").toList
       Predicate(index = f(0).toInt - 1, lemma = lemma, sense = sense)
     }
-    val argLists = columns.drop(10).map(_.zipWithIndex.filter(_._1 != "_").toList)
+    val argLists = columns.drop(11).map(_.zipWithIndex.filter(_._1 != "_").toList)
     require(predicates.size == argLists.size)
     val paStructures = predicates.zip(argLists).map(
       Function.tupled(PredicateArgumentStructure(_, _))

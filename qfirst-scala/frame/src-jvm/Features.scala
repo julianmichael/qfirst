@@ -78,6 +78,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   protected val rootDir: Path
 
+  // TODO move all setup into this/superclass
+  def setup: IO[Unit] = IO.unit
+
   val splitLabels: RunDataCell.Labels = new RunDataCell.Labels(mode)
   object splitDirnames {
     def train = splitLabels.train
@@ -211,8 +214,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // )
 }
 
-// TODO maybe change to raw question string for arg id
-// and add clausal question as an extra feature
+// TODO change to raw question string (or slots) for arg id
+// and add clausal question as an extra feature for interpretability and/or clustering stuff
 class GoldQasrlFeatures(
   mode: RunMode)(
   implicit cs: ContextShift[IO],
@@ -547,21 +550,31 @@ object PropBankRoleLabel {
       !argSpan.contains(pred.index)
 }
 
-class CoNLL08GoldDepFeatures(
+abstract class PropBankFeatures[Arg](
   mode: RunMode,
   val assumeGoldVerbSense: Boolean)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
-) extends Features[String, Int](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
-
-  import qfirst.conll08._
-
-  override val rootDir = Paths.get("frame-induction/conll08")
+) extends Features[String, Arg](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(
     _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
   ).flatTap(createDir)
+
+  def argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]]
+}
+
+class CoNLL08GoldDepFeatures(
+  mode: RunMode,
+  assumeGoldVerbSense: Boolean)(
+  implicit cs: ContextShift[IO],
+  Log: EphemeralTreeLogger[IO, String]
+) extends PropBankFeatures[Int](mode, assumeGoldVerbSense)(cs, Log) {
+
+  import qfirst.conll08._
+
+  override val rootDir = Paths.get("frame-induction/conll08")
 
   val dataService = new CoNLL08FileSystemService(Paths.get("data/conll08st"))
 
@@ -571,12 +584,20 @@ class CoNLL08GoldDepFeatures(
     test = CoNLL08Split.TestWSJ
   )
 
+  def keepOnlyVerbalPredicates(sentence: CoNLL08Sentence) = {
+    import jjm.ling.en.PTBPosTags
+    sentence.copy(
+      predicateArgumentStructures = sentence.predicateArgumentStructures
+        .filter(pas => PTBPosTags.verbs.contains(sentence.tokens(pas.predicate.index).pos))
+    )
+  }
+
   val dataset: RunDataCell[NonMergingMap[String, CoNLL08Sentence]] = {
     import scala.concurrent.ExecutionContext.Implicits.global
     splits.flatMap(split =>
       dataService
         .streamSentences[IO](split)
-        .map(s => NonMergingMap(Map(s.id.toString -> s)))
+        .map(s => NonMergingMap(Map(s.id.toString -> keepOnlyVerbalPredicates(s))))
         .infoCompile(s"Reading CoNLL 2008 data ($split)")(_.foldMonoid)
     ).toCell("CoNLL 2008 dataset")
   }
@@ -623,7 +644,7 @@ class CoNLL08GoldDepFeatures(
       "[ERROR] no spans for CoNLL 2008 data."
     )
 
-  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
+  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
     predArgStructures.get.map(
     makeArgFeats { case (verbId, pas) =>
       pas.arguments.map { case (roleLabel, index) =>
@@ -632,50 +653,43 @@ class CoNLL08GoldDepFeatures(
     }
   ).toCell("PropBank arg to role label mapping")
 
-  // @JsonCodec case class PropBankQGInput(
-  //   sentenceId: String,
-  //   sentenceTokens: Vector[String],
-  //   verbEntries: Map[Int, PropBankQGVerbInput]
-  // )
-  // @JsonCodec case class PropBankQGVerbInput(
-  //   verbIndex: Int,
-  //   argumentSpans: Set[ESpan]
-  // )
+  // TODO refactor this, other features, gen code, and setup function into the main trait,
+  // so it's all done smoothly for the cases with none of those features.
 
-  // val qgInputs = index.get.map { paths =>
-  //   Stream.emits[IO, CoNLLPath](paths) >>= { path =>
-  //     Stream.eval(ontonotesService.getFile(path)) >>= { file =>
-  //       Stream.emits[IO, PropBankQGInput](
-  //         file.sentences.map { sentence =>
-  //           PropBankQGInput(
-  //             sentence.path.toString,
-  //             sentence.tokens.map(_.token).toVector,
-  //             sentence.predicateArgumentStructures.map { pas =>
-  //               pas.predicate.index -> PropBankQGVerbInput(pas.predicate.index, pas.arguments.map(_._2).toSet)
-  //             }.toMap
-  //           )
-  //         }
-  //       )
-  //     }
-  //   }
-  // }
+  @JsonCodec case class MLMFeatureGenInput(
+    sentenceId: String,
+    sentenceTokens: Vector[String],
+    indices: Set[Int]
+  )
 
-  // def getQGInputOutPath(split: String) = outDir
-  //   .map(_.resolve(s"qg-inputs")).flatTap(createDir)
-  //   .map(_.resolve(s"$split.jsonl.gz"))
+  val mlmFeatureGenInputs = dataset.get.map { sentences =>
+    Stream.emits[IO, (String, CoNLL08Sentence)](sentences.value.toList).map { case (sid, sentence) =>
+      MLMFeatureGenInput(
+        sentenceId = sid,
+        sentenceTokens = sentence.tokens.map(_.token),
+        indices = sentence.predicateArgumentStructures.foldMap { pas =>
+          pas.arguments.map(_._2).toSet + pas.predicate.index
+        }
+      )
+    }
+  }
 
-  // val writeQGInputs = RunData.strings.zip(qgInputs).flatMap { case (split, inputStream) =>
-  //   getQGInputOutPath(split) >>= (outPath =>
-  //     IO(Files.exists(outPath)).ifM(
-  //       Log.info(s"QG Inputs already found at $outPath."),
-  //       Log.infoBranch(s"Logging QG inputs to $outPath")(
-  //         FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
-  //       )
-  //     )
-  //   )
-  // }.run
+  def getMLMFeatureInputOutPath(split: String) = outDir
+    .map(_.resolve(s"mlm-inputs")).flatTap(createDir)
+    .map(_.resolve(s"$split.jsonl.gz"))
 
-  // val setup = writeQGInputs
+  val writeMLMInputs = RunData.strings.zip(mlmFeatureGenInputs).flatMap { case (split, inputStream) =>
+    getMLMFeatureInputOutPath(split) >>= (outPath =>
+      IO(Files.exists(outPath)).ifM(
+        Log.info(s"MLM feature inputs already found at $outPath."),
+        Log.infoBranch(s"Logging MLM feature inputs to $outPath")(
+          FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
+        )
+      )
+    )
+  }.run
+
+  override val setup = writeMLMInputs
 
 }
 
@@ -683,21 +697,16 @@ class CoNLL08GoldDepFeatures(
 // verb type is either lemma or sense, depending on assumeGoldVerbSense value (false/true resp.).
 class Ontonotes5GoldSpanFeatures(
   mode: RunMode,
-  val assumeGoldVerbSense: Boolean
+  assumeGoldVerbSense: Boolean
   // val filterPropBankRoles: Boolean // TODO do this in a reasonable way
 )(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
-) extends Features[String, ESpan](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
+) extends PropBankFeatures[ESpan](mode, assumeGoldVerbSense)(cs, Log) {
 
   import qfirst.ontonotes._
 
   override val rootDir = Paths.get("frame-induction/ontonotes5")
-
-  // don't store the models in the same dir, because they cluster different kinds of things
-  override def modelDir = super.modelDir.map(
-    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
-  ).flatTap(createDir)
 
   val ontonotesPath = Paths.get("data/conll-formatted-ontonotes-5.0")
 
@@ -793,7 +802,7 @@ class Ontonotes5GoldSpanFeatures(
     }
   ).toCell("PropBank span to role label mapping")
 
-  val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
+  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -849,5 +858,5 @@ class Ontonotes5GoldSpanFeatures(
     )
   }.run
 
-  val setup = writeQGInputs
+  override val setup = writeQGInputs
 }

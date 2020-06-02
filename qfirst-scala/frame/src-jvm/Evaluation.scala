@@ -6,7 +6,6 @@ import qfirst.frame.util.NonMergingMap
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
-import jjm.ling.ESpan
 import jjm.implicits._
 
 import freelog.EphemeralTreeLogger
@@ -129,9 +128,9 @@ object Evaluation {
     ).get
   }
 
-  def getAllPRStats(
-    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
-    argRoleLabels: Map[String, NonMergingMap[ArgumentId[ESpan], PropBankRoleLabel]],
+  def getAllPRStats[Arg](
+    argTrees: Map[String, MergeTree[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[String, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     computePR: ClusterPR,
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -486,16 +485,14 @@ object Evaluation {
   }
 
   // TODO refactor probably to be agnostic to features and gold label type
-  def evaluateArgumentClusters(
+  def evaluateArgumentClusters[Arg](
     modelName: String,
-    features: Ontonotes5GoldSpanFeatures,
-    argTrees: Map[String, MergeTree[Set[ArgumentId[ESpan]]]],
+    features: PropBankFeatures[Arg],
+    argTrees: Map[String, MergeTree[Set[ArgumentId[Arg]]]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
     _ <- Log.info("Initializing eval features")
-    // verbIds <- features.verbArgSets.eval.get
-    // args <- features.args.eval.get
     argRoleLabels <- features.argRoleLabels.eval.get
     // numGoldClusters = argRoleLabels.transform { case (_, labels) =>
     //   if(useSenseSpecificRoles) labels.value.values.toSet.size

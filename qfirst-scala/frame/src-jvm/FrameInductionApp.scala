@@ -357,8 +357,8 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
-  def runPropBankArgumentRoleInduction(
-    features: Ontonotes5GoldSpanFeatures)(
+  def runPropBankArgumentRoleInduction[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     val modelName = "test"
@@ -368,7 +368,7 @@ object FrameInductionApp extends CommandIOApp(
       _ <- Log.infoBranch("Running feature setup.")(features.setup)
       _ <- Log.info(s"Model name: $modelName")
       argTrees <- Log.infoBranch(s"Clustering arguments") {
-        getEvalArgumentClusters[String, ESpan](modelName, features, identity[String]).flatMap(_.get)
+        getEvalArgumentClusters[String, Arg](modelName, features, identity[String]).flatMap(_.get)
       }
       _ <- {
         if(features.assumeGoldVerbSense) {
@@ -397,16 +397,22 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def main: Opts[IO[ExitCode]] = {
+    val dataSettings = List(
+      "qasrl",
+      "ontonotes-lemma-args", "ontonotes-sense-args",
+      "conll08-lemma-args", "conll08-sense-args"
+    )
+
     val dataO = Opts.option[String](
-      "data", metavar = "qasrl|propbank-span", help = "Data setting to run in."
+      "data", metavar = dataSettings.mkString("|"), help = "Data setting to run in."
     )
 
     val modeO = Opts.option[String](
-      "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
+      "mode", metavar = "setup|sanity|dev|test", help = "Which mode to run in."
     ).mapValidated { string =>
       RunMode.fromString(string)
         .map(Validated.valid)
-        .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test."))
+        .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be setup, sanity, dev, or test."))
     }
 
     val modelConfigOptO = Opts.option[String](
@@ -417,20 +423,33 @@ object FrameInductionApp extends CommandIOApp(
         .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
     }.orNone
 
-    (dataO, modeO, modelConfigOptO).mapN { (data, mode, modelConfigOpt) =>
+    val setupO = Opts.flag("setup", help = "Run setup steps for feature generation.").orFalse
+
+    (dataO, modeO, modelConfigOptO, setupO).mapN { (data, mode, modelConfigOpt, setup) =>
       for {
         implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
         _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Model configuration: $modelConfigOpt")
         _ <- data match {
-          case "qasrl-gold" =>
-            runQasrlFrameInduction(new GoldQasrlFeatures(mode), modelConfigOpt)
-          case "ontonotes5-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
-            runPropBankArgumentRoleInduction(new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = true))
-          case "ontonotes5-lemma-args" => // don't assume gold verb sense, only cluster arguments
-            runPropBankArgumentRoleInduction(new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = false))
-          case _ => ???
+          case "qasrl" =>
+            val feats = new GoldQasrlFeatures(mode)
+            if(setup) feats.setup else runQasrlFrameInduction(feats, modelConfigOpt)
+          case "ontonotes-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
+            val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = true)
+            if(setup) feats.setup else runPropBankArgumentRoleInduction(feats)
+          case "ontonotes-lemma-args" => // don't assume gold verb sense, only cluster arguments
+            val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = false)
+            if(setup) feats.setup else runPropBankArgumentRoleInduction(feats)
+          case "conll08-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
+            val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = true)
+            if(setup) feats.setup else runPropBankArgumentRoleInduction(feats)
+          case "conll08-lemma-args" => // don't assume gold verb sense, only cluster arguments
+            val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = false)
+            if(setup) feats.setup else runPropBankArgumentRoleInduction(feats)
+          case _ => throw new IllegalArgumentException(
+            "--data must be one of the following: " + dataSettings.mkString(", ")
+          )
         }
       } yield ExitCode.Success
     }
