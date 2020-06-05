@@ -46,6 +46,7 @@ case class RunData[A](
     dev >>= f,
     test >>= f
   )
+  // def >>=[B](f: A => IO[B]) = flatMap(f)
 
   def zip[B](that: RunData[B]) = RunData(
     this.train product that.train,

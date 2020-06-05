@@ -45,6 +45,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
+  type SentFeats[A] = SentenceFeatures[VerbType, A]
+
   type VerbFeats[A] = VerbFeatures[VerbType, A]
   def mapVerbFeats[A, B](f: A => B): VerbFeats[A] => VerbFeats[B] = {
     feats => feats.transform { case (_, instances) =>
@@ -66,7 +68,12 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   }
 
+  type VerbFeatsNew[A] = VerbType => VerbId => A
+  type ArgFeatsNew[A] = VerbType => ArgumentId[Arg] => A
+
   implicit protected val runMode = mode
+
+  def getVerbLemma(verbType: VerbType): String
 
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
@@ -75,6 +82,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
 
   def argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]]
+
+  // new style arg features
+  def argIndices: RunData[ArgFeatsNew[Int]]
 
   protected val rootDir: Path
 
@@ -119,19 +129,24 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   ).toCell("Argument IDs")
 
-  lazy val verbIdToType = verbArgSets.get
-    .map(
-      _.toList.foldMap { case (verbType, verbs) =>
-        NonMergingMap(
-          verbs.value.toList.map { case (verbId, _) =>
-            verbId -> verbType
-          }.toMap
-        )
-      }
+  lazy val verbLemmaToType = verbArgSets.get.map(
+    _.keySet.toList.foldMap(verbType =>
+      NonMergingMap(getVerbLemma(verbType) -> verbType)
     )
-    .toCell("Verb ID to verb type mapping")
+  ).toCell("Verb lemma to verb type mapping")
 
-  // Verb vectors
+  lazy val verbIdToType = verbArgSets.get.map(
+    _.toList.foldMap { case (verbType, verbs) =>
+      NonMergingMap(
+        verbs.value.toList.map { case (verbId, _) =>
+          verbId -> verbType
+        }.toMap
+      )
+    }
+  ).toCell("Verb ID to verb type mapping")
+
+
+  // ELMo XXX TODO remove this Verb vectors
 
   import breeze.linalg.DenseVector
 
@@ -171,7 +186,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
   }
 
-  // ELMo
+  // ELMo XXX TODO remove these
 
   lazy val elmoVecs = verbIdToType.get.zip(RunData.strings).flatMap {
     case (vIdToVType, split) =>
@@ -180,6 +195,76 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
         inputDir.resolve(s"elmo/$split").toString
       )
   }.toCell("Verb ELMo vectors")
+
+  // end elmo vecs
+
+  val mlmSettings = List("masked", "symm_left", "symm_right", "symm_both")
+  val mlmFeatureDir = inputDir.resolve("mlm")
+  def makeMLMFeatures[A](f: (String, Path) => A): Map[String, A] = {
+    mlmSettings.map(_ -> "").toMap.transform { case (setting, _) =>
+      val mlmSettingDir = mlmFeatureDir.resolve(setting)
+      f(setting, mlmSettingDir)
+    }
+  }
+
+  // setting to lemma to vocab
+  val argMLMVocabs: Map[String, Cell[NonMergingMap[String, Vector[String]]]] = {
+    makeMLMFeatures { case (setting, path) =>
+      new Cell(
+        s"MLM argument vocab ($setting)",
+        FileUtil.readJson[Map[String, Vector[String]]](path.resolve("arg_vocabs.json.gz"))
+          .map(NonMergingMap(_))
+      )
+    }
+  }
+
+  @JsonCodec case class MLMFeatureId(
+    sentenceId: String,
+    verbLemma: String,
+    index: Int)
+
+  // mode -> verb type -> sentence id -> arg index -> vector
+  val argMLMVectors: Map[String, RunDataCell[Map[VerbType, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
+    makeMLMFeatures { case (setting, path) =>
+      RunData.strings.zip(verbLemmaToType.get).flatMap { case (split, getVerbType) =>
+        val vecDim = 1024
+        val idsPath = path.resolve(s"${split}_arg_ids.jsonl.gz")
+        val vecPath = path.resolve(s"${split}_arg_vecs.bin")
+        // val embPath = Paths.get(filePrefix + "_emb.bin")
+        for {
+          ids <- Log.infoBranch("Reading verb IDs")(
+            FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
+          )
+          embeddings <- Log.infoBranch("Reading verb embeddings")(
+            VectorFileUtil.readDenseFloatVectorsNIO(vecPath, vecDim)
+          )
+          _ <- Log.info(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}")
+          _ <- {
+            val numToCheck = 20
+            val propSane = embeddings.take(numToCheck)
+              .foldMap(
+                _.activeValuesIterator.filter(f => f >= 0.0 && f <= 1.0).size
+              ).toDouble / (numToCheck * vecDim)
+            val sanityCheckText = f"Sanity check: ${propSane * 100.0}%.1f%% of sampled vector components units are between 0 and 1."
+            if(propSane < 1.0) {
+              Log.warn(sanityCheckText) >>
+                Log.warn("There might be endianness issues with how you're reading the vectors") >>
+                embeddings.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
+            } else Log.info(sanityCheckText)
+          }
+        } yield ids.zip(embeddings).foldMap { case (mlmFeatureId, vec) =>
+            Map(getVerbType(mlmFeatureId.verbLemma) -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
+        }
+      }.toCell("Argument MLM Vectors")
+    }
+  }
+
+  def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
+    argMLMVectors(mode).get.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
+        mlmFeats(verbType)(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
+      }
+    }
 
   // XXXXXXXXX
 
@@ -221,6 +306,8 @@ class GoldQasrlFeatures(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
 ) extends Features[InflectedForms, ClausalQuestion](mode)(implicitly[Encoder[InflectedForms]], implicitly[Decoder[InflectedForms]], cs, Log) {
+
+  override def getVerbLemma(verbType: InflectedForms): String = verbType.stem
 
   override val rootDir = Paths.get("frame-induction/qasrl")
 
@@ -373,6 +460,8 @@ class GoldQasrlFeatures(
       }
     }
   ).toCell("PropBank span to role label mapping")
+
+  override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
   // lazy val instancesByQuestionId = instances.get.map(
   //   _.map { case (verbType, sentences) =>
@@ -557,6 +646,11 @@ abstract class PropBankFeatures[Arg](
   Log: EphemeralTreeLogger[IO, String]
 ) extends Features[String, Arg](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
+  override def getVerbLemma(verbType: String): String = {
+    if(assumeGoldVerbSense) verbType.takeWhile(_ != '.')
+    else verbType
+  }
+
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(
     _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
@@ -686,14 +780,20 @@ class CoNLL08GoldDepFeatures(
       "[ERROR] no spans for CoNLL 2008 data."
     )
 
+  override val argIndices: RunData[ArgFeatsNew[Int]] = {
+    RunData.strings.map(_ =>
+      (verbType: String) => (argId: ArgumentId[Int]) => argId.argument
+    )
+  }
+
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
     predArgStructures.get.map(
-    makeArgFeats { case (verbId, pas) =>
-      pas.arguments.map { case (roleLabel, index) =>
-        index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
+      makeArgFeats { case (verbId, pas) =>
+        pas.arguments.map { case (roleLabel, index) =>
+          index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
+        }
       }
-    }
-  ).toCell("PropBank arg to role label mapping")
+    ).toCell("PropBank arg to role label mapping")
 
   // TODO refactor this, other features, gen code, and setup function into the main trait,
   // so it's all done smoothly for the cases with none of those features.
@@ -847,6 +947,8 @@ class Ontonotes5GoldSpanFeatures(
       }
     }
   ).toCell("PropBank span to role label mapping")
+
+  override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
     _.transform { case (_, verbs) =>
