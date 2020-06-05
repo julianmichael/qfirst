@@ -17,7 +17,18 @@ object CoNLL08Parsing {
   def readSentence(id: CoNLL08SentenceId, lines: NonEmptyList[String]): CoNLL08Sentence = {
     val rows = lines.map(_.split("\t").toVector).toList.toVector
     val columns = rows.transpose
-    val tokens = rows.map(f => CoNLL08Token(index = f(0).toInt - 1, pos = f(7), token = f(5)))
+    val tokens = rows.map(f =>
+      CoNLL08Token(
+        index = f(0).toInt - 1,
+        pos = Option(f(3)).filter(_ != '_').getOrElse(f(7)),
+        token = f(5)
+      )
+    )
+
+    val dependencies = rows.map(f =>
+      f(9) -> (f(8).toInt - 1)
+    )
+
     val predicates = rows.filter(f => f(10) != "_").map { f =>
       // if(!f.contains(".")) {
       //   System.err.println(lines.intercalate("\n"))
@@ -35,7 +46,8 @@ object CoNLL08Parsing {
     val paStructures = predicates.zip(argLists).map(
       Function.tupled(PredicateArgumentStructure(_, _))
     ).toList
-    CoNLL08Sentence(id, tokens, paStructures)
+
+    CoNLL08Sentence(id, tokens, dependencies, paStructures)
   }
 
   /** Reads a CoNLL 2008 file as an iterator over lines. */

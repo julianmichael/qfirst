@@ -625,6 +625,48 @@ class CoNLL08GoldDepFeatures(
     ).toCell("CoNLL 2008 predicate-argument structures")
   }
 
+  import scala.annotation.tailrec
+  @tailrec final def getDependencyPathToRoot(
+    dependencies: Vector[(String, Int)],
+    index: Int,
+    acc: List[(String, Int)] = Nil
+  ): List[(String, Int)] = {
+    if(index == -1) acc
+    else {
+      val dep = dependencies(index)
+      getDependencyPathToRoot(dependencies, dep._2, dep :: acc)
+    }
+  }
+
+  val argDependencyPaths: RunDataCell[ArgFeats[String]] = {
+    dataset.get.map(
+      _.value.toList.foldMap { case (sid, sentence) =>
+        val dependencies = sentence.childToParentDependencies
+        sentence.predicateArgumentStructures.foldMap { pas =>
+          val verbType = if(assumeGoldVerbSense) {
+            s"${pas.predicate.lemma}.${pas.predicate.sense}"
+          } else pas.predicate.lemma
+          val verbIndex = pas.predicate.index
+          val verbId = VerbId(sid, verbIndex)
+          val argDependencyPaths = pas.arguments.map(_._2).map { argIndex =>
+            val predPathToRoot = getDependencyPathToRoot(dependencies, verbIndex)
+            val argPathToRoot = getDependencyPathToRoot(dependencies, argIndex)
+            val predPathToLCA = predPathToRoot.takeWhile { case (_, i) =>
+              i != argIndex && !argPathToRoot.exists(_._2 == i)
+            }
+            val argPathToLCA = argPathToRoot.takeWhile { case (_, i) =>
+              i != argIndex && !predPathToRoot.exists(_._2 == i)
+            }
+            val pathStr = predPathToLCA.mkString("->") + "*" + argPathToLCA.reverse.mkString("<-")
+            ArgumentId(verbId, argIndex) -> pathStr
+          }.toMap
+
+          Map(verbType -> NonMergingMap(argDependencyPaths))
+        }
+      }
+    ).toCell("CoNLL 2008 predicate-to-argument dependency paths")
+  }
+
   override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.get.map(
     mapVerbFeats(_.arguments.map(_._2).toSet)
   ).toCell("CoNLL 2008 gold arg indices")
@@ -659,7 +701,8 @@ class CoNLL08GoldDepFeatures(
   @JsonCodec case class MLMFeatureGenInput(
     sentenceId: String,
     sentenceTokens: Vector[String],
-    indices: Set[Int]
+    verbs: Map[String, Set[Int]],
+    argsByVerb: Map[String, Set[Int]]
   )
 
   val mlmFeatureGenInputs = dataset.get.map { sentences =>
@@ -667,9 +710,12 @@ class CoNLL08GoldDepFeatures(
       MLMFeatureGenInput(
         sentenceId = sid,
         sentenceTokens = sentence.tokens.map(_.token),
-        indices = sentence.predicateArgumentStructures.foldMap { pas =>
-          pas.arguments.map(_._2).toSet + pas.predicate.index
-        }
+        verbs = sentence.predicateArgumentStructures.foldMap(pas =>
+          Map(pas.predicate.lemma -> Set(pas.predicate.index))
+        ),
+        argsByVerb = sentence.predicateArgumentStructures.foldMap(pas =>
+          Map(pas.predicate.lemma -> pas.arguments.map(_._2).toSet)
+        )
       )
     }
   }

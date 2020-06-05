@@ -79,7 +79,7 @@ object CoNLL08SentenceId {
 case class CoNLL08Sentence(
   id: CoNLL08SentenceId,
   tokens: Vector[CoNLL08Token],
-  // syntacticHeads: Vector[Int], // don't need this right now
+  childToParentDependencies: Vector[(String, Int)],
   predicateArgumentStructures: List[PredicateArgumentStructure])
 
 
