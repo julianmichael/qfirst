@@ -210,7 +210,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     makeMLMFeatures { case (setting, path) =>
       new Cell(
         s"MLM argument vocab ($setting)",
-        FileUtil.readJson[Map[String, Vector[String]]](path.resolve("arg_vocabs.json.gz"))
+        FileUtil.readJson[Map[String, Vector[String]]](path.resolve("arg_vocabs.json"))
           .map(NonMergingMap(_))
       )
     }
@@ -226,11 +226,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   val argMLMFeatureDim = 1024
   lazy val argMLMVectors: Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
     makeMLMFeatures { case (setting, path) =>
-      RunData.strings.zip(verbLemmaToType.get).flatMap { case (split, getVerbType) =>
+      // TODO sentences is temporary
+      RunData.strings.zip(sentences.get).flatMap { case (split, sents) =>
         val idsPath = path.resolve(s"${split}_arg_ids.jsonl.gz")
         val vecPath = path.resolve(s"${split}_arg_vecs.bin")
         // val embPath = Paths.get(filePrefix + "_emb.bin")
         for {
+          // TODO vocab is temporary
+          vocabs <- argMLMVocabs(setting).get
           ids <- Log.infoBranch("Reading verb IDs")(
             FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
           )
@@ -252,21 +255,31 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             } else Log.info(sanityCheckText)
           }
           norms <- Ref[IO].of(qfirst.metrics.Numbers(Vector[Float]()))
-          normedVecs <- vecs.infoTraverse("Normalizing vectors") { vec =>
+          normedVecs <- ids.zip(vecs).infoTraverse("Normalizing vectors") { case (id, vec) =>
             import breeze.math._
             import breeze.linalg._
             val total = sum(vec)
+            // if(total < 0.6) {
+            //   val vocab = vocabs(id.verbLemma)
+            //   val sentence = sents(id.sentenceId)
+            //   val token = sentence(id.index)
+            //   val topElements = vec.activeIterator.map { case (i, value) =>
+            //     vocab(i) -> value
+            //   }.toVector.sortBy(-_._2)
+            //   System.err.println(jjm.ling.Text.render(sentence))
+            //   System.err.println(s"$id ($token): $total")
+            //   topElements.grouped(10).take(5).foreach { pairs =>
+            //     System.err.println(pairs.map(_._1).map(x => f"$x%10s").mkString(" "))
+            //     System.err.println(pairs.map(_._2).map(x => f"$x%10.5f").mkString(" "))
+            //   }
+            // }
+            // TODO make it a parameter whether to norm vectors or not. perhaps in the clustering alg instead though.
+            // or at least do this in-place or something.
             norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
           }
           _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
         } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
-            // XXX patch for now
-            // scala.util.Try(getVerbType(mlmFeatureId.verbLemma)).toOption.foldMap(verbType =>
-            // if(mlmFeatureId.sentenceId == "devel:815") {
-            //   System.err.println(mlmFeatureId)
-            // }
             Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
-            // )
         }
       }.toCell("Argument MLM Vectors")
     }
@@ -275,13 +288,6 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
     argMLMVectors(mode).get.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        // if(argId.verbId.sentenceId == "devel:815") {
-        //   System.err.println("vvv")
-        //   System.err.println(verbType)
-        //   System.err.println(getVerbLemma(verbType))
-        //   System.err.println(argId)
-        //   System.err.println("^^^")
-        // }
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
     }
