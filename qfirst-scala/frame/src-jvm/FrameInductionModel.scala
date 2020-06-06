@@ -121,6 +121,22 @@ object ClusteringModel {
     )
   }
 
+  import breeze.linalg.DenseVector
+
+  // TODO XXX THIS ASSUMES DEV DATA.
+  case class ArgMLMEntropy(mode: String) extends ArgumentModel[DenseVector[Float], MinEntropyClusteringDense.ClusterMixture] {
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).dev.as(())
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      argMLMFeatures <- features.getArgMLMFeatures(mode).dev.map(_.apply(verbType))
+      // TODO add tf-idf transform?
+    } yield (
+      new DirichletMAPClusteringDense(argMLMFeatures, features.argMLMFeatureDim, 0.01f),
+      new MinEntropyClusteringDense(argMLMFeatures, features.argMLMFeatureDim)
+    )
+  }
+
   case object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.full.get.as(())
     override def create[VerbType, Instance](

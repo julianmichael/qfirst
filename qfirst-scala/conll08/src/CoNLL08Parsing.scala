@@ -30,14 +30,6 @@ object CoNLL08Parsing {
     )
 
     val predicates = rows.filter(f => f(10) != "_").map { f =>
-      // if(!f.contains(".")) {
-      //   System.err.println(lines.intercalate("\n"))
-      //   System.err.println("")
-      //   System.err.println(f.map(x => f"$x%15s").mkString)
-      // }
-      // System.err.println(f(10))
-      // System.err.println(f(10).split("."))
-      // System.err.println(f(10).split(".").toList)
       val lemma :: sense :: Nil = f(10).split("\\.").toList
       Predicate(index = f(0).toInt - 1, lemma = lemma, sense = sense)
     }

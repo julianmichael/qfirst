@@ -45,8 +45,6 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
-  type SentFeats[A] = SentenceFeatures[VerbType, A]
-
   type VerbFeats[A] = VerbFeatures[VerbType, A]
   def mapVerbFeats[A, B](f: A => B): VerbFeats[A] => VerbFeats[B] = {
     feats => feats.transform { case (_, instances) =>
@@ -199,7 +197,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // end elmo vecs
 
   val mlmSettings = List("masked", "symm_left", "symm_right", "symm_both")
-  val mlmFeatureDir = inputDir.resolve("mlm")
+  def mlmFeatureDir = inputDir.resolve("mlm")
   def makeMLMFeatures[A](f: (String, Path) => A): Map[String, A] = {
     mlmSettings.map(_ -> "").toMap.transform { case (setting, _) =>
       val mlmSettingDir = mlmFeatureDir.resolve(setting)
@@ -208,7 +206,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }
 
   // setting to lemma to vocab
-  val argMLMVocabs: Map[String, Cell[NonMergingMap[String, Vector[String]]]] = {
+  lazy val argMLMVocabs: Map[String, Cell[NonMergingMap[String, Vector[String]]]] = {
     makeMLMFeatures { case (setting, path) =>
       new Cell(
         s"MLM argument vocab ($setting)",
@@ -223,11 +221,12 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     verbLemma: String,
     index: Int)
 
-  // mode -> verb type -> sentence id -> arg index -> vector
-  val argMLMVectors: Map[String, RunDataCell[Map[VerbType, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
+  // XXX TODO remove verb lemma to type map situation
+  // mode -> verb lemma -> sentence id -> arg index -> vector
+  val argMLMFeatureDim = 1024
+  lazy val argMLMVectors: Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
     makeMLMFeatures { case (setting, path) =>
       RunData.strings.zip(verbLemmaToType.get).flatMap { case (split, getVerbType) =>
-        val vecDim = 1024
         val idsPath = path.resolve(s"${split}_arg_ids.jsonl.gz")
         val vecPath = path.resolve(s"${split}_arg_vecs.bin")
         // val embPath = Paths.get(filePrefix + "_emb.bin")
@@ -236,7 +235,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
           )
           vecs <- Log.infoBranch("Reading argument MLM vectors")(
-            VectorFileUtil.readDenseFloatVectorsNIO(vecPath, vecDim)
+            VectorFileUtil.readDenseFloatVectorsNIO(vecPath, argMLMFeatureDim)
           )
           _ <- Log.info(s"Number of IDs: ${ids.size}; Number of vectors: ${vecs.size}; embedding size: ${vecs.head.size}")
           _ <- {
@@ -244,7 +243,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             val propSane = vecs.take(numToCheck)
               .foldMap(
                 _.activeValuesIterator.filter(f => f >= 0.0 && f <= 1.0).size
-              ).toDouble / (numToCheck * vecDim)
+              ).toDouble / (numToCheck * argMLMFeatureDim)
             val sanityCheckText = f"Sanity check: ${propSane * 100.0}%.1f%% of sampled vector components units are between 0 and 1."
             if(propSane < 1.0) {
               Log.warn(sanityCheckText) >>
@@ -259,9 +258,15 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             val total = sum(vec)
             norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
           }
-          _ <- norms.get >>= (n => Log.info(s"Vector norms: ${getMetricsString(n)}"))
+          _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
         } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
-            Map(getVerbType(mlmFeatureId.verbLemma) -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
+            // XXX patch for now
+            // scala.util.Try(getVerbType(mlmFeatureId.verbLemma)).toOption.foldMap(verbType =>
+            // if(mlmFeatureId.sentenceId == "devel:815") {
+            //   System.err.println(mlmFeatureId)
+            // }
+            Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
+            // )
         }
       }.toCell("Argument MLM Vectors")
     }
@@ -270,7 +275,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
     argMLMVectors(mode).get.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        mlmFeats(verbType)(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
+        // if(argId.verbId.sentenceId == "devel:815") {
+        //   System.err.println("vvv")
+        //   System.err.println(verbType)
+        //   System.err.println(getVerbLemma(verbType))
+        //   System.err.println(argId)
+        //   System.err.println("^^^")
+        // }
+        mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
     }
 
@@ -738,6 +750,28 @@ class CoNLL08GoldDepFeatures(
       val dep = dependencies(index)
       getDependencyPathToRoot(dependencies, dep._2, dep :: acc)
     }
+  }
+
+  val argDependencyRels: RunDataCell[ArgFeats[String]] = {
+    dataset.get.map(
+      _.value.toList.foldMap { case (sid, sentence) =>
+        val dependencies = sentence.childToParentDependencies
+        sentence.predicateArgumentStructures.foldMap { pas =>
+          val verbType = if(assumeGoldVerbSense) {
+            s"${pas.predicate.lemma}.${pas.predicate.sense}"
+          } else pas.predicate.lemma
+
+          val verbIndex = pas.predicate.index
+          val verbId = VerbId(sid, verbIndex)
+
+          val argDependencyRels = pas.arguments.map(_._2).map { argIndex =>
+            ArgumentId(verbId, argIndex) -> dependencies(argIndex)._1
+          }.toMap
+
+          Map(verbType -> NonMergingMap(argDependencyRels))
+        }
+      }
+    ).toCell("CoNLL 2008 argument-to-head dependency rels")
   }
 
   val argDependencyPaths: RunDataCell[ArgFeats[String]] = {

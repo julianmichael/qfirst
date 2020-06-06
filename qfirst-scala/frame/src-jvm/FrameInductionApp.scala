@@ -65,14 +65,17 @@ object FrameInductionApp extends CommandIOApp(
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial
 
-  val numFlatClusters = 50 // TODO small for testing. make big for final runs, maybe.
+  val numFlatClusters = 100 // TODO small for testing. make big for final runs, maybe.
 
   // soft EM hyperparams
   val flatClusteringSoftStoppingDelta = 1e-8
   val flatClusteringTempSched = (x: Int) => scala.math.pow(0.8, x)
   val flatClusteringPriorEstimatorDense = (counts: DenseVector[Double]) => {
     // smoothes with dirichlet, then inverts the odds.
-    invertOdds(dirichletPosteriorFromDense(counts, 1000))
+    // invertOdds(dirichletPosteriorFromDense(counts, 1000))
+
+    // uniform prior
+    Multinomial(DenseVector.ones[Double](counts.size))
   }
   // hard EM hyperparams
   val flatClusteringHardStoppingDelta = 1e-9
@@ -84,7 +87,6 @@ object FrameInductionApp extends CommandIOApp(
     Multinomial(DenseVector.ones[Double](numClusters))
   }
 
-  // TODO actually want to save full tree and do reprocessing for evaluation..
   def runCombinedClustering[I, FP, AP](
     indices: NonEmptyVector[I],
     flatAlgorithm: FlatClusteringAlgorithm { type Index = I; type ClusterParam = FP },
@@ -149,7 +151,8 @@ object FrameInductionApp extends CommandIOApp(
           .infoCompile("Reading cached filtered models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
         import ClusteringModel._
-        val model = QuestionEntropy
+        // val model = QuestionEntropy
+        val model = ArgMLMEntropy("masked")
         for {
           fullTrees <- getFullArgumentClusters(modelName, features, renderVerbType).flatMap(_.get)
           _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
@@ -197,7 +200,8 @@ object FrameInductionApp extends CommandIOApp(
           .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
         write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
         import ClusteringModel._
-        val model = QuestionEntropy
+        val model = ArgMLMEntropy("masked")
+        // val model = QuestionEntropy
         // val model = Composite.argument(
         //   QuestionEntropy -> 1.0,
         //   AnswerEntropy -> 1.0
@@ -335,7 +339,7 @@ object FrameInductionApp extends CommandIOApp(
     for {
       _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
       _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
-      _ <- Log.infoBranch("Running feature setup.")(features.setup)
+      // _ <- Log.infoBranch("Running feature setup.")(features.setup)
       _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
       verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
         Log.infoBranch(s"Clustering for model: $vsConfig") {
@@ -365,7 +369,7 @@ object FrameInductionApp extends CommandIOApp(
     for {
       _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
       _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
-      _ <- Log.infoBranch("Running feature setup.")(features.setup)
+      // _ <- Log.infoBranch("Running feature setup.")(features.setup)
       _ <- Log.info(s"Model name: $modelName")
       argTrees <- Log.infoBranch(s"Clustering arguments") {
         getEvalArgumentClusters[String, Arg](modelName, features, identity[String]).flatMap(_.get)
