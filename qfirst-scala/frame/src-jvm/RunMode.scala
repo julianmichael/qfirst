@@ -2,24 +2,25 @@ package qfirst.frame
 
 import io.circe.generic.JsonCodec
 
+import cats.effect.IO
+
 @JsonCodec sealed trait RunMode {
   import RunMode._
+
+  // run mode details / data choices etc. are defined here
+
+  def get[A](data: RunData[A]): IO[A] = {
+    if(isSanity) data.dev
+    else data.train
+  }
+
+  def shouldEvaluate = isSanity || isTest
+
   override def toString = this match {
     case Sanity => "sanity"
     case Dev => "dev"
     case Test => "test"
   }
-  // def input: String = new Labels(this).input
-  // def input: String = this match {
-  //   case Sanity => "dev"
-  //   case Dev => "train"
-  //   case Test => "train"
-  // }
-  // def eval: String = this match {
-  //   case Sanity => "dev"
-  //   case Dev => "dev"
-  //   case Test => "test"
-  // }
   def isSanity = this match {
     case Sanity => true
     case _ => false

@@ -88,7 +88,7 @@ object ClusteringModel {
 
   //     for {
   //       argumentAlgorithm <- innerModel.create(features, verbType).map(_._2)
-  //       verbIdToArgIds <- features.verbArgSets.full.get.map(
+  //       verbIdToArgIds <- features.verbArgSets.get.map(
   //         _.apply(verbType).value.map { case (verbId, argIds) =>
   //           // TODO: maybe do something to handle the case of no args for a verb...
   //           // what should the clustering do in this case?
@@ -104,12 +104,12 @@ object ClusteringModel {
   // }
 
   case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.full.get.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.get.as(())
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
       // TODO
-      questionDists <- features.argQuestionDists.full.get.map(_.apply(verbType))
+      questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
       questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
       // TODO add tf-idf transform?
       indexedInstances = questionDists.value.map { case (argId, questionDist) =>
@@ -123,13 +123,12 @@ object ClusteringModel {
 
   import breeze.linalg.DenseVector
 
-  // TODO XXX THIS ASSUMES DEV DATA.
   case class ArgMLMEntropy(mode: String) extends ArgumentModel[DenseVector[Float], MinEntropyClusteringDense.ClusterMixture] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).dev.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).get.as(())
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
-      argMLMFeatures <- features.getArgMLMFeatures(mode).dev.map(_.apply(verbType))
+      argMLMFeatures <- features.getArgMLMFeatures(mode).get.map(_.apply(verbType))
       // TODO add tf-idf transform?
     } yield (
       new DirichletMAPClusteringDense(argMLMFeatures, features.argMLMFeatureDim, 0.01f),
@@ -138,18 +137,18 @@ object ClusteringModel {
   }
 
   case object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
-    override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.full.get.as(())
+    override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.get.as(())
     override def create[VerbType, Instance](
       features: Features[VerbType, Instance], verbType: VerbType
     ) = for {
-      vectors <- features.elmoVecs.full.get.map(_.apply(verbType))
+      vectors <- features.elmoVecs.get.map(_.apply(verbType))
     } yield new VectorMeanClustering(vectors.value)
   }
 
   case object AnswerEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
-      sentences <- features.sentences.full.get
-      tokenCounts <- features.argSpans.full.get
+      sentences <- features.sentences.get
+      tokenCounts <- features.argSpans.get
     } yield ()
 
     override def create[VerbType, Instance](
@@ -162,8 +161,8 @@ object ClusteringModel {
 
       // TODO TF-IDF thing
 
-      sentences <- features.sentences.full.get
-      tokenProbs <- features.argSpans.full.get.map(
+      sentences <- features.sentences.get
+      tokenProbs <- features.argSpans.get.map(
         _.apply(verbType).value.toList.foldMap { case (argId, spanScores) =>
           val sentenceTokens = sentences.value(argId.verbId.sentenceId)
           // val numTokens = spanSets.foldMap(_.foldMap(_.length))
@@ -191,11 +190,11 @@ object ClusteringModel {
 }
 
 // object VerbClauseEntropy extends FrameInductionModel[MinEntropyClusteringSparse.ClusterMixture] {
-//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.verbArgSets.full.get.as(())
+//   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.verbArgSets.get.as(())
 //   override def create[VerbType, Instance](
 //     features: Features[VerbType, Instance], verbType: VerbType
 //   ) = for {
-//     clauseCounts <- features.verbArgSets.full.get.map(
+//     clauseCounts <- features.verbArgSets.get.map(
 //       _.apply(verbType).map {
 //         case (verbId, qaPairs) =>
 //           verbId -> qaPairs.keys.toList.foldMap { question =>
@@ -216,7 +215,7 @@ object ClusteringModel {
 
 // object AnswerNLL extends FrameInductionModel[MixtureOfStatesClustering.StateCounts] {
 //   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
-//     answerNLLInfo <- features.answerNLLs.full.get
+//     answerNLLInfo <- features.answerNLLs.get
 //   } yield ()
 
 //   import jjm.ling.en.InflectedForms
@@ -236,7 +235,7 @@ object ClusteringModel {
 //   override def create[VerbType, Instance](
 //     features: Features[VerbType, Instance], verbType: VerbType
 //   ) = for {
-//     answerNLLInfo <- features.answerNLLs.full.get.map(_.apply(verbType))
+//     answerNLLInfo <- features.answerNLLs.get.map(_.apply(verbType))
 //     templateQVocab = Vocab.make(
 //       answerNLLInfo.values.flatten
 //         .map(_._1)

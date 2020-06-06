@@ -41,7 +41,7 @@ import freelog._
 import freelog.implicits._
 
 abstract class Features[VerbType : Encoder : Decoder, Arg](
-  mode: RunMode)(
+  val mode: RunMode)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
@@ -71,6 +71,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   implicit protected val runMode = mode
 
+  def splitName = RunData.strings.get
+
   def getVerbLemma(verbType: VerbType): String
 
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
@@ -89,19 +91,20 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // TODO move all setup into this/superclass
   def setup: IO[Unit] = IO.unit
 
-  val splitLabels: RunDataCell.Labels = new RunDataCell.Labels(mode)
-  object splitDirnames {
-    def train = splitLabels.train
-    def dev = splitLabels.dev
-    def test = splitLabels.test
-    def input = splitLabels.input
-    def full = splitLabels.full
-    def eval = {
-      if(splitLabels.eval == splitLabels.full) splitLabels.eval
-      else s"${splitLabels.full}-filtered-${splitLabels.eval}"
-    }
-    def all = splitLabels.all
-  }
+  // val splitLabels = RunData.strings
+  // val splitLabels: RunDataCell.Labels = new RunDataCell.Labels(mode)
+  // object splitDirnames {
+  //   def train = splitLabels.train
+  //   def dev = splitLabels.dev
+  //   def test = splitLabels.test
+  //   def input = splitLabels.input
+  //   def full = splitLabels.full
+  //   def eval = {
+  //     if(splitLabels.eval == splitLabels.full) splitLabels.eval
+  //     else s"${splitLabels.full}-filtered-${splitLabels.eval}"
+  //   }
+  //   def all = splitLabels.all
+  // }
 
   val createDir = (path: Path) => IO(!Files.exists(path))
     .ifM(IO(Files.createDirectories(path)), IO.unit)
@@ -119,7 +122,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // question and verb IDs
 
-  lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.get.map(
+  lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.data.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, args) =>
         args.map(arg => ArgumentId(verbId, arg))
@@ -127,13 +130,13 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   ).toCell("Argument IDs")
 
-  lazy val verbLemmaToType = verbArgSets.get.map(
+  lazy val verbLemmaToType = verbArgSets.data.map(
     _.keySet.toList.foldMap(verbType =>
       NonMergingMap(getVerbLemma(verbType) -> verbType)
     )
   ).toCell("Verb lemma to verb type mapping")
 
-  lazy val verbIdToType = verbArgSets.get.map(
+  lazy val verbIdToType = verbArgSets.data.map(
     _.toList.foldMap { case (verbType, verbs) =>
       NonMergingMap(
         verbs.value.toList.map { case (verbId, _) =>
@@ -186,7 +189,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // ELMo XXX TODO remove these
 
-  lazy val elmoVecs = verbIdToType.get.zip(RunData.strings).flatMap {
+  lazy val elmoVecs = verbIdToType.data.zip(RunData.strings).flatMap {
     case (vIdToVType, split) =>
       getVerbVectors(
         vIdToVType.value,
@@ -227,7 +230,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   lazy val argMLMVectors: Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
     makeMLMFeatures { case (setting, path) =>
       // TODO sentences is temporary
-      RunData.strings.zip(sentences.get).flatMap { case (split, sents) =>
+      RunData.strings.zip(sentences.data).flatMap { case (split, sents) =>
         val idsPath = path.resolve(s"${split}_arg_ids.jsonl.gz")
         val vecPath = path.resolve(s"${split}_arg_vecs.bin")
         // val embPath = Paths.get(filePrefix + "_emb.bin")
@@ -286,7 +289,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }
 
   def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
-    argMLMVectors(mode).get.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
+    argMLMVectors(mode).data.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
@@ -361,7 +364,7 @@ class GoldQasrlFeatures(
   ).toCell("QA-SRL dataset")
 
   val qaPairs: RunDataCell[VerbFeats[QAPairs]] = {
-    dataset.get.map(
+    dataset.data.map(
       _.sentences.iterator.flatMap { case (sid, sentence) =>
         sentence.verbEntries.values.map(sid -> _)
       }.toList.groupBy(_._2.verbInflectedForms).map {
@@ -385,21 +388,20 @@ class GoldQasrlFeatures(
     )
   }.toCell("QA-SRL All QA Pairs")
 
-  val argIdToSpans: RunDataCell[ArgFeats[List[List[ESpan]]]] = qaPairs.get
-    .map(
-      _.transform { case (_, verbs) =>
-        verbs.value.toList.foldMap { case (verbId, qaPairs) =>
-          NonMergingMap(
-            qaPairs.map { case (cq, spanLists) =>
-              ArgumentId(verbId, cq) -> spanLists
-            }
-          )
-        }
+  val argIdToSpans: RunDataCell[ArgFeats[List[List[ESpan]]]] = qaPairs.data.map(
+    _.transform { case (_, verbs) =>
+      verbs.value.toList.foldMap { case (verbId, qaPairs) =>
+        NonMergingMap(
+          qaPairs.map { case (cq, spanLists) =>
+            ArgumentId(verbId, cq) -> spanLists
+          }
+        )
       }
-    ).toCell("QA-SRL ArgumentId to spans")
+    }
+  ).toCell("QA-SRL ArgumentId to spans")
 
   override val verbArgSets: RunDataCell[VerbFeats[Set[ClausalQuestion]]] =
-      qaPairs.get.map(
+      qaPairs.data.map(
         _.transform { case (_, verbs) =>
           NonMergingMap(
             verbs.value.transform { case (verbId, qaPairs) =>
@@ -414,14 +416,14 @@ class GoldQasrlFeatures(
   //   .map(NonMergingMap.apply[String, Vector[String]])
   //   .toCell("QA-SRL sentences")
 
-  override val sentences = dataset.get
+  override val sentences = dataset.data
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
     .map(NonMergingMap.apply[String, Vector[String]])
     .toCell("QA-SRL sentences")
 
   // TODO temp before we have distribution results from the models
   // override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-  //   argIdToSpans.get.map(
+  //   argIdToSpans.data.map(
   //     _.transform { case (_, args) =>
   //       NonMergingMap(
   //         args.value.transform { case (argId, _) =>
@@ -434,7 +436,7 @@ class GoldQasrlFeatures(
 
   // TODO incorporate gold question
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-    RunData.strings.zip(verbIdToType.get).zip(qaPairs.get)
+    RunData.strings.zip(verbIdToType.data).zip(qaPairs.data)
       .flatMap { case ((split, vidToType), qaPairs) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
       FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
@@ -475,7 +477,7 @@ class GoldQasrlFeatures(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = qaPairs.get.map(
+  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = qaPairs.data.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, qaPairs) =>
         NonMergingMap(
@@ -489,7 +491,7 @@ class GoldQasrlFeatures(
 
   override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
-  // lazy val instancesByQuestionId = instances.get.map(
+  // lazy val instancesByQuestionId = instances.data.map(
   //   _.map { case (verbType, sentences) =>
   //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
   //       verbs.value.toList.foldMap { case (vi, questions) =>
@@ -596,8 +598,9 @@ class GoldQasrlFeatures(
 
   val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
 
-  // TODO refactor into RunData framework
-  val evaluationItemsPath = liveDir.map(_.resolve(s"eval-sample-${splitLabels.eval}.jsonl"))
+  // TODO refactor into RunData framework. is this done?
+  // actually TODO: delete!
+  val evaluationItemsPath = (liveDir, splitName).mapN((dir, split) => dir.resolve(s"eval-sample-$split.jsonl"))
   val evaluationItems = {
       new Cell(
         "Evaluation items",
@@ -608,7 +611,7 @@ class GoldQasrlFeatures(
             read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
             write = (path, items) => FileUtil.writeJsonLines(path)(items))(
             Log.infoBranch(s"Creating new sample for evaluation at $evalItemsPath")(
-              dataset.eval.get.map { evalSet =>
+              dataset.get.map { evalSet =>
                 (new scala.util.Random(86735932569L)).shuffle(
                   evalSet.sentences.values.iterator.flatMap(sentence =>
                     sentence.verbEntries.values.toList.map(verb =>
@@ -723,7 +726,7 @@ class CoNLL08GoldDepFeatures(
   }
 
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
-    dataset.get.map(sents =>
+    dataset.data.map(sents =>
       NonMergingMap(
         sents.value.map { case (sid, sent) =>
           sid -> sent.tokens.map(_.token)
@@ -732,7 +735,7 @@ class CoNLL08GoldDepFeatures(
     ).toCell("CoNLL 2008 sentence index")
 
   val predArgStructures: RunDataCell[VerbFeats[PredicateArgumentStructure]] = {
-    dataset.get.map(
+    dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         sentence.predicateArgumentStructures.foldMap { pas =>
           val verbType = if(assumeGoldVerbSense) {
@@ -759,7 +762,7 @@ class CoNLL08GoldDepFeatures(
   }
 
   val argDependencyRels: RunDataCell[ArgFeats[String]] = {
-    dataset.get.map(
+    dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         val dependencies = sentence.childToParentDependencies
         sentence.predicateArgumentStructures.foldMap { pas =>
@@ -781,7 +784,7 @@ class CoNLL08GoldDepFeatures(
   }
 
   val argDependencyPaths: RunDataCell[ArgFeats[String]] = {
-    dataset.get.map(
+    dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         val dependencies = sentence.childToParentDependencies
         sentence.predicateArgumentStructures.foldMap { pas =>
@@ -809,11 +812,11 @@ class CoNLL08GoldDepFeatures(
     ).toCell("CoNLL 2008 predicate-to-argument dependency paths")
   }
 
-  override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.get.map(
+  override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.data.map(
     mapVerbFeats(_.arguments.map(_._2).toSet)
   ).toCell("CoNLL 2008 gold arg indices")
 
-  // override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.get.map(
+  // override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.data.map(
   //   mapVerbFeats(_.arguments.map(_._2).toSet)
   // ).toCell("CoNLL 2008 gold arg indices")
 
@@ -835,7 +838,7 @@ class CoNLL08GoldDepFeatures(
   }
 
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
-    predArgStructures.get.map(
+    predArgStructures.data.map(
       makeArgFeats { case (verbId, pas) =>
         pas.arguments.map { case (roleLabel, index) =>
           index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
@@ -853,7 +856,7 @@ class CoNLL08GoldDepFeatures(
     argsByVerb: Map[String, Set[Int]]
   )
 
-  val mlmFeatureGenInputs = dataset.get.map { sentences =>
+  val mlmFeatureGenInputs = dataset.data.map { sentences =>
     Stream.emits[IO, (String, CoNLL08Sentence)](sentences.value.toList).map { case (sid, sentence) =>
       MLMFeatureGenInput(
         sentenceId = sid,
@@ -881,7 +884,7 @@ class CoNLL08GoldDepFeatures(
         )
       )
     )
-  }.run
+  }.all.void
 
   override val setup = writeMLMInputs
 
@@ -919,7 +922,7 @@ class Ontonotes5GoldSpanFeatures(
     spec => fullIndex.get.map(_.filter(_.split == spec))
   ).toCell("OntoNotes Index")
 
-  val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = RunData.strings.zip(index.get)
+  val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
       filePaths.infoBarFoldMapM(s"Reading PropBank files to construct instances ($split)") { path =>
         Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
@@ -945,7 +948,7 @@ class Ontonotes5GoldSpanFeatures(
 
   // TODO eliminate redundant traversal of propbank
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
-    index.get.flatMap(
+    index.data.flatMap(
       _.infoBarFoldMapM("Constructing sentence index") { path =>
         ontonotesService.getFile(path).map(
           _.sentences.foldMap(s => NonMergingMap(s.path.toString -> s.tokens.map(_.token).toVector))
@@ -953,7 +956,7 @@ class Ontonotes5GoldSpanFeatures(
       }
     ).toCell("Sentence index")
 
-  override val verbArgSets = dataset.get.map(
+  override val verbArgSets = dataset.data.map(
     _.transform { case (_, verbs) =>
       NonMergingMap(
         verbs.value.map { case (verbId, (_, labels)) =>
@@ -964,7 +967,7 @@ class Ontonotes5GoldSpanFeatures(
   ).toCell("PropBank gold span instances")
 
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-    RunData.strings.zip(verbIdToType.get).flatMap { case (split, vidToType) =>
+    RunData.strings.zip(verbIdToType.data).flatMap { case (split, vidToType) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
       FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
         .map { case QGen.SentencePrediction(sid, _, verbs) =>
@@ -984,7 +987,7 @@ class Ontonotes5GoldSpanFeatures(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = dataset.get.map(
+  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = dataset.data.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -998,7 +1001,7 @@ class Ontonotes5GoldSpanFeatures(
 
   override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
-  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.get.map(
+  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.data.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -1021,7 +1024,7 @@ class Ontonotes5GoldSpanFeatures(
     argumentSpans: Set[ESpan]
   )
 
-  val qgInputs = index.get.map { paths =>
+  val qgInputs = index.data.map { paths =>
     Stream.emits[IO, CoNLLPath](paths) >>= { path =>
       Stream.eval(ontonotesService.getFile(path)) >>= { file =>
         Stream.emits[IO, PropBankQGInput](
@@ -1052,7 +1055,7 @@ class Ontonotes5GoldSpanFeatures(
         )
       )
     )
-  }.run
+  }.all.void
 
   override val setup = writeQGInputs
 }

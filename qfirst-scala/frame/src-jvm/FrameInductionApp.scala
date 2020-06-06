@@ -131,102 +131,52 @@ object FrameInductionApp extends CommandIOApp(
     }
   }
 
-  def getEvalArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    modelName: String, features: Features[VerbType, Arg],
-    renderVerbType: VerbType => String)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
-    val fullSplit = features.splitLabels.full
-    val evalSplit = features.splitLabels.eval
-    if(fullSplit == evalSplit) getFullArgumentClusters(
-      modelName, features, renderVerbType
-    ) else features.modelDir
-      .map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
-      .flatTap(features.createDir)
-      .map(modelDir =>
-      FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
-        s"Argument cluster model $modelName, clustered over $fullSplit, filtered to $evalSplit")(
-        path = modelDir.resolve(s"model.jsonl.gz"),
-        read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
-          .infoCompile("Reading cached filtered models for verbs")(_.toList).map(_.toMap),
-        write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-        import ClusteringModel._
-        // val model = QuestionEntropy
-        val model = ArgMLMEntropy("masked")
-        for {
-          fullTrees <- getFullArgumentClusters(modelName, features, renderVerbType).flatMap(_.get)
-          _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
-          _ <- model.init(features)
-          allEvalArgs <- features.args.eval.get
-          results <- fullTrees.toList.infoBarTraverse("Filtering verb cluster trees") { case (verbType, fullTree) =>
-            Log.info(renderVerbType(verbType)) >> {
-              // some of them arg empty, gotta skip
-              val proc = for {
-                evalArgs <- OptionT.fromOption[IO](Option(allEvalArgs(verbType)).filter(_.nonEmpty))
-                // if evalArgs.nonEmpty
-                (flatAlgorithm, agglomAlgorithm) <- OptionT.liftF(model.create(features, verbType))
-                setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-                evalTree <- OptionT.fromOption[IO](
-                  setAgglomAlgorithm.filterAndReMerge(
-                    fullTree,
-                    indices => Option(indices.intersect(evalArgs)).filter(_.nonEmpty)
-                  )
-                )
-              } yield verbType -> evalTree
-
-              proc.value
-            }
-          }
-        } yield results.flatten.toMap
-      }
-    )
-  }
-
   // TODO organize models into subdirs and cache
-  def getFullArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+  def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     modelName: String, features: Features[VerbType, Arg],
     renderVerbType: VerbType => String)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
-    val split = features.splitLabels.full
-    features.modelDir
-      .map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
-      .flatTap(features.createDir)
-      .map(modelDir =>
-        FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
-        s"Argument cluster model: $modelName. Clustering data from $split")(
-        path = modelDir.resolve(s"model.jsonl.gz"),
-        read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
-          .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
-        write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-        import ClusteringModel._
-        val model = ArgMLMEntropy("masked")
-        // val model = QuestionEntropy
-        // val model = Composite.argument(
-        //   QuestionEntropy -> 1.0,
-        //   AnswerEntropy -> 1.0
-        // )
-        for {
-          _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
-          _ <- model.init(features)
-          allVerbArgSets <- features.verbArgSets.full.get
-          allArgs <- features.args.full.get
-          results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-            Log.info(renderVerbType(verbType)) >> {
-              // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
-              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
-                model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
-                  val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-                  runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
-                    case (argTree, _) => verbType -> argTree
+    features.splitName >>= { splitName =>
+      features.modelDir
+        .map(_.resolve(s"$splitName/$modelName"))
+        .flatTap(features.createDir)
+        .map(modelDir =>
+          FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
+            s"Argument cluster model: $modelName. Clustering data from $splitName")(
+            path = modelDir.resolve(s"model.jsonl.gz"),
+            read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
+              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+            write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
+            import ClusteringModel._
+            val model = ArgMLMEntropy("masked")
+            // val model = QuestionEntropy
+            // val model = Composite.argument(
+            //   QuestionEntropy -> 1.0,
+            //   AnswerEntropy -> 1.0
+            // )
+            for {
+              _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+              _ <- model.init(features)
+              allVerbArgSets <- features.verbArgSets.get
+              allArgs <- features.args.get
+              results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+                Log.info(renderVerbType(verbType)) >> {
+                  // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+                  NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+                    model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
+                      val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
+                      runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+                        case (argTree, _) => verbType -> argTree
+                      }
+                    }
                   }
                 }
               }
-            }
+            } yield results.flatten.toMap
           }
-        } yield results.flatten.toMap
-      }
-    )
+        )
+    }
   }
 
   def getVerbClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
@@ -372,9 +322,9 @@ object FrameInductionApp extends CommandIOApp(
       // _ <- Log.infoBranch("Running feature setup.")(features.setup)
       _ <- Log.info(s"Model name: $modelName")
       argTrees <- Log.infoBranch(s"Clustering arguments") {
-        getEvalArgumentClusters[String, Arg](modelName, features, identity[String]).flatMap(_.get)
+        getArgumentClusters[String, Arg](modelName, features, identity[String]).flatMap(_.get)
       }
-      _ <- {
+      _ <- if(features.mode.shouldEvaluate) {
         if(features.assumeGoldVerbSense) {
           Log.infoBranch("Evaluating argument clustering")(
             Evaluation.evaluateArgumentClusters(modelName, features, argTrees, useSenseSpecificRoles = true)
@@ -386,7 +336,7 @@ object FrameInductionApp extends CommandIOApp(
             Evaluation.evaluateArgumentClusters(s"$modelName-nosense", features, argTrees, useSenseSpecificRoles = false)
           )
         }
-      }
+      } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
       // evalSenseLabels <- config.propBankEvalLabels.get
       // tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
       //   evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
@@ -411,11 +361,12 @@ object FrameInductionApp extends CommandIOApp(
       "data", metavar = dataSettings.mkString("|"), help = "Data setting to run in."
     )
 
-    val modeO = Opts.option[String](
+    val modeOptO = Opts.option[String](
       "mode", metavar = "setup|sanity|dev|test", help = "Which mode to run in."
     ).mapValidated { string =>
       RunMode.fromString(string)
-        .map(Validated.valid)
+        .map(mode => Validated.valid(Option(mode)))
+        .orElse(if(string == "setup") Some(Validated.valid(None)) else None)
         .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be setup, sanity, dev, or test."))
     }
 
@@ -427,14 +378,15 @@ object FrameInductionApp extends CommandIOApp(
         .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
     }.orNone
 
-    val setupO = Opts.flag("setup", help = "Run setup steps for feature generation.").orFalse
-
-    (dataO, modeO, modelConfigOptO, setupO).mapN { (data, mode, modelConfigOpt, setup) =>
+    (dataO, modeOptO, modelConfigOptO).mapN { (data, modeOpt, modelConfigOpt) =>
+      val mode = modeOpt.getOrElse(RunMode.Sanity)
+      val setup = modeOpt.isEmpty
+      val modeString = modeOpt.fold("setup")(_.toString)
       for {
         implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
         _ <- logger.info(s"Data: $data")
-        _ <- logger.info(s"Mode: $mode")
-        _ <- logger.info(s"Model configuration: $modelConfigOpt")
+        _ <- logger.info(s"Mode: $modeString")
+        _ <- (if(setup) IO.unit else logger.info(s"Model configuration: $modelConfigOpt")
         _ <- data match {
           case "qasrl" =>
             val feats = new GoldQasrlFeatures(mode)

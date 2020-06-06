@@ -493,13 +493,14 @@ object Evaluation {
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
     _ <- Log.info("Initializing eval features")
-    argRoleLabels <- features.argRoleLabels.eval.get
+    argRoleLabels <- features.argRoleLabels.get
     // numGoldClusters = argRoleLabels.transform { case (_, labels) =>
     //   if(useSenseSpecificRoles) labels.value.values.toSet.size
     //   else labels.value.values.map(_.role).toSet.size
     // }
     // calculate B^3 precision-recall curve for each verb
-    mainResultsDir <- features.modelDir.map(_.resolve(s"$modelName/${features.splitDirnames.eval}"))
+    splitName <- features.splitName
+    mainResultsDir <- features.modelDir.map(_.resolve(s"$splitName/$modelName"))
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
         bCubedResults <- getAllPRStats(argTrees, argRoleLabels, bCubed, useSenseSpecificRoles)
