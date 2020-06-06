@@ -16,30 +16,23 @@ import scala.collection.immutable.Vector
 
 // same as DirichletMAPClustering but only does MLE (no smoothing) and agglomeration
 // can also be regarded as "MLE clustering"
-object MinEntropyClustering {
-  case class ClusterMixture(counts: DenseVector[Double], total: Double)
+object MinEntropyClusteringDense {
+  case class ClusterMixture(counts: DenseVector[Float], total: Float)
 }
-// TODO maybe sparse vectors ... or dense, since they need to be constructed for cluster params anyway? or maybe that would just use way too much memory
 // Doesn't allow for flat clustering, because assigns infinite loss to zero-probability items.
-// TODO could perhaps modify EM algorithm to account for this, but doesn't seem worth it.
-class MinEntropyClustering[I](
-  getInstance: I => Map[Int, Double],
+class MinEntropyClusteringDense[I](
+  getInstance: I => DenseVector[Float],
   vocabSize: Int
 ) extends AgglomerativeClusteringAlgorithm {
-  import MinEntropyClustering._
+  import MinEntropyClusteringDense._
   type ClusterParam = ClusterMixture
   type Index = I
 
   def getSingleInstanceParameter(
     index: Index
   ): ClusterParam = {
-    val arr = new Array[Double](vocabSize)
-    var total = 0.0
-    getInstance(index).foreach { case (index, pcount) =>
-      arr(index) += pcount
-      total = total + pcount
-    }
-    ClusterMixture(DenseVector(arr), total)
+    val vec = getInstance(index)
+    ClusterMixture(vec, sum(vec))
   }
 
   // loss is entropy * num elements (same as likelihood under MLE in our case)
@@ -47,9 +40,7 @@ class MinEntropyClustering[I](
     index: Index,
     param: ClusterParam
   ): Double = {
-    getInstance(index).iterator.map { case (item, count) =>
-      math.log(param.counts(item) / param.total) * count
-    }.sum * -1.0
+    -1.0 * sum(getInstance(index) *:* log(param.counts /:/ param.total)) // no entries should be 0. hope we don't get NaNs
   }
 
   // just get MLE by counting
@@ -57,21 +48,17 @@ class MinEntropyClustering[I](
     indices: Vector[Index],
     assignmentProbabilities: Vector[Double]
   ): ClusterParam = {
-    val arr = new Array[Double](vocabSize)
-    var total = 0.0
-    var numInstances = 0.0
+    val param = DenseVector.zeros[Float](vocabSize)
+    var total = 0.0f
     indices.iterator
       .zip(assignmentProbabilities.iterator)
       .filter(_._2 > 0.0) // ignore zero weights
       .foreach { case (index, prob) =>
-        numInstances = numInstances + prob
-        getInstance(index).foreach { case (index, count) =>
-          val pcount = prob * count
-          arr(index) += pcount
-          total = total + pcount
-        }
+        val pcounts = getInstance(index) *:* prob.toFloat
+        param :+= pcounts
+        total = total + sum(pcounts)
       }
-    ClusterMixture(DenseVector(arr), total)
+    ClusterMixture(param, total)
   }
 
   // could maybe make more efficient by copying code
@@ -93,10 +80,11 @@ class MinEntropyClustering[I](
   override val mergeLossEfficient = Some(
     (left: ClusterParam, right: ClusterParam) => {
       val param = mergeParamsEfficient.get(left, right)
-      param.counts.activeValuesIterator
-        .filter(_ > 0.0) // prevent log of 0
-        .map(c => c * log(c / param.total)) // count * log probability = log likelihood
-        .sum * -1.0
+      -1.0 * sum(param.counts *:* log(param.counts /:/ param.total)) // no entries should be 0. hope we don't get NaNs
+      // param.counts.activeValuesIterator
+      //   .filter(_ > 0.0) // prevent log of 0
+      //   .map(c => c * log(c / param.total)) // count * log probability = log likelihood
+      //   .sum * -1.0
     }
   )
 }

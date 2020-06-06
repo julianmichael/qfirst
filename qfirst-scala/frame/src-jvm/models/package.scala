@@ -55,7 +55,13 @@ package object models {
 
   def dirichletPosteriorFromDense[A](pseudoCounts: DenseVector[Double], alpha: Double): DenseMultinomial = {
     val priorCount = alpha / pseudoCounts.size
-    Multinomial(pseudoCounts *:* priorCount)
+    Multinomial(pseudoCounts + priorCount)
+  }
+
+  def dirichletPosteriorFromDenseFloat[A](pseudoCounts: DenseVector[Float], alpha: Float): DenseVector[Float] = {
+    val priorCounts = DenseVector.fill[Float](pseudoCounts.size, alpha / pseudoCounts.size)
+    val normalizer = sum(pseudoCounts) + alpha
+    (pseudoCounts + priorCounts) /:/ normalizer
   }
 
   // alpha is TOTAL of prior counts

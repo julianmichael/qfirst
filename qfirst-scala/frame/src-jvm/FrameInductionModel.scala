@@ -103,7 +103,7 @@ object ClusteringModel {
   //   }
   // }
 
-  case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClustering.ClusterMixture] {
+  case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
     override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.full.get.as(())
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
@@ -116,8 +116,8 @@ object ClusteringModel {
         argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
       }
     } yield (
-      new DirichletMAPClustering(indexedInstances, questionVocab.size, 0.01),
-      new MinEntropyClustering(indexedInstances, questionVocab.size)
+      new DirichletMAPClusteringSparse(indexedInstances, questionVocab.size, 0.01),
+      new MinEntropyClusteringSparse(indexedInstances, questionVocab.size)
     )
   }
 
@@ -130,7 +130,7 @@ object ClusteringModel {
     } yield new VectorMeanClustering(vectors.value)
   }
 
-  case object AnswerEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClustering.ClusterMixture] {
+  case object AnswerEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
       sentences <- features.sentences.full.get
       tokenCounts <- features.argSpans.full.get
@@ -168,13 +168,13 @@ object ClusteringModel {
         qid -> qTokenProbs.map { case (tok, pcount) => tokenVocab.getIndex(tok) -> pcount }
       }
     } yield (
-      new DirichletMAPClustering(indexedTokenProbs, tokenVocab.size, 0.01),
-      new MinEntropyClustering(indexedTokenProbs, tokenVocab.size)
+      new DirichletMAPClusteringSparse(indexedTokenProbs, tokenVocab.size, 0.01),
+      new MinEntropyClusteringSparse(indexedTokenProbs, tokenVocab.size)
     )
   }
 }
 
-// object VerbClauseEntropy extends FrameInductionModel[MinEntropyClustering.ClusterMixture] {
+// object VerbClauseEntropy extends FrameInductionModel[MinEntropyClusteringSparse.ClusterMixture] {
 //   override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.verbArgSets.full.get.as(())
 //   override def create[VerbType, Instance](
 //     features: Features[VerbType, Instance], verbType: VerbType
@@ -193,7 +193,7 @@ object ClusteringModel {
 //         clauseVocab.getIndex(clause) -> count
 //       }
 //     }
-//   } yield new MinEntropyClustering(indexedClauseCounts, clauseVocab.size)
+//   } yield new MinEntropyClusteringSparse(indexedClauseCounts, clauseVocab.size)
 // }
 
 // import breeze.linalg.DenseVector

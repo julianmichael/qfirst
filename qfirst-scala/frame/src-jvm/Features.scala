@@ -235,13 +235,13 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
           ids <- Log.infoBranch("Reading verb IDs")(
             FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
           )
-          embeddings <- Log.infoBranch("Reading verb embeddings")(
+          vecs <- Log.infoBranch("Reading argument MLM vectors")(
             VectorFileUtil.readDenseFloatVectorsNIO(vecPath, vecDim)
           )
-          _ <- Log.info(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}")
+          _ <- Log.info(s"Number of IDs: ${ids.size}; Number of vectors: ${vecs.size}; embedding size: ${vecs.head.size}")
           _ <- {
             val numToCheck = 20
-            val propSane = embeddings.take(numToCheck)
+            val propSane = vecs.take(numToCheck)
               .foldMap(
                 _.activeValuesIterator.filter(f => f >= 0.0 && f <= 1.0).size
               ).toDouble / (numToCheck * vecDim)
@@ -249,10 +249,18 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             if(propSane < 1.0) {
               Log.warn(sanityCheckText) >>
                 Log.warn("There might be endianness issues with how you're reading the vectors") >>
-                embeddings.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
+                vecs.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
             } else Log.info(sanityCheckText)
           }
-        } yield ids.zip(embeddings).foldMap { case (mlmFeatureId, vec) =>
+          norms <- Ref[IO].of(qfirst.metrics.Numbers(Vector[Float]()))
+          normedVecs <- vecs.infoTraverse("Normalizing vectors") { vec =>
+            import breeze.math._
+            import breeze.linalg._
+            val total = sum(vec)
+            norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
+          }
+          _ <- norms.get >>= (n => Log.info(s"Vector norms: ${getMetricsString(n)}"))
+        } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
             Map(getVerbType(mlmFeatureId.verbLemma) -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
         }
       }.toCell("Argument MLM Vectors")

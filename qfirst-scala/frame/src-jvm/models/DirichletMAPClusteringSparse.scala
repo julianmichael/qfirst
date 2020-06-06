@@ -19,7 +19,7 @@ import scala.collection.immutable.Vector
 // breaking monotonicity thanks to the smoothing and concentration effects of the Dirichlet prior.
 // In particular, combining identical indices will reduce the total loss
 // (instead of keeping it constant, as with MinEntropyClustering).
-class DirichletMAPClustering[I](
+class DirichletMAPClusteringSparse[I](
   getInstance: I => Map[Int, Double],
   vocabSize: Int,
   clusterConcentrationParameter: Double
