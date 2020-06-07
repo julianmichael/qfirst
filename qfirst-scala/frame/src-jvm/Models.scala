@@ -25,6 +25,77 @@ import cats.implicits._
 //   ): IO[AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = P }]
 // }
 
+// sealed trait ClusteringModelConfig
+
+// case class ArgumentModelConfig(
+// ) extends ClusteringModelConfig
+
+// case class VerbModelConfig(
+// ) extends ClusteringModelConfig
+
+// case class JointModelConfig(
+// ) extends ClusteringModelConfig
+
+// case class ArgumentModel(
+//   lossTerms: Map[(ArgumentLossTerm, Double)]
+// ) {
+
+//   // type FlatParam
+//   // type AgglomParam
+
+//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
+
+//   def create[VerbType, Arg](
+//     features: Features[VerbType, Arg], verbType: VerbType
+//   ): IO[
+//     (FlatClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = FlatParam },
+//      AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = AgglomParam })
+//   ]
+
+//   def getArgumentClusters[VerbType, Arg : Order](
+//     modelName: String, features: Features[VerbType, Arg],
+//     renderVerbType: VerbType => String)(
+//     implicit Log: EphemeralTreeLogger[IO, String]
+//   ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
+//     import ClusteringModel._
+//     val model = ArgMLMEntropy("masked")
+//     for {
+//       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+//       _ <- lossTerms.traverse(_.init(features)).void
+//       allVerbArgSets <- features.verbArgSets.get
+//       allArgs <- features.args.get
+//       results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+//         Log.info(renderVerbType(verbType)) >> {
+//           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+//           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+//             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
+//               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
+//               Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+//                 case (argTree, _) => verbType -> argTree
+//               }
+//             }
+//           }
+//         }
+//       }
+//     } yield results.flatten.toMap
+//   }
+// }
+
+// sealed trait ArgumentLossTerm {
+
+//   type FlatParam
+//   type AgglomParam
+
+//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
+
+//   def create[VerbType, Arg](
+//     features: Features[VerbType, Arg], verbType: VerbType
+//   ): IO[
+//     (FlatClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = FlatParam },
+//      AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = AgglomParam })
+//   ]
+// }
+
 sealed trait ClusteringModel[Alg[_]] {
   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
   def create[VerbType, Arg](

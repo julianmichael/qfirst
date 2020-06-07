@@ -2,7 +2,6 @@ package qfirst.frame.models
 
 import qfirst.frame.MergeTree
 
-import cats.data.NonEmptyVector
 import cats.implicits._
 
 trait CompositeAgglomerativeClusteringAlgorithm extends AgglomerativeClusteringAlgorithm {
@@ -27,6 +26,16 @@ trait CompositeAgglomerativeClusteringAlgorithm extends AgglomerativeClusteringA
     (_1Lambda * _1.getInstanceLoss(index, param._1)) +
       (_2Lambda * _2.getInstanceLoss(index, param._2))
   }
+
+  override def mergeParamsEfficient: Option[(ClusterParam, ClusterParam) => ClusterParam] =
+    (_1.mergeParamsEfficient, _2.mergeParamsEfficient).mapN((f1, f2) =>
+      (x: ClusterParam, y: ClusterParam) => (f1(x._1, y._1), f2(x._2, y._2))
+    )
+
+  override def mergeLossEfficient: Option[(ClusterParam, ClusterParam) => Double] =
+    (_1.mergeLossEfficient, _2.mergeLossEfficient).mapN((f1, f2) =>
+      (x: ClusterParam, y: ClusterParam) => f1(x._1, y._1) + f2(x._2, y._2)
+    )
 
   override def mergeParamsFallback(
     left: MergeTree[Index],

@@ -62,75 +62,6 @@ object FrameInductionApp extends CommandIOApp(
     // (1 to 9).map(_.toDouble / 10.0).toList.map(ModelConfig.Interpolated(_))
   }
 
-  import breeze.linalg.DenseVector
-  import breeze.stats.distributions.Multinomial
-
-  val numFlatClusters = 100 // TODO small for testing. make big for final runs, maybe.
-
-  // soft EM hyperparams
-  val flatClusteringSoftStoppingDelta = 1e-8
-  val flatClusteringTempSched = (x: Int) => scala.math.pow(0.8, x)
-  val flatClusteringPriorEstimatorDense = (counts: DenseVector[Double]) => {
-    // smoothes with dirichlet, then inverts the odds.
-    // invertOdds(dirichletPosteriorFromDense(counts, 1000))
-
-    // uniform prior
-    Multinomial(DenseVector.ones[Double](counts.size))
-  }
-  // hard EM hyperparams
-  val flatClusteringHardStoppingDelta = 1e-9
-  val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
-    // smoothes with dirichlet, then inverts the odds.
-    // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
-
-    // always assume uniform prior --- seems to work just as well if not better
-    Multinomial(DenseVector.ones[Double](numClusters))
-  }
-
-  def runCombinedClustering[I, FP, AP](
-    indices: NonEmptyVector[I],
-    flatAlgorithm: FlatClusteringAlgorithm { type Index = I; type ClusterParam = FP },
-    agglomAlgorithm: AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = AP })(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[(MergeTree[Set[I]], AP)] = {
-    if(indices.size <= numFlatClusters) { // we can immediately do agglom. clustering
-      IO {
-        val (argClusterTree, params) = agglomAlgorithm.runFullAgglomerativeClustering(indices)
-        argClusterTree.map(Set(_)) -> params
-      }
-    } else { // we need a flat pre-clustering step
-      val indicesVec = indices.toVector
-      for {
-        _ <- Log.info(s"Pre-clustering ${indices.size} items.")
-        allEMTrials <- (1 to 3).toList.traverse(i =>
-          Log.traceBranch(s"Flat clustering trial $i")(
-            for {
-              initModel <- IO(flatAlgorithm.initPlusPlus(indicesVec, numFlatClusters))
-              // softEMModel <- flatAlgorithm.runSoftEM(
-              //   initModel, argIds,
-              //   flatClusteringSoftStoppingDelta,
-              //   flatClusteringTempSched,
-              //   flatClusteringPriorEstimatorDense
-              // ).map(_._1)
-              res <- flatAlgorithm.runHardEM(
-                initModel /*softEMModel*/, indicesVec,
-                flatClusteringHardStoppingDelta,
-                flatClusteringPriorEstimatorSparse
-              )
-            } yield res
-          )
-        )
-        hardEMAssignments = allEMTrials.filterNot(_._3.isNaN).minBy(_._3)._2
-        hardEMClusters = hardEMAssignments.zipWithIndex.groupBy(_._1).toVector.map {
-          case (_, is) => is.map(i => indicesVec(i._2)).toSet
-        }
-        setClusteringAlg = new AgglomerativeSetClustering(agglomAlgorithm)
-      } yield setClusteringAlg.runFullAgglomerativeClustering(
-        NonEmptyVector.fromVector(hardEMClusters).get
-      )
-    }
-  }
-
   // TODO organize models into subdirs and cache
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     modelName: String, features: Features[VerbType, Arg],
@@ -140,7 +71,7 @@ object FrameInductionApp extends CommandIOApp(
     features.splitName >>= { splitName =>
       features.modelDir
         .map(_.resolve(s"$splitName/$modelName"))
-        .flatTap(features.createDir)
+        .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
             s"Argument cluster model: $modelName. Clustering data from $splitName")(
@@ -166,7 +97,7 @@ object FrameInductionApp extends CommandIOApp(
                   NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
                     model.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
                       val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-                      runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+                      Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
                         case (argTree, _) => verbType -> argTree
                       }
                     }
@@ -324,29 +255,33 @@ object FrameInductionApp extends CommandIOApp(
       argTrees <- Log.infoBranch(s"Clustering arguments") {
         getArgumentClusters[String, Arg](modelName, features, identity[String]).flatMap(_.get)
       }
+      splitName <- features.splitName
+      evalDir <- features.modelDir.map(_.resolve(s"$splitName/$modelName")).flatTap(createDir)
+      argRoleLabels <- features.argRoleLabels.get
       _ <- if(features.mode.shouldEvaluate) {
         if(features.assumeGoldVerbSense) {
           Log.infoBranch("Evaluating argument clustering")(
-            Evaluation.evaluateArgumentClusters(modelName, features, argTrees, useSenseSpecificRoles = true)
+            Evaluation.evaluateArgumentClusters(
+              evalDir, modelName,
+              argTrees, argRoleLabels, useSenseSpecificRoles = true
+            )
           )
         } else {
-          Log.infoBranch("Evaluating argument clustering (verb sense specific)")(
-            Evaluation.evaluateArgumentClusters(s"$modelName-sense", features, argTrees, useSenseSpecificRoles = true)
-          ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic)")(
-            Evaluation.evaluateArgumentClusters(s"$modelName-nosense", features, argTrees, useSenseSpecificRoles = false)
+          Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+            Evaluation.evaluateArgumentClusters(
+              evalDir.resolve("sense-specific"),
+              s"$modelName (sense-specific roles)",
+              argTrees, argRoleLabels, useSenseSpecificRoles = true
+            )
+          ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+            Evaluation.evaluateArgumentClusters(
+              evalDir.resolve("sense-agnostic"),
+              s"$modelName (sense-agnostic roles)",
+              argTrees, argRoleLabels, useSenseSpecificRoles = false
+            )
           )
         }
       } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-      // evalSenseLabels <- config.propBankEvalLabels.get
-      // tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
-      //   evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
-      // )
-      // fullSenseLabels <- config.propBankFullLabels.get
-      // _ <- chosenThresholds.foldMapM(thresholds =>
-      //   Log.infoBranch("Printing debuggy stuff")(
-      //     doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
-      //   )
-      // )
     } yield ()
   }
 
@@ -386,7 +321,7 @@ object FrameInductionApp extends CommandIOApp(
         implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
         _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Mode: $modeString")
-        _ <- (if(setup) IO.unit else logger.info(s"Model configuration: $modelConfigOpt")
+        _ <- (if(setup) IO.unit else logger.info(s"Model configuration: $modelConfigOpt"))
         _ <- data match {
           case "qasrl" =>
             val feats = new GoldQasrlFeatures(mode)

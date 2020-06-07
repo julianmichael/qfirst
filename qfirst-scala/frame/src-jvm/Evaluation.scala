@@ -484,39 +484,26 @@ object Evaluation {
     }
   }
 
-  // TODO refactor probably to be agnostic to features and gold label type
   def evaluateArgumentClusters[Arg](
+    resultsDir: NIOPath,
     modelName: String,
-    features: PropBankFeatures[Arg],
     argTrees: Map[String, MergeTree[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[String, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
-    _ <- Log.info("Initializing eval features")
-    argRoleLabels <- features.argRoleLabels.get
-    // numGoldClusters = argRoleLabels.transform { case (_, labels) =>
-    //   if(useSenseSpecificRoles) labels.value.values.toSet.size
-    //   else labels.value.values.map(_.role).toSet.size
-    // }
-    // calculate B^3 precision-recall curve for each verb
-    splitName <- features.splitName
-    mainResultsDir <- features.modelDir.map(_.resolve(s"$splitName/$modelName"))
     _ <- Log.infoBranch("Calculating B-Cubed metrics") {
       for {
         bCubedResults <- getAllPRStats(argTrees, argRoleLabels, bCubed, useSenseSpecificRoles)
-        resultsDir <- IO.pure(mainResultsDir.resolve(s"b-cubed")).flatTap(features.createDir)
+        resultsDir <- IO.pure(resultsDir.resolve(s"b-cubed")).flatTap(createDir)
         _ <- plotAllStatsVerbwise(
-          modelName,
-          bCubedResults,
-          "B^3 Precision",
-          "B^3 Recall",
+          modelName, bCubedResults,
+          "B^3 Precision", "B^3 Recall",
           name => resultsDir.resolve(s"by-verb-$name.png")
         )
         _ <- runClusterTuning(
-          modelName,
-          bCubedResults,
-          "B^3 Precision",
-          "B^3 Recall",
+          modelName, bCubedResults,
+          "B^3 Precision", "B^3 Recall",
           resultsDir
         )
       } yield ()
@@ -524,19 +511,15 @@ object Evaluation {
     _ <- Log.infoBranch("Calculating Purity/Collocation metrics") {
       for {
         allStats <- getAllPRStats(argTrees, argRoleLabels, purityCollocation, useSenseSpecificRoles)
-        resultsDir <- IO.pure(mainResultsDir.resolve(s"pur-coll")).flatTap(features.createDir)
+        resultsDir <- IO.pure(resultsDir.resolve(s"pur-coll")).flatTap(createDir)
         _ <- plotAllStatsVerbwise(
-          modelName,
-          allStats,
-          "Purity",
-          "Collocation",
+          modelName, allStats,
+          "Purity", "Collocation",
           name => resultsDir.resolve(s"by-verb-$name.png")
         )
         _ <- runClusterTuning(
-          modelName,
-          allStats,
-          "Purity",
-          "Collocation",
+          modelName, allStats,
+          "Purity", "Collocation",
           resultsDir
         )
       } yield ()
@@ -692,5 +675,4 @@ object Evaluation {
   //   //   }
   //   // }
   // } yield ()
-
 }

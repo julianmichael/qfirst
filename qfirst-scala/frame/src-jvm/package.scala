@@ -4,6 +4,7 @@ import cats.Id
 import cats.effect.IO
 import cats.implicits._
 
+import java.nio.file.Files
 import java.nio.file.Path
 
 import qasrl.ArgumentSlot
@@ -16,6 +17,10 @@ import qfirst.clause.ArgStructure
 import qfirst.metrics.HasMetrics.ops._
 
 trait PackagePlatformExtensions {
+
+  val createDir = (path: Path) => IO(!Files.exists(path))
+    .ifM(IO(Files.createDirectories(path)), IO.unit)
+
   def filterDatasetNonDense(dataset: Dataset) = {
     dataset.filterQuestionLabels(questionLabelIsValidNonDense)
       .cullQuestionlessVerbs

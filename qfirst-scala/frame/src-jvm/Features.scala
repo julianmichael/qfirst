@@ -91,28 +91,10 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // TODO move all setup into this/superclass
   def setup: IO[Unit] = IO.unit
 
-  // val splitLabels = RunData.strings
-  // val splitLabels: RunDataCell.Labels = new RunDataCell.Labels(mode)
-  // object splitDirnames {
-  //   def train = splitLabels.train
-  //   def dev = splitLabels.dev
-  //   def test = splitLabels.test
-  //   def input = splitLabels.input
-  //   def full = splitLabels.full
-  //   def eval = {
-  //     if(splitLabels.eval == splitLabels.full) splitLabels.eval
-  //     else s"${splitLabels.full}-filtered-${splitLabels.eval}"
-  //   }
-  //   def all = splitLabels.all
-  // }
-
-  val createDir = (path: Path) => IO(!Files.exists(path))
-    .ifM(IO(Files.createDirectories(path)), IO.unit)
-
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
   // for use by frame induction etc.
-  def modelDir = outDir.map(_.resolve("models")).flatTap(createDir)
+  def modelDir = IO.pure(rootDir.resolve("models")).flatTap(createDir)
 
   // for inputs to feature computation
   protected def inputDir = rootDir.resolve("input")
@@ -682,7 +664,7 @@ abstract class PropBankFeatures[Arg](
 
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(
-    _.resolve(if(assumeGoldVerbSense) "sense" else "lemma")
+    _.resolve(if(assumeGoldVerbSense) "by-sense" else "by-lemma")
   ).flatTap(createDir)
 
   def argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]]
