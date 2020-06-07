@@ -1,4 +1,4 @@
-package qfirst.frame.models
+package qfirst.frame.clustering
 import qfirst.frame.MergeTree
 
 import cats.Foldable

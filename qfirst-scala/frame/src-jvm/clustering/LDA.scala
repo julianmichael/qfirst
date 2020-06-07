@@ -1,4 +1,4 @@
-package qfirst.frame.models
+package qfirst.frame.clustering
 
 import cats.Foldable
 import cats.data.NonEmptyList

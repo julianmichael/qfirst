@@ -1,6 +1,6 @@
 package qfirst.frame
 
-import qfirst.frame.models._
+import qfirst.frame.clustering._
 import qfirst.frame.util.Duad
 import qfirst.frame.util.FileCached
 import qfirst.frame.util.NonMergingMap

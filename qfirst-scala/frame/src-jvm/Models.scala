@@ -4,7 +4,7 @@ import qfirst.frame.util.Vocab
 
 import jjm.implicits._
 
-import qfirst.frame.models._
+import qfirst.frame.clustering._
 import qfirst.clause.ArgStructure
 
 import cats.effect.IO

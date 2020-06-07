@@ -1,8 +1,8 @@
 package qfirst.frame
 
-import qfirst.frame.models.FlatClusteringAlgorithm
-import qfirst.frame.models.AgglomerativeClusteringAlgorithm
-import qfirst.frame.models.AgglomerativeSetClustering
+import qfirst.frame.clustering.FlatClusteringAlgorithm
+import qfirst.frame.clustering.AgglomerativeClusteringAlgorithm
+import qfirst.frame.clustering.AgglomerativeSetClustering
 
 import freelog.EphemeralTreeLogger
 

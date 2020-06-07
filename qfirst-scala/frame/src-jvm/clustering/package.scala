@@ -11,7 +11,7 @@ import breeze.numerics._
 import breeze.stats.distributions.Multinomial
 import scala.collection.immutable.Vector
 
-package object models {
+package object clustering {
 
   case class ClusterMean[A](mean: DenseVector[A], total: Double)
 
