@@ -11,91 +11,6 @@ import cats.effect.IO
 import cats.data.NonEmptyVector
 import cats.implicits._
 
-// sealed trait VerbClusteringModel[P] {
-//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
-//   def create[VerbType, Arg](
-//     features: Features[VerbType, Arg], verbType: VerbType
-//   ): IO[AgglomerativeClusteringAlgorithm { type Index = VerbId; type ClusterParam = P }]
-// }
-
-// sealed trait RoleClusteringModel[P] {
-//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
-//   def create[VerbType, Arg](
-//     features: Features[VerbType, Arg], verbType: VerbType
-//   ): IO[AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = P }]
-// }
-
-// sealed trait ClusteringModelConfig
-
-// case class ArgumentModelConfig(
-// ) extends ClusteringModelConfig
-
-// case class VerbModelConfig(
-// ) extends ClusteringModelConfig
-
-// case class JointModelConfig(
-// ) extends ClusteringModelConfig
-
-// case class ArgumentModel(
-//   lossTerms: Map[(ArgumentLossTerm, Double)]
-// ) {
-
-//   // type FlatParam
-//   // type AgglomParam
-
-//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
-
-//   def create[VerbType, Arg](
-//     features: Features[VerbType, Arg], verbType: VerbType
-//   ): IO[
-//     (FlatClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = FlatParam },
-//      AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = AgglomParam })
-//   ]
-
-//   def getArgumentClusters[VerbType, Arg : Order](
-//     modelName: String, features: Features[VerbType, Arg],
-//     renderVerbType: VerbType => String)(
-//     implicit Log: EphemeralTreeLogger[IO, String]
-//   ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
-//     import ClusteringModel._
-//     val model = ArgMLMEntropy("masked")
-//     for {
-//       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
-//       _ <- lossTerms.traverse(_.init(features)).void
-//       allVerbArgSets <- features.verbArgSets.get
-//       allArgs <- features.args.get
-//       results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-//         Log.info(renderVerbType(verbType)) >> {
-//           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
-//           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
-//             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
-//               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-//               Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
-//                 case (argTree, _) => verbType -> argTree
-//               }
-//             }
-//           }
-//         }
-//       }
-//     } yield results.flatten.toMap
-//   }
-// }
-
-// sealed trait ArgumentLossTerm {
-
-//   type FlatParam
-//   type AgglomParam
-
-//   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
-
-//   def create[VerbType, Arg](
-//     features: Features[VerbType, Arg], verbType: VerbType
-//   ): IO[
-//     (FlatClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = FlatParam },
-//      AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg]; type ClusterParam = AgglomParam })
-//   ]
-// }
-
 sealed trait ClusteringModel[Alg[_]] {
   def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit]
   def create[VerbType, Arg](
@@ -174,38 +89,38 @@ object ClusteringModel {
   //   }
   // }
 
-  case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.get.as(())
-    override def create[VerbType, Arg](
-      features: Features[VerbType, Arg], verbType: VerbType
-    ) = for {
-      // TODO
-      questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
-      questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
-      // TODO add tf-idf transform?
-      indexedInstances = questionDists.value.map { case (argId, questionDist) =>
-        argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
-      }
-    } yield (
-      new DirichletMAPClusteringSparse(indexedInstances, questionVocab.size, 0.01),
-      new MinEntropyClusteringSparse(indexedInstances, questionVocab.size)
-    )
-  }
+  // case object QuestionEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
+  //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.get.as(())
+  //   override def create[VerbType, Arg](
+  //     features: Features[VerbType, Arg], verbType: VerbType
+  //   ) = for {
+  //     // TODO
+  //     questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
+  //     questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
+  //     // TODO add tf-idf transform?
+  //     indexedInstances = questionDists.value.map { case (argId, questionDist) =>
+  //       argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
+  //     }
+  //   } yield (
+  //     new DirichletMAPClusteringSparse(indexedInstances, questionVocab.size, 0.01),
+  //     new MinEntropyClusteringSparse(indexedInstances, questionVocab.size)
+  //   )
+  // }
 
-  import breeze.linalg.DenseVector
+  // import breeze.linalg.DenseVector
 
-  case class ArgMLMEntropy(mode: String) extends ArgumentModel[DenseVector[Float], MinEntropyClusteringDense.ClusterMixture] {
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).get.as(())
-    override def create[VerbType, Arg](
-      features: Features[VerbType, Arg], verbType: VerbType
-    ) = for {
-      argMLMFeatures <- features.getArgMLMFeatures(mode).get.map(_.apply(verbType))
-      // TODO add tf-idf transform?
-    } yield (
-      new DirichletMAPClusteringDense(argMLMFeatures, features.argMLMFeatureDim, 0.01f),
-      new MinEntropyClusteringDense(argMLMFeatures, features.argMLMFeatureDim)
-    )
-  }
+  // case class ArgMLMEntropy(mode: String) extends ArgumentModel[DenseVector[Float], MinEntropyClusteringDense.ClusterMixture] {
+  //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).get.as(())
+  //   override def create[VerbType, Arg](
+  //     features: Features[VerbType, Arg], verbType: VerbType
+  //   ) = for {
+  //     argMLMFeatures <- features.getArgMLMFeatures(mode).get.map(_.apply(verbType))
+  //     // TODO add tf-idf transform?
+  //   } yield (
+  //     new DirichletMAPClusteringDense(argMLMFeatures, features.argMLMFeatureDim, 0.01f),
+  //     new MinEntropyClusteringDense(argMLMFeatures, features.argMLMFeatureDim)
+  //   )
+  // }
 
   case object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.get.as(())
