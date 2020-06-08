@@ -182,21 +182,10 @@ object FrameInductionApp extends CommandIOApp(
     features: Ontonotes5GoldSpanFeatures)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
-    // val modelConfigs = modelOpt.map(List(_)).getOrElse(allModelConfigs)
-    // TODO read in tuned threshold (in case of test)
-    // val chosenThresholds = Option(
-    //   Map[ModelConfig, Double](
-    //     ModelConfig.SingleCluster -> 0.0,
-    //     ModelConfig.EntropyOnly -> 1.115,
-    //     ModelConfig.ELMoOnly -> 0.718,
-    //     ModelConfig.Interpolated(0.5) -> 1.105
-    //   )
-    // )
     for {
       _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
       _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
       _ <- IO.unit
-      // _ <- Log.infoBranch("Running feature setup.")(features.setup)
       // _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
       // verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
       //   Log.infoBranch(s"Clustering for model: $vsConfig") {
@@ -260,66 +249,127 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
-  def main: Opts[IO[ExitCode]] = {
-    val dataSettings = List(
-      "qasrl",
-      "ontonotes-lemma-args", "ontonotes-sense-args",
-      "conll08-lemma-args", "conll08-sense-args"
-    )
-
-    val dataO = Opts.option[String](
-      "data", metavar = dataSettings.mkString("|"), help = "Data setting to run in."
-    )
-
-    // TODO separate "setup" into a different subcommand that doesn't require a model configuration
-    val modeOptO = Opts.option[String](
-      "mode", metavar = "setup|sanity|dev|test", help = "Which mode to run in."
-    ).mapValidated { string =>
-      RunMode.fromString(string)
-        .map(mode => Validated.valid(Option(mode)))
-        .orElse(if(string == "setup") Some(Validated.valid(None)) else None)
-        .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be setup, sanity, dev, or test."))
+  sealed trait DataSetting {
+    type VerbType; type Arg
+    def getFeatures(
+      mode: RunMode)(
+      implicit Log: EphemeralTreeLogger[IO, String]
+    ): Features[VerbType, Arg]
+  }
+  object DataSetting {
+    case object Qasrl extends DataSetting {
+      type VerbType = InflectedForms; type Arg = ClausalQuestion
+      override def toString = "qasrl"
+      override def getFeatures(
+        mode: RunMode)(
+        implicit Log: EphemeralTreeLogger[IO, String]
+      ) = new GoldQasrlFeatures(mode)
+    }
+    case class Ontonotes5(assumeGoldVerbSense: Boolean) extends DataSetting {
+      type VerbType = String; type Arg = ESpan
+      override def toString = {
+        val senseLemma = if(assumeGoldVerbSense) "sense" else "lemma"
+        s"ontonotes-$senseLemma"
+      }
+      override def getFeatures(
+        mode: RunMode)(
+        implicit Log: EphemeralTreeLogger[IO, String]
+      ) = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense)
+    }
+    case class CoNLL08(assumeGoldVerbSense: Boolean) extends DataSetting {
+      type VerbType = String; type Arg = Int
+      override def toString = {
+        val senseLemma = if(assumeGoldVerbSense) "sense" else "lemma"
+        s"conll08-$senseLemma"
+      }
+      override def getFeatures(
+        mode: RunMode)(
+        implicit Log: EphemeralTreeLogger[IO, String]
+      ) = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense)
     }
 
-    // TODO: get any model (verb or joint)
-    val modelO = Opts.option[String](
-      "model", metavar = "loss spec", help = "Argument clustering model configuration."
-    ).mapValidated { string =>
-      ArgumentModel.fromString(string)
-        .map(Validated.valid)
-        .getOrElse(Validated.invalidNel(s"Invalid model $string. Still working on parsing error reporting."))
-    }
+    def all = List[DataSetting](
+      Qasrl, Ontonotes5(false), Ontonotes5(true),
+      CoNLL08(false), CoNLL08(true)
+    )
 
-    (dataO, modeOptO, modelO).mapN { (data, modeOpt, model) =>
-      val mode = modeOpt.getOrElse(RunMode.Sanity)
-      val setup = modeOpt.isEmpty
-      val modeString = modeOpt.fold("setup")(_.toString)
+    def fromString(x: String): Option[DataSetting] = {
+      all.find(_.toString == x)
+    }
+  }
+
+  val dataO = Opts.option[String](
+    "data", metavar = DataSetting.all.mkString("|"), help = "Data setting to run in."
+  ).mapValidated { setting =>
+    DataSetting.fromString(setting).map(Validated.valid).getOrElse(
+      Validated.invalidNel(s"Invalid data setting $setting: must be one of ${DataSetting.all.mkString(", ")}")
+    )
+  }
+
+  val modeO = Opts.option[String](
+    "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
+  ).mapValidated { string =>
+    RunMode.fromString(string).map(Validated.valid).getOrElse(
+      Validated.invalidNel(s"Invalid mode $string: must be setup, sanity, dev, or test.")
+    )
+  }
+
+  // TODO: get any model (verb or joint)
+  val modelO = Opts.option[String](
+    "model", metavar = "loss spec", help = "Argument clustering model configuration."
+  ).mapValidated { string =>
+    ArgumentModel.fromString(string)
+      .map(Validated.valid)
+      .getOrElse(Validated.invalidNel(s"Invalid model $string. Still working on parsing error reporting."))
+  }
+
+  val setup = Opts.subcommand(
+    name = "setup",
+    help = "Run feature setup.")(
+    dataO.orNone.map { dataSettingOpt =>
       for {
         implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
+        _ <- logger.info(s"Mode: setup")
+        dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
+        _ <- logger.info(s"Data: " + dataSettings.mkString(", "))
+        _ <- dataSettings.traverse(_.getFeatures(RunMode.Sanity).setup).as(ExitCode.Success)
+      } yield ExitCode.Success
+    }
+  )
+
+  val run = Opts.subcommand(
+    name = "run",
+    help = "Run clustering / frame induction.")(
+    (dataO, modeO, modelO).mapN { (data, mode, model) =>
+      for {
+        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
+        _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Data: $data")
-        _ <- logger.info(s"Mode: $modeString")
-        _ <- (if(setup) IO.unit else logger.info(s"Model: $model"))
-        _ <- data match {
+        _ <- logger.info(s"Model: $model")
+        _ <- data.toString match {
           case "qasrl" =>
             val feats = new GoldQasrlFeatures(mode)
-            if(setup) feats.setup else runQasrlFrameInduction(feats)
-          case "ontonotes-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
+            runQasrlFrameInduction(feats)
+          case "ontonotes-sense" => // assume gold verb sense, only cluster/evaluate arguments
             val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = true)
-            if(setup) feats.setup else runPropBankArgumentRoleInduction(model, feats)
-          case "ontonotes-lemma-args" => // don't assume gold verb sense, only cluster arguments
+            runPropBankArgumentRoleInduction(model, feats)
+          case "ontonotes-lemma" => // don't assume gold verb sense, only cluster arguments
             val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = false)
-            if(setup) feats.setup else runPropBankArgumentRoleInduction(model, feats)
-          case "conll08-sense-args" => // assume gold verb sense, only cluster/evaluate arguments
+            runPropBankArgumentRoleInduction(model, feats)
+          case "conll08-sense" => // assume gold verb sense, only cluster/evaluate arguments
             val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = true)
-            if(setup) feats.setup else runPropBankArgumentRoleInduction(model, feats)
-          case "conll08-lemma-args" => // don't assume gold verb sense, only cluster arguments
+            runPropBankArgumentRoleInduction(model, feats)
+          case "conll08-lemma" => // don't assume gold verb sense, only cluster arguments
             val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = false)
-            if(setup) feats.setup else runPropBankArgumentRoleInduction(model, feats)
+            runPropBankArgumentRoleInduction(model, feats)
           case _ => throw new IllegalArgumentException(
-            "--data must be one of the following: " + dataSettings.mkString(", ")
+            "--data must be one of the following: " + DataSetting.all.mkString(", ")
           )
         }
       } yield ExitCode.Success
     }
-  }
+  )
+
+  def main: Opts[IO[ExitCode]] = setup.orElse(run)
+
 }
