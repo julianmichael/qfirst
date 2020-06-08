@@ -40,10 +40,13 @@ import qfirst.clause.ClauseResolution
 import freelog._
 import freelog.implicits._
 
-abstract class Features[VerbType : Encoder : Decoder, Arg](
+sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
   val mode: RunMode)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
+
+  // overriden for propbank features
+  def getIfPropBank: Option[PropBankFeatures[Arg]] = None
 
   type VerbFeats[A] = VerbFeatures[VerbType, A]
   def mapVerbFeats[A, B](f: A => B): VerbFeats[A] => VerbFeats[B] = {
@@ -73,7 +76,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def splitName = RunData.strings.get
 
+  // for constructing features
   def getVerbLemma(verbType: VerbType): String
+
+  // for logging. could replace with Show instance?
+  def renderVerbType(verbType: VerbType): String
 
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
@@ -319,6 +326,8 @@ class GoldQasrlFeatures(
 ) extends Features[InflectedForms, ClausalQuestion](mode)(implicitly[Encoder[InflectedForms]], implicitly[Decoder[InflectedForms]], cs, Log) {
 
   override def getVerbLemma(verbType: InflectedForms): String = verbType.stem
+
+  def renderVerbType(verbType: InflectedForms): String = verbType.allForms.mkString(", ")
 
   override val rootDir = Paths.get("frame-induction/qasrl")
 
@@ -650,17 +659,21 @@ object PropBankRoleLabel {
       !argSpan.contains(pred.index)
 }
 
-abstract class PropBankFeatures[Arg](
+sealed abstract class PropBankFeatures[Arg](
   mode: RunMode,
   val assumeGoldVerbSense: Boolean)(
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]
 ) extends Features[String, Arg](mode)(implicitly[Encoder[String]], implicitly[Decoder[String]], cs, Log) {
 
+  override def getIfPropBank: Option[PropBankFeatures[Arg]] = Some(this)
+
   override def getVerbLemma(verbType: String): String = {
     if(assumeGoldVerbSense) verbType.takeWhile(_ != '.')
     else verbType
   }
+
+  def renderVerbType(verbType: String): String = verbType
 
   // don't store the models in the same dir, because they cluster different kinds of things
   override def modelDir = super.modelDir.map(

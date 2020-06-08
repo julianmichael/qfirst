@@ -56,16 +56,8 @@ object FrameInductionApp extends CommandIOApp(
 
   implicit val logLevel = LogLevel.Trace
 
-  // val allModelConfigs = {
-  //   List(ModelConfig.SingleCluster, ModelConfig.EntropyOnly, ModelConfig.ELMoOnly) ++
-  //     List(ModelConfig.Interpolated(0.5))
-  //   // (1 to 9).map(_.toDouble / 10.0).toList.map(ModelConfig.Interpolated(_))
-  // }
-
-  // TODO organize models into subdirs and cache
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ArgumentModel, features: Features[VerbType, Arg],
-    renderVerbType: VerbType => String)(
+    model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
     features.splitName >>= { splitName =>
@@ -79,15 +71,14 @@ object FrameInductionApp extends CommandIOApp(
             read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-            model.getArgumentClusters(features, renderVerbType)
+            model.getArgumentClusters(features)
           }
         )
     }
   }
 
   def getVerbClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
-    features: Features[VerbType, Arg],
-    renderVerbType: VerbType => String)(
+    features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
     features.modelDir.map(modelDir =>
@@ -131,7 +122,7 @@ object FrameInductionApp extends CommandIOApp(
         //   features.verbArgSets.full.get >>= (
         //     _.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
         //       val verbIds = NonEmptyVector.fromVector(verbs.value.keySet.toVector).get
-        //       Log.trace(renderVerbType(verbType)) >> {
+        //       Log.trace(features.renderVerbType(verbType)) >> {
         //         for {
         //           argumentAlgorithm <- argumentModel.create(features, verbType)
         //           algorithm <- model.create(features, verbType)
@@ -178,75 +169,56 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
-  def runPropBankGoldSpanFrameInduction(
-    features: Ontonotes5GoldSpanFeatures)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Unit] = {
-    for {
-      _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
-      _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
-      _ <- IO.unit
-      // _ <- Log.info(s"Clustering models: ${modelConfigs.mkString(", ")}")
-      // verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
-      //   Log.infoBranch(s"Clustering for model: $vsConfig") {
-      //     getVerbClusterModels[String, ESpan](features, vsConfig, identity[String]) >>= (
-      //       _.get.map(vsConfig -> _)
-      //     )
-      //   }
-      // ).map(_.toMap)
-      // evalSenseLabels <- config.propBankEvalLabels.get
-      // tunedThresholds <- Log.infoBranch("Evaluating and tuning on PropBank")(
-      //   evaluatePropBankVerbClusters(config, verbModelsByConfig, evalSenseLabels)
-      // )
-      // fullSenseLabels <- config.propBankFullLabels.get
-      // _ <- chosenThresholds.foldMapM(thresholds =>
-      //   Log.infoBranch("Printing debuggy stuff")(
-      //     doPropBankClusterDebugging(config, fullSenseLabels, verbModelsByConfig, thresholds)
-      //   )
-      // )
-    } yield ()
-  }
-
-  def runPropBankArgumentRoleInduction[Arg: Encoder : Decoder : Order](
-    model: ArgumentModel, features: PropBankFeatures[Arg])(
+  def runArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     for {
-      _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
-      _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
-      // _ <- Log.infoBranch("Running feature setup.")(features.setup)
-      _ <- Log.info(s"Model: $model")
+      // _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
+      // _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
+      // _ <- Log.info(s"Model: $model")
       argTrees <- Log.infoBranch(s"Clustering arguments") {
-        getArgumentClusters[String, Arg](model, features, identity[String]).flatMap(_.get)
+        getArgumentClusters[VerbType, Arg](model, features).flatMap(_.get)
       }
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
-      argRoleLabels <- features.argRoleLabels.get
-      _ <- if(features.mode.shouldEvaluate) {
-        if(features.assumeGoldVerbSense) {
-          Log.infoBranch("Evaluating argument clustering")(
-            Evaluation.evaluateArgumentClusters(
-              evalDir, model.toString,
-              argTrees, argRoleLabels, useSenseSpecificRoles = true
-            )
-          )
-        } else {
-          Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-            Evaluation.evaluateArgumentClusters(
-              evalDir.resolve("sense-specific"),
-              s"$model (sense-specific roles)",
-              argTrees, argRoleLabels, useSenseSpecificRoles = true
-            )
-          ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-            Evaluation.evaluateArgumentClusters(
-              evalDir.resolve("sense-agnostic"),
-              s"$model (sense-agnostic roles)",
-              argTrees, argRoleLabels, useSenseSpecificRoles = false
-            )
-          )
-        }
-      } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+      _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+        val argTreesRefined = argTrees.asInstanceOf[Map[String, MergeTree[Set[ArgumentId[Arg]]]]]
+        features.argRoleLabels.get >>= (argRoleLabels =>
+          if(features.mode.shouldEvaluate) {
+            if(features.assumeGoldVerbSense) {
+              Log.infoBranch("Evaluating argument clustering")(
+                Evaluation.evaluateArgumentClusters(
+                  evalDir, model.toString,
+                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+                )
+              )
+            } else {
+              Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+                Evaluation.evaluateArgumentClusters(
+                  evalDir.resolve("sense-specific"),
+                  s"$model (sense-specific roles)",
+                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+                )
+              ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                Evaluation.evaluateArgumentClusters(
+                  evalDir.resolve("sense-agnostic"),
+                  s"$model (sense-agnostic roles)",
+                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
+                )
+              )
+            }
+          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+        )
+      }
     } yield ()
+  }
+
+  def runModeling[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: ArgumentModel, features: Features[VerbType, Arg])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = model match {
+    case argModel @ ArgumentModel(_) => runArgumentRoleInduction(argModel, features)
   }
 
   sealed trait DataSetting {
@@ -346,30 +318,18 @@ object FrameInductionApp extends CommandIOApp(
         _ <- logger.info(s"Mode: $mode")
         _ <- logger.info(s"Data: $data")
         _ <- logger.info(s"Model: $model")
-        _ <- data.toString match {
-          case "qasrl" =>
-            val feats = new GoldQasrlFeatures(mode)
-            runQasrlFrameInduction(feats)
-          case "ontonotes-sense" => // assume gold verb sense, only cluster/evaluate arguments
-            val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = true)
-            runPropBankArgumentRoleInduction(model, feats)
-          case "ontonotes-lemma" => // don't assume gold verb sense, only cluster arguments
-            val feats = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense = false)
-            runPropBankArgumentRoleInduction(model, feats)
-          case "conll08-sense" => // assume gold verb sense, only cluster/evaluate arguments
-            val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = true)
-            runPropBankArgumentRoleInduction(model, feats)
-          case "conll08-lemma" => // don't assume gold verb sense, only cluster arguments
-            val feats = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense = false)
-            runPropBankArgumentRoleInduction(model, feats)
-          case _ => throw new IllegalArgumentException(
-            "--data must be one of the following: " + DataSetting.all.mkString(", ")
-          )
+        // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+        _ <- data match {
+          case d @ DataSetting.Qasrl =>
+            runModeling(model, d.getFeatures(mode))
+          case d @ DataSetting.Ontonotes5(_) =>
+            runModeling(model, d.getFeatures(mode))
+          case d @ DataSetting.CoNLL08(_) =>
+            runModeling(model, d.getFeatures(mode))
         }
       } yield ExitCode.Success
     }
   )
 
   def main: Opts[IO[ExitCode]] = setup.orElse(run)
-
 }

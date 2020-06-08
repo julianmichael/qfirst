@@ -128,13 +128,13 @@ object Evaluation {
     ).get
   }
 
-  def getAllPRStats[Arg](
-    argTrees: Map[String, MergeTree[Set[ArgumentId[Arg]]]],
-    argRoleLabels: Map[String, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
+  def getAllPRStats[VerbType, Arg](
+    argTrees: Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     computePR: ClusterPR,
     useSenseSpecificRoles: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[String, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
+  ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = argRoleLabels.toList
     .filter(_._2.value.nonEmpty)
     .infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, labels) =>
       Log.trace(s"$verbType (${labels.value.size} items)") >> IO {
@@ -152,9 +152,9 @@ object Evaluation {
       }
     }.map(_.toMap)
 
-  def plotAllStatsVerbwise(
+  def plotAllStatsVerbwise[VerbType](
     modelName: String,
-    allStats: Map[String, NonEmptyList[ConfStatsPoint]],
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
     precisionAxisLabel: String,
     recallAxisLabel: String,
     makePath: String => NIOPath)(
@@ -170,7 +170,7 @@ object Evaluation {
     import com.cibo.evilplot.plot.renderers.PathRenderer
 
     case class PRPoint(
-      verbType: String,
+      verbType: VerbType,
       loss: Double,
       numItems: Int,
       numClusters: Int,
@@ -253,8 +253,8 @@ object Evaluation {
       IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
   }
 
-  def getTunedWeightedStats(
-    allResults: Map[String, NonEmptyList[ConfStatsPoint]],
+  def getTunedWeightedStats[VerbType](
+    allResults: Map[VerbType, NonEmptyList[ConfStatsPoint]],
     choose: NonEmptyList[ConfStatsPoint] => ConfStatsPoint
   ): WeightedPR = {
     allResults.toList.foldMap { case (verbType, results) =>
@@ -267,9 +267,9 @@ object Evaluation {
     }
   }
 
-  def tuneWeightedStats[A](
+  def tuneWeightedStats[VerbType, A](
     thresholds: List[A],
-    allResults: Map[String, NonEmptyList[ConfStatsPoint]])(
+    allResults: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
     choose: A => NonEmptyList[ConfStatsPoint] => ConfStatsPoint)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[List[(A, WeightedPR)]] = {
@@ -278,9 +278,9 @@ object Evaluation {
     }
   }
 
-  def runClusterTuning(
+  def runClusterTuning[VerbType](
     modelName: String,
-    allStats: Map[String, NonEmptyList[ConfStatsPoint]],
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
     precisionAxisLabel: String,
     recallAxisLabel: String,
     resultsDir: NIOPath)(
@@ -484,11 +484,11 @@ object Evaluation {
     }
   }
 
-  def evaluateArgumentClusters[Arg](
+  def evaluateArgumentClusters[VerbType, Arg](
     resultsDir: NIOPath,
     modelName: String,
-    argTrees: Map[String, MergeTree[Set[ArgumentId[Arg]]]],
-    argRoleLabels: Map[String, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
+    argTrees: Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {

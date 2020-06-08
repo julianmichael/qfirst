@@ -40,8 +40,7 @@ case class ArgumentModel private (
   }
 
   def getArgumentClusters[VerbType, Arg : Order](
-    features: Features[VerbType, Arg],
-    renderVerbType: VerbType => String)(
+    features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
     import ArgumentModel._
@@ -52,7 +51,7 @@ case class ArgumentModel private (
       allVerbArgSets <- features.verbArgSets.get
       allArgs <- features.args.get
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-        Log.info(renderVerbType(verbType)) >> {
+        Log.info(features.renderVerbType(verbType)) >> {
           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
