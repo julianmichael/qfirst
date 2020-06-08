@@ -71,11 +71,12 @@ case class ArgumentModel private (
 object ArgumentModel {
 
   def apply(terms: (LossTerm, Double)*): ArgumentModel = {
+    val total = terms.map(_._2).sum
     val termMap = terms.map { case (term, weight) =>
-      term -> (scala.math.round(weight * 10.0) / 10.0)
+      term -> (scala.math.round(weight / total * 100.0) / 100.0)
     }.toMap
     require(terms.size == termMap.size)
-    new ArgumentModel(terms.toMap)
+    new ArgumentModel(termMap)
   }
 
   val termIndex = List[(LossTerm, String)](
@@ -105,7 +106,7 @@ object ArgumentModel {
   def toString(model: ArgumentModel): String = {
     model.lossTerms.toList.map { case (term, weight) =>
       if(weight == 1.0) termToString(term)
-      else f"${termToString(term)}%s*${weight}%.1f"
+      else f"${termToString(term)}%s*${weight}%.2f"
     }.sorted.mkString("+")
   }
 
