@@ -77,107 +77,12 @@ object FrameInductionApp extends CommandIOApp(
     }
   }
 
-  def getVerbClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder](
-    features: Features[VerbType, Arg])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
-    features.modelDir.map(modelDir =>
-      FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]](
-        s"QA-SRL cluster model: XXX")(
-        path = modelDir.resolve(s"XXX.jsonl.gz"),
-        read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType, Arg])](path)
-          .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
-        write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
-        import ArgumentModel._
-        val argumentModel = QuestionEntropy
-
-        // val model = Joint(argumentModel)
-
-        ???
-
-        // val argumentModel = Composite.argument(
-        //   QuestionEntropy -> 1.0,
-        //   AnswerEntropy -> 1.0
-        // )
-        // val model = Composite.withJoint(
-        //   VerbSqDist -> (1.0 / 200),
-        //   Joint(argumentModel) -> 1.0
-        // )
-        // val questionModel = Composite(
-        //   Composite(
-        //     QuestionEntropy -> 1.0,
-        //     AnswerEntropy -> 2.0
-        //   ) -> 1.0,
-        //   AnswerNLL -> 2.0
-        // )
-        // val model = Composite(
-        //   Composite(
-        //     VerbClauseEntropy -> 2.0,
-        //     VerbSqDist -> (1.0 / 175),
-        //     ) -> 1.0,
-        //   Joint(questionModel) -> 1.0
-        // )
-
-        // Log.infoBranch("Initializing model features")(model.init(features)) >>
-        //   features.verbArgSets.full.get >>= (
-        //     _.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-        //       val verbIds = NonEmptyVector.fromVector(verbs.value.keySet.toVector).get
-        //       Log.trace(features.renderVerbType(verbType)) >> {
-        //         for {
-        //           argumentAlgorithm <- argumentModel.create(features, verbType)
-        //           algorithm <- model.create(features, verbType)
-        //           (verbClusterTree, finalParams) <- IO(algorithm.runFullAgglomerativeClustering(verbIds))
-        //           argumentClusterTree = argumentAlgorithm.finishAgglomerativeClustering(finalParams)._1
-        //         } yield verbType -> VerbClusterModel(
-        //           verbType,
-        //           verbClusterTree,
-        //           argumentClusterTree
-        //         )
-        //       }
-        //     }.map(_.toMap)
-        //   )
-      }
-    )
-  }
-
-  def runQasrlFrameInduction(
-    features: GoldQasrlFeatures)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Unit] = {
-    for {
-      _ <- IO.unit
-      // vocabs <- Log.infoBranch(s"Initializing question template vocabularies")(
-      //   features.questionTemplateVocabsByVerb.get
-      // )
-      // _ <- Log.info(s"Total question templates: " + vocabs.unorderedFoldMap(_.items.toSet).size)
-      // _ <- vocabs.toList.sortBy(-_._2.size).take(30).reverse.traverse { case (verb, vocab) =>
-      //   Log.info(vocab.size + " " + verb.allForms.mkString(", "))
-      // }
-      // _ <- Log.info(s"Running frame induction on QA-SRL. Models: ${modelConfigs.mkString(", ")}")
-      // verbModelsByConfig <- modelConfigs.traverse(vsConfig =>
-      //   Log.infoBranch(s"Clustering for model: $vsConfig") {
-      //     getVerbClusterModels[InflectedForms, ClausalQuestion](features, vsConfig, _.allForms.mkString(", ")) >>= (
-      //       _.get.map(vsConfig -> _)
-      //     )
-      //   }
-      // ).map(_.toMap)
-      // goldParaphrases <- config.readGoldParaphrases
-      // evaluationItems <- config.evaluationItems.get
-      // tunedThresholds <- Log.infoBranch("Evaluating and tuning thresholds")(
-      //   tuningFullEvaluation(config, verbModelsByConfig, goldParaphrases, evaluationItems)
-      // )
-    } yield ()
-  }
-
   def runArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     for {
-      // _ <- Log.info(s"Running frame induction on PropBank with gold argument spans.")
-      // _ <- Log.info(s"Assume gold verb sense? " + (if(features.assumeGoldVerbSense) "yes" else "no"))
-      // _ <- Log.info(s"Model: $model")
-      argTrees <- Log.infoBranch(s"Clustering arguments") {
+      argTrees <- Log.infoBranch(s"Getting argument clusters") {
         getArgumentClusters[VerbType, Arg](model, features).flatMap(_.get)
       }
       splitName <- features.splitName
@@ -214,11 +119,75 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
+  def getVerbClusters[VerbType: Encoder : Decoder, Arg](
+    model: VerbModel, features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[FileCached[Map[VerbType, MergeTree[Set[VerbId]]]]] = {
+    features.splitName >>= { splitName =>
+      features.modelDir
+        .map(_.resolve(s"$splitName/$model"))
+        .flatTap(createDir)
+        .map(modelDir =>
+          FileCached[Map[VerbType, MergeTree[Set[VerbId]]]](
+            s"Argument cluster model: $model. Clustering data from $splitName")(
+            path = modelDir.resolve(s"model.jsonl.gz"),
+            read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[VerbId]])](path)
+              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+            write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
+            model.getVerbClusters(features)
+          }
+        )
+    }
+  }
+
+  def runVerbSenseInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: VerbModel, features: Features[VerbType, Arg])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = {
+    for {
+      verbTrees <- Log.infoBranch(s"Getting verb clusters") {
+        getVerbClusters[VerbType, Arg](model, features).flatMap(_.get)
+      }
+      splitName <- features.splitName
+      evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
+    //   _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+    //     val argTreesRefined = argTrees.asInstanceOf[Map[String, MergeTree[Set[ArgumentId[Arg]]]]]
+    //     features.argRoleLabels.get >>= (argRoleLabels =>
+    //       if(features.mode.shouldEvaluate) {
+    //         if(features.assumeGoldVerbSense) {
+    //           Log.infoBranch("Evaluating argument clustering")(
+    //             Evaluation.evaluateArgumentClusters(
+    //               evalDir, model.toString,
+    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+    //             )
+    //           )
+    //         } else {
+    //           Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+    //             Evaluation.evaluateArgumentClusters(
+    //               evalDir.resolve("sense-specific"),
+    //               s"$model (sense-specific roles)",
+    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+    //             )
+    //           ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+    //             Evaluation.evaluateArgumentClusters(
+    //               evalDir.resolve("sense-agnostic"),
+    //               s"$model (sense-agnostic roles)",
+    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
+    //             )
+    //           )
+    //         }
+    //       } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+    //     )
+    //   }
+    } yield ()
+  }
+
   def runModeling[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ArgumentModel, features: Features[VerbType, Arg])(
+    model: ClusteringModel, features: Features[VerbType, Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = model match {
     case argModel @ ArgumentModel(_) => runArgumentRoleInduction(argModel, features)
+    case verbModel @ VerbModel(_) => runVerbSenseInduction(verbModel, features)
   }
 
   sealed trait DataSetting {
@@ -286,11 +255,10 @@ object FrameInductionApp extends CommandIOApp(
     )
   }
 
-  // TODO: get any model (verb or joint)
   val modelO = Opts.option[String](
-    "model", metavar = "loss spec", help = "Argument clustering model configuration."
+    "model", metavar = "loss spec", help = "Clustering model configuration."
   ).mapValidated { string =>
-    ArgumentModel.fromString(string)
+    ClusteringModel.fromString(string)
       .map(Validated.valid)
       .getOrElse(Validated.invalidNel(s"Invalid model $string. Still working on parsing error reporting."))
   }

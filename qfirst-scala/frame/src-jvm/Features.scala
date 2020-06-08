@@ -119,11 +119,16 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   ).toCell("Argument IDs")
 
-  lazy val verbLemmaToType = verbArgSets.data.map(
-    _.keySet.toList.foldMap(verbType =>
-      NonMergingMap(getVerbLemma(verbType) -> verbType)
-    )
-  ).toCell("Verb lemma to verb type mapping")
+  lazy val verbs: RunDataCell[Map[VerbType, Set[VerbId]]] = verbArgSets.data.map(
+    _.transform { case (_, verbs) => verbs.value.keySet }
+  ).toCell("Verb IDs")
+
+  // XXX delete this
+  // lazy val verbLemmaToType = verbArgSets.data.map(
+  //   _.keySet.toList.foldMap(verbType =>
+  //     NonMergingMap(getVerbLemma(verbType) -> verbType)
+  //   )
+  // ).toCell("Verb lemma to verb type mapping")
 
   lazy val verbIdToType = verbArgSets.data.map(
     _.toList.foldMap { case (verbType, verbs) =>
@@ -197,85 +202,100 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   }
 
-  // setting to lemma to vocab
-  lazy val argMLMVocabs: Map[String, Cell[NonMergingMap[String, Vector[String]]]] = {
-    makeMLMFeatures { case (setting, path) =>
-      new Cell(
-        s"MLM argument vocab ($setting)",
-        FileUtil.readJson[Map[String, Vector[String]]](path.resolve("arg_vocabs.json"))
-          .map(NonMergingMap(_))
-      )
-    }
-  }
-
   @JsonCodec case class MLMFeatureId(
     sentenceId: String,
     verbLemma: String,
     index: Int)
 
-  // XXX TODO remove verb lemma to type map situation
-  // mode -> verb lemma -> sentence id -> arg index -> vector
-  val argMLMFeatureDim = 1024
-  lazy val argMLMVectors: Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]] = {
-    makeMLMFeatures { case (setting, path) =>
-      // TODO sentences is temporary
-      RunData.strings.zip(sentences.data).flatMap { case (split, sents) =>
-        val idsPath = path.resolve(s"${split}_arg_ids.jsonl.gz")
-        val vecPath = path.resolve(s"${split}_arg_vecs.bin")
-        // val embPath = Paths.get(filePrefix + "_emb.bin")
-        for {
-          // TODO vocab is temporary
-          vocabs <- argMLMVocabs(setting).get
-          ids <- Log.infoBranch("Reading verb IDs")(
-            FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
-          )
-          vecs <- Log.infoBranch("Reading argument MLM vectors")(
-            VectorFileUtil.readDenseFloatVectorsNIO(vecPath, argMLMFeatureDim)
-          )
-          _ <- Log.info(s"Number of IDs: ${ids.size}; Number of vectors: ${vecs.size}; embedding size: ${vecs.head.size}")
-          _ <- {
-            val numToCheck = 20
-            val propSane = vecs.take(numToCheck)
-              .foldMap(
-                _.activeValuesIterator.filter(f => f >= 0.0 && f <= 1.0).size
-              ).toDouble / (numToCheck * argMLMFeatureDim)
-            val sanityCheckText = f"Sanity check: ${propSane * 100.0}%.1f%% of sampled vector components units are between 0 and 1."
-            if(propSane < 1.0) {
-              Log.warn(sanityCheckText) >>
-                Log.warn("There might be endianness issues with how you're reading the vectors") >>
-                vecs.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
-            } else Log.info(sanityCheckText)
-          }
-          norms <- Ref[IO].of(qfirst.metrics.Numbers(Vector[Float]()))
-          normedVecs <- ids.zip(vecs).infoTraverse("Normalizing vectors") { case (id, vec) =>
-            import breeze.math._
-            import breeze.linalg._
-            val total = sum(vec)
-            // if(total < 0.6) {
-            //   val vocab = vocabs(id.verbLemma)
-            //   val sentence = sents(id.sentenceId)
-            //   val token = sentence(id.index)
-            //   val topElements = vec.activeIterator.map { case (i, value) =>
-            //     vocab(i) -> value
-            //   }.toVector.sortBy(-_._2)
-            //   System.err.println(jjm.ling.Text.render(sentence))
-            //   System.err.println(s"$id ($token): $total")
-            //   topElements.grouped(10).take(5).foreach { pairs =>
-            //     System.err.println(pairs.map(_._1).map(x => f"$x%10s").mkString(" "))
-            //     System.err.println(pairs.map(_._2).map(x => f"$x%10.5f").mkString(" "))
-            //   }
-            // }
-            // TODO make it a parameter whether to norm vectors or not. perhaps in the clustering alg instead though.
-            // or at least do this in-place or something.
-            norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
-          }
-          _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
-        } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
-            Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
-        }
-      }.toCell("Argument MLM Vectors")
-    }
+  private lazy val mlmVocabs: Map[String, Map[String, Cell[NonMergingMap[String, Vector[String]]]]] = {
+    List("arg", "verb").map(label =>
+      label -> makeMLMFeatures { case (setting, path) =>
+        new Cell(
+          s"MLM $label vocab ($setting)",
+          FileUtil.readJson[Map[String, Vector[String]]](path.resolve(s"${label}_vocabs.json"))
+            .map(NonMergingMap(_))
+        )
+      }
+    ).toMap
   }
+
+  val mlmFeatureDim = 1024
+  // type -> mode -> verb lemma -> sentence id -> index -> vector
+  private lazy val mlmVectors: Map[String, Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]]] = {
+    List("arg", "verb").map(label =>
+      label -> makeMLMFeatures { case (setting, path) =>
+        // TODO sentences is temporary
+        RunData.strings.zip(sentences.data).flatMap { case (split, sents) =>
+          val idsPath = path.resolve(s"${split}_${label}_ids.jsonl.gz")
+          val vecPath = path.resolve(s"${split}_${label}_vecs.bin")
+          // val embPath = Paths.get(filePrefix + "_emb.bin")
+          for {
+            // TODO vocab is temporary
+            vocabs <- mlmVocabs(label)(setting).get
+            ids <- Log.infoBranch("Reading verb IDs")(
+              FileUtil.readJsonLines[MLMFeatureId](idsPath).compile.toList
+            )
+            vecs <- Log.infoBranch(s"Reading $label MLM vectors")(
+              VectorFileUtil.readDenseFloatVectorsNIO(vecPath, mlmFeatureDim)
+            )
+            _ <- Log.info(s"Number of IDs: ${ids.size}; Number of vectors: ${vecs.size}; embedding size: ${vecs.head.size}")
+            _ <- {
+              val numToCheck = 20
+              val propSane = vecs.take(numToCheck)
+                .foldMap(
+                  _.activeValuesIterator.filter(f => f >= 0.0 && f <= 1.0).size
+                ).toDouble / (numToCheck * mlmFeatureDim)
+              val sanityCheckText = f"Sanity check: ${propSane * 100.0}%.1f%% of sampled vector components units are between 0 and 1."
+              if(propSane < 1.0) {
+                Log.warn(sanityCheckText) >>
+                  Log.warn("There might be endianness issues with how you're reading the vectors") >>
+                  vecs.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
+              } else Log.info(sanityCheckText)
+            }
+            norms <- Ref[IO].of(qfirst.metrics.Numbers(Vector[Float]()))
+            normedVecs <- ids.zip(vecs).infoTraverse("Normalizing vectors") { case (id, vec) =>
+              import breeze.math._
+              import breeze.linalg._
+              val total = sum(vec)
+              // if(total < 0.6) {
+              //   val vocab = vocabs(id.verbLemma)
+              //   val sentence = sents(id.sentenceId)
+              //   val token = sentence(id.index)
+              //   val topElements = vec.activeIterator.map { case (i, value) =>
+              //     vocab(i) -> value
+              //   }.toVector.sortBy(-_._2)
+              //   System.err.println(jjm.ling.Text.render(sentence))
+              //   System.err.println(s"$id ($token): $total")
+              //   topElements.grouped(10).take(5).foreach { pairs =>
+              //     System.err.println(pairs.map(_._1).map(x => f"$x%10s").mkString(" "))
+              //     System.err.println(pairs.map(_._2).map(x => f"$x%10.5f").mkString(" "))
+              //   }
+              // }
+              // TODO make it a parameter whether to norm vectors or not. perhaps in the clustering alg instead though.
+              // or at least do this in-place or something.
+              norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
+            }
+            _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
+          } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
+              Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
+          }
+        }.toCell(s"$label MLM Vectors")
+      }
+    ).toMap
+  }
+
+  def verbMLMVocab = mlmVocabs("verb")
+  def argMLMVocab = mlmVocabs("arg")
+
+  def verbMLMVectors = mlmVectors("verb")
+  def argMLMVectors = mlmVectors("arg")
+
+  def getVerbMLMFeatures(mode: String): RunData[VerbFeatsNew[DenseVector[Float]]] =
+    verbMLMVectors(mode).data.map { mlmFeats =>
+      (verbType: VerbType) => (verbId: VerbId) => {
+        mlmFeats(getVerbLemma(verbType))(verbId.sentenceId).value(verbId.verbIndex)
+      }
+    }
 
   def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
     argMLMVectors(mode).data.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
