@@ -272,17 +272,32 @@ object FrameInductionApp extends CommandIOApp(
       .getOrElse(Validated.invalidNel(s"Invalid model $string. Still working on parsing error reporting."))
   }
 
+  def withLogger[A](run: SequentialEphemeralTreeLogger[IO, String] => IO[A]): IO[A] = {
+    freelog.loggers.TimingEphemeralTreeFansiLogger.debounced() >>= { Log =>
+      val res = run(Log)
+      res.handleErrorWith { e =>
+        import java.io.{PrintWriter,StringWriter}
+        val sw = new StringWriter
+        val pw = new PrintWriter(sw)
+        e.printStackTrace(pw)
+        Log.error(sw.toString) >> IO.raiseError[A](e)
+      }
+    }
+  }
+
   val setup = Opts.subcommand(
     name = "setup",
     help = "Run feature setup.")(
     dataO.orNone.map { dataSettingOpt =>
-      for {
-        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
-        _ <- logger.info(s"Mode: setup")
-        dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
-        _ <- logger.info(s"Data: " + dataSettings.mkString(", "))
-        _ <- dataSettings.traverse(_.getFeatures(RunMode.Sanity).setup).as(ExitCode.Success)
-      } yield ExitCode.Success
+      withLogger { logger =>
+        implicit val Log = logger
+        for {
+          _ <- Log.info(s"Mode: setup")
+          dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
+          _ <- Log.info(s"Data: " + dataSettings.mkString(", "))
+          _ <- dataSettings.traverse(_.getFeatures(RunMode.Sanity).setup)
+        } yield ExitCode.Success
+      }
     }
   )
 
@@ -290,21 +305,23 @@ object FrameInductionApp extends CommandIOApp(
     name = "run",
     help = "Run clustering / frame induction.")(
     (dataO, modeO, modelO).mapN { (data, mode, model) =>
-      for {
-        implicit0(logger: SequentialEphemeralTreeLogger[IO, String]) <- freelog.loggers.TimingEphemeralTreeFansiLogger.debounced()
-        _ <- logger.info(s"Mode: $mode")
-        _ <- logger.info(s"Data: $data")
-        _ <- logger.info(s"Model: $model")
-        // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
-        _ <- data match {
-          case d @ DataSetting.Qasrl =>
-            runModeling(model, d.getFeatures(mode))
-          case d @ DataSetting.Ontonotes5(_) =>
-            runModeling(model, d.getFeatures(mode))
-          case d @ DataSetting.CoNLL08(_) =>
-            runModeling(model, d.getFeatures(mode))
-        }
-      } yield ExitCode.Success
+      withLogger { logger =>
+        implicit val Log = logger
+        for {
+          _ <- Log.info(s"Mode: $mode")
+          _ <- Log.info(s"Data: $data")
+          _ <- Log.info(s"Model: $model")
+          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+          _ <- data match {
+            case d @ DataSetting.Qasrl =>
+              runModeling(model, d.getFeatures(mode))
+            case d @ DataSetting.Ontonotes5(_) =>
+              runModeling(model, d.getFeatures(mode))
+            case d @ DataSetting.CoNLL08(_) =>
+              runModeling(model, d.getFeatures(mode))
+          }
+        } yield ExitCode.Success
+      }
     }
   )
 
