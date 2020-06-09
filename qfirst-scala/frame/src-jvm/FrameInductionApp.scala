@@ -150,35 +150,34 @@ object FrameInductionApp extends CommandIOApp(
       }
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
-    //   _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-    //     val argTreesRefined = argTrees.asInstanceOf[Map[String, MergeTree[Set[ArgumentId[Arg]]]]]
-    //     features.argRoleLabels.get >>= (argRoleLabels =>
-    //       if(features.mode.shouldEvaluate) {
-    //         if(features.assumeGoldVerbSense) {
-    //           Log.infoBranch("Evaluating argument clustering")(
-    //             Evaluation.evaluateArgumentClusters(
-    //               evalDir, model.toString,
-    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-    //             )
-    //           )
-    //         } else {
-    //           Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-    //             Evaluation.evaluateArgumentClusters(
-    //               evalDir.resolve("sense-specific"),
-    //               s"$model (sense-specific roles)",
-    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-    //             )
-    //           ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-    //             Evaluation.evaluateArgumentClusters(
-    //               evalDir.resolve("sense-agnostic"),
-    //               s"$model (sense-agnostic roles)",
-    //               argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
-    //             )
-    //           )
-    //         }
-    //       } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-    //     )
-    //   }
+      // _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+      //   features.argRoleLabels.get >>= (argRoleLabels =>
+      //     if(features.mode.shouldEvaluate) {
+      //       if(features.assumeGoldVerbSense) {
+      //         Log.infoBranch("Evaluating argument clustering")(
+      //           Evaluation.evaluateArgumentClusters(
+      //             evalDir, model.toString,
+      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+      //           )
+      //         )
+      //       } else {
+      //         Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+      //           Evaluation.evaluateArgumentClusters(
+      //             evalDir.resolve("sense-specific"),
+      //             s"$model (sense-specific roles)",
+      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+      //           )
+      //         ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+      //           Evaluation.evaluateArgumentClusters(
+      //             evalDir.resolve("sense-agnostic"),
+      //             s"$model (sense-agnostic roles)",
+      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
+      //           )
+      //         )
+      //       }
+      //     } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+      //   )
+      // }
     } yield ()
   }
 

@@ -123,13 +123,6 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
     _.transform { case (_, verbs) => verbs.value.keySet }
   ).toCell("Verb IDs")
 
-  // XXX delete this
-  // lazy val verbLemmaToType = verbArgSets.data.map(
-  //   _.keySet.toList.foldMap(verbType =>
-  //     NonMergingMap(getVerbLemma(verbType) -> verbType)
-  //   )
-  // ).toCell("Verb lemma to verb type mapping")
-
   lazy val verbIdToType = verbArgSets.data.map(
     _.toList.foldMap { case (verbType, verbs) =>
       NonMergingMap(
@@ -139,59 +132,6 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
       )
     }
   ).toCell("Verb ID to verb type mapping")
-
-
-  // ELMo XXX TODO remove this Verb vectors
-
-  import breeze.linalg.DenseVector
-
-  def getVerbVectors(
-    verbIdToType: Map[VerbId, VerbType],
-    filePrefix: String
-  ): IO[VerbFeats[DenseVector[Float]]] = {
-    val idsPath = Paths.get(filePrefix + "_ids.jsonl")
-    val embPath = Paths.get(filePrefix + "_emb.bin")
-    val embDim = 1024
-    for {
-      ids <- Log.infoBranch("Reading verb IDs")(
-        FileUtil.readJsonLines[VerbId](idsPath).compile.toList
-      )
-      embeddings <- Log.infoBranch("Reading verb embeddings")(
-        VectorFileUtil.readDenseFloatVectorsNIO(embPath, embDim)
-      )
-      _ <- Log.info(s"Number of IDs: ${ids.size}; Number of embeddings: ${embeddings.size}; embedding size: ${embeddings.head.size}")
-      _ <- {
-        val numToCheck = 5
-        val propSane = embeddings.take(numToCheck)
-          .foldMap(
-            _.activeValuesIterator.map(scala.math.abs).filter(f => f > 1e-2 && f < 1e2).size
-          ).toDouble / (numToCheck * embDim)
-        val sanityCheckText = f"Sanity check: ${propSane}%.3f of ELMo embedding units have absolute value between ${1e-2}%s and ${1e2}%s."
-        if(propSane < 0.8) {
-          Log.warn(sanityCheckText) >>
-            Log.warn("There might be endianness issues with how you're reading the ELMo embeddings") >>
-            embeddings.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
-        } else Log.info(sanityCheckText)
-      }
-    } yield ids.zip(embeddings)
-      .foldMap { case (verbId, embedding) =>
-        verbIdToType.get(verbId).foldMap(verbType => // don't include vectors for verbs not in the provided instances
-          Map(verbType -> NonMergingMap(verbId -> embedding))
-        )
-      }
-  }
-
-  // ELMo XXX TODO remove these
-
-  lazy val elmoVecs = verbIdToType.data.zip(RunData.strings).flatMap {
-    case (vIdToVType, split) =>
-      getVerbVectors(
-        vIdToVType.value,
-        inputDir.resolve(s"elmo/$split").toString
-      )
-  }.toCell("Verb ELMo vectors")
-
-  // end elmo vecs
 
   val mlmSettings = List("masked", "symm_left", "symm_right", "symm_both")
   def mlmFeatureDir = inputDir.resolve("mlm")
@@ -218,6 +158,8 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
     ).toMap
   }
+
+  import breeze.linalg.DenseVector
 
   val mlmFeatureDim = 1024
   // type -> mode -> verb lemma -> sentence id -> index -> vector
@@ -502,159 +444,6 @@ class GoldQasrlFeatures(
 
   override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
-  // lazy val instancesByQuestionId = instances.data.map(
-  //   _.map { case (verbType, sentences) =>
-  //     verbType -> sentences.toList.foldMap { case (sid, verbs) =>
-  //       verbs.value.toList.foldMap { case (vi, questions) =>
-  //         val verbId = VerbId(sid, vi)
-  //         questions.map { case (question, spanLists) =>
-  //           QuestionId(verbId, question) -> spanLists
-  //         }.toMap
-  //       }
-  //     }
-  //   }
-  // ).toCell("Instances by question ID")
-
-
-  // lazy val questionTemplateVocabsCachePath = cacheDir.map(_.resolve("question-vocabs.jsonl.gz"))
-  // lazy val questionTemplateVocabsByVerb = new Cell(
-  //   "Question template vocabularies",
-  //   questionTemplateVocabsCachePath >>= (path =>
-  //     FileCached.get[Map[InflectedForms, Vocab[QuestionTemplate]]]("Question template vocabularies")(
-  //       path = path,
-  //       read = path => (
-  //         FileUtil.readJsonLines[(InflectedForms, Vocab[QuestionTemplate])](path)
-  //           .infoCompile("Reading lines")(_.toList).map(_.toMap)
-  //       ),
-  //       write = (path, clausalQVocabs) => FileUtil.writeJsonLines(
-  //         path, io.circe.Printer.noSpaces)(
-  //         clausalQVocabs.toList))(
-  //       instances.all.get >>= (
-  //         _.toList.infoBarTraverse("Constructing clausal question vocabularies") {
-  //           case (verbType, sentences) =>
-  //             Log.trace(verbType.toString) >> IO {
-  //               val qTemplateSet = sentences.unorderedFoldMap(verbs =>
-  //                 verbs.value.unorderedFoldMap(qaPairs =>
-  //                   qaPairs.keySet.map(QuestionTemplate.fromClausalQuestion)
-  //                 )
-  //               )
-  //               verbType -> Vocab.make(qTemplateSet)
-  //             }
-  //         }.map(_.toMap)
-  //       )
-  //     )
-  //   )
-  // )
-
-  // // inputs sent to a QA model
-  // // def qaInputPath = outDir.map(_.resolve(s"qa-input-${mode.eval}.jsonl.gz"))
-
-  // // outputs of a QA model, read back in to construct features
-  // def qaOutputPath(split: String) =
-  //   IO.pure(inputDir.resolve("qa"))
-  //     .flatTap(createDir)
-  //     .map(_.resolve(s"qa-output-$split.jsonl.gz"))
-  // def qaFeaturesPath(split: String) =
-  //   cacheDir.map(_.resolve("qa"))
-  //     .flatTap(createDir)
-  //     .map(_.resolve(s"qa-features-$split.jsonl.gz"))
-
-  // lazy val answerNLLs = RunData.splits.flatMap { split =>
-  //   import QAInputApp.{SentenceQAOutput, ClauseQAOutput}
-  //   for {
-  //     insts <- instances(split)
-  //     vidToType <- verbIdToType(split)
-  //     splitName <- RunData.strings(split)
-  //     qaOutPath <- qaOutputPath(splitName)
-  //     res <- FileUtil.readJsonLines[SentenceQAOutput](
-  //       qaOutPath
-  //     ).map { case SentenceQAOutput(sid, verbs) =>
-  //       verbs.toList.foldMap { case (verbIndexStr, clausalQAs) =>
-  //         val verbIndex = verbIndexStr.toInt
-  //         val verbId = VerbId(sid, verbIndex)
-  //         val verbTypeOpt = vidToType.value.get(verbId)
-  //         verbTypeOpt.foldMap { verbType =>
-  //           val verbInstances = insts(verbType)(sid).value(verbIndex)
-  //           Map(
-  //             verbType -> verbInstances.map { case (cq, spans) =>
-  //               val goldSpans = spans.flatten.toSet
-  //               QuestionId(verbId, cq) -> clausalQAs.map {
-  //                 case ClauseQAOutput(question, spans) =>
-  //                   val marginalAnswerProb = spans
-  //                     .filter(p => goldSpans.contains(p._1))
-  //                     .foldMap(_._2)
-  //                   // smoothed prob chosen here bc it's 1/2 of the bottom decoding threshold for the QA model
-  //                   val smoothedMarginalAnswerProb =
-  //                     scala.math.max(marginalAnswerProb, 0.0025)
-  //                   question.clausalQ -> -scala.math.log(smoothedMarginalAnswerProb)
-  //               }
-  //             }
-  //           )
-  //         }
-  //       }
-  //     }.infoCompile("Compiling QA NLL features from sentence predictions")(_.foldMonoid)
-  //   } yield res
-  // }.toFileCachedCell("QA NLL features", qaFeaturesPath)(
-  //   read = path => (
-  //     FileUtil.readJsonLines[(InflectedForms, List[(QuestionId, List[(TemplateQ, Double)])])](path)
-  //       .map { case (k, v) => k -> v.toMap }
-  //       .infoCompile("Reading lines")(_.toList)
-  //       .map(_.toMap)
-  //   ),
-  //   write = (path, qaFeatures) => FileUtil.writeJsonLines(
-  //     path, io.circe.Printer.noSpaces)(
-  //     qaFeatures.toList.map { case (k, v) => k -> v.toList })
-  // )
-
-
-  val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
-
-  // TODO refactor into RunData framework. is this done?
-  // actually TODO: delete!
-  val evaluationItemsPath = (liveDir, splitName).mapN((dir, split) => dir.resolve(s"eval-sample-$split.jsonl"))
-  val evaluationItems = {
-      new Cell(
-        "Evaluation items",
-        evaluationItemsPath >>= (evalItemsPath =>
-          FileCached.get[Vector[(InflectedForms, String, Int)]](
-            "Evaluation Items")(
-            path = evalItemsPath,
-            read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
-            write = (path, items) => FileUtil.writeJsonLines(path)(items))(
-            Log.infoBranch(s"Creating new sample for evaluation at $evalItemsPath")(
-              dataset.get.map { evalSet =>
-                (new scala.util.Random(86735932569L)).shuffle(
-                  evalSet.sentences.values.iterator.flatMap(sentence =>
-                    sentence.verbEntries.values.toList.map(verb =>
-                      (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
-                    )
-                  )
-                ).take(1000).toVector
-              }
-            )
-          )
-        )
-    )
-  }
-
-  val paraphraseGoldPath = liveDir.map(_.resolve("gold-paraphrases.json"))
-
-  def readGoldParaphrases = {
-    paraphraseGoldPath >>= (ppGoldPath =>
-      IO(Files.exists(ppGoldPath)).ifM(
-        FileUtil.readJson[ParaphraseAnnotations](ppGoldPath),
-        Log.warn(s"No gold paraphrase annotations found at $ppGoldPath. Initializing to empty annotations.") >>
-          IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]]),
-        )
-    )
-  }
-  def saveGoldParaphrases(data: ParaphraseAnnotations) = {
-    paraphraseGoldPath >>= (ppGoldPath =>
-      Log.infoBranch(s"Saving gold paraphrases to $ppGoldPath")(
-        FileUtil.writeJson(ppGoldPath, io.circe.Printer.noSpaces)(data)
-      )
-    )
-  }
 }
 
 case class PropBankRoleLabel(
