@@ -187,7 +187,16 @@ object FrameInductionApp extends CommandIOApp(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = model match {
     case argModel @ ArgumentModel(_) => runArgumentRoleInduction(argModel, features)
-    case verbModel @ VerbModel(_) => runVerbSenseInduction(verbModel, features)
+    case verbModel @ VerbModel(_) =>
+      // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
+      IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
+        IO.raiseError(
+          new IllegalArgumentException(
+            "There's no point to running a verb sense model when assuming gold verb sense."
+          )
+        ),
+        runVerbSenseInduction(verbModel, features)
+      )
   }
 
   sealed trait DataSetting {
