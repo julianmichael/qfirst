@@ -489,6 +489,8 @@ sealed abstract class PropBankFeatures[Arg](
     _.resolve(if(assumeGoldVerbSense) "by-sense" else "by-lemma")
   ).flatTap(createDir)
 
+  def verbSenseLabels: RunData[VerbFeatsNew[String]]
+
   def argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]]
 }
 
@@ -550,6 +552,13 @@ class CoNLL08GoldDepFeatures(
         }
       }
     ).toCell("CoNLL 2008 predicate-argument structures")
+  }
+
+  override val verbSenseLabels = predArgStructures.data.map { paStructs =>
+    (verbType: String) => (verbId: VerbId) => {
+      val predicate = paStructs(verbType).value(verbId).predicate
+      s"${predicate.lemma}.${predicate.sense}"
+    }
   }
 
   import scala.annotation.tailrec
@@ -749,6 +758,11 @@ class Ontonotes5GoldSpanFeatures(
         }
       }
     }.toCell("PropBank dataset")
+
+  // TODO: fill this in after adding sense information to `dataset`
+  override val verbSenseLabels = dataset.data.map { data =>
+    ???
+  }
 
   // TODO eliminate redundant traversal of propbank
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =

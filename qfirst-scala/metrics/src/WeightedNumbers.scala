@@ -14,6 +14,10 @@ case class WeightedNumbers[N](values: Vector[(Double, N)])(implicit N: Numeric[N
       pcount, wsum
     )
   }
+  def normalize = {
+    val pcount = values.foldMap(_._1)
+    WeightedNumbers(values.map { case (w, n) => (w / pcount) -> n })
+  }
 }
 object WeightedNumbers {
   def apply[N: Numeric](n: N, weight: Double = 1.0): WeightedNumbers[N] = WeightedNumbers(Vector(weight -> n))

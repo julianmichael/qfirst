@@ -72,6 +72,10 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
     def <->(y: A)(implicit o: Order[A]): Duad[A] = Duad(x, y)
   }
 
+  implicit class RichMap[A, B](val x: Map[A, B]) extends AnyVal {
+    def mapVals[C](f: B => C): Map[A, C] = x.transform { case (_, v) => f(v) }
+  }
+
   object Auxiliaries {
     final val doVerbs = Set("do", "does", "doing", "did", "done").map(_.lowerCase)
     final val beVerbs =

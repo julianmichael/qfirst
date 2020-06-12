@@ -150,34 +150,20 @@ object FrameInductionApp extends CommandIOApp(
       }
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
-      // _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-      //   features.argRoleLabels.get >>= (argRoleLabels =>
-      //     if(features.mode.shouldEvaluate) {
-      //       if(features.assumeGoldVerbSense) {
-      //         Log.infoBranch("Evaluating argument clustering")(
-      //           Evaluation.evaluateArgumentClusters(
-      //             evalDir, model.toString,
-      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-      //           )
-      //         )
-      //       } else {
-      //         Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-      //           Evaluation.evaluateArgumentClusters(
-      //             evalDir.resolve("sense-specific"),
-      //             s"$model (sense-specific roles)",
-      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-      //           )
-      //         ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-      //           Evaluation.evaluateArgumentClusters(
-      //             evalDir.resolve("sense-agnostic"),
-      //             s"$model (sense-agnostic roles)",
-      //             argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
-      //           )
-      //         )
-      //       }
-      //     } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-      //   )
-      // }
+      _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+        features.verbSenseLabels.get >>= { verbSenseLabels =>
+          val verbTreesRefined = verbTrees.asInstanceOf[Map[String, MergeTree[Set[VerbId]]]]
+          if(features.mode.shouldEvaluate) {
+            require(!features.assumeGoldVerbSense) // should hold due to condition in runModeling
+            Log.infoBranch("Evaluating verb clustering")(
+              Evaluation.evaluateClusters(
+                evalDir, model.toString,
+                verbTreesRefined, verbSenseLabels
+              )
+            )
+          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+        }
+      }
     } yield ()
   }
 
@@ -185,7 +171,8 @@ object FrameInductionApp extends CommandIOApp(
     model: ClusteringModel, features: Features[VerbType, Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = model match {
-    case argModel @ ArgumentModel(_) => runArgumentRoleInduction(argModel, features)
+    case argModel @ ArgumentModel(_) =>
+      runArgumentRoleInduction(argModel, features)
     case verbModel @ VerbModel(_) =>
       // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
       IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
