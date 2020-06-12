@@ -93,6 +93,8 @@ sealed abstract class Features[VerbType : Encoder : Decoder, Arg](
   // new style arg features
   def argIndices: RunData[ArgFeatsNew[Int]]
 
+  def argSyntacticFunctions: RunDataCell[ArgFeats[String]]
+
   protected val rootDir: Path
 
   // TODO move all setup into this/superclass
@@ -444,6 +446,8 @@ class GoldQasrlFeatures(
 
   override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
 
+
+  def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
 }
 
 case class PropBankRoleLabel(
@@ -574,7 +578,7 @@ class CoNLL08GoldDepFeatures(
     }
   }
 
-  val argDependencyRels: RunDataCell[ArgFeats[String]] = {
+  val argSyntacticFunctions: RunDataCell[ArgFeats[String]] = {
     dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         val dependencies = sentence.childToParentDependencies
@@ -586,14 +590,14 @@ class CoNLL08GoldDepFeatures(
           val verbIndex = pas.predicate.index
           val verbId = VerbId(sid, verbIndex)
 
-          val argDependencyRels = pas.arguments.map(_._2).map { argIndex =>
+          val argSyntacticFs = pas.arguments.map(_._2).map { argIndex =>
             ArgumentId(verbId, argIndex) -> dependencies(argIndex)._1
           }.toMap
 
-          Map(verbType -> NonMergingMap(argDependencyRels))
+          Map(verbType -> NonMergingMap(argSyntacticFs))
         }
       }
-    ).toCell("CoNLL 2008 argument-to-head dependency rels")
+    ).toCell("CoNLL 2008 argument-to-head syntactic rels")
   }
 
   val argDependencyPaths: RunDataCell[ArgFeats[String]] = {
@@ -818,6 +822,8 @@ class Ontonotes5GoldSpanFeatures(
   ).toCell("PropBank span to role label mapping")
 
   override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
+
+  def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
 
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.data.map(
     _.transform { case (_, verbs) =>

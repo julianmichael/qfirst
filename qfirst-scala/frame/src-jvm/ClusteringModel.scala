@@ -96,7 +96,8 @@ object ArgumentModel {
   }
 
   val termIndex = List[(LossTerm, String)](
-    QuestionEntropy -> "qent"
+    QuestionEntropy -> "qent",
+    SyntacticFunction -> "syntf",
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )
@@ -141,7 +142,6 @@ object ArgumentModel {
     ]
   }
 
-
   case object QuestionEntropy extends LossTerm {
     type FlatParam = DenseMultinomial
     type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
@@ -162,6 +162,49 @@ object ArgumentModel {
       new MinEntropyClusteringSparse(indexedInstances, questionVocab.size)
     )
   }
+
+  case object SyntacticFunction extends LossTerm {
+    type FlatParam = DenseMultinomial
+    type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argSyntacticFunctions.get.as(())
+
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      argSyntacticFunctions <- features.argSyntacticFunctions.get.map(_.apply(verbType))
+      syntFuncVocab = Vocab.make(argSyntacticFunctions.value.values.toSet)
+      // TODO add tf-idf transform?
+      indexedInstances = argSyntacticFunctions.value.map { case (argId, syntFunc) =>
+        argId -> Map(syntFuncVocab.getIndex(syntFunc) -> 1.0)
+      }
+    } yield (
+      new DirichletMAPClusteringSparse(indexedInstances, syntFuncVocab.size, 0.01),
+      new MinEntropyClusteringSparse(indexedInstances, syntFuncVocab.size)
+    )
+  }
+
+  // TODO
+  // case object MaximumEntropy extends LossTerm {
+  //   type FlatParam = DenseMultinomial
+  //   type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
+
+  //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argSyntacticFunctions.get.as(())
+
+  //   override def create[VerbType, Arg](
+  //     features: Features[VerbType, Arg], verbType: VerbType
+  //   ) = for {
+  //     argSyntacticFunctions <- features.argSyntacticFunctions.get.map(_.apply(verbType))
+  //     syntFuncVocab = Vocab.make(argSyntacticFunctions.value.values.toSet)
+  //     // TODO add tf-idf transform?
+  //     indexedInstances = argSyntacticFunctions.value.map { case (argId, syntFunc) =>
+  //       argId -> Map(syntFuncVocab.getIndex(syntFunc) -> 1.0)
+  //     }
+  //   } yield (
+  //     new DirichletMAPClusteringSparse(indexedInstances, syntFuncVocab.size, 0.01),
+  //     new MinEntropyClusteringSparse(indexedInstances, syntFuncVocab.size)
+  //   )
+  // }
 
   import breeze.linalg.DenseVector
 
