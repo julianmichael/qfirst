@@ -25,18 +25,26 @@ sealed trait ClusteringModel {
 }
 object ClusteringModel {
   def fromString(x: String): Option[ClusteringModel] = {
-    if(x.startsWith("arg-baseline/")) ArgumentBaselineModel.fromString(x.drop("arg-baseline/".length))
-    else if(x.startsWith("arg/")) ArgumentModel.fromString(x.drop("arg/".length))
+    // if(x.startsWith("arg-baseline/")) ArgumentBaselineModel.fromString(x.drop("arg-baseline/".length))
+    if(x == ("arg/baseline")) Some(BaselineArgumentModel())
+    else if(x.startsWith("arg/")) FullArgumentModel.fromString(x.drop("arg/".length))
     else if(x.startsWith("verb/")) VerbModel.fromString(x.drop("verb/".length))
     else None
   }
 }
 
-case class ArgumentBaselineModel(numPrimaryClusters: Int) extends ClusteringModel {
+sealed trait ArgumentModel extends ClusteringModel {
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, Vector[Set[ArgumentId[Arg]]]]] = {
+  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]
+}
+
+case class BaselineArgumentModel() extends ArgumentModel {
+  def getArgumentClusters[VerbType, Arg : Order](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       allVerbArgSets <- features.verbArgSets.get
@@ -51,20 +59,25 @@ case class ArgumentBaselineModel(numPrimaryClusters: Int) extends ClusteringMode
           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
             IO {
-              val allClusters = args.toVector.toSet.groupBy(argSyntFuncsForVerb).toVector
-                .sortBy(p => -syntFuncCounts(p._1)).map(_._2)
-              val primaryClusters = allClusters.take(numPrimaryClusters)
-              val catchallCluster = allClusters.drop(numPrimaryClusters).combineAll
-              verbType -> (primaryClusters ++ Vector(catchallCluster).filter(_.nonEmpty))
+              verbType -> args.toVector.toSet.groupBy(argSyntFuncsForVerb)
+                .toVector.sortBy(p => syntFuncCounts(p._1)).map(_._2)
+                .map(MergeTree.Leaf(0.0, _))
+                .reduceLeft[MergeTree[Set[ArgumentId[Arg]]]](MergeTree.Merge(0.0, _, _))
+
+              // val allClusters = args.toVector.toSet.groupBy(argSyntFuncsForVerb).toVector
+              //   .sortBy(p => -syntFuncCounts(p._1)).map(_._2)
+              // val primaryClusters = allClusters.take(numPrimaryClusters)
+              // val catchallCluster = allClusters.drop(numPrimaryClusters).combineAll
+              // verbType -> (primaryClusters ++ Vector(catchallCluster).filter(_.nonEmpty))
             }
           }
         }
       }
     } yield results.flatten.toMap
   }
-  override def toString = ArgumentBaselineModel.toString(this)
+  override def toString = BaselineArgumentModel.toString(this)
 }
-object ArgumentBaselineModel {
+object BaselineArgumentModel {
 
   // val termIndex = List[(LossTerm, String)](
   //   QuestionEntropy -> "qent",
@@ -77,19 +90,21 @@ object ArgumentBaselineModel {
 
   // too lazy for proper parser combinators
   // TODO add better error reporting
-  def fromString(x: String): Option[ArgumentBaselineModel] = {
-    scala.util.Try(x.toInt).toOption.map(ArgumentBaselineModel(_))
+  def fromString(x: String): Option[BaselineArgumentModel] = {
+    // scala.util.Try(x.toInt).toOption.map(BaselineArgumentModel(_))
+    Option(BaselineArgumentModel()).filter(_ => x == "arg/baseline")
   }
-  def toString(model: ArgumentBaselineModel): String = {
-    "arg-baseline/" + model.numPrimaryClusters.toString
+  def toString(model: BaselineArgumentModel): String = {
+    // "arg-baseline/" + model.numPrimaryClusters.toString
+    "arg/baseline"
   }
 }
 
-case class ArgumentModel private (
-  lossTerms: Map[ArgumentModel.LossTerm, Double]
-) extends ClusteringModel {
+case class FullArgumentModel private (
+  lossTerms: Map[FullArgumentModel.LossTerm, Double]
+) extends ArgumentModel {
 
-  override def toString: String = ArgumentModel.toString(this)
+  override def toString: String = FullArgumentModel.toString(this)
 
   type FlatAlg[Arg] = FlatClusteringAlgorithm { type Index = ArgumentId[Arg] }
   type AgglomAlg[Arg] = AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg] }
@@ -139,15 +154,15 @@ case class ArgumentModel private (
   }
 }
 
-object ArgumentModel {
+object FullArgumentModel {
 
-  def apply(terms: (LossTerm, Double)*): ArgumentModel = {
+  def apply(terms: (LossTerm, Double)*): FullArgumentModel = {
     val total = terms.map(_._2).sum
     val termMap = terms.map { case (term, weight) =>
       term -> (scala.math.round(weight / total * 100.0) / 100.0)
     }.toMap
     require(terms.size == termMap.size)
-    new ArgumentModel(termMap)
+    new FullArgumentModel(termMap)
   }
 
   val termIndex = List[(LossTerm, String)](
@@ -161,8 +176,8 @@ object ArgumentModel {
 
   // too lazy for proper parser combinators
   // TODO add better error reporting
-  def fromString(x: String): Option[ArgumentModel] = {
-    if(stringToTerm.contains(x)) Some(ArgumentModel(stringToTerm(x) -> 1.0))
+  def fromString(x: String): Option[FullArgumentModel] = {
+    if(stringToTerm.contains(x)) Some(FullArgumentModel(stringToTerm(x) -> 1.0))
     else scala.util.Try {
       val termStrings = x.split("\\+").toList
       val terms = termStrings.map { term =>
@@ -172,10 +187,10 @@ object ArgumentModel {
           stringToTerm(components(0)) -> components(1).toDouble
         }
       }
-      ArgumentModel(terms: _*)
+      FullArgumentModel(terms: _*)
     }.toOption
   }
-  def toString(model: ArgumentModel): String = {
+  def toString(model: FullArgumentModel): String = {
     "arg/" + model.lossTerms.toList.map { case (term, weight) =>
       if(weight == 1.0) termToString(term)
       else f"${termToString(term)}%s*${weight}%.2f"
@@ -452,7 +467,7 @@ object VerbModel {
 //     } yield new VectorMeanClustering(vectors.value)
 //   }
 
-//   case object AnswerEntropy extends ArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
+//   case object AnswerEntropy extends FullArgumentModel[DenseMultinomial, MinEntropyClusteringSparse.ClusterMixture] {
 //     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = for {
 //       sentences <- features.sentences.get
 //       tokenCounts <- features.argSpans.get

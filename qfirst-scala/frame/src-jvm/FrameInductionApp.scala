@@ -121,47 +121,47 @@ object FrameInductionApp extends CommandIOApp(
     } yield ()
   }
 
-  def runBaselineArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ArgumentBaselineModel, features: Features[VerbType, Arg])(
-    implicit Log: SequentialEphemeralTreeLogger[IO, String]
-  ): IO[Unit] = {
-    for {
-      argTrees <- Log.infoBranch(s"Getting argument clusters") {
-        model.getArgumentClusters(features)
-      }
-      splitName <- features.splitName
-      evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
-      _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-        val argTreesRefined = argTrees.asInstanceOf[Map[String, Vector[Set[ArgumentId[Arg]]]]]
-        features.argRoleLabels.get >>= (argRoleLabels =>
-          if(features.mode.shouldEvaluate) {
-            if(features.assumeGoldVerbSense) {
-              Log.infoBranch("Evaluating argument clustering")(
-                Evaluation.evaluateSingleArgumentClustering(
-                  evalDir, model.toString,
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-                )
-              )
-            } else {
-              Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-                Evaluation.evaluateSingleArgumentClustering(
-                  evalDir.resolve("sense-specific"),
-                  s"$model (sense-specific roles)",
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-                )
-              ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                Evaluation.evaluateSingleArgumentClustering(
-                  evalDir.resolve("sense-agnostic"),
-                  s"$model (sense-agnostic roles)",
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
-                )
-              )
-            }
-          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-        )
-      }
-    } yield ()
-  }
+  // def runBaselineArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+  //   model: ArgumentBaselineModel, features: Features[VerbType, Arg])(
+  //   implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  // ): IO[Unit] = {
+  //   for {
+  //     argTrees <- Log.infoBranch(s"Getting argument clusters") {
+  //       model.getArgumentClusters(features)
+  //     }
+  //     splitName <- features.splitName
+  //     evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
+  //     _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+  //       val argTreesRefined = argTrees.asInstanceOf[Map[String, Vector[Set[ArgumentId[Arg]]]]]
+  //       features.argRoleLabels.get >>= (argRoleLabels =>
+  //         if(features.mode.shouldEvaluate) {
+  //           if(features.assumeGoldVerbSense) {
+  //             Log.infoBranch("Evaluating argument clustering")(
+  //               Evaluation.evaluateSingleArgumentClustering(
+  //                 evalDir, model.toString,
+  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+  //               )
+  //             )
+  //           } else {
+  //             Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+  //               Evaluation.evaluateSingleArgumentClustering(
+  //                 evalDir.resolve("sense-specific"),
+  //                 s"$model (sense-specific roles)",
+  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+  //               )
+  //             ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+  //               Evaluation.evaluateSingleArgumentClustering(
+  //                 evalDir.resolve("sense-agnostic"),
+  //                 s"$model (sense-agnostic roles)",
+  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
+  //               )
+  //             )
+  //           }
+  //         } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+  //       )
+  //     }
+  //   } yield ()
+  // }
 
   def getVerbClusters[VerbType: Encoder : Decoder, Arg](
     model: VerbModel, features: Features[VerbType, Arg])(
@@ -215,11 +215,11 @@ object FrameInductionApp extends CommandIOApp(
     model: ClusteringModel, features: Features[VerbType, Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = model match {
-    case argBaselineModel @ ArgumentBaselineModel(_) =>
-      runBaselineArgumentRoleInduction(argBaselineModel, features)
-    case argModel @ ArgumentModel(_) =>
+    // case argBaselineModel @ ArgumentBaselineModel(_) =>
+    //   runBaselineArgumentRoleInduction(argBaselineModel, features)
+    case argModel: ArgumentModel =>
       runArgumentRoleInduction(argModel, features)
-    case verbModel @ VerbModel(_) =>
+    case verbModel: VerbModel =>
       // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
       IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
         IO.raiseError(
