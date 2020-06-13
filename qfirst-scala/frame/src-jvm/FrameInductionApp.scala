@@ -1,6 +1,7 @@
 package qfirst.frame
 
 import qfirst.frame.clustering._
+import qfirst.frame.eval.Evaluation
 import qfirst.frame.features._
 import qfirst.frame.util.Duad
 import qfirst.frame.util.FileCached
