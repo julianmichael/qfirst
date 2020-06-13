@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import qfirst.frame.features.Features
+import qfirst.frame.features.PropBankRoleLabel
 import qfirst.frame.util.Duad
 import qfirst.frame.util.NonMergingMap
 

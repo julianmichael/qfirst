@@ -1,4 +1,6 @@
-package qfirst.frame
+package qfirst.frame.features
+
+import qfirst.frame.RunMode
 
 import qfirst.frame.util.Cell
 import qfirst.frame.util.FileCached

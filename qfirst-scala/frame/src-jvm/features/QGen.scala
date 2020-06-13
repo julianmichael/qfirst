@@ -1,4 +1,6 @@
-package qfirst.frame
+package qfirst.frame.features
+
+import qfirst.frame.QuestionTemplate
 
 import io.circe.generic.JsonCodec
 

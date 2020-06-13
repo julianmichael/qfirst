@@ -1,6 +1,7 @@
 package qfirst.frame
 
 import qfirst.frame.clustering._
+import qfirst.frame.features.Features
 import qfirst.frame.util.Vocab
 
 import cats.Order

@@ -1,6 +1,7 @@
 package qfirst.frame
 
 import qfirst.frame.clustering._
+import qfirst.frame.features._
 import qfirst.frame.util.Duad
 import qfirst.frame.util.FileCached
 import qfirst.frame.util.NonMergingMap
@@ -254,7 +255,7 @@ object FrameInductionApp extends CommandIOApp(
       override def getFeatures(
         mode: RunMode)(
         implicit Log: EphemeralTreeLogger[IO, String]
-      ) = new Ontonotes5GoldSpanFeatures(mode, assumeGoldVerbSense)
+      ) = new OntoNotes5Features(mode, assumeGoldVerbSense)
     }
     case class CoNLL08(assumeGoldVerbSense: Boolean) extends DataSetting {
       type VerbType = String; type Arg = Int
@@ -265,7 +266,7 @@ object FrameInductionApp extends CommandIOApp(
       override def getFeatures(
         mode: RunMode)(
         implicit Log: EphemeralTreeLogger[IO, String]
-      ) = new CoNLL08GoldDepFeatures(mode, assumeGoldVerbSense)
+      ) = new CoNLL08Features(mode, assumeGoldVerbSense)
     }
 
     def all = List[DataSetting](

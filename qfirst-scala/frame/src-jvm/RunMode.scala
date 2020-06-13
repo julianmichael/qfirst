@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import qfirst.frame.features.RunData
+
 import io.circe.generic.JsonCodec
 
 import cats.effect.IO

@@ -36,34 +36,6 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   type TemplateQ = (ArgStructure, ArgumentSlot)
   type QAPairs = Map[ClausalQuestion, List[List[ESpan]]]
 
-  type VerbFeatures[VerbType, A] = Map[
-    VerbType, NonMergingMap[VerbId, A]
-  ]
-  type ArgFeatures[VerbType, A, B] = Map[
-    VerbType, NonMergingMap[ArgumentId[A], B]
-  ]
-
-  type Instances[VerbType, A] = Map[
-    VerbType, Map[String, NonMergingMap[Int, A]]
-  ]
-  object Instances {
-    type Qasrl = Instances[InflectedForms, QAPairs]
-    type PropBank = Instances[String, QAPairs]
-  }
-  type ParaphraseAnnotations = Map[
-    // sentence
-    String, Map[
-      // verb index
-      Int, VerbParaphraseLabels
-    ]
-  ]
-
-  // type PropBank = Instances[String, QAPairs]
-  // type PropBankElmo = Instances[String, DenseVector[Float]]
-  // type PropBankLabels = Instances[String, String]
-  // type Qasrl = Instances[InflectedForms, QAPairs]
-  // type QasrlElmo = Instances[InflectedForms, DenseVector[Float]]
-
   def nonEmptySetOptionIso[A: Order] = Iso[Option[NonEmptySet[A]], Set[A]](
     _.foldMap(_.toSortedSet: Set[A]))(
     s => NonEmptySet.fromSet(SortedSet(s.toSeq:_*)))
