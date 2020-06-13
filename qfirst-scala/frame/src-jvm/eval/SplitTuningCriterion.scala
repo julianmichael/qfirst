@@ -57,12 +57,25 @@ object SplitTuningCriterion {
       IO.pure(threshold -> getTunedWeightedStats(allResults, choose(threshold)))
     }
   }
+
+  val all = List(
+    OracleCriterion,
+    NumClustersCriterion,
+    TotalEntropyCriterion,
+    SqNumClustersPenaltyCriterion,
+    CuttingDeltaCriterion,
+    LossPerItemCriterion
+  )
+
+  def fromString(x: String): Option[SplitTuningCriterion] = {
+    all.find(_.name == x)
+  }
 }
 
 import SplitTuningCriterion._
 
 object NumClustersCriterion extends SplitTuningCriterion {
-  val name: String = "const num clusters"
+  val name: String = "num-clusters"
   val defaultThresholds = (1 to 30).toList.map(_.toDouble)
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -112,7 +125,7 @@ object OracleCriterion extends SplitTuningCriterion {
 }
 
 object TotalEntropyCriterion extends SplitTuningCriterion {
-  val name: String = "total entropy"
+  val name: String = "entropy"
   val defaultThresholds = (-40 to 40).map(_.toDouble / 20).toList
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -138,7 +151,7 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
 }
 
 object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
-  val name: String = "sq num clusters penalty"
+  val name: String = "sq-nclusters"
   val defaultThresholds = (0 to 50).map(_.toDouble / 2).toList
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -163,7 +176,7 @@ object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
 }
 
 object CuttingDeltaCriterion extends SplitTuningCriterion {
-  val name: String = "cutting delta"
+  val name: String = "cut-delta"
   val defaultThresholds = (0 to 100).map(_.toDouble / 10).toList
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -192,7 +205,7 @@ object CuttingDeltaCriterion extends SplitTuningCriterion {
 }
 
 object LossPerItemCriterion extends SplitTuningCriterion {
-  val name: String = "loss per item"
+  val name: String = "loss"
   val defaultThresholds = (0 to 40).toList.map(_.toDouble / 10.0)
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],

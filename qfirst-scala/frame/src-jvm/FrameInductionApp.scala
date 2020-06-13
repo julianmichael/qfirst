@@ -1,7 +1,7 @@
 package qfirst.frame
 
 import qfirst.frame.clustering._
-import qfirst.frame.eval.Evaluation
+import qfirst.frame.eval._
 import qfirst.frame.features._
 import qfirst.frame.util.Duad
 import qfirst.frame.util.FileCached
@@ -80,7 +80,7 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ArgumentModel, features: Features[VerbType, Arg])(
+    model: ArgumentModel, features: Features[VerbType, Arg], tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     for {
@@ -97,7 +97,9 @@ object FrameInductionApp extends CommandIOApp(
               Log.infoBranch("Evaluating argument clustering")(
                 Evaluation.evaluateArgumentClusters(
                   evalDir, model.toString,
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+                  argTreesRefined, argRoleLabels,
+                  tuningSpecs,
+                  useSenseSpecificRoles = true
                 )
               )
             } else {
@@ -105,13 +107,17 @@ object FrameInductionApp extends CommandIOApp(
                 Evaluation.evaluateArgumentClusters(
                   evalDir.resolve("sense-specific"),
                   s"$model (sense-specific roles)",
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
+                  argTreesRefined, argRoleLabels,
+                  tuningSpecs,
+                  useSenseSpecificRoles = true
                 )
               ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
                 Evaluation.evaluateArgumentClusters(
                   evalDir.resolve("sense-agnostic"),
                   s"$model (sense-agnostic roles)",
-                  argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
+                  argTreesRefined, argRoleLabels,
+                  tuningSpecs,
+                  useSenseSpecificRoles = false
                 )
               )
             }
@@ -185,7 +191,7 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runVerbSenseInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: VerbModel, features: Features[VerbType, Arg])(
+    model: VerbModel, features: Features[VerbType, Arg], tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = {
     for {
@@ -202,7 +208,8 @@ object FrameInductionApp extends CommandIOApp(
             Log.infoBranch("Evaluating verb clustering")(
               Evaluation.evaluateClusters(
                 evalDir, model.toString,
-                verbTreesRefined, verbSenseLabels
+                verbTreesRefined, verbSenseLabels,
+                tuningSpecs
               )
             )
           } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
@@ -212,13 +219,15 @@ object FrameInductionApp extends CommandIOApp(
   }
 
   def runModeling[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ClusteringModel, features: Features[VerbType, Arg])(
+    model: ClusteringModel,
+    features: Features[VerbType, Arg],
+    tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = model match {
     // case argBaselineModel @ ArgumentBaselineModel(_) =>
     //   runBaselineArgumentRoleInduction(argBaselineModel, features)
     case argModel: ArgumentModel =>
-      runArgumentRoleInduction(argModel, features)
+      runArgumentRoleInduction(argModel, features, tuningSpecs)
     case verbModel: VerbModel =>
       // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
       IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
@@ -227,7 +236,7 @@ object FrameInductionApp extends CommandIOApp(
             "There's no point to running a verb sense model when assuming gold verb sense."
           )
         ),
-        runVerbSenseInduction(verbModel, features)
+        runVerbSenseInduction(verbModel, features, tuningSpecs)
       )
   }
 
@@ -301,8 +310,34 @@ object FrameInductionApp extends CommandIOApp(
   ).mapValidated { string =>
     ClusteringModel.fromString(string)
       .map(Validated.valid)
-      .getOrElse(Validated.invalidNel(s"Invalid model $string. Still working on parsing error reporting."))
+      .getOrElse(Validated.invalidNel(s"Invalid model $string. (todo: better error reporting)"))
   }
+
+  val defaultTuningSpecs = NonEmptyList.of(
+    OracleCriterion,
+    NumClustersCriterion,
+    TotalEntropyCriterion
+  ).map(SplitTuningSpec(_))
+
+  val tuningO = Opts.options[String](
+    "tune", help = "tuning spec, e.g., num-clusters=23"
+  ).mapValidated(
+    _.traverse(arg =>
+      SplitTuningCriterion.fromString(arg).map(SplitTuningSpec(_)).orElse {
+        val get = arg.split("=").toList.lift
+        for {
+          criterionStr <- get(0)
+          criterion <- SplitTuningCriterion.fromString(criterionStr)
+          thresholdsStr <- get(1)
+          thresholds <- thresholdsStr.split(",").toList.traverse(x =>
+            scala.util.Try(x.toDouble).toOption
+          )
+        } yield SplitTuningSpec(criterion, Some(thresholds))
+      }.map(Validated.valid).getOrElse(
+        Validated.invalidNel(s"Invalid tuning spec $arg. (todo: better error reporting)")
+      )
+    )
+  ).orNone.map(_.getOrElse(defaultTuningSpecs))
 
   def withLogger[A](run: SequentialEphemeralTreeLogger[IO, String] => IO[A]): IO[A] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.debounced() >>= { Log =>
@@ -336,7 +371,7 @@ object FrameInductionApp extends CommandIOApp(
   val run = Opts.subcommand(
     name = "run",
     help = "Run clustering / frame induction.")(
-    (dataO, modeO, modelO).mapN { (data, mode, model) =>
+    (dataO, modeO, modelO, tuningO).mapN { (data, mode, model, tuning) =>
       withLogger { logger =>
         implicit val Log = logger
         for {
@@ -346,11 +381,11 @@ object FrameInductionApp extends CommandIOApp(
           // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
           _ <- data match {
             case d @ DataSetting.Qasrl =>
-              runModeling(model, d.getFeatures(mode))
+              runModeling(model, d.getFeatures(mode), tuning)
             case d @ DataSetting.Ontonotes5(_) =>
-              runModeling(model, d.getFeatures(mode))
+              runModeling(model, d.getFeatures(mode), tuning)
             case d @ DataSetting.CoNLL08(_) =>
-              runModeling(model, d.getFeatures(mode))
+              runModeling(model, d.getFeatures(mode), tuning)
           }
         } yield ExitCode.Success
       }
