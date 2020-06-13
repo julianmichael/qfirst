@@ -72,6 +72,52 @@ object NumClustersCriterion extends SplitTuningCriterion {
   }
 }
 
+object OracleCriterion extends SplitTuningCriterion {
+  val name: String = "oracle"
+  def runTuning[VerbType](
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ) = {
+    val logBound = 10
+    val betas = (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
+    for {
+      tuningResults <- tuneWeightedStats(
+        betas, allStats)(
+        t => stats => {
+          stats.toList.maxBy(_.fMeasure(t))
+        }
+      )
+      tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+      _ <- Log.info(s"Tuned results (oracle): ${getMetricsString(tunedBest)}")
+    } yield tuningResults
+  }
+}
+
+object TotalEntropyCriterion extends SplitTuningCriterion {
+  val name: String = "total entropy"
+  val coeffs = (-40 to 40).map(_.toDouble / 20).toList
+  def runTuning[VerbType](
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ) = {
+    val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+      val numItems = s.numItems
+      s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
+    }
+    for {
+      tuningResults <- tuneWeightedStats(
+        coeffs, allStats)(
+        t => stats => {
+          val getLoss = getTotalLoss(t)
+          stats.toList.minBy(getLoss)
+        }
+      )
+      tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
+      _ <- Log.info(s"Tuned results (cluster dist entropy loss coeff): ${getMetricsString(tunedBest)}")
+    } yield tuningResults
+  }
+}
+
 object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
   val name: String = "sq num clusters penalty"
   val coeffs = (0 to 50).map(_.toDouble / 2).toList
@@ -126,25 +172,14 @@ object CuttingDeltaCriterion extends SplitTuningCriterion {
 
 object LossPerItemCriterion extends SplitTuningCriterion {
   val name: String = "loss per item"
+  val lossThresholds = (0 to 40).toList.map(_.toDouble / 10.0)
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
-    val lossPerItemAll = allStats.toList.foldMap { case (verbType, results) =>
-      results.foldMap(s => Numbers(s.lossPerItem))
-    }
-    val lossPerItemBest = allStats.toList.foldMap { case (verbType, results) =>
-      val bestF1 = results.map(_.f1).maximum
-      results.filter(_.f1 == bestF1).foldMap(s => Numbers(s.lossPerItem))
-    }
-    val stats = lossPerItemAll.stats
-    val interval = scala.math.round(stats.quartiles.max - stats.quartiles.min) / 50.0
     val allStatsSortedByLoss = allStats.transform { case (_, results) =>
       results.sortBy(-_.lossPerItem)
     }
-    val lossThresholds = (
-      scala.math.round(stats.quartiles.min / interval).toInt to scala.math.round(stats.quartiles.max / interval).toInt
-    ).map(_ * interval).toList
     for {
       tuningResults <- tuneWeightedStats(
         lossThresholds, allStatsSortedByLoss)(
@@ -154,55 +189,7 @@ object LossPerItemCriterion extends SplitTuningCriterion {
         }
       )
       tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-      // _ <- Log.info(s"Loss per item (all): ${getMetricsString(lossPerItemAll)}")
-      // _ <- Log.info(s"Loss per item (best): ${getMetricsString(lossPerItemBest)}")
       _ <- Log.info(s"Tuned results (best loss per item): ${getMetricsString(tunedBest)}")
-    } yield tuningResults
-  }
-}
-
-object OracleCriterion extends SplitTuningCriterion {
-  val name: String = "oracle"
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val logBound = 10
-    val betas = (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
-    for {
-      tuningResults <- tuneWeightedStats(
-        betas, allStats)(
-        t => stats => {
-          stats.toList.maxBy(_.fMeasure(t))
-        }
-      )
-      tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-      _ <- Log.info(s"Tuned results (oracle): ${getMetricsString(tunedBest)}")
-    } yield tuningResults
-  }
-}
-
-object TotalEntropyCriterion extends SplitTuningCriterion {
-  val name: String = "total entropy"
-  val coeffs = (-40 to 40).map(_.toDouble / 20).toList
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
-      val numItems = s.numItems
-      s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
-    }
-    for {
-      tuningResults <- tuneWeightedStats(
-        coeffs, allStats)(
-        t => stats => {
-          val getLoss = getTotalLoss(t)
-          stats.toList.minBy(getLoss)
-        }
-      )
-      tunedBest = Chosen(tuningResults.toMap).keepMaxBy(_.f1)
-      _ <- Log.info(s"Tuned results (cluster dist entropy loss coeff): ${getMetricsString(tunedBest)}")
     } yield tuningResults
   }
 }

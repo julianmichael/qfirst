@@ -80,9 +80,7 @@ class CoNLL08Features(
     sentence.copy(
       predicateArgumentStructures = sentence.predicateArgumentStructures
         .map { pas =>
-          // NOTE: uncomment the bits below to see edge case phenomena (assuming verbal predicates).
-          // They're rare and I think they're mostly annotation mistakes.
-          // Normally pred/arg indices coinciding, or SU roles, are used for non-verbal predicates.
+          // NOTE: the commented bits below print out edge case phenomena (assuming verbal predicates).
 
           // there are a few cases of this remaning for verbal predicates.
           // AFAICT they are annotation mistakes in gold.
@@ -91,11 +89,31 @@ class CoNLL08Features(
           //   System.err.println("Argument coincides with predicate: " + jjm.ling.Text.render(sentence.tokens))
           // }
 
+          // Normally pred/arg indices coinciding, or SU roles, are used for non-verbal predicates.
           // there's a (less) small number of these. I assume we should keep them..
+          // But I also kinda think they're mistakes. Unclear.
           // if(pas.arguments.map(_._1).contains("SU")) {
           //   System.err.println("SU argument: " + pas.toString)
           //   System.err.println("SU argument: " + jjm.ling.Text.render(sentence.tokens))
           // }
+
+          // There is a not-huge number of these. Unclear how AM-TM is different from AM-TMP.
+          // It only appears twice in the trainins set so I think it's a mistake.
+          // and I can't totally figure out what AA is about.
+          // if(pas.arguments.map(_._1).contains("AA") || pas.arguments.map(_._1).contains("AM-TM")) {
+          //   System.err.println("Weird argument: " + pas.toString)
+          //   System.err.println("Weird argument: " + jjm.ling.Text.render(sentence.tokens))
+          // }
+
+          // potential processing to bring the number of gold labels down to 22.
+          // doesn't change the results for the baseline.
+          // pas.copy(
+          //   arguments = pas.arguments.filterNot(
+          //     l => l._1.startsWith("R-") || l._1.startsWith("C-") || l._1 == "SU"
+          //   ).map { case (label, index) =>
+          //       (if(label == "AM-TM") "AM-TMP" else label) -> index
+          //   }
+          // )
 
           pas.copy(
             arguments = pas.arguments.filterNot(

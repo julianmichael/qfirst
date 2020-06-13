@@ -87,9 +87,9 @@ object Evaluation {
   val activeTuningCriteria = List[SplitTuningCriterion](
     OracleCriterion,
     NumClustersCriterion,
-    SqNumClustersPenaltyCriterion,
-    CuttingDeltaCriterion,
-    LossPerItemCriterion,
+    // SqNumClustersPenaltyCriterion,
+    // CuttingDeltaCriterion,
+    // LossPerItemCriterion,
     TotalEntropyCriterion
   )
 
