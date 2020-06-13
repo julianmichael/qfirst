@@ -14,8 +14,6 @@ import qfirst.frame.logLevel
 import qfirst.frame.progressSpec
 import qfirst.frame.getMetricsString
 
-import Evaluation.ConfStatsPoint
-
 trait SplitTuningCriterion {
   def name: String
   def runTuning[VerbType](
