@@ -84,18 +84,10 @@ object Evaluation {
       }
     }.map(_.toMap)
 
-  val activeTuningCriteria = List[SplitTuningCriterion](
-    OracleCriterion,
-    NumClustersCriterion,
-    // SqNumClustersPenaltyCriterion,
-    // CuttingDeltaCriterion,
-    // LossPerItemCriterion,
-    TotalEntropyCriterion
-  )
-
   def runClusterTuning[VerbType](
     modelName: String,
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    tuningSpecs: List[SplitTuningSpec],
     precisionAxisLabel: String,
     recallAxisLabel: String,
     resultsDir: NIOPath)(
@@ -110,9 +102,9 @@ object Evaluation {
           )
           s"Max precision: ${getMetricsString(stats)}"
         }
-        tuningResults <- activeTuningCriteria.traverse(
-          tuningCriterion => Log.infoBranch(s"Tuning (${tuningCriterion.name})") {
-            tuningCriterion.runTuning(allStats).map(tuningCriterion.name -> _)
+        tuningResults <- tuningSpecs.traverse(
+          tuningSpec => Log.infoBranch(s"Tuning (${tuningSpec.criterion.name})") {
+            tuningSpec.run(allStats).map(tuningSpec.criterion.name -> _)
           }
         ).map(_.toMap)
         _ <- Plotting.plotTuningResults(
@@ -124,6 +116,15 @@ object Evaluation {
       } yield ()
     }
   }
+
+  val activeTuningSpecs = List[SplitTuningCriterion](
+    OracleCriterion,
+    NumClustersCriterion,
+    // SqNumClustersPenaltyCriterion,
+    // CuttingDeltaCriterion,
+    // LossPerItemCriterion,
+    TotalEntropyCriterion
+  ).map(SplitTuningSpec(_))
 
   def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
     parentDir: NIOPath,
@@ -142,6 +143,7 @@ object Evaluation {
         )
         _ <- runClusterTuning(
           modelName, allStats,
+          activeTuningSpecs,
           metric.precisionName, metric.recallName,
           resultsDir
         )

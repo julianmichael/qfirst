@@ -14,10 +14,24 @@ import qfirst.frame.logLevel
 import qfirst.frame.progressSpec
 import qfirst.frame.getMetricsString
 
+case class SplitTuningSpec(
+  criterion: SplitTuningCriterion,
+  thresholds: Option[List[Double]] = None
+) {
+  def run[VerbType](
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ) = {
+    criterion.runTuning(allStats, thresholds.getOrElse(criterion.defaultThresholds))
+  }
+}
+
 trait SplitTuningCriterion {
   def name: String
+  def defaultThresholds: List[Double]
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[List[(Double, WeightedPR)]]
 
@@ -49,9 +63,10 @@ import SplitTuningCriterion._
 
 object NumClustersCriterion extends SplitTuningCriterion {
   val name: String = "const num clusters"
-  val thresholds = (1 to 30).toList.map(_.toDouble)
+  val defaultThresholds = (1 to 30).toList.map(_.toDouble)
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
     val allStatsSortedByNumClusters = allStats.transform { case (_, results) =>
@@ -74,15 +89,18 @@ object NumClustersCriterion extends SplitTuningCriterion {
 
 object OracleCriterion extends SplitTuningCriterion {
   val name: String = "oracle"
+  val defaultThresholds = {
+    val logBound = 10
+    (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
+  }
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
-    val logBound = 10
-    val betas = (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
     for {
       tuningResults <- tuneWeightedStats(
-        betas, allStats)(
+        thresholds, allStats)(
         t => stats => {
           stats.toList.maxBy(_.fMeasure(t))
         }
@@ -95,9 +113,10 @@ object OracleCriterion extends SplitTuningCriterion {
 
 object TotalEntropyCriterion extends SplitTuningCriterion {
   val name: String = "total entropy"
-  val coeffs = (-40 to 40).map(_.toDouble / 20).toList
+  val defaultThresholds = (-40 to 40).map(_.toDouble / 20).toList
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
     val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
@@ -106,7 +125,7 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
     }
     for {
       tuningResults <- tuneWeightedStats(
-        coeffs, allStats)(
+        thresholds, allStats)(
         t => stats => {
           val getLoss = getTotalLoss(t)
           stats.toList.minBy(getLoss)
@@ -120,9 +139,10 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
 
 object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
   val name: String = "sq num clusters penalty"
-  val coeffs = (0 to 50).map(_.toDouble / 2).toList
+  val defaultThresholds = (0 to 50).map(_.toDouble / 2).toList
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
     val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
@@ -130,7 +150,7 @@ object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
     }
     for {
       tuningResults <- tuneWeightedStats(
-        coeffs, allStats)(
+        thresholds, allStats)(
         t => stats => {
           val getLoss = getTotalLoss(t)
           stats.toList.minBy(getLoss)
@@ -144,9 +164,10 @@ object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
 
 object CuttingDeltaCriterion extends SplitTuningCriterion {
   val name: String = "cutting delta"
-  val deltasPerItem = (0 to 100).map(_.toDouble / 10).toList
+  val defaultThresholds = (0 to 100).map(_.toDouble / 10).toList
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
     val allStatsSortedByLoss = allStats.transform { case (_, results) =>
@@ -154,7 +175,7 @@ object CuttingDeltaCriterion extends SplitTuningCriterion {
     }
     for {
       tuningResults <- tuneWeightedStats(
-        deltasPerItem, allStatsSortedByLoss)(
+        thresholds, allStatsSortedByLoss)(
         t => stats => {
           val deltaThreshold = t * stats.head.numItems
           stats.toList.sliding(2)
@@ -172,9 +193,10 @@ object CuttingDeltaCriterion extends SplitTuningCriterion {
 
 object LossPerItemCriterion extends SplitTuningCriterion {
   val name: String = "loss per item"
-  val lossThresholds = (0 to 40).toList.map(_.toDouble / 10.0)
+  val defaultThresholds = (0 to 40).toList.map(_.toDouble / 10.0)
   def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
     val allStatsSortedByLoss = allStats.transform { case (_, results) =>
@@ -182,7 +204,7 @@ object LossPerItemCriterion extends SplitTuningCriterion {
     }
     for {
       tuningResults <- tuneWeightedStats(
-        lossThresholds, allStatsSortedByLoss)(
+        thresholds, allStatsSortedByLoss)(
         t => stats => {
           val qualified = stats.toList.takeWhile(_.lossPerItem > t)
           qualified.lastOption.getOrElse(stats.head)
