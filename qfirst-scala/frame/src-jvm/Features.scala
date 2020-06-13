@@ -521,16 +521,67 @@ class CoNLL08GoldDepFeatures(
     import jjm.ling.en.PTBPosTags
     sentence.copy(
       predicateArgumentStructures = sentence.predicateArgumentStructures
-        .filter(pas => PTBPosTags.verbs.contains(sentence.tokens(pas.predicate.index).pos))
+        .filter { pas =>
+          val predPos = sentence.tokens(pas.predicate.index).pos
+          PTBPosTags.verbs.contains(predPos)
+        }
     )
   }
+
+  def keepOnlyCommonPredicates(sentence: CoNLL08Sentence, lemmasToKeep: Set[String]) = {
+    sentence.copy(
+      predicateArgumentStructures = sentence.predicateArgumentStructures
+        .filter { pas =>
+          lemmasToKeep.contains(pas.predicate.lemma)
+        }
+    )
+  }
+
+  def keepOnlyCommonPredicatesInDataset(ds: NonMergingMap[String, CoNLL08Sentence]) = {
+    val predLemmaCounts = ds.value.unorderedFoldMap(_.predicateArgumentStructures.map(_.predicate.lemma).counts)
+    val lemmasToKeep = predLemmaCounts.filter(_._2 > 20).keySet
+    NonMergingMap(ds.value.map { case (sid, sent) => sid -> keepOnlyCommonPredicates(sent, lemmasToKeep) })
+  }
+
+  def dropCorefAndResumptiveRoles(sentence: CoNLL08Sentence) = {
+    import jjm.ling.en.PTBPosTags
+    sentence.copy(
+      predicateArgumentStructures = sentence.predicateArgumentStructures
+        .map { pas =>
+          // NOTE: uncomment the bits below to see edge case phenomena (assuming verbal predicates).
+          // They're rare and I think they're mostly annotation mistakes.
+          // Normally pred/arg indices coinciding, or SU roles, are used for non-verbal predicates.
+
+          // there are a few cases of this remaning for verbal predicates.
+          // AFAICT they are annotation mistakes in gold.
+          // if(pas.arguments.map(_._2).contains(pas.predicate.index)) {
+          //   System.err.println("Argument coincides with predicate: " + pas.toString)
+          //   System.err.println("Argument coincides with predicate: " + jjm.ling.Text.render(sentence.tokens))
+          // }
+
+          // there's a (less) small number of these. I assume we should keep them..
+          // if(pas.arguments.map(_._1).contains("SU")) {
+          //   System.err.println("SU argument: " + pas.toString)
+          //   System.err.println("SU argument: " + jjm.ling.Text.render(sentence.tokens))
+          // }
+
+          pas.copy(
+            arguments = pas.arguments.filterNot(
+              l => l._1.startsWith("R-") || l._1.startsWith("C-")
+            )
+          )
+        }
+    )
+  }
+
+  // TODO add unfiltered dataset separately for feature generation
 
   val dataset: RunDataCell[NonMergingMap[String, CoNLL08Sentence]] = {
     import scala.concurrent.ExecutionContext.Implicits.global
     splits.flatMap(split =>
       dataService
         .streamSentences[IO](split)
-        .map(s => NonMergingMap(Map(s.id.toString -> keepOnlyVerbalPredicates(s))))
+        .map(s => NonMergingMap(Map(s.id.toString -> dropCorefAndResumptiveRoles(keepOnlyVerbalPredicates(s)))))
         .infoCompile(s"Reading CoNLL 2008 data ($split)")(_.foldMonoid)
     ).toCell("CoNLL 2008 dataset")
   }
@@ -579,6 +630,7 @@ class CoNLL08GoldDepFeatures(
   }
 
   val argSyntacticFunctions: RunDataCell[ArgFeats[String]] = {
+    import qfirst.conll08.HasLemma.ops._
     dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         val dependencies = sentence.childToParentDependencies
@@ -590,8 +642,31 @@ class CoNLL08GoldDepFeatures(
           val verbIndex = pas.predicate.index
           val verbId = VerbId(sid, verbIndex)
 
+          // commented-out stuff here was for producing more detailed argument keys
+          // but, these aren't necessary for the syntactic function baseline I want to use
+
+          // val verbChildDepLabels = dependencies.filter(_._2 == verbIndex).map(_._1).toSet
+          // val isPassive = verbChildDepLabels.contains("LGS") || (
+          //   !sentence.tokens(verbIndex).token.endsWith("ing") &&
+          //     dependencies(verbIndex)._1 == "VC" &&
+          //     sentence.tokens(dependencies(verbIndex)._2).lemma == "be"
+          // )
+          // val passive = if(isPassive) "pss" else ""
+
           val argSyntacticFs = pas.arguments.map(_._2).map { argIndex =>
-            ArgumentId(verbId, argIndex) -> dependencies(argIndex)._1
+            ArgumentId(verbId, argIndex) -> {
+              // val position = {
+              //   if(argIndex < verbIndex) "left"
+              //   else if(argIndex > verbIndex) "right"
+              //   else "same" // don't generally expect this to happen
+              // }
+              // val preposition = {
+              //   val argToken = sentence.tokens(argIndex)
+              //   if(argToken.pos == "IN") argToken.lemma.toLowerCase
+              //   else ""
+              // }
+              dependencies(argIndex)._1
+            }
           }.toMap
 
           Map(verbType -> NonMergingMap(argSyntacticFs))
@@ -633,10 +708,6 @@ class CoNLL08GoldDepFeatures(
     mapVerbFeats(_.arguments.map(_._2).toSet)
   ).toCell("CoNLL 2008 gold arg indices")
 
-  // override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.data.map(
-  //   mapVerbFeats(_.arguments.map(_._2).toSet)
-  // ).toCell("CoNLL 2008 gold arg indices")
-
   override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
     RunData.strings.map(_ => ???).toCell(
       "[ERROR] no question distributions for CoNLL 2008 data."
@@ -654,10 +725,13 @@ class CoNLL08GoldDepFeatures(
     )
   }
 
+  var allRoleLabels = Set.empty[String]
+
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
     predArgStructures.data.map(
       makeArgFeats { case (verbId, pas) =>
         pas.arguments.map { case (roleLabel, index) =>
+          allRoleLabels = allRoleLabels + roleLabel
           index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
         }
       }

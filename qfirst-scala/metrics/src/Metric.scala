@@ -1,6 +1,8 @@
 package qfirst.metrics
 
 sealed trait Metric {
+  // TODO make this a separate routine, possibly use as an implicit.
+  // it'd be nice to make rendering configurable
   import Metric._
   def render: String = this match {
     case MetricMetadata(s) => s

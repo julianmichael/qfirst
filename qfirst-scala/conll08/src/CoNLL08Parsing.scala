@@ -21,7 +21,8 @@ object CoNLL08Parsing {
       CoNLL08Token(
         index = f(0).toInt - 1,
         pos = Option(f(3)).filter(_ != '_').getOrElse(f(7)),
-        token = f(5)
+        token = f(5),
+        lemma = f(6)
       )
     )
 

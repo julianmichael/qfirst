@@ -8,6 +8,8 @@ import cats.data.NonEmptyVector
 import cats.effect.IO
 import cats.implicits._
 
+import jjm.implicits._
+
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 
@@ -22,9 +24,63 @@ sealed trait ClusteringModel {
 }
 object ClusteringModel {
   def fromString(x: String): Option[ClusteringModel] = {
-    if(x.startsWith("arg/")) ArgumentModel.fromString(x.drop(4))
-    else if(x.startsWith("verb/")) VerbModel.fromString(x.drop(5))
+    if(x.startsWith("arg-baseline/")) ArgumentBaselineModel.fromString(x.drop("arg-baseline/".length))
+    else if(x.startsWith("arg/")) ArgumentModel.fromString(x.drop("arg/".length))
+    else if(x.startsWith("verb/")) VerbModel.fromString(x.drop("verb/".length))
     else None
+  }
+}
+
+case class ArgumentBaselineModel(numPrimaryClusters: Int) extends ClusteringModel {
+  def getArgumentClusters[VerbType, Arg : Order](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, Vector[Set[ArgumentId[Arg]]]]] = {
+    for {
+      _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+      allVerbArgSets <- features.verbArgSets.get
+      allArgs <- features.args.get
+      argSyntacticFunctions <- features.argSyntacticFunctions.get
+      syntFuncCounts <- allVerbArgSets.toList.infoBarTraverse("Counting syntactic functions") { case (verbType, verbs) =>
+        IO(argSyntacticFunctions(verbType).value.values.toVector.counts)
+      }.map(_.combineAll)
+      results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
+        Log.info(features.renderVerbType(verbType)) >> {
+          val argSyntFuncsForVerb = argSyntacticFunctions(verbType).value
+          // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+          NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+            IO {
+              val allClusters = args.toVector.toSet.groupBy(argSyntFuncsForVerb).toVector
+                .sortBy(p => -syntFuncCounts(p._1)).map(_._2)
+              val primaryClusters = allClusters.take(numPrimaryClusters)
+              val catchallCluster = allClusters.drop(numPrimaryClusters).combineAll
+              verbType -> (primaryClusters ++ Vector(catchallCluster).filter(_.nonEmpty))
+            }
+          }
+        }
+      }
+    } yield results.flatten.toMap
+  }
+  override def toString = ArgumentBaselineModel.toString(this)
+}
+object ArgumentBaselineModel {
+
+  // val termIndex = List[(LossTerm, String)](
+  //   QuestionEntropy -> "qent",
+  //   SyntacticFunction -> "syntf",
+  // ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
+  //   MLMEntropy(mode) -> s"mlm_$mode",
+  // )
+  // val termToString = termIndex.toMap
+  // val stringToTerm = termIndex.map(_.swap).toMap
+
+  // too lazy for proper parser combinators
+  // TODO add better error reporting
+  def fromString(x: String): Option[ArgumentBaselineModel] = {
+    scala.util.Try(x.toInt).toOption.map(ArgumentBaselineModel(_))
+  }
+  def toString(model: ArgumentBaselineModel): String = {
+    "arg-baseline/" + model.numPrimaryClusters.toString
   }
 }
 
@@ -60,8 +116,6 @@ case class ArgumentModel private (
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
-    import ArgumentModel._
-    val model = MLMEntropy("masked")
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)

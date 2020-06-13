@@ -37,8 +37,6 @@ object Evaluation {
     def f1 = Functions.harmonicMean(precision, recall)
     def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
     def normalize = WeightedPR(precisions.normalize, recalls.normalize)
-
-    def pr = (precision, recall)
   }
   object WeightedPR {
     implicit val weightedPRMonoid: Monoid[WeightedPR] = {
@@ -71,7 +69,7 @@ object Evaluation {
     def recallName: String
     def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ): WeightedPR
   }
 
@@ -81,38 +79,36 @@ object Evaluation {
     override def recallName: String = "Collocation"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ): WeightedPR = {
-      val clusterLabelCounts = clusters.map(_.unorderedFold)
-      val purity = clusterLabelCounts.filter(_.nonEmpty).foldMap { counts =>
+      val purity = clusters.filter(_.nonEmpty).foldMap { counts =>
         val primaryLabelCount = counts.values.max
         val total = counts.values.sum
         Proportion.Stats(
           included = primaryLabelCount,
           excluded = total - primaryLabelCount
         )
-      }
+      }.proportion
       val collocation = goldClusterSizes.toList.foldMap { case (goldLabel, numLabels) =>
-        val numInPrimaryCluster = clusterLabelCounts.map(_.getOrElse(goldLabel, 0)).max
+        val numInPrimaryCluster = clusters.map(_.getOrElse(goldLabel, 0)).max
         Proportion.Stats(
           included = numInPrimaryCluster,
           excluded = numLabels - numInPrimaryCluster
         )
-      }
-      val numItems = goldClusterSizes.values.toList.combineAll
+      }.proportion
+      val numItems = goldClusterSizes.unorderedFold
       WeightedPR(
-        WeightedNumbers(purity.proportion, weight = numItems.toDouble),
-        WeightedNumbers(collocation.proportion, weight = numItems.toDouble)
+        WeightedNumbers(purity, weight = numItems.toDouble),
+        WeightedNumbers(collocation, weight = numItems.toDouble)
       )
     }
   }
 
   def bCubedPerInstanceByLabel[A](
     goldClusterSizes: Map[A, Int],
-    clusters: Vector[MergeTree[Map[A, Int]]]
+    clusters: Vector[Map[A, Int]]
   ): Map[A, WeightedPR] = {
-    val clusterLabelCounts = clusters.map(_.unorderedFold)
-    clusterLabelCounts.foldMap { counts =>
+    clusters.foldMap { counts =>
       val predictedClusterSize = counts.unorderedFold
       counts.toList.foldMap { case (goldLabel, countInCluster) =>
         val precision = countInCluster.toDouble / predictedClusterSize
@@ -133,7 +129,7 @@ object Evaluation {
     override def recallName: String = "B^3 Recall (per instance)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll
   }
 
@@ -143,7 +139,7 @@ object Evaluation {
     override def recallName: String = "B^3 Recall (per instance, MFS)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ) = {
       val mfs = goldClusterSizes.toList.maxBy(_._2)._1
       bCubedPerInstanceByLabel(goldClusterSizes, clusters)(mfs)
@@ -156,7 +152,7 @@ object Evaluation {
     override def recallName: String = "B^3 Recall (per instance, LFS)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ) = {
       val mfs = goldClusterSizes.toList.maxBy(_._2)._1
       (bCubedPerInstanceByLabel(goldClusterSizes, clusters) - mfs).values.toList.combineAll
@@ -169,7 +165,7 @@ object Evaluation {
     override def recallName: String = "B^3 Recall (per label)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.foldMap(_.normalize)
   }
 
@@ -179,20 +175,20 @@ object Evaluation {
     override def recallName: String = "B^3 Recall (per verb type)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
-      clusters: Vector[MergeTree[Map[A, Int]]]
+      clusters: Vector[Map[A, Int]]
     ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll.normalize
   }
 
   def getAllClusteringConfs[A](
     goldLabelTree: MergeTree[Map[A, Int]],
-    computePR: ClusterPR
+    metric: ClusterPR
   ): NonEmptyList[ConfStatsPoint] = {
     val goldClusterSizes = goldLabelTree.unorderedFold
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittings.map { clusters =>
         val loss = clusters.foldMap(_.loss)
         val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
-        val weightedPR = computePR(goldClusterSizes, clusters)
+        val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold))
         ConfStatsPoint(loss, clusterSizes, weightedPR)
       }.toList
     ).get
@@ -201,16 +197,39 @@ object Evaluation {
   def getAllPRStats[VerbType, InstanceId, GoldLabel](
     trees: Map[VerbType, MergeTree[Set[InstanceId]]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
-    computePR: ClusterPR)(
+    metric: ClusterPR)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = trees.toList
-    .infoBarTraverse("Calculating B-cubed for all clusterings") { case (verbType, tree) =>
+    .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, tree) =>
       val getGoldLabelForVerb = getGoldLabel(verbType)
-      Log.trace(s"$verbType (${tree.size} items)") >> IO {
+      Log.trace(s"$verbType (${tree.size} leaves)") >> IO {
         val goldCountTree = tree.map(
           _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
         )
-        verbType -> getAllClusteringConfs(goldCountTree, computePR)
+        verbType -> getAllClusteringConfs(goldCountTree, metric)
+      }
+    }.map(_.toMap)
+
+  def getSingleClusteringPRStats[VerbType, InstanceId, GoldLabel](
+    clusterings: Map[VerbType, Vector[Set[InstanceId]]],
+    getGoldLabel: VerbType => InstanceId => GoldLabel,
+    metric: ClusterPR)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = clusterings.toList
+    .infoBarTraverse(s"Calculating ${metric.name} for single clusterings") { case (verbType, clusters) =>
+      val getGoldLabelForVerb = getGoldLabel(verbType)
+      Log.trace(s"$verbType (${clusters.size} clusters)") >> IO {
+        val goldCounts = clusters.map(
+          _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
+        )
+        val goldClusterSizes = goldCounts.combineAll
+        verbType -> NonEmptyList.of(
+          ConfStatsPoint(
+            0.0,
+            clusters.map(_.size),
+            metric(goldClusterSizes, goldCounts)
+          )
+        )
       }
     }.map(_.toMap)
 
@@ -541,17 +560,15 @@ object Evaluation {
     }
   }
 
-  def runClusteringMetric[VerbType, InstanceId, GoldLabel](
+  def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
     parentDir: NIOPath,
     modelName: String,
-    argTrees: Map[VerbType, MergeTree[Set[InstanceId]]],
-    getGoldLabel: VerbType => InstanceId => GoldLabel,
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
     metric: ClusterPR)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ) = {
     Log.infoBranch(s"Calculating metrics (${metric.name})") {
       for {
-        allStats <- getAllPRStats(argTrees, getGoldLabel, metric)
         resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
         _ <- plotAllStatsVerbwise(
           modelName, allStats,
@@ -567,6 +584,51 @@ object Evaluation {
     }
   }
 
+  def runHierarchicalClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
+    parentDir: NIOPath,
+    modelName: String,
+    argTrees: Map[VerbType, MergeTree[Set[InstanceId]]],
+    getGoldLabel: VerbType => InstanceId => GoldLabel,
+    metric: ClusterPR)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ) = {
+    Log.infoBranch(s"Calculating metrics (${metric.name})") {
+      getAllPRStats(argTrees, getGoldLabel, metric) >>= (allStats =>
+        runClusteringEvalWithMetric(parentDir, modelName, allStats, metric)
+      )
+    }
+  }
+
+  def runSingleClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
+    parentDir: NIOPath,
+    modelName: String,
+    clusterings: Map[VerbType, Vector[Set[InstanceId]]],
+    getGoldLabel: VerbType => InstanceId => GoldLabel,
+    metric: ClusterPR)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ) = {
+    Log.infoBranch(s"Calculating metrics (${metric.name})") {
+      getSingleClusteringPRStats(clusterings, getGoldLabel, metric) >>= (allStats =>
+        runClusteringEvalWithMetric(parentDir, modelName, allStats, metric)
+      )
+    }
+  }
+
+  def evaluateSingleClustering[VerbType, InstanceId, GoldLabel](
+    resultsDir: NIOPath,
+    modelName: String,
+    clusterings: Map[VerbType, Vector[Set[InstanceId]]],
+    getGoldLabel: VerbType => InstanceId => GoldLabel)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = for {
+    _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, bCubedPerInstance)
+    // _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, bCubedMFS)
+    // _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, bCubedLFS)
+    // _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, bCubedPerLabel)
+    // _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, bCubedPerVerbType)
+    _ <- runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, purityCollocation)
+  } yield ()
+
   def evaluateClusters[VerbType, InstanceId, GoldLabel](
     resultsDir: NIOPath,
     modelName: String,
@@ -574,12 +636,12 @@ object Evaluation {
     getGoldLabel: VerbType => InstanceId => GoldLabel)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = for {
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerInstance)
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, bCubedMFS)
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, bCubedLFS)
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerLabel)
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerVerbType)
-    _ <- runClusteringMetric(resultsDir, modelName, trees, getGoldLabel, purityCollocation)
+    _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerInstance)
+    // _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, bCubedMFS)
+    // _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, bCubedLFS)
+    // _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerLabel)
+    // _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, bCubedPerVerbType)
+    _ <- runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, purityCollocation)
   } yield ()
 
   def evaluateArgumentClusters[VerbType, Arg](
@@ -596,6 +658,23 @@ object Evaluation {
     ) else evaluateClusters(
       resultsDir, modelName,
       argTrees, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
+    )
+  }
+
+  def evaluateSingleArgumentClustering[VerbType, Arg](
+    resultsDir: NIOPath,
+    modelName: String,
+    argClusterings: Map[VerbType, Vector[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
+    useSenseSpecificRoles: Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = {
+    if(useSenseSpecificRoles) evaluateSingleClustering(
+      resultsDir, modelName,
+      argClusterings, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
+    ) else evaluateSingleClustering(
+      resultsDir, modelName,
+      argClusterings, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
     )
   }
 
