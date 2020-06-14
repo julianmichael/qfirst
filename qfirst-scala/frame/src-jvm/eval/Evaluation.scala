@@ -61,29 +61,6 @@ object Evaluation {
       }
     }.map(_.toMap)
 
-  def getSingleClusteringPRStats[VerbType, InstanceId, GoldLabel](
-    clusterings: Map[VerbType, Vector[Set[InstanceId]]],
-    getGoldLabel: VerbType => InstanceId => GoldLabel,
-    metric: ClusterPRMetric)(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = clusterings.toList
-    .infoBarTraverse(s"Calculating ${metric.name} for single clusterings") { case (verbType, clusters) =>
-      val getGoldLabelForVerb = getGoldLabel(verbType)
-      Log.trace(s"$verbType (${clusters.size} clusters)") >> IO {
-        val goldCounts = clusters.map(
-          _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
-        )
-        val goldClusterSizes = goldCounts.combineAll
-        verbType -> NonEmptyList.of(
-          ConfStatsPoint(
-            0.0,
-            clusters.map(_.size),
-            metric(goldClusterSizes, goldCounts)
-          )
-        )
-      }
-    }.map(_.toMap)
-
   def runClusterTuning[VerbType](
     modelName: String,
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -91,10 +68,11 @@ object Evaluation {
     precisionAxisLabel: String,
     recallAxisLabel: String,
     resultsDir: NIOPath)(
-    implicit logger: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = {
+    def outerLogger = Log
     freelog.loggers.TimingDelayedLogger.file[Unit](resultsDir.resolve("results.txt")) { fileLogger =>
-      val Log = logger |+| fileLogger
+      implicit val Log = outerLogger |+| fileLogger // shadow the outer one, removing implicit ambiguity
       for {
         _ <- Log.info {
           val stats = SplitTuningCriterion.getTunedWeightedStats(
@@ -120,30 +98,6 @@ object Evaluation {
   def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
     parentDir: NIOPath,
     modelName: String,
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    tuningSpecs: NonEmptyList[SplitTuningSpec],
-    metric: ClusterPRMetric)(
-    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  ) = {
-    for {
-      resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
-      _ <- Plotting.plotAllStatsVerbwise(
-        modelName, allStats,
-        metric.precisionName, metric.recallName,
-        name => resultsDir.resolve(s"by-verb-$name.png")
-      )
-      _ <- runClusterTuning(
-        modelName, allStats,
-        tuningSpecs,
-        metric.precisionName, metric.recallName,
-        resultsDir
-      )
-    } yield ()
-  }
-
-  def runHierarchicalClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
-    parentDir: NIOPath,
-    modelName: String,
     argTrees: Map[VerbType, MergeTree[Set[InstanceId]]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     tuningSpecs: NonEmptyList[SplitTuningSpec],
@@ -152,25 +106,23 @@ object Evaluation {
   ) = {
     Log.infoBranch(s"Calculating metrics (${metric.name})") {
       getAllPRStats(argTrees, getGoldLabel, metric) >>= (allStats =>
-        runClusteringEvalWithMetric(parentDir, modelName, allStats, tuningSpecs, metric)
+        for {
+          resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
+          _ <- Plotting.plotAllStatsVerbwise(
+            modelName, allStats,
+            metric.precisionName, metric.recallName,
+            name => resultsDir.resolve(s"by-verb-$name.png")
+          )
+          _ <- runClusterTuning(
+            modelName, allStats,
+            tuningSpecs,
+            metric.precisionName, metric.recallName,
+            resultsDir
+          )
+        } yield ()
       )
     }
   }
-
-  // def runSingleClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
-  //   parentDir: NIOPath,
-  //   modelName: String,
-  //   clusterings: Map[VerbType, Vector[Set[InstanceId]]],
-  //   getGoldLabel: VerbType => InstanceId => GoldLabel,
-  //   metric: ClusterPRMetric)(
-  //   implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  // ) = {
-  //   Log.infoBranch(s"Calculating metrics (${metric.name})") {
-  //     getSingleClusteringPRStats(clusterings, getGoldLabel, metric) >>= (allStats =>
-  //       runClusteringEvalWithMetric(parentDir, modelName, allStats, metric)
-  //     )
-  //   }
-  // }
 
   val activeMetrics: List[ClusterPRMetric] = {
     import ClusterPRMetric._
@@ -184,16 +136,6 @@ object Evaluation {
     )
   }
 
-  // def evaluateSingleClustering[VerbType, InstanceId, GoldLabel](
-  //   resultsDir: NIOPath,
-  //   modelName: String,
-  //   clusterings: Map[VerbType, Vector[Set[InstanceId]]],
-  //   getGoldLabel: VerbType => InstanceId => GoldLabel)(
-  //   implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  // ): IO[Unit] = activeMetrics.traverse(metric =>
-  //   runSingleClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, metric)
-  // ).void
-
   def evaluateClusters[VerbType, InstanceId, GoldLabel](
     resultsDir: NIOPath,
     modelName: String,
@@ -202,7 +144,7 @@ object Evaluation {
     tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = activeMetrics.traverse(metric =>
-    runHierarchicalClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, tuningSpecs, metric)
+    runClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, tuningSpecs, metric)
   ).void
 
   def evaluateArgumentClusters[VerbType, Arg](
@@ -224,23 +166,6 @@ object Evaluation {
       tuningSpecs
     )
   }
-
-  // def evaluateSingleArgumentClustering[VerbType, Arg](
-  //   resultsDir: NIOPath,
-  //   modelName: String,
-  //   argClusterings: Map[VerbType, Vector[Set[ArgumentId[Arg]]]],
-  //   argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
-  //   useSenseSpecificRoles: Boolean)(
-  //   implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  // ): IO[Unit] = {
-  //   if(useSenseSpecificRoles) evaluateSingleClustering(
-  //     resultsDir, modelName,
-  //     argClusterings, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
-  //   ) else evaluateSingleClustering(
-  //     resultsDir, modelName,
-  //     argClusterings, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
-  //   )
-  // }
 
   // def doPropBankClusterDebugging(
   //   config: Config,
