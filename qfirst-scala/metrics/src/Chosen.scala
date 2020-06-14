@@ -3,11 +3,14 @@ package qfirst.metrics
 import cats.Applicative
 import cats.Eval
 import cats.Monoid
+import cats.Order
 import cats.Show
 import cats.Traverse
 import cats.implicits._
 
 import monocle.function.Each
+
+import jjm.implicits._
 
 import HasMetrics.ops._
 
@@ -15,9 +18,21 @@ case class Chosen[Param, MetricData](
   data: Map[Param, MetricData]
 ) {
   // TODO TraverseFilter
-  def filter(p: MetricData => Boolean) = Chosen(data.collect { case (k, v) if p(v) => k -> v })
+  def filter(p: MetricData => Boolean) = Chosen(
+    data.collect { case (k, v) if p(v) => k -> v }
+  )
+  def keepMaximaBy[O](f: MetricData => O)(implicit o: Order[O]) = {
+    Chosen(data.toList.maximaBy(p => f(p._2)).toMap)
+  }
   def keepMaxBy[O](f: MetricData => O)(implicit o: Ordering[O]) = {
     if(data.nonEmpty) Chosen(Map(data.toList.maxBy(p => f(p._2))))
+    else Chosen[Param, MetricData](Map())
+  }
+  def keepMinimaBy[O](f: MetricData => O)(implicit o: Order[O]) = {
+    Chosen(data.toList.minimaBy(p => f(p._2)).toMap)
+  }
+  def keepMinBy[O](f: MetricData => O)(implicit o: Ordering[O]) = {
+    if(data.nonEmpty) Chosen(Map(data.toList.minBy(p => f(p._2))))
     else Chosen[Param, MetricData](Map())
   }
 }
