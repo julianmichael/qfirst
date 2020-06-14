@@ -24,12 +24,7 @@ case class SplitTuningSpec(
   ) = {
     val runThresholds = thresholds.getOrElse(criterion.defaultThresholds)
     criterion.runTuning(allStats, runThresholds).flatTap { tuningResults =>
-      val tunedBest = {
-        val maxima = Chosen(tuningResults.toMap).keepMaximaBy(_.f1).data
-        if(maxima.contains(runThresholds.max)) Chosen(Map(maxima.minBy(_._1)))
-        else if(maxima.contains(runThresholds.min)) Chosen(Map(maxima.maxBy(_._1)))
-        else Chosen(maxima).keepMaxBy(_.f1)
-      }
+      val tunedBest = SplitTuningCriterion.chooseBest(tuningResults)
       Log.info(s"Tuned results (${criterion.name}): ${getMetricsString(tunedBest)}")
     }
   }
@@ -46,6 +41,14 @@ trait SplitTuningCriterion {
 
 }
 object SplitTuningCriterion {
+
+  def chooseBest(tuningResults: List[(Double, WeightedPR)]): Chosen[Double, WeightedPR] = {
+    val runThresholds = tuningResults.map(_._1)
+    val maxima = Chosen(tuningResults.toMap).keepMaximaBy(_.f1).data
+    if(maxima.contains(runThresholds.max)) Chosen(Map(maxima.minBy(_._1)))
+    else if(maxima.contains(runThresholds.min)) Chosen(Map(maxima.maxBy(_._1)))
+    else Chosen(maxima).keepMaxBy(_.f1)
+  }
 
   def getTunedWeightedStats[VerbType](
     allResults: Map[VerbType, NonEmptyList[ConfStatsPoint]],

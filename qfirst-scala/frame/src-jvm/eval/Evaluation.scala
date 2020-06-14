@@ -9,6 +9,7 @@ import qfirst.frame.util.NonMergingMap
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
+import jjm.io.FileUtil
 import jjm.implicits._
 
 import freelog.EphemeralTreeLogger
@@ -92,6 +93,11 @@ object Evaluation {
           precisionAxisLabel, recallAxisLabel,
           resultsDir
         )
+        bestResult = tuningResults.toList.map { case (name, stats) =>
+          name -> SplitTuningCriterion.chooseBest(stats).data.head
+        }.maxBy(_._2._2.f1)
+        _ <- FileUtil.writeString(resultsDir.resolve("best-setting.txt"))(bestResult._1 + "=" + bestResult._2._1)
+        _ <- FileUtil.writeString(resultsDir.resolve("best-result.txt"))(getMetricsString(bestResult._2._2))
       } yield ()
     }
   }
