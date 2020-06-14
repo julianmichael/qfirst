@@ -150,6 +150,8 @@ class OntoNotes5Features(
 
   def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
 
+  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = ???
+
   override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.data.map(
     _.transform { case (_, verbs) =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>

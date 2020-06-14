@@ -95,6 +95,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argSyntacticFunctions: RunDataCell[ArgFeats[String]]
 
+  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]]
+
   protected val rootDir: Path
 
   // TODO move all setup into this/superclass

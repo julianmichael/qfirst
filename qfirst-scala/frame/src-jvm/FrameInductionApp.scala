@@ -347,7 +347,7 @@ object FrameInductionApp extends CommandIOApp(
         val sw = new StringWriter
         val pw = new PrintWriter(sw)
         e.printStackTrace(pw)
-        Log.error(sw.toString) >> IO.raiseError[A](e)
+        Log.error(sw.toString) >> Log.flush >> IO.raiseError[A](e)
       }
     }
   }

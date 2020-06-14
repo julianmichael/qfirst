@@ -207,4 +207,6 @@ class GoldQasrlFeatures(
 
 
   def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
+
+  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = ???
 }

@@ -225,6 +225,50 @@ class CoNLL08Features(
     ).toCell("CoNLL 2008 argument-to-head syntactic rels")
   }
 
+  val argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = {
+    import qfirst.conll08.HasLemma.ops._
+    dataset.data.map(
+      _.value.toList.foldMap { case (sid, sentence) =>
+        val dependencies = sentence.childToParentDependencies
+        sentence.predicateArgumentStructures.foldMap { pas =>
+          val verbType = if(assumeGoldVerbSense) {
+            s"${pas.predicate.lemma}.${pas.predicate.sense}"
+          } else pas.predicate.lemma
+
+          val verbIndex = pas.predicate.index
+          val verbId = VerbId(sid, verbIndex)
+
+          val verbChildDepLabels = dependencies.filter(_._2 == verbIndex).map(_._1).toSet
+          val isPassive = verbChildDepLabels.contains("LGS") || (
+            sentence.tokens(verbIndex).pos == "VBN" &&
+              dependencies(verbIndex)._1 == "VC" &&
+              sentence.tokens(dependencies(verbIndex)._2).lemma == "be"
+          )
+          // val objIndices = dependencies.filter(_._2 == verbIndex).filter(_._1 == "OBJ").map(_._2).toSet
+
+          val argSyntacticFs = pas.arguments.map(_._2).map { argIndex =>
+            ArgumentId(verbId, argIndex) -> {
+              dependencies(argIndex)._1 match {
+                // just handle passives reasonably
+                case "SBJ" if isPassive => "OBJ"
+                case "LGS" => "SBJ"
+                // I tried these but they didn't help / broke apart too much
+                // case "OBJ" if objIndices.exists(_ < argIndex) => "OBJ2"
+                // case "OBJ" if isPassive => "OBJ2"
+                // case "LGS" => "SBJ-trans"
+                // case "SBJ" if objIndices.isEmpty => "SBJ-intrans"
+                // case "SBJ" if objIndices.nonEmpty => "SBJ-trans"
+                case x => x
+              }
+            }
+          }.toMap
+
+          Map(verbType -> NonMergingMap(argSyntacticFs))
+        }
+      }
+    ).toCell("CoNLL 2008 converted argument-to-head syntactic rels")
+  }
+
   val argDependencyPaths: RunDataCell[ArgFeats[String]] = {
     dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
