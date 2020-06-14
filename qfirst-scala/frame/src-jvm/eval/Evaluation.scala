@@ -75,10 +75,11 @@ object Evaluation {
       implicit val Log = outerLogger |+| fileLogger // shadow the outer one, removing implicit ambiguity
       for {
         _ <- Log.info {
-          val stats = SplitTuningCriterion.getTunedWeightedStats(
-            allStats, _.toList.maxBy(_.precision)
-          )
-          s"Max precision: ${getMetricsString(stats)}"
+          // max precision FYI for e.g. knowing how well flat clustering worked
+          val maxPrecision = allStats.toList.foldMap { case (verbType, results) =>
+            results.toList.maxBy(_.precision).weightedPR
+          }.precision
+          f"Max precision: $maxPrecision%.3f"
         }
         tuningResults <- tuningSpecs.traverse(
           tuningSpec => Log.infoBranch(s"Tuning (${tuningSpec.criterion.name})") {
