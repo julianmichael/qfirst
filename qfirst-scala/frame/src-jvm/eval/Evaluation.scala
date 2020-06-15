@@ -134,11 +134,11 @@ object Evaluation {
   val activeMetrics: List[ClusterPRMetric] = {
     import ClusterPRMetric._
     List(
-      bCubedPerInstance,
-      // bCubedMFS,
-      // bCubedLFS,
-      // bCubedPerLabel,
-      // bCubedPerVerbType,
+      b3instance,
+      // b3mfs,
+      // b3lfs,
+      // b3label,
+      // b3verb,
       purityCollocation
     )
   }

@@ -13,6 +13,8 @@ trait ClusterPRMetric {
     goldClusterSizes: Map[A, Int],
     clusters: Vector[Map[A, Int]]
   ): WeightedPR
+
+  override def toString = name
 }
 
 object ClusterPRMetric {
@@ -48,7 +50,7 @@ object ClusterPRMetric {
     }
   }
 
-  def bCubedPerInstanceByLabel[A](
+  def b3PerInstanceByLabel[A](
     goldClusterSizes: Map[A, Int],
     clusters: Vector[Map[A, Int]]
   ): Map[A, WeightedPR] = {
@@ -67,17 +69,17 @@ object ClusterPRMetric {
     }
   }
 
-  val bCubedPerInstance: ClusterPRMetric = new ClusterPRMetric {
+  val b3instance: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "b3-instance"
     override def precisionName: String = "B^3 Precision (per instance)"
     override def recallName: String = "B^3 Recall (per instance)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
       clusters: Vector[Map[A, Int]]
-    ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll
+    ) = b3PerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll
   }
 
-  val bCubedMFS: ClusterPRMetric = new ClusterPRMetric {
+  val b3mfs: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "b3-mfs"
     override def precisionName: String = "B^3 Precision (per instance, MFS)"
     override def recallName: String = "B^3 Recall (per instance, MFS)"
@@ -86,11 +88,11 @@ object ClusterPRMetric {
       clusters: Vector[Map[A, Int]]
     ) = {
       val mfs = goldClusterSizes.toList.maxBy(_._2)._1
-      bCubedPerInstanceByLabel(goldClusterSizes, clusters)(mfs)
+      b3PerInstanceByLabel(goldClusterSizes, clusters)(mfs)
     }
   }
 
-  val bCubedLFS: ClusterPRMetric = new ClusterPRMetric {
+  val b3lfs: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "b3-lfs"
     override def precisionName: String = "B^3 Precision (per instance, LFS)"
     override def recallName: String = "B^3 Recall (per instance, LFS)"
@@ -99,27 +101,34 @@ object ClusterPRMetric {
       clusters: Vector[Map[A, Int]]
     ) = {
       val mfs = goldClusterSizes.toList.maxBy(_._2)._1
-        (bCubedPerInstanceByLabel(goldClusterSizes, clusters) - mfs).values.toList.combineAll
+        (b3PerInstanceByLabel(goldClusterSizes, clusters) - mfs).values.toList.combineAll
     }
   }
 
-  val bCubedPerLabel: ClusterPRMetric = new ClusterPRMetric {
+  val b3label: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "b3-label"
     override def precisionName: String = "B^3 Precision (per label)"
     override def recallName: String = "B^3 Recall (per label)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
       clusters: Vector[Map[A, Int]]
-    ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.foldMap(_.normalize)
+    ) = b3PerInstanceByLabel(goldClusterSizes, clusters).values.toList.foldMap(_.normalize)
   }
 
-  val bCubedPerVerbType: ClusterPRMetric = new ClusterPRMetric {
+  val b3verb: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "b3-verb"
     override def precisionName: String = "B^3 Precision (per verb type)"
     override def recallName: String = "B^3 Recall (per verb type)"
     override def apply[A](
       goldClusterSizes: Map[A, Int],
       clusters: Vector[Map[A, Int]]
-    ) = bCubedPerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll.normalize
+    ) = b3PerInstanceByLabel(goldClusterSizes, clusters).values.toList.combineAll.normalize
   }
+
+  val all = List[ClusterPRMetric](
+    b3instance, b3label, b3lfs, b3mfs, b3verb, purityCollocation
+  )
+
+  def fromString(x: String) = all.find(_.name == x)
+
 }

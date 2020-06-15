@@ -28,6 +28,27 @@ case class SplitTuningSpec(
       Log.info(s"Tuned results (${criterion.name}): ${getMetricsString(tunedBest)}")
     }
   }
+
+  override def toString = {
+    if(thresholds.forall(_ == criterion.defaultThresholds)) criterion.name
+    else s"$criterion=" + thresholds.get.mkString(",")
+  }
+}
+object SplitTuningSpec {
+
+  def fromString(x: String): Option[SplitTuningSpec] = {
+    SplitTuningCriterion.fromString(x).map(SplitTuningSpec(_)).orElse {
+      val get = x.split("=").toList.lift
+      for {
+        criterionStr <- get(0)
+        criterion <- SplitTuningCriterion.fromString(criterionStr)
+        thresholdsStr <- get(1)
+        thresholds <- thresholdsStr.split(",").toList.traverse(x =>
+          scala.util.Try(x.toDouble).toOption
+        )
+      } yield SplitTuningSpec(criterion, Some(thresholds))
+    }
+  }
 }
 
 trait SplitTuningCriterion {
@@ -39,6 +60,7 @@ trait SplitTuningCriterion {
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[List[(Double, WeightedPR)]]
 
+  override def toString = name
 }
 object SplitTuningCriterion {
 

@@ -105,7 +105,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
   // for use by frame induction etc.
-  def modelDir = IO.pure(rootDir.resolve("models")).flatTap(createDir)
+  def modelDir = splitName.map(split => rootDir.resolve(s"models/$split")).flatTap(createDir)
 
   // for inputs to feature computation
   protected def inputDir = rootDir.resolve("input")
@@ -222,7 +222,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
               norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
             }
             _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
-          } yield ids.zip(normedVecs).foldMap { case (mlmFeatureId, vec) =>
+            // for now don't use the normalized vectors.
+          } yield ids.zip(vecs).foldMap { case (mlmFeatureId, vec) =>
               Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
           }
         }.toCell(s"$label MLM Vectors")

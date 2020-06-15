@@ -17,9 +17,10 @@ import freelog.implicits._
 sealed trait ClusteringModel
 object ClusteringModel {
   def fromString(x: String): Option[ClusteringModel] = {
-    if(x.startsWith("arg/syntf")) BaselineArgumentModel.fromString(x.drop("arg/".length))
-    else if(x.startsWith("arg/")) FullArgumentModel.fromString(x.drop("arg/".length))
-    else if(x.startsWith("verb/")) VerbModel.fromString(x.drop("verb/".length))
+    if(x.startsWith("arg/")) {
+      BaselineArgumentModel.fromString(x.drop("arg/".length))
+        .orElse(FullArgumentModel.fromString(x.drop("arg/".length)))
+    } else if(x.startsWith("verb/")) VerbModel.fromString(x.drop("verb/".length))
     else None
   }
 }
@@ -29,6 +30,12 @@ sealed trait ArgumentModel extends ClusteringModel {
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]
+}
+object ArgumentModel {
+  def fromString(x: String): Option[ArgumentModel] =
+    ClusteringModel.fromString(x).collect {
+      case model: ArgumentModel => model
+    }
 }
 
 case class BaselineArgumentModel(useConvertedDeps: Boolean) extends ArgumentModel {

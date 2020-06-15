@@ -64,7 +64,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
     features.splitName >>= { splitName =>
       features.modelDir
-        .map(_.resolve(s"$splitName/$model"))
+        .map(_.resolve(model.toString))
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
@@ -88,30 +88,21 @@ object FrameInductionApp extends CommandIOApp(
         getArgumentClusters[VerbType, Arg](model, features).flatMap(_.get)
       }
       splitName <- features.splitName
-      evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
+      evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         val argTreesRefined = argTrees.asInstanceOf[Map[String, MergeTree[Set[ArgumentId[Arg]]]]]
         features.argRoleLabels.get >>= (argRoleLabels =>
           if(features.mode.shouldEvaluate) {
-            if(features.assumeGoldVerbSense) {
-              Log.infoBranch("Evaluating argument clustering")(
-                Evaluation.evaluateArgumentClusters(
-                  evalDir, model.toString,
-                  argTreesRefined, argRoleLabels,
-                  tuningSpecs,
-                  useSenseSpecificRoles = true
-                )
+            Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+              Evaluation.evaluateArgumentClusters(
+                evalDir.resolve("sense-specific"),
+                s"$model (sense-specific roles)",
+                argTreesRefined, argRoleLabels,
+                tuningSpecs,
+                useSenseSpecificRoles = true
               )
-            } else {
-              Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-                Evaluation.evaluateArgumentClusters(
-                  evalDir.resolve("sense-specific"),
-                  s"$model (sense-specific roles)",
-                  argTreesRefined, argRoleLabels,
-                  tuningSpecs,
-                  useSenseSpecificRoles = true
-                )
-              ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+            ) >> IO.pure(features.assumeGoldVerbSense).ifM(
+              IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
                 Evaluation.evaluateArgumentClusters(
                   evalDir.resolve("sense-agnostic"),
                   s"$model (sense-agnostic roles)",
@@ -120,54 +111,12 @@ object FrameInductionApp extends CommandIOApp(
                   useSenseSpecificRoles = false
                 )
               )
-            }
+            )
           } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
         )
       }
     } yield ()
   }
-
-  // def runBaselineArgumentRoleInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-  //   model: ArgumentBaselineModel, features: Features[VerbType, Arg])(
-  //   implicit Log: SequentialEphemeralTreeLogger[IO, String]
-  // ): IO[Unit] = {
-  //   for {
-  //     argTrees <- Log.infoBranch(s"Getting argument clusters") {
-  //       model.getArgumentClusters(features)
-  //     }
-  //     splitName <- features.splitName
-  //     evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
-  //     _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-  //       val argTreesRefined = argTrees.asInstanceOf[Map[String, Vector[Set[ArgumentId[Arg]]]]]
-  //       features.argRoleLabels.get >>= (argRoleLabels =>
-  //         if(features.mode.shouldEvaluate) {
-  //           if(features.assumeGoldVerbSense) {
-  //             Log.infoBranch("Evaluating argument clustering")(
-  //               Evaluation.evaluateSingleArgumentClustering(
-  //                 evalDir, model.toString,
-  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-  //               )
-  //             )
-  //           } else {
-  //             Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-  //               Evaluation.evaluateSingleArgumentClustering(
-  //                 evalDir.resolve("sense-specific"),
-  //                 s"$model (sense-specific roles)",
-  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = true
-  //               )
-  //             ) >> Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-  //               Evaluation.evaluateSingleArgumentClustering(
-  //                 evalDir.resolve("sense-agnostic"),
-  //                 s"$model (sense-agnostic roles)",
-  //                 argTreesRefined, argRoleLabels, useSenseSpecificRoles = false
-  //               )
-  //             )
-  //           }
-  //         } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-  //       )
-  //     }
-  //   } yield ()
-  // }
 
   def getVerbClusters[VerbType: Encoder : Decoder, Arg](
     model: VerbModel, features: Features[VerbType, Arg])(
@@ -175,7 +124,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[FileCached[Map[VerbType, MergeTree[Set[VerbId]]]]] = {
     features.splitName >>= { splitName =>
       features.modelDir
-        .map(_.resolve(s"$splitName/$model"))
+        .map(_.resolve(model.toString))
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, MergeTree[Set[VerbId]]]](
@@ -199,7 +148,7 @@ object FrameInductionApp extends CommandIOApp(
         getVerbClusters[VerbType, Arg](model, features).flatMap(_.get)
       }
       splitName <- features.splitName
-      evalDir <- features.modelDir.map(_.resolve(s"$splitName/$model")).flatTap(createDir)
+      evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         features.verbSenseLabels.get >>= { verbSenseLabels =>
           val verbTreesRefined = verbTrees.asInstanceOf[Map[String, MergeTree[Set[VerbId]]]]
@@ -239,6 +188,53 @@ object FrameInductionApp extends CommandIOApp(
         runVerbSenseInduction(verbModel, features, tuningSpecs)
       )
   }
+
+  def runSummarize[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    features: Features[VerbType, Arg])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    modelDir <- features.modelDir
+    _ <- fileExists(modelDir.resolve("arg")).ifM(
+      getSubdirs(modelDir.resolve("arg")) >>= ((modelDirs: List[NIOPath]) =>
+        modelDirs.traverse { (modelSubdir: NIOPath) =>
+          for {
+            model <- IO(ArgumentModel.fromString("arg/" + modelSubdir.getFileName.toString).get)
+            evalModeSubdirs <- getSubdirs(modelSubdir)
+            evalModeResults <- evalModeSubdirs.traverse { (evalDir: NIOPath) =>
+              getSubdirs(evalDir).flatMap((metricDirs: List[NIOPath]) =>
+                metricDirs.traverse { (metricDir: NIOPath) =>
+                  for {
+                    metric <- IO(ClusterPRMetric.fromString(metricDir.getFileName.toString).get)
+                    tuningSpecStr <- FileUtil.readString(metricDir.resolve("best-setting.txt"))
+                    tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get)
+                  } yield metric -> tuningSpec
+                }.map(_.toMap)
+              ).map(evalDir.getFileName.toString -> _)
+            }.map(_.toMap)
+          } yield model -> evalModeResults
+        }.map(_.toMap)
+      ) >>= { argModelSpecs =>
+        // TODO output model summary stuff
+        Log.info(argModelSpecs.mkString("\n"))
+      }, IO.unit
+    )
+  } yield ()
+  //   model match {
+  //   // case argBaselineModel @ ArgumentBaselineModel(_) =>
+  //   //   runBaselineArgumentRoleInduction(argBaselineModel, features)
+  //   case argModel: ArgumentModel =>
+  //     runArgumentRoleInduction(argModel, features, tuningSpecs)
+  //   case verbModel: VerbModel =>
+  //     // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
+  //     IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
+  //       IO.raiseError(
+  //         new IllegalArgumentException(
+  //           "There's no point to running a verb sense model when assuming gold verb sense."
+  //         )
+  //       ),
+  //       runVerbSenseInduction(verbModel, features, tuningSpecs)
+  //     )
+  // }
 
   sealed trait DataSetting {
     type VerbType; type Arg
@@ -323,17 +319,7 @@ object FrameInductionApp extends CommandIOApp(
     "tune", help = "tuning spec, e.g., num-clusters=23"
   ).mapValidated(
     _.traverse(arg =>
-      SplitTuningCriterion.fromString(arg).map(SplitTuningSpec(_)).orElse {
-        val get = arg.split("=").toList.lift
-        for {
-          criterionStr <- get(0)
-          criterion <- SplitTuningCriterion.fromString(criterionStr)
-          thresholdsStr <- get(1)
-          thresholds <- thresholdsStr.split(",").toList.traverse(x =>
-            scala.util.Try(x.toDouble).toOption
-          )
-        } yield SplitTuningSpec(criterion, Some(thresholds))
-      }.map(Validated.valid).getOrElse(
+      SplitTuningSpec.fromString(arg).map(Validated.valid).getOrElse(
         Validated.invalidNel(s"Invalid tuning spec $arg. (todo: better error reporting)")
       )
     )
@@ -392,5 +378,31 @@ object FrameInductionApp extends CommandIOApp(
     }
   )
 
-  def main: Opts[IO[ExitCode]] = setup.orElse(run)
+  val summarize = Opts.subcommand(
+    name = "summarize",
+    help = "Aggregate and analyze results from all models.")(
+    (dataO, modeO).mapN { (data, mode) =>
+      withLogger { logger =>
+        implicit val Log = logger
+        for {
+          _ <- Log.info(s"Mode: $mode")
+          _ <- Log.info(s"Data: $data")
+          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+          _ <- data match {
+            case d @ DataSetting.Qasrl =>
+              runSummarize(d.getFeatures(mode))
+            case d @ DataSetting.Ontonotes5(_) =>
+              runSummarize(d.getFeatures(mode))
+            case d @ DataSetting.CoNLL08(_) =>
+              runSummarize(d.getFeatures(mode))
+          }
+        } yield ExitCode.Success
+      }
+    }
+  )
+
+  def main: Opts[IO[ExitCode]] =
+    setup
+      .orElse(run)
+      .orElse(summarize)
 }
