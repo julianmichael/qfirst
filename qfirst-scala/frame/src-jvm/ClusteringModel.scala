@@ -38,7 +38,7 @@ object ArgumentModel {
     }
 }
 
-case class BaselineArgumentModel(useConvertedDeps: Boolean) extends ArgumentModel {
+case class BaselineArgumentModel(setting: String) extends ArgumentModel {
 
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
@@ -48,21 +48,34 @@ case class BaselineArgumentModel(useConvertedDeps: Boolean) extends ArgumentMode
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       allVerbArgSets <- features.verbArgSets.get
       allArgs <- features.args.get
-      argSyntacticFunctions <- {
-        if(useConvertedDeps) features.argSyntacticFunctionsConverted
-        else features.argSyntacticFunctions
-      }.get
-      syntFuncCounts <- allVerbArgSets.toList.infoBarTraverse("Counting syntactic functions") { case (verbType, verbs) =>
-        IO(argSyntacticFunctions(verbType).value.values.toVector.counts)
-      }.map(_.combineAll)
+      argSyntacticFunctionsOpt <- {
+        if(setting == "syntf+") features.argSyntacticFunctionsConverted.get.map(Some(_))
+        else if(setting == "syntf") features.argSyntacticFunctions.get.map(Some(_))
+        else if(setting == "random") IO.pure(None)
+        else ??? // should never happen
+      }
+      syntFuncCountsOpt <- argSyntacticFunctionsOpt.traverse(argSyntacticFunctions =>
+        allVerbArgSets.toList.infoBarTraverse("Counting syntactic functions") { case (verbType, verbs) =>
+          IO(argSyntacticFunctions(verbType).value.values.toVector.counts)
+        }.map(_.combineAll)
+      )
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
         Log.info(features.renderVerbType(verbType)) >> {
-          val argSyntFuncsForVerb = argSyntacticFunctions(verbType).value
+          val getOrderedVerbSets = (argSyntacticFunctionsOpt, syntFuncCountsOpt).mapN { (argSyntacticFunctions, syntFuncCounts) =>
+            val argSyntFuncsForVerb = argSyntacticFunctions(verbType).value
+            (argIds: Set[ArgumentId[Arg]]) => argIds.groupBy(argSyntFuncsForVerb)
+              .toVector.sortBy(p => syntFuncCounts(p._1)).map(_._2)
+          }.getOrElse {
+            // random baseline
+            (argIds: Set[ArgumentId[Arg]]) => scala.util.Random.shuffle(
+              argIds.toVector.map(Set(_))
+            )
+          }
+
           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
             IO {
-              verbType -> args.toVector.toSet.groupBy(argSyntFuncsForVerb)
-                .toVector.sortBy(p => syntFuncCounts(p._1)).map(_._2)
+              verbType -> getOrderedVerbSets(args.toVector.toSet)
                 .map(MergeTree.Leaf(0.0, _))
                 .reduceLeft[MergeTree[Set[ArgumentId[Arg]]]](MergeTree.Merge(0.0, _, _))
             }
@@ -78,13 +91,11 @@ object BaselineArgumentModel {
   // too lazy for proper parser combinators
   // TODO add better error reporting
   def fromString(x: String): Option[BaselineArgumentModel] = x match {
-    case "syntf" => Some(BaselineArgumentModel(false))
-    case "syntf+" => Some(BaselineArgumentModel(true))
+    case x @ ("syntf" | "syntf+" | "random") => Some(BaselineArgumentModel(x))
     case _ => None
   }
   def toString(model: BaselineArgumentModel): String = {
-    val augStr = if(model.useConvertedDeps) "+" else ""
-    "arg/syntf" + augStr
+    "arg/" + model.setting
   }
 }
 
