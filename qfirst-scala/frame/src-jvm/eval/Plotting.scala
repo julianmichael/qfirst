@@ -119,14 +119,14 @@ object Plotting {
       IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
   }
 
-  def plotTuningResults[VerbType](
-    modelName: String,
+  def plotPrecisionRecallCurves[VerbType](
     tuningResults: Map[String, List[(Double, WeightedPR)]],
+    title: String,
     precisionAxisLabel: String,
     recallAxisLabel: String,
-    resultsDir: NIOPath)(
+    path: NIOPath)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Unit] = Log.infoBranch("Plotting tuning results") {
+  ): IO[Unit] = IO {
 
     case class PRPoint(
       category: String,
@@ -170,14 +170,13 @@ object Plotting {
             )
 	        )
         }
-    ).title(s"PropBank argument clustering ($modelName)")
+    ).title(title)
       .xLabel(recallAxisLabel)
       .yLabel(precisionAxisLabel)
       .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
       .xAxis().yAxis()
       .frame().rightLegend()
 
-    val path = resultsDir.resolve("tuning-strategies.png")
-    IO(plot.render().write(new java.io.File(path.toString)))
+    plot.render().write(new java.io.File(path.toString))
   }
 }

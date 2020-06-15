@@ -87,11 +87,10 @@ object Evaluation {
             tuningSpec.run(allStats).map(tuningSpec.criterion.name -> _)
           }
         ).map(_.toList.toMap)
-        _ <- Plotting.plotTuningResults(
-          modelName,
+        _ <- Plotting.plotPrecisionRecallCurves(
           tuningResults,
-          precisionAxisLabel, recallAxisLabel,
-          resultsDir
+          modelName, precisionAxisLabel, recallAxisLabel,
+          resultsDir.resolve("tuning-strategies.png")
         )
         bestResult = tuningResults.toList.map { case (name, stats) =>
           name -> SplitTuningCriterion.chooseBest(stats).data.head
@@ -154,6 +153,68 @@ object Evaluation {
     runClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, tuningSpecs, metric)
   ).void
 
+  def evaluateModels[VerbType, InstanceId, GoldLabel](
+    resultsDir: NIOPath,
+    metric: ClusterPRMetric,
+    models: Map[String, (Map[VerbType, MergeTree[Set[InstanceId]]], SplitTuningSpec)],
+    getGoldLabel: VerbType => InstanceId => GoldLabel,
+    includeOracle: Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = {
+    for {
+      tunedStatsByModel <- models.toList.infoBarTraverse("Getting tuned P/R curves for models") { case (model, (argTrees, tuningSpec)) =>
+        Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric)
+          .flatMap(tuningSpec.run(_))
+          .map(model -> _)
+      }.map(_.toMap)
+      _ <- Log.infoBranch(s"Plotting best tuned P/R curves") {
+        Plotting.plotPrecisionRecallCurves(
+          tunedStatsByModel,
+          "Best tuned performance", metric.precisionName, metric.recallName,
+          resultsDir.resolve("best.png")
+        )
+      }
+      _ <- FileUtil.writeString(resultsDir.resolve("best.txt"))(
+        getMetricsString(
+          Chosen(
+            tunedStatsByModel.transform { case (model, stats) =>
+              Chosen(
+                stats.map { case (k, v) => f"${models(model)._2.criterion}%s=$k%.3f" -> v }.toMap
+              ).keepMaxBy(_.f1)
+            }
+          )
+        )
+      )
+      _ <- IO.pure(!includeOracle).ifM(
+        IO.unit, for {
+          oracleStatsByModel <- models.toList.infoBarTraverse("Getting oracle P/R curves for models") { case (model, (argTrees, _)) =>
+            Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric)
+              .flatMap(SplitTuningSpec(OracleCriterion).run(_))
+              .map(model -> _)
+          }.map(_.toMap)
+          _ <- Log.infoBranch(s"Plotting oracle P/R curves") {
+            Plotting.plotPrecisionRecallCurves(
+              oracleStatsByModel,
+              "Oracle tuned performance", metric.precisionName, metric.recallName,
+              resultsDir.resolve("oracle.png")
+            )
+          }
+          _ <- FileUtil.writeString(resultsDir.resolve("oracle.txt"))(
+            getMetricsString(
+              Chosen(
+                oracleStatsByModel.transform { case (model, stats) =>
+                  Chosen(
+                    stats.map { case (k, v) => f"oracle=$k%.3f" -> v }.toMap
+                  ).keepMaxBy(_.f1)
+                }
+              )
+            )
+          )
+        } yield ()
+      )
+    } yield ()
+  }
+
   def evaluateArgumentClusters[VerbType, Arg](
     resultsDir: NIOPath,
     modelName: String,
@@ -171,6 +232,26 @@ object Evaluation {
       resultsDir, modelName,
       argTrees, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
       tuningSpecs
+    )
+  }
+
+  def evaluateArgumentModels[VerbType, Arg](
+    resultsDir: NIOPath,
+    metric: ClusterPRMetric,
+    models: Map[String, (Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]], SplitTuningSpec)],
+    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
+    useSenseSpecificRoles: Boolean,
+    includeOracle: Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = {
+    if(useSenseSpecificRoles) evaluateModels(
+      resultsDir, metric, models,
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId),
+      includeOracle
+    ) else evaluateModels(
+      resultsDir, metric, models,
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
+      includeOracle
     )
   }
 
@@ -318,7 +399,7 @@ object Evaluation {
   //   //   val maxLoss = chosenThresholds(vsConfig)
   //   //   verbModels.toList.traverse { case (verbLemma, verbModel) =>
   //   //     val clusters = verbModel.clusterTree.splitWhile(_.loss > maxLoss)
-  //   //     IO.unit // TODO
+  //   //     IO.unit
   //   //   }
   //   // }
   // } yield ()

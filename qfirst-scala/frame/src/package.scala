@@ -46,6 +46,10 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
 
   implicit class RichMap[A, B](val x: Map[A, B]) extends AnyVal {
     def mapVals[C](f: B => C): Map[A, C] = x.transform { case (_, v) => f(v) }
+    def zipValues[C](y: Map[A, C]) = {
+      val keys = x.keySet.intersect(y.keySet)
+      keys.iterator.map(k => k -> (x(k) -> y(k))).toMap
+    }
   }
 
   object Auxiliaries {

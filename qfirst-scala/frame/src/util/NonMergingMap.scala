@@ -4,6 +4,7 @@ import cats.Monoid
 
 class NonMergingMap[A, B](val value: Map[A, B]) {
   def apply(a: A): B = value.apply(a)
+  override def toString: String = value.toString
 }
 object NonMergingMap {
   def apply[A, B](value: Map[A, B]): NonMergingMap[A, B] = new NonMergingMap(value)

@@ -189,52 +189,56 @@ object FrameInductionApp extends CommandIOApp(
       )
   }
 
-  def runSummarize[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    features: Features[VerbType, Arg])(
+  def runSummarize[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     modelDir <- features.modelDir
     _ <- fileExists(modelDir.resolve("arg")).ifM(
       getSubdirs(modelDir.resolve("arg")) >>= ((modelDirs: List[NIOPath]) =>
-        modelDirs.traverse { (modelSubdir: NIOPath) =>
+        modelDirs.infoBarFoldMapM("Reading models and model info") { (modelSubdir: NIOPath) =>
           for {
             model <- IO(ArgumentModel.fromString("arg/" + modelSubdir.getFileName.toString).get)
+            argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
             evalModeSubdirs <- getSubdirs(modelSubdir)
-            evalModeResults <- evalModeSubdirs.traverse { (evalDir: NIOPath) =>
+            evalModeResults <- evalModeSubdirs.foldMapM { (evalDir: NIOPath) =>
               getSubdirs(evalDir).flatMap((metricDirs: List[NIOPath]) =>
-                metricDirs.traverse { (metricDir: NIOPath) =>
+                metricDirs.foldMapM { (metricDir: NIOPath) =>
                   for {
                     metric <- IO(ClusterPRMetric.fromString(metricDir.getFileName.toString).get)
                     tuningSpecStr <- FileUtil.readString(metricDir.resolve("best-setting.txt"))
-                    tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get)
-                  } yield metric -> tuningSpec
-                }.map(_.toMap)
-              ).map(evalDir.getFileName.toString -> _)
-            }.map(_.toMap)
-          } yield model -> evalModeResults
-        }.map(_.toMap)
-      ) >>= { argModelSpecs =>
-        // TODO output model summary stuff
-        Log.info(argModelSpecs.mkString("\n"))
+                    tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get).map(spec =>
+                      if(!features.mode.isTest) spec.copy(thresholds = None) else spec
+                    )
+                  } yield Map(evalDir.getFileName.toString -> Map(metric -> NonMergingMap(model.toString -> tuningSpec)))
+                }
+              )
+            }
+          } yield (NonMergingMap(model.toString -> argTree), evalModeResults)
+        }
+      ) >>= {
+        case (models, argModelSpecs) =>
+          features.argRoleLabels.get.flatMap(argRoleLabels =>
+            (features.outDir, features.splitName).mapN((out, split) => out.resolve(s"eval/$split")) >>= (parentResultsDir =>
+              argModelSpecs.toList.traverse { case (evalMode, metricSpecs) =>
+                val useSenseSpecificRoles = evalMode == "sense-specific"
+                val resultsDir = parentResultsDir.resolve(evalMode)
+                metricSpecs.toList.infoBarTraverse(s"Recording stats ($evalMode)") { case (metric, modelSpecs) =>
+                  val metricDir = resultsDir.resolve(metric.name)
+                  Log.info(s"Metric: $metric") >> createDir(metricDir) >> Evaluation.evaluateArgumentModels(
+                    metricDir, metric,
+                    models.value.zipValues(modelSpecs.value),
+                    argRoleLabels,
+                    useSenseSpecificRoles = evalMode == "sense-specific",
+                    includeOracle = !features.mode.isTest
+                  )
+                }
+              }
+            )
+          ).void
       }, IO.unit
     )
   } yield ()
-  //   model match {
-  //   // case argBaselineModel @ ArgumentBaselineModel(_) =>
-  //   //   runBaselineArgumentRoleInduction(argBaselineModel, features)
-  //   case argModel: ArgumentModel =>
-  //     runArgumentRoleInduction(argModel, features, tuningSpecs)
-  //   case verbModel: VerbModel =>
-  //     // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
-  //     IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
-  //       IO.raiseError(
-  //         new IllegalArgumentException(
-  //           "There's no point to running a verb sense model when assuming gold verb sense."
-  //         )
-  //       ),
-  //       runVerbSenseInduction(verbModel, features, tuningSpecs)
-  //     )
-  // }
 
   sealed trait DataSetting {
     type VerbType; type Arg
@@ -390,7 +394,7 @@ object FrameInductionApp extends CommandIOApp(
           // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
           _ <- data match {
             case d @ DataSetting.Qasrl =>
-              runSummarize(d.getFeatures(mode))
+              IO.raiseError(new IllegalArgumentException("Cannot evaluate on QA-SRL."))
             case d @ DataSetting.Ontonotes5(_) =>
               runSummarize(d.getFeatures(mode))
             case d @ DataSetting.CoNLL08(_) =>
