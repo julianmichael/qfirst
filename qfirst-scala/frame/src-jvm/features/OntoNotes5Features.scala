@@ -64,7 +64,7 @@ class OntoNotes5Features(
     spec => fullIndex.get.map(_.filter(_.split == spec))
   ).toCell("OntoNotes Index")
 
-  val dataset: RunDataCell[VerbFeats[(String, Map[ESpan, String])]] = RunData.strings.zip(index.data)
+  val dataset: RunDataCell[Map[String, NonMergingMap[VerbId, (String, Map[ESpan, String])]]] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
       filePaths.infoBarFoldMapM(s"Reading PropBank files to construct instances ($split)") { path =>
         Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
@@ -89,9 +89,7 @@ class OntoNotes5Features(
     }.toCell("PropBank dataset")
 
   // TODO: fill this in after adding sense information to `dataset`
-  override val verbSenseLabels = dataset.data.map { data =>
-    ???
-  }
+  override def verbSenseLabels = ???
 
   // TODO eliminate redundant traversal of propbank
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
@@ -104,16 +102,14 @@ class OntoNotes5Features(
     ).toCell("Sentence index")
 
   override val verbArgSets = dataset.data.map(
-    _.transform { case (_, verbs) =>
-      NonMergingMap(
-        verbs.value.map { case (verbId, (_, labels)) =>
-          verbId -> labels.keySet
-        }
-      )
+    _.mapVals { verbs =>
+      verbs.value.map { case (verbId, (_, labels)) =>
+        verbId -> labels.keySet
+      }
     }
   ).toCell("PropBank gold span instances")
 
-  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+  override val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).flatMap { case (split, vidToType) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
       FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
@@ -134,8 +130,8 @@ class OntoNotes5Features(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = dataset.data.map(
-    _.transform { case (_, verbs) =>
+  override val argSpans: ArgFeats[Map[ESpan, Double]] = dataset.data.map(
+    _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
           arguments.map { case (span, _) =>
@@ -144,16 +140,16 @@ class OntoNotes5Features(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping")
+  ).toCell("PropBank span to role label mapping").data
 
-  override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
+  override def argIndices: ArgFeats[Int] = ???
 
-  def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
+  override def argSyntacticFunctions: CachedArgFeats[String] = ???
 
-  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = ???
+  override def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
 
-  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] = dataset.data.map(
-    _.transform { case (_, verbs) =>
+  override def argRoleLabels: CachedArgFeats[PropBankRoleLabel] = dataset.data.map(
+    _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
           arguments.map { case (span, label) =>

@@ -55,14 +55,18 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
         else ??? // should never happen
       }
       syntFuncCountsOpt <- argSyntacticFunctionsOpt.traverse(argSyntacticFunctions =>
-        allVerbArgSets.toList.infoBarTraverse("Counting syntactic functions") { case (verbType, verbs) =>
-          IO(argSyntacticFunctions(verbType).value.values.toVector.counts)
-        }.map(_.combineAll)
+        allArgs.toList.infoBarFoldMapM("Counting syntactic functions") { case (verbType, argIds) =>
+          IO(
+            argIds.toList.foldMap(argId =>
+              Map(argSyntacticFunctions(verbType)(argId) -> 1)
+            )
+          )
+        }
       )
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
         Log.info(features.renderVerbType(verbType)) >> {
           val getOrderedVerbSets = (argSyntacticFunctionsOpt, syntFuncCountsOpt).mapN { (argSyntacticFunctions, syntFuncCounts) =>
-            val argSyntFuncsForVerb = argSyntacticFunctions(verbType).value
+            val argSyntFuncsForVerb = argSyntacticFunctions(verbType)
             (argIds: Set[ArgumentId[Arg]]) => argIds.groupBy(argSyntFuncsForVerb)
               .toVector.sortBy(p => syntFuncCounts(p._1)).map(_._2)
           }.getOrElse {
@@ -336,7 +340,7 @@ case class VerbModel private (
       _ <- this.init(features)
       allVerbArgSets <- features.verbArgSets.get
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
-        val verbIds = verbs.value.keySet
+        val verbIds = verbs.keySet
         Log.info(features.renderVerbType(verbType)) >> {
           // TODO I don't think any of these should be empty
           NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>

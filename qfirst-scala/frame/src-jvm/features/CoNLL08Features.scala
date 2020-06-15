@@ -60,6 +60,7 @@ class CoNLL08Features(
     )
   }
 
+  // unused
   def keepOnlyCommonPredicates(sentence: CoNLL08Sentence, lemmasToKeep: Set[String]) = {
     sentence.copy(
       predicateArgumentStructures = sentence.predicateArgumentStructures
@@ -69,6 +70,7 @@ class CoNLL08Features(
     )
   }
 
+  // unused
   def keepOnlyCommonPredicatesInDataset(ds: NonMergingMap[String, CoNLL08Sentence]) = {
     val predLemmaCounts = ds.value.unorderedFoldMap(_.predicateArgumentStructures.map(_.predicate.lemma).counts)
     val lemmasToKeep = predLemmaCounts.filter(_._2 > 20).keySet
@@ -145,7 +147,7 @@ class CoNLL08Features(
       )
     ).toCell("CoNLL 2008 sentence index")
 
-  val predArgStructures: RunDataCell[VerbFeats[PredicateArgumentStructure]] = {
+  val predArgStructures: RunDataCell[Map[String, NonMergingMap[VerbId, PredicateArgumentStructure]]] = {
     dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         sentence.predicateArgumentStructures.foldMap { pas =>
@@ -153,17 +155,97 @@ class CoNLL08Features(
             s"${pas.predicate.lemma}.${pas.predicate.sense}"
           } else pas.predicate.lemma
           val verbId = VerbId(sid, pas.predicate.index)
-          Map(verbType -> NonMergingMap(Map(verbId -> pas))) 
+          Map(verbType -> NonMergingMap(Map(verbId -> pas)))
         }
       }
     ).toCell("CoNLL 2008 predicate-argument structures")
   }
 
-  override val verbSenseLabels = predArgStructures.data.map { paStructs =>
-    (verbType: String) => (verbId: VerbId) => {
-      val predicate = paStructs(verbType).value(verbId).predicate
+  override val verbArgSets: RunDataCell[Map[String, Map[VerbId, Set[Int]]]] =
+    predArgStructures.data.map(allPAStructures =>
+      allPAStructures.mapVals { verbs =>
+        verbs.value.mapVals { pas =>
+          pas.arguments.map(_._2).toSet
+        }
+      }
+    ).toCell("CoNLL 2008 verb arg sets")
+
+  override val verbSenseLabels =
+    mapVerbFeats(predArgStructures.data) { pas =>
+      val predicate = pas.predicate
       s"${predicate.lemma}.${predicate.sense}"
     }
+
+  override val argRoleLabels: CachedArgFeats[PropBankRoleLabel] =
+    predArgStructures.data.map(predArgStructures =>
+      predArgStructures.mapVals { verbs =>
+        verbs.value.toList.foldMap { case (verbId, pas) =>
+          pas.arguments.foldMap { case (roleLabel, index) =>
+            val argId = ArgumentId(verbId, index)
+            val label = PropBankRoleLabel(pas.predicate.sense, roleLabel)
+            NonMergingMap(argId -> label)
+          }
+        }
+      }
+    ).toCell("CoNLL 2008 argument role labels")
+
+
+  // other things that could be used as argument keys
+
+  // val position = {
+  //   if(argIndex < verbIndex) "left"
+  //   else if(argIndex > verbIndex) "right"
+  //   else "same" // don't generally expect this to happen
+  // }
+  // val preposition = {
+  //   val argToken = sentence.tokens(argIndex)
+  //   if(argToken.pos == "IN") argToken.lemma.toLowerCase
+  //   else ""
+  // }
+
+  val argSyntacticFunctions: CachedArgFeats[String] = {
+    cacheArgFeats("CoNLL 2008 argument syntactic functions")(
+      dataset.data.map { data =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentence = data(argId.verbId.sentenceId)
+          val dependencies = sentence.childToParentDependencies
+          dependencies(argId.argument)._1
+        }
+      }
+    )
+  }
+
+  val argSyntacticFunctionsConverted: CachedArgFeats[String] = {
+    import qfirst.conll08.HasLemma.ops._
+    cacheArgFeats("CoNLL 2008 converted argument syntactic functions")(
+      dataset.data.map { data =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentence = data(argId.verbId.sentenceId)
+          val dependencies = sentence.childToParentDependencies
+          val verbIndex = argId.verbId.verbIndex
+          val verbChildDepLabels = dependencies.filter(_._2 == verbIndex).map(_._1).toSet
+          val isPassive = verbChildDepLabels.contains("LGS") || (
+            sentence.tokens(verbIndex).pos == "VBN" &&
+              dependencies(verbIndex)._1 == "VC" &&
+              sentence.tokens(dependencies(verbIndex)._2).lemma == "be"
+          )
+          // val objIndices = dependencies.filter(_._2 == verbIndex).filter(_._1 == "OBJ").map(_._2).toSet
+
+          dependencies(argId.argument)._1 match {
+            // just handle passives reasonably
+            case "SBJ" if isPassive => "OBJ"
+            case "LGS" => "SBJ"
+            // I tried these but they didn't help / reduced purity too much
+            // case "OBJ" if objIndices.exists(_ < argIndex) => "OBJ2"
+            // case "OBJ" if isPassive => "OBJ2"
+            // case "LGS" => "SBJ-trans"
+            // case "SBJ" if objIndices.isEmpty => "SBJ-intrans"
+            // case "SBJ" if objIndices.nonEmpty => "SBJ-trans"
+            case x => x
+          }
+        }
+      }
+    )
   }
 
   import scala.annotation.tailrec
@@ -179,157 +261,39 @@ class CoNLL08Features(
     }
   }
 
-  val argSyntacticFunctions: RunDataCell[ArgFeats[String]] = {
-    import qfirst.conll08.HasLemma.ops._
-    dataset.data.map(
-      _.value.toList.foldMap { case (sid, sentence) =>
-        val dependencies = sentence.childToParentDependencies
-        sentence.predicateArgumentStructures.foldMap { pas =>
-          val verbType = if(assumeGoldVerbSense) {
-            s"${pas.predicate.lemma}.${pas.predicate.sense}"
-          } else pas.predicate.lemma
+  val argDependencyPaths: CachedArgFeats[String] = {
+    cacheArgFeats("CoNLL 2008 predicate-argument dependency paths")(
+      dataset.data.map { data =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentence = data(argId.verbId.sentenceId)
+          val dependencies = sentence.childToParentDependencies
+          val verbIndex = argId.verbId.verbIndex
+          val argIndex = argId.argument
 
-          val verbIndex = pas.predicate.index
-          val verbId = VerbId(sid, verbIndex)
-
-          // commented-out stuff here was for producing more detailed argument keys
-          // but, these aren't necessary for the syntactic function baseline I want to use
-
-          // val verbChildDepLabels = dependencies.filter(_._2 == verbIndex).map(_._1).toSet
-          // val isPassive = verbChildDepLabels.contains("LGS") || (
-          //   !sentence.tokens(verbIndex).token.endsWith("ing") &&
-          //     dependencies(verbIndex)._1 == "VC" &&
-          //     sentence.tokens(dependencies(verbIndex)._2).lemma == "be"
-          // )
-          // val passive = if(isPassive) "pss" else ""
-
-          val argSyntacticFs = pas.arguments.map(_._2).map { argIndex =>
-            ArgumentId(verbId, argIndex) -> {
-              // val position = {
-              //   if(argIndex < verbIndex) "left"
-              //   else if(argIndex > verbIndex) "right"
-              //   else "same" // don't generally expect this to happen
-              // }
-              // val preposition = {
-              //   val argToken = sentence.tokens(argIndex)
-              //   if(argToken.pos == "IN") argToken.lemma.toLowerCase
-              //   else ""
-              // }
-              dependencies(argIndex)._1
-            }
-          }.toMap
-
-          Map(verbType -> NonMergingMap(argSyntacticFs))
+          val predPathToRoot = getDependencyPathToRoot(dependencies, verbIndex)
+          val argPathToRoot = getDependencyPathToRoot(dependencies, argIndex)
+          val predPathToLCA = predPathToRoot.takeWhile { case (_, i) =>
+            i != argIndex && !argPathToRoot.exists(_._2 == i)
+          }
+          val argPathToLCA = argPathToRoot.takeWhile { case (_, i) =>
+            i != argIndex && !predPathToRoot.exists(_._2 == i)
+          }
+          val pathStr = predPathToLCA.mkString("->") + "*" + argPathToLCA.reverse.mkString("<-")
+          pathStr
         }
       }
-    ).toCell("CoNLL 2008 argument-to-head syntactic rels")
-  }
-
-  val argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = {
-    import qfirst.conll08.HasLemma.ops._
-    dataset.data.map(
-      _.value.toList.foldMap { case (sid, sentence) =>
-        val dependencies = sentence.childToParentDependencies
-        sentence.predicateArgumentStructures.foldMap { pas =>
-          val verbType = if(assumeGoldVerbSense) {
-            s"${pas.predicate.lemma}.${pas.predicate.sense}"
-          } else pas.predicate.lemma
-
-          val verbIndex = pas.predicate.index
-          val verbId = VerbId(sid, verbIndex)
-
-          val verbChildDepLabels = dependencies.filter(_._2 == verbIndex).map(_._1).toSet
-          val isPassive = verbChildDepLabels.contains("LGS") || (
-            sentence.tokens(verbIndex).pos == "VBN" &&
-              dependencies(verbIndex)._1 == "VC" &&
-              sentence.tokens(dependencies(verbIndex)._2).lemma == "be"
-          )
-          // val objIndices = dependencies.filter(_._2 == verbIndex).filter(_._1 == "OBJ").map(_._2).toSet
-
-          val argSyntacticFs = pas.arguments.map(_._2).map { argIndex =>
-            ArgumentId(verbId, argIndex) -> {
-              dependencies(argIndex)._1 match {
-                // just handle passives reasonably
-                case "SBJ" if isPassive => "OBJ"
-                case "LGS" => "SBJ"
-                // I tried these but they didn't help / broke apart too much
-                // case "OBJ" if objIndices.exists(_ < argIndex) => "OBJ2"
-                // case "OBJ" if isPassive => "OBJ2"
-                // case "LGS" => "SBJ-trans"
-                // case "SBJ" if objIndices.isEmpty => "SBJ-intrans"
-                // case "SBJ" if objIndices.nonEmpty => "SBJ-trans"
-                case x => x
-              }
-            }
-          }.toMap
-
-          Map(verbType -> NonMergingMap(argSyntacticFs))
-        }
-      }
-    ).toCell("CoNLL 2008 converted argument-to-head syntactic rels")
-  }
-
-  val argDependencyPaths: RunDataCell[ArgFeats[String]] = {
-    dataset.data.map(
-      _.value.toList.foldMap { case (sid, sentence) =>
-        val dependencies = sentence.childToParentDependencies
-        sentence.predicateArgumentStructures.foldMap { pas =>
-          val verbType = if(assumeGoldVerbSense) {
-            s"${pas.predicate.lemma}.${pas.predicate.sense}"
-          } else pas.predicate.lemma
-          val verbIndex = pas.predicate.index
-          val verbId = VerbId(sid, verbIndex)
-          val argDependencyPaths = pas.arguments.map(_._2).map { argIndex =>
-            val predPathToRoot = getDependencyPathToRoot(dependencies, verbIndex)
-            val argPathToRoot = getDependencyPathToRoot(dependencies, argIndex)
-            val predPathToLCA = predPathToRoot.takeWhile { case (_, i) =>
-              i != argIndex && !argPathToRoot.exists(_._2 == i)
-            }
-            val argPathToLCA = argPathToRoot.takeWhile { case (_, i) =>
-              i != argIndex && !predPathToRoot.exists(_._2 == i)
-            }
-            val pathStr = predPathToLCA.mkString("->") + "*" + argPathToLCA.reverse.mkString("<-")
-            ArgumentId(verbId, argIndex) -> pathStr
-          }.toMap
-
-          Map(verbType -> NonMergingMap(argDependencyPaths))
-        }
-      }
-    ).toCell("CoNLL 2008 predicate-to-argument dependency paths")
-  }
-
-  override val verbArgSets: RunDataCell[VerbFeats[Set[Int]]] = predArgStructures.data.map(
-    mapVerbFeats(_.arguments.map(_._2).toSet)
-  ).toCell("CoNLL 2008 gold arg indices")
-
-  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
-    RunData.strings.map(_ => ???).toCell(
-      "[ERROR] no question distributions for CoNLL 2008 data."
     )
   }
 
-  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] =
-    RunData.strings.map(_ => ???).toCell(
-      "[ERROR] no spans for CoNLL 2008 data."
-    )
+  override def argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = ???
 
-  override val argIndices: RunData[ArgFeatsNew[Int]] = {
+  override def argSpans: ArgFeats[Map[ESpan, Double]] = ???
+
+  override val argIndices: ArgFeats[Int] = {
     RunData.strings.map(_ =>
       (verbType: String) => (argId: ArgumentId[Int]) => argId.argument
     )
   }
-
-  var allRoleLabels = Set.empty[String]
-
-  override val argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]] =
-    predArgStructures.data.map(
-      makeArgFeats { case (verbId, pas) =>
-        pas.arguments.map { case (roleLabel, index) =>
-          allRoleLabels = allRoleLabels + roleLabel
-          index -> PropBankRoleLabel(pas.predicate.sense, roleLabel)
-        }
-      }
-    ).toCell("PropBank arg to role label mapping")
 
   // TODO refactor this, other features, gen code, and setup function into the main trait,
   // so it's all done smoothly for the cases with none of those features.

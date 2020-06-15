@@ -2,7 +2,7 @@ package qfirst.frame.util
 
 import cats.Monoid
 
-class NonMergingMap[A, B](val value: Map[A, B]) {
+class NonMergingMap[A, B](val value: Map[A, B]) extends (A => B) {
   def apply(a: A): B = value.apply(a)
   override def toString: String = value.toString
 }

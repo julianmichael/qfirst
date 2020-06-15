@@ -45,36 +45,77 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
+  type CachedVerbFeats[A] = RunDataCell[Map[VerbType, NonMergingMap[VerbId, A]]]
+  type VerbFeats[A] = RunData[VerbType => VerbId => A]
+
+  type CachedArgFeats[A] = RunDataCell[Map[VerbType, NonMergingMap[ArgumentId[Arg], A]]]
+  type ArgFeats[A] = RunData[VerbType => ArgumentId[Arg] => A]
+
+  // def makeArgFeats[A, B](f: (VerbId, A) => List[(Arg, B)]): VerbFeats[A] => ArgFeats[B] = {
+  //   _.transform { case (_, verbs) =>
+  //     verbs.value.toList.foldMap { case (verbId, feat) =>
+  //       f(verbId, feat).foldMap { case (arg, argFeat) =>
+  //         NonMergingMap(ArgumentId(verbId, arg) -> argFeat)
+  //       }
+  //     }
+  //   }
+  // }
+
+  def cacheArgFeats[A](name: String)(feats: ArgFeats[A]): CachedArgFeats[A] =
+    (args.data.zip(feats)).map { case (args, feats) =>
+      args.transform { case (verbType, args) =>
+        val featsForVerbType = feats(verbType)
+        NonMergingMap(
+          args.iterator.map { argId =>
+            argId -> featsForVerbType(argId)
+          }.toMap
+        )
+      }
+    }.toCell(name)
+
+
+  def mapArgFeats[A, B](feats: ArgFeats[A])(f: A => B): ArgFeats[B] =
+    feats.map(_.andThen(_.andThen(f)))
+  def mapVerbFeats[A, B](feats: VerbFeats[A])(f: A => B): VerbFeats[B] =
+    feats.map(_.andThen(_.andThen(f)))
+
+
   // overriden for propbank features
   def getIfPropBank: Option[PropBankFeatures[Arg]] = None
-
-  type VerbFeats[A] = VerbFeatures[VerbType, A]
-  def mapVerbFeats[A, B](f: A => B): VerbFeats[A] => VerbFeats[B] = {
-    feats => feats.transform { case (_, instances) =>
-      NonMergingMap(
-        instances.value.transform { case (verbId, feat) =>
-          f(feat)
-        }
-      )
-    }
-  }
-  type ArgFeats[A] = ArgFeatures[VerbType, Arg, A]
-  def makeArgFeats[A, B](f: (VerbId, A) => List[(Arg, B)]): VerbFeats[A] => ArgFeats[B] = {
-    _.transform { case (_, verbs) =>
-      verbs.value.toList.foldMap { case (verbId, feat) =>
-        f(verbId, feat).foldMap { case (arg, argFeat) =>
-          NonMergingMap(ArgumentId(verbId, arg) -> argFeat)
-        }
-      }
-    }
-  }
-
-  type VerbFeatsNew[A] = VerbType => VerbId => A
-  type ArgFeatsNew[A] = VerbType => ArgumentId[Arg] => A
 
   implicit protected val runMode = mode
 
   def splitName = RunData.strings.get
+
+  // indices of important info
+
+  val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
+
+  val verbArgSets: RunDataCell[Map[VerbType, Map[VerbId, Set[Arg]]]]
+
+  lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.data.map(
+    _.transform { case (_, verbs) =>
+      verbs.toList.foldMap { case (verbId, args) =>
+        args.map(arg => ArgumentId(verbId, arg))
+      }
+    }
+  ).toCell("Argument IDs")
+
+  lazy val verbs: RunDataCell[Map[VerbType, Set[VerbId]]] = verbArgSets.data.map(
+    _.transform { case (_, verbs) => verbs.keySet }
+  ).toCell("Verb IDs")
+
+  lazy val verbIdToType = verbArgSets.data.map(
+    _.toList.foldMap { case (verbType, verbs) =>
+      NonMergingMap(
+        verbs.toList.map { case (verbId, _) =>
+          verbId -> verbType
+        }.toMap
+      )
+    }
+  ).toCell("Verb ID to verb type mapping")
+
+  // Metadata
 
   // for constructing features
   def getVerbLemma(verbType: VerbType): String
@@ -82,20 +123,20 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // for logging. could replace with Show instance?
   def renderVerbType(verbType: VerbType): String
 
-  val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
+  // Various features that need to be implemented
 
-  val verbArgSets: RunDataCell[VerbFeats[Set[Arg]]]
+  def argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]]
 
-  def argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]]
-
-  def argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]]
+  def argSpans: ArgFeats[Map[ESpan, Double]]
 
   // new style arg features
-  def argIndices: RunData[ArgFeatsNew[Int]]
+  def argIndices: ArgFeats[Int]
 
-  def argSyntacticFunctions: RunDataCell[ArgFeats[String]]
+  def argSyntacticFunctions: CachedArgFeats[String]
 
-  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]]
+  def argSyntacticFunctionsConverted: CachedArgFeats[String]
+
+  // directories
 
   protected val rootDir: Path
 
@@ -113,29 +154,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // for caching features that take a while to compute
   protected def cacheDir = IO.pure(rootDir.resolve("cache")).flatTap(createDir)
 
-  // question and verb IDs
-
-  lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.data.map(
-    _.transform { case (_, verbs) =>
-      verbs.value.toList.foldMap { case (verbId, args) =>
-        args.map(arg => ArgumentId(verbId, arg))
-      }
-    }
-  ).toCell("Argument IDs")
-
-  lazy val verbs: RunDataCell[Map[VerbType, Set[VerbId]]] = verbArgSets.data.map(
-    _.transform { case (_, verbs) => verbs.value.keySet }
-  ).toCell("Verb IDs")
-
-  lazy val verbIdToType = verbArgSets.data.map(
-    _.toList.foldMap { case (verbType, verbs) =>
-      NonMergingMap(
-        verbs.value.toList.map { case (verbId, _) =>
-          verbId -> verbType
-        }.toMap
-      )
-    }
-  ).toCell("Verb ID to verb type mapping")
+  // features and setup code constructed from the other provided features
 
   val mlmSettings = List("masked", "symm_left", "symm_right", "symm_both")
   def mlmFeatureDir = inputDir.resolve("mlm")
@@ -237,14 +256,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def verbMLMVectors = mlmVectors("verb")
   def argMLMVectors = mlmVectors("arg")
 
-  def getVerbMLMFeatures(mode: String): RunData[VerbFeatsNew[DenseVector[Float]]] =
+  def getVerbMLMFeatures(mode: String): VerbFeats[DenseVector[Float]] =
     verbMLMVectors(mode).data.map { mlmFeats =>
       (verbType: VerbType) => (verbId: VerbId) => {
         mlmFeats(getVerbLemma(verbType))(verbId.sentenceId).value(verbId.verbIndex)
       }
     }
 
-  def getArgMLMFeatures(mode: String): RunData[ArgFeatsNew[DenseVector[Float]]] =
+  def getArgMLMFeatures(mode: String): ArgFeats[DenseVector[Float]] =
     argMLMVectors(mode).data.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
@@ -265,21 +284,4 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   //     )
   //   )
   // }
-
-  // def readFramesets(vsConfig: VerbSenseConfig)(implicit cs: ContextShift[IO]) = {
-  //   framesetsPath(vsConfig).flatMap(path =>
-  //     FileUtil.readJsonLines[VerbFrameset](path)
-  //       .compile.toList
-  //       .map(_.map(f => f.inflectedForms -> f).toMap)
-  //   )
-  // }
-  // def writeFramesets(
-  //   vsConfig: VerbSenseConfig,
-  //   framesets: Map[InflectedForms, VerbFrameset])(
-  //   implicit cs: ContextShift[IO]
-  // ): IO[Unit] = framesetsPath(vsConfig).flatMap(path =>
-  //   FileUtil.writeJsonLines(path)(
-  //     framesets.values.toList
-  //   )
-  // )
 }

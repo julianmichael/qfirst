@@ -77,7 +77,7 @@ class GoldQasrlFeatures(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
   ).toCell("QA-SRL dataset")
 
-  val qaPairs: RunDataCell[VerbFeats[QAPairs]] = {
+  val qaPairs: RunDataCell[Map[InflectedForms, NonMergingMap[VerbId, QAPairs]]] = {
     dataset.data.map(
       _.sentences.iterator.flatMap { case (sid, sentence) =>
         sentence.verbEntries.values.map(sid -> _)
@@ -102,8 +102,17 @@ class GoldQasrlFeatures(
     )
   }.toCell("QA-SRL All QA Pairs")
 
-  val argIdToSpans: RunDataCell[ArgFeats[List[List[ESpan]]]] = qaPairs.data.map(
-    _.transform { case (_, verbs) =>
+  override val verbArgSets: RunDataCell[Map[InflectedForms, Map[VerbId, Set[ClausalQuestion]]]] =
+    qaPairs.data.map(
+      _.mapVals { verbs =>
+        verbs.value.mapVals { qaPairs =>
+          qaPairs.keySet
+        }
+      }
+    ).toCell("QA-SRL ArgumentIds by verb ID")
+
+  val argIdToSpans: ArgFeats[List[List[ESpan]]] = qaPairs.data.map(
+    _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, qaPairs) =>
         NonMergingMap(
           qaPairs.map { case (cq, spanLists) =>
@@ -112,18 +121,8 @@ class GoldQasrlFeatures(
         )
       }
     }
-  ).toCell("QA-SRL ArgumentId to spans")
+  ).toCell("QA-SRL ArgumentId to spans").data
 
-  override val verbArgSets: RunDataCell[VerbFeats[Set[ClausalQuestion]]] =
-      qaPairs.data.map(
-        _.transform { case (_, verbs) =>
-          NonMergingMap(
-            verbs.value.transform { case (verbId, qaPairs) =>
-              qaPairs.keySet
-            }
-          )
-        }
-      ).toCell("QA-SRL ArgumentIds by verb ID")
   // TODO replace with this
   // qaPairs
   //   .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
@@ -138,7 +137,7 @@ class GoldQasrlFeatures(
   // TODO temp before we have distribution results from the models
   // override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
   //   argIdToSpans.data.map(
-  //     _.transform { case (_, args) =>
+  //     _.mapVals { args =>
   //       NonMergingMap(
   //         args.value.transform { case (argId, _) =>
   //           Map(QuestionTemplate.fromClausalQuestion(argId.argument) -> 1.0)
@@ -149,7 +148,7 @@ class GoldQasrlFeatures(
   // }
 
   // TODO incorporate gold question
-  override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
+  override val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(qaPairs.data)
       .flatMap { case ((split, vidToType), qaPairs) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
@@ -177,7 +176,7 @@ class GoldQasrlFeatures(
                     } else ArgumentId(verbId, cq) -> spanPredLists.foldMap { localPreds =>
                       val denom = localPreds.foldMap(_.spanProb) * spanPredLists.size
                       localPreds.foldMap(
-                        _.questions.transform { case (_, prob) =>
+                        _.questions.mapVals { prob =>
                           prob / denom
                         }
                       )
@@ -191,8 +190,8 @@ class GoldQasrlFeatures(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: RunDataCell[ArgFeats[Map[ESpan, Double]]] = qaPairs.data.map(
-    _.transform { case (_, verbs) =>
+  override val argSpans: ArgFeats[Map[ESpan, Double]] = qaPairs.data.map(
+    _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, qaPairs) =>
         NonMergingMap(
           qaPairs.map { case (cq, spanLists) =>
@@ -201,12 +200,13 @@ class GoldQasrlFeatures(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping")
+  ).toCell("PropBank span to role label mapping").data
 
-  override val argIndices: RunData[ArgFeatsNew[Int]] = RunData.strings.map(_ => ???)
+  override val argIndices: ArgFeats[Int] = {
+    RunData.strings.map(_ => ???)
+  }
 
+  def argSyntacticFunctions: CachedArgFeats[String] = ???
 
-  def argSyntacticFunctions: RunDataCell[ArgFeats[String]] = ???
-
-  def argSyntacticFunctionsConverted: RunDataCell[ArgFeats[String]] = ???
+  def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
 }

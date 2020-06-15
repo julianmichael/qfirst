@@ -50,9 +50,9 @@ abstract class PropBankFeatures[Arg](
     _.resolve(if(assumeGoldVerbSense) "by-sense" else "by-lemma")
   ).flatTap(createDir)
 
-  def verbSenseLabels: RunData[VerbFeatsNew[String]]
+  def verbSenseLabels: VerbFeats[String]
 
-  def argRoleLabels: RunDataCell[ArgFeats[PropBankRoleLabel]]
+  def argRoleLabels: CachedArgFeats[PropBankRoleLabel]
 }
 
 case class PropBankRoleLabel(

@@ -1,6 +1,8 @@
 package qfirst.frame.features
 
+import qfirst.frame.ArgumentId
 import qfirst.frame.RunMode
+import qfirst.frame.VerbId
 
 import qfirst.frame.util.Cell
 import qfirst.frame.util.FileCached
@@ -14,12 +16,13 @@ import java.nio.file.Path
 
 import freelog.TreeLogger
 
-case class RunData[A](
+case class RunData[+A](
   train: IO[A],
   dev: IO[A],
   test: IO[A])(
   implicit mode: RunMode
 ) {
+
   def get = mode.get(this)
 
   def all = List(train, dev, test).sequence
@@ -51,7 +54,7 @@ case class RunData[A](
 
   def toCell(name: String)(
     implicit mode: RunMode,
-    monoid: Monoid[A],
+    // monoid: Monoid[A],
     Log: TreeLogger[IO, String]) = new RunDataCell(
     name,
     new Cell(s"$name (train)", train),
@@ -59,17 +62,17 @@ case class RunData[A](
     new Cell(s"$name (test)", test),
   )
 
-  def toFileCachedCell(
+  def toFileCachedCell[B >: A](
     name: String, getCachePath: String => IO[Path])(
-    read: Path => IO[A], write: (Path, A) => IO[Unit])(
+    read: Path => IO[B], write: (Path, B) => IO[Unit])(
     implicit mode: RunMode,
-    monoid: Monoid[A],
+    // monoid: Monoid[A],
     Log: TreeLogger[IO, String]) = {
-    def doCache(runName: String, a: IO[A]) = {
+    def doCache(runName: String, a: IO[B]) = {
       new Cell(
         s"$name ($runName)",
         getCachePath(runName) >>= (path =>
-          FileCached.get[A](s"$name ($runName)")(
+          FileCached.get[B](s"$name ($runName)")(
             path = path,
             read = read,
             write = write)(
@@ -103,7 +106,7 @@ object RunData {
   case object Test extends Split
 }
 
-class RunDataCell[A](
+class RunDataCell[+A](
   name: String,
   train: Cell[A],
   dev: Cell[A],
