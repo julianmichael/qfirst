@@ -148,9 +148,9 @@ object Plotting {
       prs.map { case (t, pr) => PRPoint(category, t, pr.f1 == bestF1, pr.recall, pr.precision) }
     }
 
-    val allData = tuningResults.map { case (cat, items) =>
-      cat -> makePoints(cat, items)
-    }
+    val allData = tuningResults.toList
+      .sortBy(-_._2.map(_._2.f1).max)
+      .map { case (cat, items) => cat -> makePoints(cat, items) }
 
     // val maxNumClusters = allData.flatMap(_.toList).filter(_.isBestF1).map(_.numClusters).max
     // val maxNumInstances = allData.values.toList.map(_.head.numItems).max
