@@ -294,7 +294,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     argsByVerb: Map[String, Set[Int]]
   )
 
-  val mlmFeatureGenInputs = {
+  lazy val mlmFeatureGenInputs = {
     (verbs.data, args.data, sentences.data, verbIdToType.data, widen(argSemanticHeadIndices)).mapN {
       (verbs, args, sentences, verbIdToType, argSemanticHeadIndices) =>
         val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
@@ -320,7 +320,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     .map(_.resolve(s"mlm-inputs")).flatTap(createDir)
     .map(_.resolve(s"$split.jsonl.gz"))
 
-  val writeMLMInputs = RunData.strings.zip(mlmFeatureGenInputs).flatMap { case (split, inputStream) =>
+  lazy val writeMLMInputs = RunData.strings.zip(mlmFeatureGenInputs).flatMap { case (split, inputStream) =>
     getMLMFeatureInputOutPath(split) >>= (outPath =>
       IO(Files.exists(outPath)).ifM(
         Log.info(s"MLM feature inputs already found at $outPath."),

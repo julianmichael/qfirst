@@ -290,8 +290,47 @@ class CoNLL08Features(
   override def argSpans: ArgFeats[Map[ESpan, Double]] = ???
 
   override val argSemanticHeadIndices: ArgFeats[Int] = {
-    RunData.strings.map(_ =>
-      (verbType: String) => (argId: ArgumentId[Int]) => argId.argument
-    )
+    dataset.data.map { data =>
+      (verbType: String) => (argId: ArgumentId[Int]) => {
+        val sentence = data(argId.verbId.sentenceId)
+        val dependencies = sentence.childToParentDependencies
+        val argIndex = argId.argument
+
+        val validPrepPOS = Set("IN", "TO", "RB")
+        // together these other POS tags should cover everything interesting. they can stay heads
+        // val invalidPrepPOS = Set("VBG", "VBN", "VBD", "RP", "JJ")
+
+        // if(dependencies.contains("PMOD" -> argIndex)) {
+        //   if(!(validPrepPOS ++ invalidPrepPOS).contains(sentence.tokens(argIndex).pos)) {
+        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
+        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
+        //     val pmodIndex = dependencies.indexOf("PMOD" -> argIndex)
+        //     System.err.println(s"$pmodIndex: ${sentence.tokens(pmodIndex)}")
+        //   }
+        // }
+
+        val validToPOS = Set[String]("TO")
+        // TO is the only pos that appears with IM dependents
+        // val invalidToPOS = Set[String]()
+
+        // if(dependencies.contains("IM" -> argIndex)) {
+        //   if(!(validToPOS ++ invalidToPOS).contains(sentence.tokens(argIndex).pos)) {
+        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
+        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
+        //     val imIndex = dependencies.indexOf("IM" -> argIndex)
+        //     System.err.println(s"$imIndex: ${sentence.tokens(imIndex)}")
+        //   }
+        // }
+
+        Option(dependencies.indexOf("PMOD" -> argIndex))
+          .filter(_ >= 0)
+          .filter(i => validPrepPOS.contains(sentence.tokens(i).pos))
+          .orElse(
+            Option(dependencies.indexOf("IM" -> argIndex))
+              .filter(_ >= 0)
+              .filter(i => validToPOS.contains(sentence.tokens(i).pos))
+          ).getOrElse(argIndex)
+      }
+    }
   }
 }
