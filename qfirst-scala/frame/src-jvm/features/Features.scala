@@ -45,6 +45,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   implicit cs: ContextShift[IO],
   Log: EphemeralTreeLogger[IO, String]) {
 
+  implicit protected val runMode = mode
+
   type CachedVerbFeats[A] = RunDataCell[Map[VerbType, NonMergingMap[VerbId, A]]]
   type VerbFeats[A] = RunData[VerbType => VerbId => A]
 
@@ -73,17 +75,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
     }.toCell(name)
 
-
   def mapArgFeats[A, B](feats: ArgFeats[A])(f: A => B): ArgFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
+
   def mapVerbFeats[A, B](feats: VerbFeats[A])(f: A => B): VerbFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
 
-
   // overriden for propbank features
   def getIfPropBank: Option[PropBankFeatures[Arg]] = None
-
-  implicit protected val runMode = mode
 
   def splitName = RunData.strings.get
 
@@ -130,7 +129,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def argSpans: ArgFeats[Map[ESpan, Double]]
 
   // new style arg features
-  def argIndices: ArgFeats[Int]
+  def argSemanticHeadIndices: ArgFeats[Int]
 
   def argSyntacticFunctions: CachedArgFeats[String]
 
@@ -139,9 +138,6 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   // directories
 
   protected val rootDir: Path
-
-  // TODO move all setup into this/superclass
-  def setup: IO[Unit] = IO.unit
 
   def outDir = IO.pure(rootDir.resolve("out")).flatTap(createDir)
 
@@ -264,7 +260,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
 
   def getArgMLMFeatures(mode: String): ArgFeats[DenseVector[Float]] =
-    argMLMVectors(mode).data.zip(argIndices).map { case (mlmFeats, getArgIndex) =>
+    argMLMVectors(mode).data.zip(argSemanticHeadIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
@@ -284,4 +280,52 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   //     )
   //   )
   // }
+
+  // generating input files for feature generation
+
+  @JsonCodec case class MLMFeatureGenInput(
+    sentenceId: String,
+    sentenceTokens: Vector[String],
+    verbs: Map[String, Set[Int]],
+    argsByVerb: Map[String, Set[Int]]
+  )
+
+  val mlmFeatureGenInputs = {
+    verbs.data.zip(args.data).zip(sentences.data).zip(verbIdToType.data).zip(argSemanticHeadIndices).map {
+      case ((((verbs, args), sentences), verbIdToType), argSemanticHeadIndices) =>
+        val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
+        val argsBySentenceId = args.values.reduce(_ union _).groupBy(_.verbId.sentenceId)
+        val sentenceIds = verbsBySentenceId.keySet union argsBySentenceId.keySet
+        Stream.emits[IO, String](sentenceIds.toList).map { sid =>
+          MLMFeatureGenInput(
+            sentenceId = sid,
+            sentenceTokens = sentences(sid),
+            verbs = verbsBySentenceId(sid).unorderedFoldMap { verbId =>
+              Map(getVerbLemma(verbIdToType(verbId)) -> Set(verbId.verbIndex))
+            },
+            argsByVerb = argsBySentenceId.get(sid).combineAll.unorderedFoldMap { argId =>
+              val verbType = verbIdToType(argId.verbId)
+              Map(getVerbLemma(verbType) -> Set(argSemanticHeadIndices(verbType)(argId)))
+            }
+          )
+        }
+    }
+  }
+
+  def getMLMFeatureInputOutPath(split: String) = outDir
+    .map(_.resolve(s"mlm-inputs")).flatTap(createDir)
+    .map(_.resolve(s"$split.jsonl.gz"))
+
+  val writeMLMInputs = RunData.strings.zip(mlmFeatureGenInputs).flatMap { case (split, inputStream) =>
+    getMLMFeatureInputOutPath(split) >>= (outPath =>
+      IO(Files.exists(outPath)).ifM(
+        Log.info(s"MLM feature inputs already found at $outPath."),
+        Log.infoBranch(s"Logging MLM feature inputs to $outPath")(
+          FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
+        )
+      )
+    )
+  }.all.void
+
+  def setup = writeMLMInputs
 }

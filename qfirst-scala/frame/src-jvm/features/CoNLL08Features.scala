@@ -289,52 +289,9 @@ class CoNLL08Features(
 
   override def argSpans: ArgFeats[Map[ESpan, Double]] = ???
 
-  override val argIndices: ArgFeats[Int] = {
+  override val argSemanticHeadIndices: ArgFeats[Int] = {
     RunData.strings.map(_ =>
       (verbType: String) => (argId: ArgumentId[Int]) => argId.argument
     )
   }
-
-  // TODO refactor this, other features, gen code, and setup function into the main trait,
-  // so it's all done smoothly for the cases with none of those features.
-
-  @JsonCodec case class MLMFeatureGenInput(
-    sentenceId: String,
-    sentenceTokens: Vector[String],
-    verbs: Map[String, Set[Int]],
-    argsByVerb: Map[String, Set[Int]]
-  )
-
-  val mlmFeatureGenInputs = dataset.data.map { sentences =>
-    Stream.emits[IO, (String, CoNLL08Sentence)](sentences.value.toList).map { case (sid, sentence) =>
-      MLMFeatureGenInput(
-        sentenceId = sid,
-        sentenceTokens = sentence.tokens.map(_.token),
-        verbs = sentence.predicateArgumentStructures.foldMap(pas =>
-          Map(pas.predicate.lemma -> Set(pas.predicate.index))
-        ),
-        argsByVerb = sentence.predicateArgumentStructures.foldMap(pas =>
-          Map(pas.predicate.lemma -> pas.arguments.map(_._2).toSet)
-        )
-      )
-    }
-  }
-
-  def getMLMFeatureInputOutPath(split: String) = outDir
-    .map(_.resolve(s"mlm-inputs")).flatTap(createDir)
-    .map(_.resolve(s"$split.jsonl.gz"))
-
-  val writeMLMInputs = RunData.strings.zip(mlmFeatureGenInputs).flatMap { case (split, inputStream) =>
-    getMLMFeatureInputOutPath(split) >>= (outPath =>
-      IO(Files.exists(outPath)).ifM(
-        Log.info(s"MLM feature inputs already found at $outPath."),
-        Log.infoBranch(s"Logging MLM feature inputs to $outPath")(
-          FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
-        )
-      )
-    )
-  }.all.void
-
-  override val setup = writeMLMInputs
-
 }

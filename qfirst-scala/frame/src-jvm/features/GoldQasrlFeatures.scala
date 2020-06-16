@@ -202,7 +202,7 @@ class GoldQasrlFeatures(
     }
   ).toCell("PropBank span to role label mapping").data
 
-  override val argIndices: ArgFeats[Int] = {
+  override val argSemanticHeadIndices: ArgFeats[Int] = {
     RunData.strings.map(_ => ???)
   }
 

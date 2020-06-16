@@ -142,7 +142,7 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank span to role label mapping").data
 
-  override def argIndices: ArgFeats[Int] = ???
+  override def argSemanticHeadIndices: ArgFeats[Int] = ???
 
   override def argSyntacticFunctions: CachedArgFeats[String] = ???
 
@@ -160,6 +160,7 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank span to role label mapping")
 
+  // TODO move this to main Features
 
   @JsonCodec case class PropBankQGInput(
     sentenceId: String,
@@ -204,5 +205,5 @@ class OntoNotes5Features(
     )
   }.all.void
 
-  override val setup = writeQGInputs
+  override def setup = super.setup >> writeQGInputs
 }
