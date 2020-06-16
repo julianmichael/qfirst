@@ -21,6 +21,7 @@ import jjm.ling.en.VerbForm
 import jjm.io.FileUtil
 import jjm.implicits._
 
+import cats.Applicative
 import cats.Order
 import cats.effect.ContextShift
 import cats.effect.IO
@@ -80,6 +81,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def mapVerbFeats[A, B](feats: VerbFeats[A])(f: A => B): VerbFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
+
+  def widen[A](feats: ArgFeats[A]): RunData[VerbType => ArgumentId[Arg] => A] = feats
 
   // overriden for propbank features
   def getIfPropBank: Option[PropBankFeatures[Arg]] = None
@@ -259,12 +262,13 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
     }
 
-  def getArgMLMFeatures(mode: String): ArgFeats[DenseVector[Float]] =
-    argMLMVectors(mode).data.zip(argSemanticHeadIndices).map { case (mlmFeats, getArgIndex) =>
+  def getArgMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
+    argMLMVectors(featureMode).data.zip(argSemanticHeadIndices).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
     }
+  }
 
   // XXXXXXXXX
 
@@ -291,8 +295,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   )
 
   val mlmFeatureGenInputs = {
-    verbs.data.zip(args.data).zip(sentences.data).zip(verbIdToType.data).zip(argSemanticHeadIndices).map {
-      case ((((verbs, args), sentences), verbIdToType), argSemanticHeadIndices) =>
+    (verbs.data, args.data, sentences.data, verbIdToType.data, widen(argSemanticHeadIndices)).mapN {
+      (verbs, args, sentences, verbIdToType, argSemanticHeadIndices) =>
         val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
         val argsBySentenceId = args.values.reduce(_ union _).groupBy(_.verbId.sentenceId)
         val sentenceIds = verbsBySentenceId.keySet union argsBySentenceId.keySet
