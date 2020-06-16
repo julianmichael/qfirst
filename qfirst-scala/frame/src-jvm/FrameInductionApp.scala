@@ -197,9 +197,14 @@ object FrameInductionApp extends CommandIOApp(
     _ <- fileExists(modelDir.resolve("arg")).ifM(
       getSubdirs(modelDir.resolve("arg")) >>= ((modelDirs: List[NIOPath]) =>
         modelDirs.infoBarFoldMapM("Reading models and model info") { (modelSubdir: NIOPath) =>
+          val model = modelSubdir.getFileName.toString
           for {
-            model <- IO(ArgumentModel.fromString("arg/" + modelSubdir.getFileName.toString).get)
-            argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
+            // reading manually to avoid having to construct the model, allowing for comparison with old models
+            // after changing code, etc.
+            // argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
+            argTrees <- FileUtil.readJsonLines[(String, MergeTree[Set[ArgumentId[Arg]]])](
+              modelSubdir.resolve("model.jsonl.gz")
+            ).infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap)
             evalModeSubdirs <- getSubdirs(modelSubdir)
             evalModeResults <- evalModeSubdirs.foldMapM { (evalDir: NIOPath) =>
               getSubdirs(evalDir).flatMap((metricDirs: List[NIOPath]) =>
@@ -214,7 +219,7 @@ object FrameInductionApp extends CommandIOApp(
                 }
               )
             }
-          } yield (NonMergingMap(model.toString -> argTree), evalModeResults)
+          } yield (NonMergingMap(model.toString -> argTrees), evalModeResults)
         }
       ) >>= {
         case (models, argModelSpecs) =>
