@@ -1,7 +1,7 @@
 package qfirst.frame
 
 import qfirst.frame.clustering._
-import qfirst.frame.features.Features
+import qfirst.frame.features._
 import qfirst.frame.util.Vocab
 
 import cats.Order
@@ -40,6 +40,84 @@ object ArgumentModel {
 
 case class BaselineArgumentModel(setting: String) extends ArgumentModel {
 
+  private def getBaselineLabelCounts[VerbType, Arg, A](
+    args: Map[VerbType, Set[ArgumentId[Arg]]],
+    labels: VerbType => ArgumentId[Arg] => A)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[A, Int]] = {
+    args.toList.infoBarFoldMapM("Counting baseline labels") { case (verbType, argIds) =>
+      IO(argIds.toList.foldMap(argId => Map(labels(verbType)(argId) -> 1)).withDefaultValue(0))
+    }
+  }
+
+  def makeDrawer[A](counts: Map[A, Int]): () => A = {
+    val total = counts.values.sum
+    val dist = counts.mapValues(_.toDouble / total).toVector
+    () => {
+      val rnd = scala.util.Random.nextDouble
+      val res = dist.foldM(rnd) { case (mass, (label, prob)) =>
+        if(prob >= mass) Left(label) else Right(mass - prob)
+      }
+      res match {
+        case Right(mass) =>
+          System.err.println(f"Didn't use all the mass! $mass%.5f")
+            ???
+        case Left(label) => label
+      }
+    }
+  }
+
+  private def getBaselineLabels[VerbType, Arg](
+    args: Map[VerbType, Set[ArgumentId[Arg]]],
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ) = setting match {
+    case "syntf+" => features.argSyntacticFunctionsConverted.get.map(Some(_))
+    case "syntf" => features.argSyntacticFunctions.get.map(Some(_))
+    case "gold_nosense" => for {
+      feats <- IO(features.getIfPropBank.get)
+      argRoleLabels <- feats.mapArgFeats(feats.argRoleLabels.data)(_.role).get
+    } yield Some(argRoleLabels.asInstanceOf[VerbType => ArgumentId[Arg] => String])
+    case "gold_nosense+noise" => for {
+      feats <- IO(features.getIfPropBank.get)
+      argRoleLabels <- feats.mapArgFeats(feats.argRoleLabels.data)(_.role).get
+      labelCounts <- getBaselineLabelCounts(
+        args.asInstanceOf[Map[String, Set[ArgumentId[Arg]]]], argRoleLabels
+      )
+    } yield {
+      val drawLabel = makeDrawer(labelCounts)
+      Some(
+        argRoleLabels.andThen(
+          _.andThen(label =>
+            if(scala.util.Random.nextDouble > 0.9) drawLabel() else label
+          )
+        ).asInstanceOf[VerbType => ArgumentId[Arg] => String]
+      )
+    }
+    case "gold_wsense" => for {
+      feats <- IO(features.getIfPropBank.get)
+      argRoleLabels <- feats.mapArgFeats(feats.argRoleLabels.data)(_.toString).get
+    } yield Some(argRoleLabels.asInstanceOf[VerbType => ArgumentId[Arg] => String])
+    case "gold_wsense+noise" => for {
+      feats <- IO(features.getIfPropBank.get)
+      argRoleLabels <- feats.argRoleLabels.data.get
+      labelCounts <- getBaselineLabelCounts(
+        args.asInstanceOf[Map[String, Set[ArgumentId[Arg]]]], argRoleLabels
+      )
+    } yield {
+      val drawLabel = makeDrawer(labelCounts)
+      Some(
+        argRoleLabels.andThen(
+          _.andThen(label =>
+            if(scala.util.Random.nextDouble > 0.9) label.copy(role = drawLabel().role).toString else label.toString
+          )
+        ).asInstanceOf[VerbType => ArgumentId[Arg] => String]
+      )
+    }
+    case "random" => IO(None)
+    case _ => ??? // should never happen
+  }
+
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -48,27 +126,14 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       allVerbArgSets <- features.verbArgSets.get
       allArgs <- features.args.get
-      argSyntacticFunctionsOpt <- {
-        if(setting == "syntf+") features.argSyntacticFunctionsConverted.get.map(Some(_))
-        else if(setting == "syntf") features.argSyntacticFunctions.get.map(Some(_))
-        else if(setting == "random") IO.pure(None)
-        else ??? // should never happen
-      }
-      syntFuncCountsOpt <- argSyntacticFunctionsOpt.traverse(argSyntacticFunctions =>
-        allArgs.toList.infoBarFoldMapM("Counting syntactic functions") { case (verbType, argIds) =>
-          IO(
-            argIds.toList.foldMap(argId =>
-              Map(argSyntacticFunctions(verbType)(argId) -> 1)
-            )
-          )
-        }
-      )
+      baselineLabelsOpt <- getBaselineLabels(allArgs, features)
+      baselineLabelCountsOpt <- baselineLabelsOpt.traverse(getBaselineLabelCounts(allArgs, _))
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
         Log.info(features.renderVerbType(verbType)) >> {
-          val getOrderedVerbSets = (argSyntacticFunctionsOpt, syntFuncCountsOpt).mapN { (argSyntacticFunctions, syntFuncCounts) =>
-            val argSyntFuncsForVerb = argSyntacticFunctions(verbType)
-            (argIds: Set[ArgumentId[Arg]]) => argIds.groupBy(argSyntFuncsForVerb)
-              .toVector.sortBy(p => syntFuncCounts(p._1)).map(_._2)
+          val getOrderedVerbSets = (baselineLabelsOpt, baselineLabelCountsOpt).mapN { (baselineLabels, baselineLabelCounts) =>
+            val baselineLabelsForVerb = baselineLabels(verbType)
+            (argIds: Set[ArgumentId[Arg]]) => argIds.groupBy(baselineLabelsForVerb)
+              .toVector.sortBy(p => baselineLabelCounts(p._1)).map(_._2)
           }.getOrElse {
             // random baseline
             (argIds: Set[ArgumentId[Arg]]) => scala.util.Random.shuffle(
@@ -95,7 +160,10 @@ object BaselineArgumentModel {
   // too lazy for proper parser combinators
   // TODO add better error reporting
   def fromString(x: String): Option[BaselineArgumentModel] = x match {
-    case x @ ("syntf" | "syntf+" | "random") => Some(BaselineArgumentModel(x))
+    case x @ (
+      "syntf" | "syntf+" | "random"
+        | "gold_nosense" | "gold_nosense+noise"
+        | "gold_wsense" | "gold_wsense+noise") => Some(BaselineArgumentModel(x))
     case _ => None
   }
   def toString(model: BaselineArgumentModel): String = {

@@ -46,10 +46,23 @@ object Evaluation {
     ).get
   }
 
+  def getLeafClusteringConf[A](
+    goldLabelTree: MergeTree[Map[A, Int]],
+    metric: ClusterPRMetric
+  ): ConfStatsPoint = {
+    val goldClusterSizes = goldLabelTree.unorderedFold
+    val clusters = goldLabelTree.valuesWithLosses
+    val loss = clusters.foldMap(_._1)
+    val clusterSizes = clusters.map(_._2.unorderedFold)
+    val weightedPR = metric(goldClusterSizes, clusters.map(_._2))
+    ConfStatsPoint(loss, clusterSizes, weightedPR)
+  }
+
   def getAllPRStats[VerbType, InstanceId, GoldLabel](
     trees: Map[VerbType, MergeTree[Set[InstanceId]]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
-    metric: ClusterPRMetric)(
+    metric: ClusterPRMetric,
+    maxClustersOnly: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = trees.toList
     .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, tree) =>
@@ -58,7 +71,11 @@ object Evaluation {
         val goldCountTree = tree.map(
           _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
         )
-        verbType -> getAllClusteringConfs(goldCountTree, metric)
+        verbType -> {
+          // we only consider default clustering of gold-derived models
+          if(maxClustersOnly) NonEmptyList.of(getLeafClusteringConf(goldCountTree, metric))
+          else getAllClusteringConfs(goldCountTree, metric)
+        }
       }
     }.map(_.toMap)
 
@@ -111,7 +128,7 @@ object Evaluation {
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ) = {
     Log.infoBranch(s"Calculating metrics (${metric.name})") {
-      getAllPRStats(argTrees, getGoldLabel, metric) >>= (allStats =>
+      getAllPRStats(argTrees, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
         for {
           resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
           _ <- Plotting.plotAllStatsVerbwise(
@@ -163,7 +180,7 @@ object Evaluation {
   ): IO[Unit] = {
     for {
       tunedStatsByModel <- models.toList.infoBarTraverse("Getting tuned P/R curves for models") { case (model, (argTrees, tuningSpec)) =>
-        Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric)
+        Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric, model.startsWith("gold"))
           .flatMap(tuningSpec.run(_))
           .map(model -> _)
       }.map(_.toMap)
@@ -188,7 +205,7 @@ object Evaluation {
       _ <- IO.pure(!includeOracle).ifM(
         IO.unit, for {
           oracleStatsByModel <- models.toList.infoBarTraverse("Getting oracle P/R curves for models") { case (model, (argTrees, _)) =>
-            Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric)
+            Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric, model.startsWith("gold"))
               .flatMap(SplitTuningSpec(OracleCriterion).run(_))
               .map(model -> _)
           }.map(_.toMap)

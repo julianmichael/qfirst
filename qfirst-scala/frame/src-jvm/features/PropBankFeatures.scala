@@ -58,7 +58,9 @@ abstract class PropBankFeatures[Arg](
 case class PropBankRoleLabel(
   framesetId: String,
   role: String
-)
+) {
+  override def toString = s"$framesetId.$role"
+}
 object PropBankRoleLabel {
 
   // the pred itself, discourse markers, negations, and auxiliaries we don't care about
