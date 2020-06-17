@@ -3,11 +3,13 @@ package qfirst.ontonotes
 import cats.data.NonEmptyList
 import cats.implicits._
 
+import io.circe.generic.JsonCodec
+
 import jjm.ling.{HasIndex, ESpan}
 import jjm.implicits._
 
 /** Represents a syntax tree. */
-sealed trait SyntaxTree[Word] {
+@JsonCodec sealed trait SyntaxTree[Word] {
   final def cata[A](leaf: Word => A)(node: (String, NonEmptyList[A]) => A): A = this match {
     case SyntaxTreeLeaf(word) => leaf(word)
     case SyntaxTreeNode(label, children) => node(label, children.map(_.cata(leaf)(node)))
@@ -59,7 +61,7 @@ sealed trait SyntaxTree[Word] {
   * @param label the nonterminal symbol of this node
   * @param this node's children
   */
-case class SyntaxTreeNode[Word](
+@JsonCodec case class SyntaxTreeNode[Word](
   label: String,
   children: NonEmptyList[SyntaxTree[Word]]
 ) extends SyntaxTree[Word] {
@@ -74,7 +76,7 @@ case class SyntaxTreeNode[Word](
   *
   * @param word the word at this node
   */
-case class SyntaxTreeLeaf[Word](
+@JsonCodec case class SyntaxTreeLeaf[Word](
   word: Word
 ) extends SyntaxTree[Word] {
   // override def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String = {

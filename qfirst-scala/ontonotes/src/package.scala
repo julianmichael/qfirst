@@ -11,6 +11,31 @@ package object ontonotes {
     }
   }
 
+  // TODO maybe can replace this with auto-derivations from shapeless? not sure
+  import io.circe.{Encoder, Decoder}
+  import io.circe.Json
+  import io.circe.syntax._
+  import jjm.implicits._
+
+  implicit val conllTokenEncoder: Encoder[CoNLLToken] = {
+    Encoder.instance[CoNLLToken](t =>
+      Json.obj(
+        "index" := t.index,
+        "pos" := t.pos,
+        "token" := t.token
+      )
+    )
+  }
+  implicit val conllTokenDecoder: Decoder[CoNLLToken] = {
+    Decoder.instance(c =>
+      for {
+        index <- c.downField("index").as[Int]
+        pos <- c.downField("pos").as[String]
+        token <- c.downField("token").as[String]
+      } yield CoNLLToken(index = index, pos = pos, token = token)
+    )
+  }
+
   // import jjm._
   // def memoizeDotKleisliIO[F[_], A <: Dot](
   //   dotKleisli: DotKleisli[IO, A],

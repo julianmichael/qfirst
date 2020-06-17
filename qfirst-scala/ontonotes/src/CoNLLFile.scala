@@ -1,11 +1,13 @@
 package qfirst.ontonotes
 
+import io.circe.generic.JsonCodec
+
 /** Represents a single CoNLL annotation file.
   *
   * @param id the unique ID of the file, present on its first line
   * @param sentences all of the sentences in the annotation file
   */
-case class CoNLLFile(
+@JsonCodec case class CoNLLFile(
   path: CoNLLPath,
   sentences: Vector[CoNLLSentence]
 )
@@ -17,7 +19,7 @@ case class CoNLLFile(
   * I believe coref spans are already implemented in the coref annotation project;
   * if necessary ask me (Julian) and I can put them in.
   */
-case class CoNLLSentence(
+@JsonCodec case class CoNLLSentence(
   path: CoNLLSentencePath,
   partNum: Int,
   tokens: List[CoNLLToken],
@@ -30,7 +32,7 @@ case class CoNLLSentence(
 }
 object CoNLLSentence
 
-case class CoNLLPath(
+@JsonCodec case class CoNLLPath(
   split: String, // development, train
   language: String, // arabic, chinese, english
   domain: String, // depends on language; e.g., nw, bc, wb
@@ -65,7 +67,7 @@ object CoNLLPath {
   * @param filePath the path to the CoNLL file containing this sentence
   * @param sentenceNum the index of this sentence in the document
   */
-case class CoNLLSentencePath(
+@JsonCodec case class CoNLLSentencePath(
   filePath: CoNLLPath,
   sentenceNum: Int
 ) {
