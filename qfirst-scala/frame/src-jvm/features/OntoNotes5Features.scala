@@ -71,7 +71,14 @@ class OntoNotes5Features(
           NonMergingMap(file.sentences.map(s => s.path.toString -> s).toMap)
         }
       }
-    }.toCell("Raw PropBank dataset")
+    }.toFileCachedCell(
+      "Raw PropBank dataset",
+      getCachePath = split => cacheDir.map(_.resolve(s"dataset/$split.jsonl.gz")).flatTap(createDir))(
+      read = path => FileUtil.readJsonLines[(String, CoNLLSentence)](path)
+        .infoCompile(s"Reading flattened OntoNotes dataset (${path.getFileName})")(_.toList)
+        .map(l => NonMergingMap(l.toMap)),
+      write = (path, data) => FileUtil.writeJsonLines(path)(data.value.toList)
+    )
 
   val verbSenseAndArgs: CachedVerbFeats[(String, Map[ESpan, String])] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
