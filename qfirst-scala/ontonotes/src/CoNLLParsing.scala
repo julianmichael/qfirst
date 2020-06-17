@@ -117,6 +117,7 @@ object CoNLLParsing {
       if !predicateLemma.equals("-")
       framesetId = arr(7)
       if !framesetId.equals("-")
+      predicatePos = arr(4)
       head = words(index)
     } yield Predicate(head.index, predicateLemma, framesetId)
 

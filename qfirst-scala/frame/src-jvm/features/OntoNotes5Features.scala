@@ -64,13 +64,27 @@ class OntoNotes5Features(
     spec => fullIndex.get.map(_.filter(_.split == spec))
   ).toCell("OntoNotes Index")
 
-  val dataset: RunDataCell[Map[String, NonMergingMap[VerbId, (String, Map[ESpan, String])]]] = RunData.strings.zip(index.data)
+  val rawDataset: RunDataCell[NonMergingMap[String, CoNLLSentence]] = RunData.strings.zip(index.data)
+    .flatMap { case (split, filePaths) =>
+      filePaths.infoBarFoldMapM(s"Reading PropBank files to construct instances ($split)") { path =>
+        Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
+          NonMergingMap(file.sentences.map(s => s.path.toString -> s).toMap)
+        }
+      }
+    }.toCell("Raw PropBank dataset")
+
+  val verbSenseAndArgs: CachedVerbFeats[(String, Map[ESpan, String])] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
       filePaths.infoBarFoldMapM(s"Reading PropBank files to construct instances ($split)") { path =>
         Log.trace(path.suffix) >> ontonotesService.getFile(path).map { file =>
           file.sentences.foldMap { sentence =>
             val sentenceId = sentence.path.toString
-            sentence.predicateArgumentStructures.foldMap { pas =>
+            sentence.predicateArgumentStructures
+              .filter(pas =>
+                jjm.ling.en.PTBPosTags.verbs.contains(
+                  sentence.tokens(pas.predicate.index).pos
+                )) // keep only verbal predicates
+              .foldMap { pas =>
               val verbLemma = pas.predicate.lemma
               val verbSense = s"$verbLemma.${pas.predicate.sense}"
               val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
@@ -86,7 +100,7 @@ class OntoNotes5Features(
           }
         }
       }
-    }.toCell("PropBank dataset")
+    }.toCell("PropBank verb senses and args")
 
   // TODO: fill this in after adding sense information to `dataset`
   override def verbSenseLabels = ???
@@ -101,7 +115,7 @@ class OntoNotes5Features(
       }
     ).toCell("Sentence index")
 
-  override val verbArgSets = dataset.data.map(
+  override val verbArgSets = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.map { case (verbId, (_, labels)) =>
         verbId -> labels.keySet
@@ -130,7 +144,7 @@ class OntoNotes5Features(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: ArgFeats[Map[ESpan, Double]] = dataset.data.map(
+  override val argSpans: ArgFeats[Map[ESpan, Double]] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -148,7 +162,7 @@ class OntoNotes5Features(
 
   override def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
 
-  override def argRoleLabels: CachedArgFeats[PropBankRoleLabel] = dataset.data.map(
+  override def argRoleLabels: CachedArgFeats[PropBankRoleLabel] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
