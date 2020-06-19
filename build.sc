@@ -289,7 +289,7 @@ object qfirst extends Module {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm, conll05.jvm)
 
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
@@ -372,6 +372,21 @@ object qfirst extends Module {
     }
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(metrics.jvm, `clause-ext`.js)
+    }
+  }
+
+  object conll05 extends Module {
+    object js extends JsModule {
+      def moduleDeps = Seq(freelog.js)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
+    }
+    object jvm extends JvmModule {
+      def moduleDeps = Seq(freelog.jvm)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
     }
   }
 
