@@ -292,7 +292,7 @@ object qfirst extends Module {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm, conll05.jvm, ptb2.jvm, propbank1.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, datasets.jvm)
 
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
@@ -373,41 +373,7 @@ object qfirst extends Module {
     }
   }
 
-  object conll05 extends Module {
-    object js extends JsModule {
-      def moduleDeps = Seq(freelog.js)
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-    }
-    object jvm extends JvmModule {
-      def moduleDeps = Seq(freelog.jvm)
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-    }
-  }
-
-  // TODO combine datasets in a single module
-  // object datasets extends Module {
-  //   object js extends JsModule {
-  //     def moduleDeps = Seq(freelog.js)
-  //   }
-  //   object jvm extends JvmModule {
-  //     def moduleDeps = Seq(freelog.jvm)
-  //   }
-  // }
-
-  object conll08 extends Module {
-    object js extends JsModule {
-      def moduleDeps = Seq(freelog.js)
-    }
-    object jvm extends JvmModule {
-      def moduleDeps = Seq(freelog.jvm)
-    }
-  }
-
-  object ptb2 extends Module {
+  object datasets extends Module {
     object js extends JsModule {
       // def moduleDeps = Seq(freelog.js)
       override def ivyDeps = super.ivyDeps() ++ Agg(
@@ -417,34 +383,13 @@ object qfirst extends Module {
     object jvm extends JvmModule {
       // def moduleDeps = Seq(freelog.jvm)
       override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-    }
-  }
-
-  object propbank1 extends Module {
-    object js extends JsModule {
-      def moduleDeps = Seq(ptb2.js)
-    }
-    object jvm extends JvmModule {
-      def moduleDeps = Seq(ptb2.jvm)
-    }
-  }
-
-  object ontonotes extends Module {
-    object js extends JsModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-    }
-    object jvm extends JvmModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
+        // TODO remove macmemo
         ivy"com.softwaremill.macmemo::macros::$macmemoVersion",
         ivy"com.lihaoyi::fastparse::$fastparseVersion"
       )
       object test extends Tests {
         def moduleDeps = super.moduleDeps ++ Seq(freelog.jvm)
-        override def millSourcePath = ontonotes.this.millSourcePath / "test"
+        override def millSourcePath = datasets.this.millSourcePath / "test"
         override def scalaVersion = jvm.this.scalaVersion
         // def platformSegment = jvm.this.platformSegment
         override def ivyDeps = Agg(

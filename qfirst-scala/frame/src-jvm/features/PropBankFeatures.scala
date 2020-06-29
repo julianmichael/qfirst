@@ -70,7 +70,7 @@ object PropBankRoleLabel {
       l == "rel"// || l == "Support"
   }
 
-  import qfirst.ontonotes.Predicate
+  import qfirst.datasets.ontonotes.Predicate
 
   def isArgRelevant(pred: Predicate, roleLabel: String, argSpan: ESpan) =
     !roleLabelIsIrrelevant(roleLabel) &&

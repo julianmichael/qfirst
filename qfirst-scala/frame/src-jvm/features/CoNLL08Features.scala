@@ -38,7 +38,7 @@ class CoNLL08Features(
   Log: EphemeralTreeLogger[IO, String]
 ) extends PropBankFeatures[Int](mode, assumeGoldVerbSense)(cs, Log) {
 
-  import qfirst.conll08._
+  import qfirst.datasets.conll08._
 
   override val rootDir = Paths.get("frame-induction/conll08")
 
@@ -217,7 +217,7 @@ class CoNLL08Features(
   }
 
   val argSyntacticFunctionsConverted: CachedArgFeats[String] = {
-    import qfirst.conll08.HasLemma.ops._
+    import qfirst.datasets.conll08.HasLemma.ops._
     cacheArgFeats("CoNLL 2008 converted argument syntactic functions")(
       dataset.data.map { data =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
@@ -385,7 +385,7 @@ class CoNLL08Features(
   //   }
   // }.flatMap(x => x)
 
-  import qfirst.conll05
+  import qfirst.datasets.conll05
 
   val conll05Path = Paths.get("data/conll05st-release")
 
@@ -411,8 +411,8 @@ class CoNLL08Features(
     ).toCell("CoNLL 2005 Sentences")
   }
 
-  import qfirst.ptb2
-  import qfirst.propbank1
+  import qfirst.datasets.ptb2
+  import qfirst.datasets.propbank1
 
   val ptb2Path = Paths.get("data/treebank2")
 

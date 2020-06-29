@@ -43,7 +43,7 @@ class OntoNotes5Features(
   Log: EphemeralTreeLogger[IO, String]
 ) extends PropBankFeatures[ESpan](mode, assumeGoldVerbSense)(cs, Log) {
 
-  import qfirst.ontonotes._
+  import qfirst.datasets.ontonotes._
 
   override val rootDir = Paths.get("frame-induction/ontonotes5")
 
