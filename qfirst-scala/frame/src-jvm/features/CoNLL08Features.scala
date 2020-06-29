@@ -9,6 +9,7 @@ import qfirst.frame.util.VectorFileUtil
 import java.nio.file._
 
 import jjm.ling.ESpan
+import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 import jjm.io.FileUtil
@@ -287,7 +288,443 @@ class CoNLL08Features(
 
   override def argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = ???
 
-  override def argSpans: ArgFeats[Map[ESpan, Double]] = ???
+  // lazy val ontonotesFeatures = new OntoNotes5Features(mode, assumeGoldVerbSense)
+
+  // lazy val ontonotesAllData = new Cell(
+  //   "All OntoNotes raw data",
+  //   ontonotesFeatures.rawDataset.all.map(_.combineAll)
+  // )
+
+  // // val ontonotesWsjData: RunDataCell[NonMergingMap[String, CoNLLSentence]] =
+  // val ontonotesWsjData = RunData.strings.zip(ontonotesFeatures.index.data)
+  //   .flatMap { case (split, filePaths) =>
+  //     filePaths
+  //       .filter(_.source == "wsj")
+  //       .infoBarFoldMapM(s"Reading WSJ files from OntoNotes ($split)") { path =>
+  //         Log.trace(path.suffix) >> ontonotesFeatures.ontonotesService.getFile(path).map { file =>
+  //           NonMergingMap(file.sentences.map(s => s.path.toString -> s).toMap)
+  //         }
+  //       }
+  //   }.toCell("OntoNotes WSJ data")
+
+  // // simple unigram-based index
+  // lazy val ontonotesSentenceIndex = new Cell(
+  //   "OntoNotes sentence index", {
+  //     ontonotesWsjData.get.map(
+  //       _.value.toList.foldMap { case (sid, sentence) =>
+  //         sentence.tokens.map(_.token.lowerCase).toSet.toList.foldMap { token =>
+  //           Map(token -> Map(sid -> 1))
+  //         }
+  //       }
+  //     )
+  //   }
+  // )
+
+  // // simple unigram-based index
+  // lazy val ontonotesSentenceIndices = ontonotesWsjData.data.map(
+  //   _.value.toList.foldMap { case (sid, sentence) =>
+  //     sentence.tokens.map(_.token.lowerCase).toSet.toList.foldMap { token =>
+  //       Map(token -> Map(sid -> 1))
+  //     }
+  //   }
+  // ).toCell("OntoNotes sentence index")
+
+  // // try and figure out how the sentences line up with each other.
+
+
+  // // TODO check if there are any bad ones, and if not, change to FileCachedCell of RunData
+  // lazy val ontonotesSentenceAlignments = (
+  //   dataset.data, ontonotesWsjData.data, ontonotesSentenceIndices.data
+  // ).mapN { (data, ontonotes, ontonotesIndex) =>
+  //   var numAligned = 0
+  //   var numTotal = 0
+  //   var numMismatched = 0
+  //   data.value.toList.infoBarFoldMapM("Aligning sentences") { case (sid, sentence) =>
+  //     Log.trace(f"""Aligned: $numAligned%d (${numAligned * 100.0 / numTotal}%.2f%%)
+  //                    |Mismatched: $numMismatched%d (${numMismatched * 100.0 / numTotal}%.2f%%)
+  //                    |Total: $numTotal%d
+  //                    |""".trim.stripMargin
+  //     ) >> IO {
+  //       val matchedOntonotesPaths = sentence.tokens.foldMap(tok =>
+  //         ontonotesIndex.get(tok.token.lowerCase).combineAll
+  //       ).toVector.sortBy(-_._2).take(5)
+
+  //       val sentText = Text.render(sentence.tokens)
+  //       val topPath = matchedOntonotesPaths.head._1
+  //       val topSentText = Text.render(ontonotes(topPath).tokens)
+
+  //       numTotal += 1
+  //       if(topSentText == sentText) {
+  //         numAligned += 1
+  //         if(Set("train", "dev", "test").exists(split => sid.contains(split) && !topPath.contains(split))) {
+  //           numMismatched += 1
+  //           System.err.println("\nSPLIT MISMATCH FOR MATCHING TEXT!")
+  //           System.err.println(sid)
+  //           System.err.println(topPath)
+  //           matchedOntonotesPaths.foreach { case (path, count) =>
+  //             System.err.println(s"$count: $path")
+  //             val ontonotesSentence = ontonotes(path)
+  //             System.err.println(Text.render(ontonotesSentence.tokens))
+  //           }
+  //         }
+  //         System.err.print(".")
+  //         NonMergingMap(sid -> topPath)
+  //       } else {
+  //         System.err.println("\n==========")
+  //         System.err.println(sid)
+  //         System.err.println(Text.render(sentence.tokens))
+  //         matchedOntonotesPaths.foreach { case (path, count) =>
+  //           System.err.println(s"$count: $path")
+  //           val ontonotesSentence = ontonotes(path)
+  //           System.err.println(Text.render(ontonotesSentence.tokens))
+  //         }
+  //         System.err.println()
+  //         NonMergingMap(Map[String, String]())
+  //       }
+  //     }
+  //   }
+  // }.flatMap(x => x)
+
+  import qfirst.conll05
+
+  val conll05Path = Paths.get("data/conll05st-release")
+
+  val conll05Splits = {
+    import conll05.CoNLL05Split._
+    RunData(
+      train = IO.pure(Train),
+      dev = IO.pure(Dev),
+      test = IO.pure(TestWSJ)
+    )
+  }
+
+  lazy val conll05Sentences: RunDataCell[NonMergingMap[String, conll05.CoNLL05Sentence]] = {
+    import conll05._
+    import scala.concurrent.ExecutionContext.Implicits.global
+    val service = new CoNLL05FileSystemService(conll05Path)
+    conll05Splits.flatMap(split =>
+      service.streamSentences[IO](split)
+        .map(s => s.id.toString -> s)
+        .infoCompile("Reading CoNLL 2005 sentences")(
+          _.toList.map(l => NonMergingMap(l.toMap))
+        )
+    ).toCell("CoNLL 2005 Sentences")
+  }
+
+  import qfirst.ptb2
+  import qfirst.propbank1
+
+  val ptb2Path = Paths.get("data/treebank2")
+
+  lazy val ptb2Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, ptb2.PTB2Sentence]] = new Cell(
+    "PTB2 sentences", {
+      val service = new ptb2.PTB2FileSystemService(ptb2Path)
+      import scala.concurrent.ExecutionContext.Implicits.global
+      service.streamFiles[IO]
+        .evalMap(f => Log.trace(f.path.toString).as(f))
+        .flatMap(f => Stream.emits[IO, ptb2.PTB2Sentence](f.sentences))
+        .map(s => NonMergingMap(s.id -> s))
+        .infoCompile("Reading Penn Treebank sentences")(_.foldMonoid)
+    }
+  )
+
+  lazy val ptb2TextIndex = new Cell(
+    "PTB2 sentence index", {
+      ptb2Sentences.get.map(
+        _.value.toList.foldMap { case (sid, sentence) =>
+          Map(Text.render(sentence.tokens.filter(_.pos != "-NONE-")) -> Set(sid))
+        }
+      )
+    }
+  )
+
+  // lazy val ptb2SentenceIndex = new Cell(
+  //   "PTB2 sentence index", {
+  //     ptb2Sentences.get.map(
+  //       _.value.toList.foldMap { case (sid, sentence) =>
+  //         sentence.tokens.map(_.token.lowerCase).toSet.toList.foldMap { token =>
+  //           Map(token -> Map(sid -> 1))
+  //         }
+  //       }
+  //     )
+  //   }
+  // )
+
+  lazy val conllToPTB2SentenceAlignments: Cell[NonMergingMap[String, ptb2.PTB2SentenceId]] = new Cell(
+    "CoNLL 2008 to PTB 2 sentence alignments",
+    cacheDir.map(_.resolve("ptb-alignments.jsonl.gz")) >>= (cachePath =>
+      FileCached.get[NonMergingMap[String, ptb2.PTB2SentenceId]](
+        "CoNLL 2008 to PTB 2 sentence alignments")(
+        path = cachePath,
+        read = path => FileUtil
+          .readJsonLines[(String, ptb2.PTB2SentenceId)](path)
+          .infoCompile("Reading alignment pairs")(_.toList.map(ls => NonMergingMap(ls.toMap))),
+        write = (path, alignments) => FileUtil
+          .writeJsonLines[(String, ptb2.PTB2SentenceId)](path)(alignments.value.toList))(
+        for {
+          ptbSentences <- ptb2Sentences.get
+          // ptbIndex <- ptb2SentenceIndex.get
+          ptbTextIndex <- ptb2TextIndex.get
+          conllSentences <- dataset.data.all.map(_.combineAll)
+          alignments <- conllSentences.value.toList.infoBarTraverse("Aligning CoNLL sentences") { case (sid, sentence) =>
+
+            val collapsedTokens = sentence.tokens.zipWithIndex.foldLeft("") {
+              case (str, (next, idx)) => {
+                if(sentence.paddingIndices.contains(idx)) str + next.token
+                else str + " " + next.token
+              }
+            }.trim.split(" ").toList
+            val sentText = Text.render(collapsedTokens)
+
+            val textMatches = ptbTextIndex.getOrElse(sentText, Set.empty[ptb2.PTB2SentenceId])
+
+            val alignment = if(textMatches.size >= 1) {
+              // if(textMatches.size > 1) {
+              //   System.err.println("\n===== Multiple matches! =====")
+              //   System.err.println(sentText)
+              //   textMatches.foreach(System.err.println)
+              // }
+              sid -> textMatches.head
+            } else {
+              // val softMatches = sentence.tokens.foldMap(tok =>
+              //   ptbIndex.get(tok.token.lowerCase).combineAll
+              // ).toVector.sortBy(-_._2).take(5)
+              // val topPath = softMatches.head._1
+
+              System.err.println("\n===== NO TEXT MATCH! =====")
+              System.err.println(sid)
+              System.err.println(sentText)
+              System.err.println(Text.render(sentence.tokens))
+              // softMatches.foreach { case (path, count) =>
+              //   System.err.println(s"$count: $path")
+              //   val ptbSentence = ptbSentences(path)
+              //   System.err.println(Text.render(ptbSentence.tokens.filter(_.pos != "-NONE-")))
+              //   System.err.println(Text.render(ptbSentence.tokens.map(t => s"${t.token}#${t.pos}")))
+              // }
+              System.err.println()
+
+              ???
+              // sid -> topPath
+            }
+
+            Log.trace(f"${alignment._1}%-15s -> ${alignment._2}%s") >> IO.pure(alignment)
+          }
+        } yield NonMergingMap(alignments.toMap)
+      )
+    )
+  )
+
+  val propbank1Path = Paths.get("data/propbank_1")
+
+  lazy val propbank1Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, propbank1.PropBank1Sentence]] = new Cell("PropBank 1 sentences", {
+    val service = new propbank1.PropBank1FileSystemService(propbank1Path)
+    import scala.concurrent.ExecutionContext.Implicits.global
+    service.streamSentences[IO]
+      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
+      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
+  })
+
+  // lazy val conllCalculatedSpans: Cell[NonMergingMap[String, ]]
+
+  // def recalculatePAStructures(
+  //   ptbSentence: ptb2.SyntaxTree,
+  //   propBankSentence: propbank1.PropBank1Sentence,
+  //   conll08Sentence: CoNLL08Sentence
+  // ): 
+
+  override def setup = propbank1Sentences.get.void
+  // override def setup = conllToPTB2SentenceAlignments.get >> argSpans.dev >> super.setup
+  // ontonotesSentenceAlignments.dev.flatMap { (sentAlignments: NonMergingMap[String, String]) =>
+  //   dataset.data.dev >>= { data =>
+  //     Log.warn(s"Number of sentences: ${data.value.size}") >>
+  //       Log.warn(s"Number of aligned sentences: ${sentAlignments.value.size}")
+  //   }
+  // } >> super.setup
+
+  override lazy val argSpans: ArgFeats[Map[ESpan, Double]] = {
+
+    cacheArgFeats("CoNLL 2008 arg spans extracted from CoNLL 2005")(
+      (dataset.data, conll05Sentences.data, argRoleLabels.data).mapN { (data, props, argRoleLabels) =>
+        for {
+          ptb2Sentences <- ptb2Sentences.get
+          propbank1Sentences <- propbank1Sentences.get
+          conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
+        } yield (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentenceId = argId.verbId.sentenceId
+          val verbIndex = argId.verbId.verbIndex
+          val argIndex = argId.argument
+          val sentence = data(sentenceId)
+          val paddingIndices = sentence.paddingIndices
+
+          val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
+          val ptbSent = ptb2Sentences(ptbSid)
+          val propbankSent = propbank1Sentences(ptbSid)
+
+          // val recalculatedPAStructures = 
+
+          System.err.println(sentenceId)
+          System.err.println(Text.render(sentence.tokens))
+          System.err.println(sentence.tokens.size)
+          System.err.println(verbIndex + s" (${sentence.tokens(verbIndex).token})")
+          System.err.println(argIndex + s"(${sentence.tokens(argIndex).token})")
+
+          props(sentenceId).predicateArgumentStructures.foreach(System.err.println)
+
+          val indexRemapping = (0 to sentence.tokens.size).foldLeft(List.empty[Int]) {
+            case (Nil, i) => i :: Nil
+            case (prev :: rest, i) =>
+              if(paddingIndices.contains(i)) prev :: prev :: rest
+              else (prev + 1) :: prev :: rest
+          }.reverse.toVector
+          val span = props(sentenceId)
+            .predicateArgumentStructures(indexRemapping(verbIndex))
+            .arguments.map { case (_, span) =>
+              val newBegin = indexRemapping(span.begin)
+              val newEnd = indexRemapping(span.end)
+              ESpan(newBegin, newEnd)
+            }.find(_.contains(argIndex)).get
+
+          // TODO fix printing code to verify sentence matching, span matching, and span index correction
+
+          System.err.println("\n" + sentenceId)
+          System.err.println(Text.render(sentence.tokens))
+          System.err.println(s"PREDICATE: ${sentence.tokens(verbIndex).token} ($verbIndex)")
+          val roleLabel = argRoleLabels(verbType)(argId).role
+          System.err.println(s"$roleLabel: ${sentence.tokens(argId.argument).token}")
+          System.err.println(Text.renderSpan(sentence.tokens, span))
+
+          // System.err.println(s"Other args: $otherArgsString")
+          // System.err.println(s"Contains another argument? " + (if(containsAnotherArg) "YES" else "NO"))
+          // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan))
+          // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan2))
+
+          Map(span -> 1.0)
+        }
+      }.flatMap(x => x)
+    ).data
+
+    // cacheArgFeats("CoNLL 2008 arg spans borrowed from OntoNotes")(
+    //   dataset.data.zip(RunData.splits).flatMap { case (data, split) =>
+    //     (ontonotesAllData.get, ontonotesSentenceIndex.get).mapN { (ontonotes, ontonotesIndex) =>
+    //     // (ontonotesFeatures.rawDataset(split), ontonotesSentenceIndices(split)).mapN { (ontonotes, ontonotesIndex) =>
+    //       (verbType: String) => (argId: ArgumentId[Int]) => {
+    //         val argIndex = argId.argument
+    //         val sid = argId.verbId.sentenceId
+    //         val sentence = data(sid)
+    //         val matchedOntonotesPaths = sentence.tokens.foldMap(tok =>
+    //           ontonotesIndex.get(tok.token.lowerCase).combineAll
+    //         ).toVector.sortBy(-_._2).take(5)
+
+    //         val sentText = Text.render(sentence.tokens)
+    //         val topPath = matchedOntonotesPaths.head._1
+    //         val topSentText = Text.render(ontonotes(topPath).tokens)
+
+    //         if(topSentText == sentText) {
+    //           System.err.print(".")
+    //         } else {
+    //           System.err.println("\n==========")
+    //           System.err.println(sid)
+    //           System.err.println(Text.render(sentence.tokens))
+    //           matchedOntonotesPaths.foreach { case (path, count) =>
+    //             System.err.println(s"$count: $path")
+    //             val ontonotesSentence = ontonotes(path)
+    //             System.err.println(Text.render(ontonotesSentence.tokens))
+    //           }
+    //           System.err.println()
+    //         }
+
+
+    //         Map(ESpan(0, 1) -> 1.0) // XXX
+    //       }
+    //     }
+    //   }
+    // ).data
+
+    // cacheArgFeats("CoNLL 2008 inferred arg spans")(
+    //   dataset.data.zip(argRoleLabels.data).map { case (data, roleLabels) =>
+    //     (verbType: String) => (argId: ArgumentId[Int]) => {
+
+    //       val argIndex = argId.argument
+    //       val sid = argId.verbId.sentenceId
+    //       val sentence = data(sid)
+    //       val dependencies = sentence.childToParentDependencies
+    //       val parentToChildren = dependencies.map(_._2).zipWithIndex
+    //         .foldMap { case (parent, child) => Map(parent -> Set(child)) }
+
+    //       @tailrec def closureSpan(fibers: Map[Int, Set[Int]], curSet: Set[Int]): ESpan = {
+    //         val nextSet = curSet
+    //           .unorderedFoldMap(i => fibers.get(i).combineAll)
+    //           .union(curSet)
+    //         if(curSet == nextSet) ESpan(curSet.min, curSet.max + 1)
+    //         else closureSpan(fibers, nextSet)
+    //       }
+    //       val span = closureSpan(parentToChildren, Set(argId.argument))
+
+    //       val otherArgIndices = sentence.predicateArgumentStructures
+    //         .find(_.predicate.index == argId.verbId.verbIndex).get
+    //         .arguments.map(_._2).filter(_ != argId.argument).toSet
+    //       val otherArgsString = otherArgIndices.toList.sorted
+    //         .map(i => s"${sentence.tokens(i).token} ($i)").mkString(", ")
+    //       val containsAnotherArg = otherArgIndices.exists(span.contains)
+
+    //       val verbIndex = argId.verbId.verbIndex
+    //       val immediateBlockedIndices = otherArgIndices + verbIndex
+
+    //       def followVerbChain(i: Int): Set[Int] = {
+    //         val (label, parent) = dependencies(i)
+    //         if(parent == argIndex) Set(i) // cut off this path at the base
+    //         else if(label == "VC") followVerbChain(parent) + i // keep going
+    //         else Set(i) // we're done
+    //       }
+
+    //       def followDepChain(i: Int): Set[Int] = {
+    //         val (label, parent) = dependencies(i)
+    //         if(parent == argIndex) Set(i) // cut off this path at the base
+    //         else if(parent == -1) Set(i) // we're done
+    //         else followDepChain(parent) + i // keep going
+    //       }
+
+    //       // go up in the tree a bit, yeeah. this gets us to the "actual" head
+    //       val blockedIndices = immediateBlockedIndices.unorderedFoldMap(followDepChain)
+
+    //       val lowerBound = blockedIndices.filter(_ < argIndex).toList.maximumOption.getOrElse(-1)
+    //       val upperBound = blockedIndices.filter(_ > argIndex).toList.minimumOption.getOrElse(sentence.tokens.size)
+
+    //       @tailrec def cullObsoleteUnaryChains(fibers: Map[Int, Set[Int]]): Map[Int, Set[Int]] = {
+    //         val obsoletes = fibers.toList.filter(_._2.isEmpty).map(_._1).toSet
+    //         if(obsoletes.isEmpty) fibers
+    //         else cullObsoleteUnaryChains(
+    //           fibers.mapVals(_.filterNot(obsoletes.contains)) -- obsoletes
+    //         )
+    //       }
+
+    //       val parentToAdmissibleChildren = parentToChildren.mapVals(_.filter(i => i > lowerBound && i < upperBound))
+    //       val blockedSpan = closureSpan(parentToAdmissibleChildren, Set(argId.argument))
+
+    //       val parentToAdmissibleChildren2 = cullObsoleteUnaryChains(
+    //         parentToAdmissibleChildren
+    //       )
+    //       val blockedSpan2 = closureSpan(parentToAdmissibleChildren2, Set(argId.argument))
+
+    //       if(!sid.startsWith("train") && containsAnotherArg) {
+    //         System.err.println("\n" + sid)
+    //         System.err.println(jjm.ling.Text.render(sentence.tokens))
+    //         System.err.println(s"PREDICATE: ${sentence.tokens(verbIndex).token} ($verbIndex)")
+    //         val roleLabel = roleLabels(verbType)(argId).role
+    //         System.err.println(s"$roleLabel: ${sentence.tokens(argId.argument).token}")
+    //         System.err.println(jjm.ling.Text.renderSpan(sentence.tokens, span))
+
+    //         System.err.println(s"Other args: $otherArgsString")
+    //         System.err.println(s"Contains another argument? " + (if(containsAnotherArg) "YES" else "NO"))
+    //         System.err.println(jjm.ling.Text.renderSpan(sentence.tokens, blockedSpan))
+    //         System.err.println(jjm.ling.Text.renderSpan(sentence.tokens, blockedSpan2))
+    //       }
+
+    //       Map(span -> 1.0)
+    //     }
+    //   }
+    // ).data
+  }
 
   override val argSemanticHeadIndices: ArgFeats[Int] = {
     dataset.data.map { data =>

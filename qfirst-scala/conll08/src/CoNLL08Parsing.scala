@@ -26,6 +26,10 @@ object CoNLL08Parsing {
       )
     )
 
+    val paddingIndices = columns(1).zipWithIndex
+      .filter(_._1 == "_")
+      .map(_._2).toSet
+
     val dependencies = rows.map(f =>
       f(9) -> (f(8).toInt - 1)
     )
@@ -40,7 +44,7 @@ object CoNLL08Parsing {
       Function.tupled(PredicateArgumentStructure(_, _))
     ).toList
 
-    CoNLL08Sentence(id, tokens, dependencies, paStructures)
+    CoNLL08Sentence(id, tokens, paddingIndices, dependencies, paStructures)
   }
 
   /** Reads a CoNLL 2008 file as an iterator over lines. */

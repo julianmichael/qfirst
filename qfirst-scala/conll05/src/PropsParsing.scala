@@ -61,10 +61,11 @@ object PropsParsing {
     allArgsP.parse(s).get.value.runA(0).value
 
   def readSentenceProps(lines: NonEmptyList[String]): List[PredicateArgumentStructure] = {
-    val rows = lines.map(_.split("\t").toVector).toList.toVector
+    val rows = lines.map(_.split("\\s+").toVector).toList.toVector
+
     val columns = rows.transpose
 
-    def getPredLemma(fields: Vector[String]): Option[String] = Option(fields(0)).filter(_ != "_")
+    def getPredLemma(fields: Vector[String]): Option[String] = Option(fields(0)).filter(_ != "-")
 
     val predicates = rows.zipWithIndex.flatMap { case (fields, index) =>
       getPredLemma(fields).map(lemma =>
@@ -86,7 +87,8 @@ object PropsParsing {
   def streamPropsFromLines[F[_]](split: CoNLL05Split): Pipe[F, String, (CoNLL05SentenceId, List[PredicateArgumentStructure])] = lines => {
     lines.groupAdjacentBy(_.trim.nonEmpty)
       .collect { case (isNonEmpty, sentenceLines) if isNonEmpty => NonEmptyList.fromList(sentenceLines.toList).get }
+      .map(readSentenceProps)
       .zipWithIndex
-      .map { case (linesNel, sentenceNum) => CoNLL05SentenceId(split, sentenceNum.toInt) -> readSentenceProps(linesNel) }
+      .map { case (props, sentenceNum) => CoNLL05SentenceId(split, sentenceNum.toInt) -> props }
   }
 }

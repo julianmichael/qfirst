@@ -9,6 +9,9 @@ import shapeless.syntax.singleton._
 import simulacrum._
 import scala.language.implicitConversions
 
+/** Utilities for working with the CoNLL 2008 Shared Task data, found here:
+  * https://catalog.ldc.upenn.edu/LDC2009T12
+  */
 package object conll08 {
 
   import jjm.ling._

@@ -1,6 +1,9 @@
 import mill._, mill.scalalib._, mill.scalalib.publish._, mill.scalajslib._
 import mill.scalalib.scalafmt._
 import coursier.maven.MavenRepository
+
+import $ivy.`com.lihaoyi::mill-contrib-bloop:$MILL_VERSION`
+
 import ammonite.ops._
 
 val thisScalaVersion = "2.12.8"
@@ -289,7 +292,7 @@ object qfirst extends Module {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm, conll05.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, ontonotes.jvm, conll08.jvm, conll05.jvm, ptb2.jvm, propbank1.jvm)
 
       override def repositories = super.repositories ++ Seq(
         coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
@@ -300,11 +303,6 @@ object qfirst extends Module {
         ivy"org.scalanlp::breeze-natives:$breezeVersion",
         ivy"com.cibo::evilplot-repl:$evilplotVersion"
       )
-
-      // def runTopics(args: String*) = T.command {
-      //   val runMain = runMainFn()
-      //   runMain("qfirst.topics.TopicModelingApp", args)
-      // }
     }
   }
 
@@ -390,12 +388,46 @@ object qfirst extends Module {
     }
   }
 
+  // TODO combine datasets in a single module
+  // object datasets extends Module {
+  //   object js extends JsModule {
+  //     def moduleDeps = Seq(freelog.js)
+  //   }
+  //   object jvm extends JvmModule {
+  //     def moduleDeps = Seq(freelog.jvm)
+  //   }
+  // }
+
   object conll08 extends Module {
     object js extends JsModule {
       def moduleDeps = Seq(freelog.js)
     }
     object jvm extends JvmModule {
       def moduleDeps = Seq(freelog.jvm)
+    }
+  }
+
+  object ptb2 extends Module {
+    object js extends JsModule {
+      // def moduleDeps = Seq(freelog.js)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
+    }
+    object jvm extends JvmModule {
+      // def moduleDeps = Seq(freelog.jvm)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::fastparse::$fastparseVersion"
+      )
+    }
+  }
+
+  object propbank1 extends Module {
+    object js extends JsModule {
+      def moduleDeps = Seq(ptb2.js)
+    }
+    object jvm extends JvmModule {
+      def moduleDeps = Seq(ptb2.jvm)
     }
   }
 

@@ -34,6 +34,7 @@ class CoNLL05FileSystemService(rootPath: Path) {
     }
     val predArgSetsBySid = getFilePathsForFeature("props") >>= (filePath =>
       fs2.io.file.readAll[F](filePath, ec, 4096)
+        .through(fs2.compress.gunzip(4096))
         .through(fs2.text.utf8Decode)
         .through(fs2.text.lines)
         .through(PropsParsing.streamPropsFromLines(split))

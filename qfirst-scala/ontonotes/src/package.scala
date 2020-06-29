@@ -2,6 +2,11 @@ package qfirst
 
 import shapeless.{::, HNil}
 
+/** This is for working with CoNLL formatted ontonotes, as found here:
+  * http://cemantix.org/data/ontonotes.html
+  * Or if that doesn't work, here:
+  * https://github.com/yuchenlin/OntoNotes-5.0-NER-BIO/tree/master/conll-formatted-ontonotes-5.0
+  */
 package object ontonotes {
   import jjm.ling._
   type CoNLLToken = Index :: Pos :: Token :: HNil

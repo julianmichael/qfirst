@@ -79,6 +79,7 @@ object CoNLL08SentenceId {
 case class CoNLL08Sentence(
   id: CoNLL08SentenceId,
   tokens: Vector[CoNLL08Token],
+  paddingIndices: Set[Int], // keep track of split word forms
   childToParentDependencies: Vector[(String, Int)],
   predicateArgumentStructures: List[PredicateArgumentStructure])
 
