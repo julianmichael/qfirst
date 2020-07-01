@@ -13,12 +13,3 @@ object PropBankArgument {
 case class SyntaxTreeBranch(
   beginIndex: Int,
   constituentHeight: Int)
-
-case class PredicateArgumentStructure(
-  predicate: Predicate,
-  arguments: List[(String, PropBankArgument)])
-
-case class Predicate(
-  index: Int,
-  lemma: String,
-  sense: String)

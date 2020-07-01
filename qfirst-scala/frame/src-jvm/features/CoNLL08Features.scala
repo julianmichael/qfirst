@@ -31,6 +31,9 @@ import monocle.function.{all => Optics}
 import freelog._
 import freelog.implicits._
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 class CoNLL08Features(
   mode: RunMode,
   assumeGoldVerbSense: Boolean)(
@@ -55,7 +58,7 @@ class CoNLL08Features(
     sentence.copy(
       predicateArgumentStructures = sentence.predicateArgumentStructures
         .filter { pas =>
-          val predPos = sentence.tokens(pas.predicate.index).pos
+          val predPos = sentence.tokens(pas.predicateIndex).pos
           PTBPosTags.verbs.contains(predPos)
         }
     )
@@ -148,14 +151,14 @@ class CoNLL08Features(
       )
     ).toCell("CoNLL 2008 sentence index")
 
-  val predArgStructures: RunDataCell[Map[String, NonMergingMap[VerbId, PredicateArgumentStructure]]] = {
+  val predArgStructures: RunDataCell[Map[String, NonMergingMap[VerbId, PredArgStructure[PropBankPredicate, Int]]]] = {
     dataset.data.map(
       _.value.toList.foldMap { case (sid, sentence) =>
         sentence.predicateArgumentStructures.foldMap { pas =>
           val verbType = if(assumeGoldVerbSense) {
             s"${pas.predicate.lemma}.${pas.predicate.sense}"
           } else pas.predicate.lemma
-          val verbId = VerbId(sid, pas.predicate.index)
+          val verbId = VerbId(sid, pas.predicateIndex)
           Map(verbType -> NonMergingMap(Map(verbId -> pas)))
         }
       }

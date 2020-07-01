@@ -6,6 +6,9 @@ package qfirst.datasets.conll08
 import cats.data.NonEmptyList
 import cats.implicits._
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 object CoNLL08Parsing {
 
   /** Reads a CoNLL08Sentence from a list of lines taken from the CoNLL2008 dataset.
@@ -36,13 +39,14 @@ object CoNLL08Parsing {
 
     val predicates = rows.filter(f => f(10) != "_").map { f =>
       val lemma :: sense :: Nil = f(10).split("\\.").toList
-      Predicate(index = f(0).toInt - 1, lemma = lemma, sense = sense)
+      val index = f(0).toInt - 1
+      index -> PropBankPredicate(lemma = lemma, sense = sense)
     }
     val argLists = columns.drop(11).map(_.zipWithIndex.filter(_._1 != "_").toList)
     require(predicates.size == argLists.size)
-    val paStructures = predicates.zip(argLists).map(
-      Function.tupled(PredicateArgumentStructure(_, _))
-    ).toList
+    val paStructures = predicates.zip(argLists).map { case ((predIndex, pred), args) =>
+      PredArgStructure(predIndex, pred, args)
+    }.toList
 
     CoNLL08Sentence(id, tokens, paddingIndices, dependencies, paStructures)
   }

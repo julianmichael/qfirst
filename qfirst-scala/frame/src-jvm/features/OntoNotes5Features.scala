@@ -82,7 +82,7 @@ class OntoNotes5Features(
             sentence.predicateArgumentStructures
               .filter(pas =>
                 jjm.ling.en.PTBPosTags.verbs.contains(
-                  sentence.tokens(pas.predicate.index).pos
+                  sentence.tokens(pas.predicateIndex).pos
                 )) // keep only verbal predicates
               .foldMap { pas =>
               val verbLemma = pas.predicate.lemma
@@ -90,9 +90,9 @@ class OntoNotes5Features(
               val verbType = if(assumeGoldVerbSense) verbSense else verbLemma
               Map(
                 verbType -> NonMergingMap(
-                  VerbId(sentenceId, pas.predicate.index) ->
+                  VerbId(sentenceId, pas.predicateIndex) ->
                     (verbSense -> pas.arguments
-                       .filter { case (label, span) => PropBankRoleLabel.isArgRelevant(pas.predicate, label, span) }
+                       .filter { case (label, span) => PropBankRoleLabel.isArgRelevant(pas.predicateIndex, pas.predicate, label, span) }
                        .map(_.swap).toMap)
                 )
               )
@@ -195,7 +195,7 @@ class OntoNotes5Features(
               sentence.path.toString,
               sentence.tokens.map(_.token).toVector,
               sentence.predicateArgumentStructures.map { pas =>
-                pas.predicate.index -> PropBankQGVerbInput(pas.predicate.index, pas.arguments.map(_._2).toSet)
+                pas.predicateIndex -> PropBankQGVerbInput(pas.predicateIndex, pas.arguments.map(_._2).toSet)
               }.toMap
             )
           }

@@ -4,6 +4,8 @@ import scala.util.Try
 
 import cats.implicits._
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
 import qfirst.datasets.ptb2.PTB2FilePath
 import qfirst.datasets.ptb2.PTB2SentenceId
 
@@ -46,20 +48,19 @@ object PropBank1Parsing {
     label -> readArgumentSpec(spansString)
   }
 
-  def readPredArgStructure(line: String): PredicateArgumentStructure = {
+  def readPredArgStructure(line: String): PredArgStructure[PropBankPredicate, PropBankArgument] = {
     val fields = line.split(" ").toVector
     val predicateIndex = fields(2).toInt
     require(fields(3) == "gold")
     val predFields = fields(4).split("\\.")
-    val predicate = Predicate(
-      index = predicateIndex,
+    val predicate = PropBankPredicate(
       lemma = predFields(0),
       sense = predFields(1))
     // fields(5) is "aspects" it seems, doc'd as "no longer used" in latest release
     // I wonder why. guess aspect is hard
     val arguments = fields.drop(6).map(readPropBankArgument(line, _))
 
-    PredicateArgumentStructure(predicate, arguments.toList)
+    PredArgStructure(predicateIndex, predicate, arguments.toList)
   }
 
   import fs2.Pipe

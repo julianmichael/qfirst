@@ -2,6 +2,11 @@ package qfirst.datasets.ontonotes
 
 import io.circe.generic.JsonCodec
 
+import jjm.ling.ESpan
+
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 /** Represents a single CoNLL annotation file.
   *
   * @param id the unique ID of the file, present on its first line
@@ -24,7 +29,7 @@ import io.circe.generic.JsonCodec
   partNum: Int,
   tokens: List[CoNLLToken],
   syntaxTree: SyntaxTree[CoNLLToken],
-  predicateArgumentStructures: List[PredicateArgumentStructure]
+  predicateArgumentStructures: List[PredArgStructure[PropBankPredicate, ESpan]]
     // nerSpans: Nothing, // TODO
     // corefSpans: List[CorefSpan] // TODO
 ) {

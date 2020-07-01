@@ -9,6 +9,9 @@ import cats.data.State
 import cats.data.NonEmptyList
 import cats.implicits._
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 // TODO merge stuff in properly
 object PredicateArgumentStructureParsing {
 
@@ -115,17 +118,17 @@ object CoNLLParsing {
       (arr, index) <- lineArrays.zipWithIndex.toList
       predicateLemma = arr(6)
       if !predicateLemma.equals("-")
-      framesetId = arr(7)
-      if !framesetId.equals("-")
+      sense = arr(7)
+      if !sense.equals("-")
       predicatePos = arr(4)
       head = words(index)
-    } yield Predicate(head.index, predicateLemma, framesetId)
+    } yield head.index -> PropBankPredicate(lemma = predicateLemma, sense = sense)
 
     val paStructures = for {
-      (pred, num) <- predicates.zipWithIndex // num of predicate tells us which col the args are in
+      ((predIndex, pred), num) <- predicates.zipWithIndex // num of predicate tells us which col the args are in
       spansString = lineArrays.map(arr => arr(11 + num)).fold
       argSpans = PredicateArgumentStructureParsing.readArgumentSpans(spansString)
-    } yield PredicateArgumentStructure(pred, argSpans)
+    } yield PredArgStructure(predIndex, pred, argSpans)
     val sentencePath = CoNLLSentencePath(path, sentenceNum)
     CoNLLSentence(sentencePath, partNum, words, tree, paStructures)
   }

@@ -8,6 +8,9 @@ import io.circe.generic.JsonCodec
 
 import jjm.ling.ESpan
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 case class CoNLL05SentenceId(
   split: CoNLL05Split,
   index: Int // sentence index
@@ -32,17 +35,8 @@ object CoNLL05SentenceId {
   //   )
 }
 
+// TODO full propbank predicate if necessary; for now requires reading in an extra file.
+// too lazy.
 case class CoNLL05Sentence(
   id: CoNLL05SentenceId,
-  predicateArgumentStructures: List[PredicateArgumentStructure])
-
-
-case class PredicateArgumentStructure(
-  predicate: Predicate,
-  arguments: List[(String, ESpan)])
-
-case class Predicate(
-  index: Int,
-  lemma: String,
-  // sense: String // TODO if necessary
-)
+  predicateArgumentStructures: List[PredArgStructure[String, ESpan]])

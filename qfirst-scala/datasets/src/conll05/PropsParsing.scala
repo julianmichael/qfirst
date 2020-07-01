@@ -6,6 +6,9 @@ import jjm.ling.ESpan
 import cats.data.NonEmptyList
 import cats.implicits._
 
+import qfirst.datasets.PredArgStructure
+import qfirst.datasets.PropBankPredicate
+
 object PropsParsing {
 
   import fastparse.all._
@@ -60,7 +63,7 @@ object PropsParsing {
   def readArgumentSpans(s: String): List[(String, ESpan)] =
     allArgsP.parse(s).get.value.runA(0).value
 
-  def readSentenceProps(lines: NonEmptyList[String]): List[PredicateArgumentStructure] = {
+  def readSentenceProps(lines: NonEmptyList[String]): List[PredArgStructure[String, ESpan]] = {
     val rows = lines.map(_.split("\\s+").toVector).toList.toVector
 
     val columns = rows.transpose
@@ -69,22 +72,22 @@ object PropsParsing {
 
     val predicates = rows.zipWithIndex.flatMap { case (fields, index) =>
       getPredLemma(fields).map(lemma =>
-        Predicate(index = index, lemma = lemma)
+        index -> lemma
       )
     }
     val argLists = columns.drop(1).map(col => readArgumentSpans(col.mkString))
 
     require(predicates.size == argLists.size)
 
-    predicates.zip(argLists).map(
-      Function.tupled(PredicateArgumentStructure(_, _))
-    ).toList
+    predicates.zip(argLists).map { case ((index, lemma), args) =>
+      PredArgStructure(index, lemma, args)
+    }.toList
   }
 
   import fs2.Pipe
 
   // TODO replace with .toNel after fs2 update
-  def streamPropsFromLines[F[_]](split: CoNLL05Split): Pipe[F, String, (CoNLL05SentenceId, List[PredicateArgumentStructure])] = lines => {
+  def streamPropsFromLines[F[_]](split: CoNLL05Split): Pipe[F, String, (CoNLL05SentenceId, List[PredArgStructure[String, ESpan]])] = lines => {
     lines.groupAdjacentBy(_.trim.nonEmpty)
       .collect { case (isNonEmpty, sentenceLines) if isNonEmpty => NonEmptyList.fromList(sentenceLines.toList).get }
       .map(readSentenceProps)
