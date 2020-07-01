@@ -33,12 +33,12 @@ import io.circe.generic.JsonCodec
 
     val newArgs = args.keys.foldLeft(DependentMap.empty[ArgumentSlot.Aux, Id]) {
       (m, k) => k match {
+        case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
         case Subj   => m.put(Subj, Noun.isAnimate.set(false)(args.get(Subj).get))
         case Obj    => m.put(Obj, Noun.isAnimate.set(false)(args.get(Obj).get))
         case Prep1  => m.put(Prep1, prepObjAnim.set(false)(args.get(Prep1).get))
         case Prep2  => m.put(Prep2, prepObjAnim.set(false)(args.get(Prep2).get))
         case Misc   => m.put(Misc, miscObjAnim.set(false)(args.get(Misc).get))
-        case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
       }
     }
     this.copy(args = newArgs)

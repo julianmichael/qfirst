@@ -19,8 +19,10 @@ import monocle.macros._
   isPassive: Boolean
 ) {
   def forgetAnimacy = {
+    import scala.annotation.unchecked
     val newArgs = args.keys.foldLeft(DependentMap.empty[ArgumentSlot.Aux, Id]) {
-      (m, k) => k match {
+      (m, k) => (k: @unchecked) match {
+        case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
         case Subj   => m.put(Subj, Noun(false))
         case Obj    => m.put(Obj, Noun(false))
         case Obj2  => m.put(
@@ -30,7 +32,6 @@ import monocle.macros._
             case x => x
           }
         )
-        case Adv(wh) => m.put(Adv(wh), args.get(Adv(wh)).get)
       }
     }
     this.copy(args = newArgs)

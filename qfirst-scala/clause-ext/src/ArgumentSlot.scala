@@ -51,23 +51,23 @@ object ArgumentSlot {
 
   implicit val dependentArgumentEncoder = new DependentEncoder[ArgumentSlot.Aux, Id] {
     final def apply[A](slot: ArgumentSlot.Aux[A]) = slot match {
+      case Adv(_) => implicitly[Encoder[Unit]].asInstanceOf[Encoder[A]] // TODO this should be acceptable w/o cast?
       case Subj   => implicitly[Encoder[Noun]]
       case Obj    => implicitly[Encoder[Noun]]
       case Prep1  => implicitly[Encoder[Preposition]]
       case Prep2  => implicitly[Encoder[Preposition]]
       case Misc   => implicitly[Encoder[NonPrepArgument]]
-      case Adv(_) => implicitly[Encoder[Unit]].asInstanceOf[Encoder[A]] // TODO this should be acceptable w/o cast?
     }
   }
 
   implicit val dependentArgumentDecoder = new DependentDecoder[ArgumentSlot.Aux, Id] {
     final def apply[A](slot: ArgumentSlot.Aux[A]) = slot match {
+      case Adv(_) => implicitly[Decoder[Unit]].asInstanceOf[Decoder[A]] // TODO this should be acceptable w/o cast?
       case Subj   => implicitly[Decoder[Noun]]
       case Obj    => implicitly[Decoder[Noun]]
       case Prep1  => implicitly[Decoder[Preposition]]
       case Prep2  => implicitly[Decoder[Preposition]]
       case Misc   => implicitly[Decoder[NonPrepArgument]]
-      case Adv(_) => implicitly[Decoder[Unit]].asInstanceOf[Decoder[A]] // TODO this should be acceptable w/o cast?
     }
   }
 }
