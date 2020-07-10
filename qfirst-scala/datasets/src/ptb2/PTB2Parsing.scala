@@ -69,7 +69,7 @@ object PTB2Parsing {
   def readSentence(id: PTB2SentenceId, lines: NonEmptyList[String]): PTB2Sentence = {
     val tree = readSyntaxTree(lines.foldMap(_.dropWhile(_ == ' ')))
     System.err.println(id)
-    PTB2Sentence(id, tree.words, tree)
+    PTB2Sentence(id, tree.toVector, tree)
   }
 
   // Sigh. Had to use this nasty fold I wrote in the past bc there's no super easy way to group the sentences properly.
@@ -81,7 +81,7 @@ object PTB2Parsing {
         (prevSentences, curLines, sentenceNum)
       } else if (!line.startsWith(" ") && !curLines.isEmpty) {
         val tree = readSyntaxTree(curLines.reverse.map(_.dropWhile(_ == ' ')).mkString)
-        val sentence = PTB2Sentence(PTB2SentenceId(filePath, sentenceNum), tree.words, tree)
+        val sentence = PTB2Sentence(PTB2SentenceId(filePath, sentenceNum), tree.toVector, tree)
         (sentence :: prevSentences, line :: Nil, sentenceNum + 1)
       } else {
         (prevSentences, line :: curLines, sentenceNum)
@@ -90,7 +90,7 @@ object PTB2Parsing {
       case (sentences, lastChunk, lastIndex) =>
         val lastSentence = {
           val tree = readSyntaxTree(lastChunk.reverse.map(_.dropWhile(_ == ' ')).mkString)
-          PTB2Sentence(PTB2SentenceId(filePath, lastIndex), tree.words, tree)
+          PTB2Sentence(PTB2SentenceId(filePath, lastIndex), tree.toVector, tree)
         }
         PTB2File(filePath, (lastSentence :: sentences).toVector.reverse)
     }

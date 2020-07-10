@@ -1,5 +1,11 @@
 package qfirst.datasets
 
+
+import cats.Apply
+import cats.Applicative
+import cats.Eval
+import cats.Monad
+import cats.NonEmptyTraverse
 import cats.data.NonEmptyList
 import cats.implicits._
 
@@ -21,25 +27,17 @@ import jjm.implicits._
     case Node(label, children) => node(children.map(_.cataUnlabeled(leaf)(node)))
   }
 
-  // final def foldM[M: Monad](leaf: Word => M[A])(node: (String, List[A]) => M[A]): M[A] = this match {
-  //   case Leaf(word) => leaf(word)
-  //   case Node(label, children) =>
-  //     children.map(_.foldM(leaf)(node)).sequence.flatMap(node(label, _))
-  // }
+  final def cataM[M[_]: Monad, A](leaf: Word => M[A])(node: (String, NonEmptyList[A]) => M[A]): M[A] = this match {
+    case Leaf(word) => leaf(word)
+    case Node(label, children) =>
+      children.traverse(_.cataM(leaf)(node)).flatMap(node(label, _))
+  }
 
-  // final def foldMUnlabeled[M: Monad](leaf: Word => M[A])(node: List[A] => M[A]): M[A] = this match {
-  //   case Leaf(word) => leaf(word)
-  //   case Node(label, children) =>
-  //     children.map(_.foldM(leaf)(node)).sequence.flatMap(node)
-  // }
-
-  // which of the following is the better generalization? guess the first... kind of the same
-  // first one lets you avoid intermediate structure, second lets you delay msumming to later....
-  // but they can obv replicate each other trivially
-  // guess the second one obviates the need to map to something right away...
-  // final def wordsMonoid[M : Monoid](leaf: Word => M) = foldUnlabeled(leaf)(_.msum)
-  // final def wordsList = fold(List(_))(_.flatten)
-  final def words = cataUnlabeled(Vector(_))(_.toList.toVector.flatten)
+  final def cataUnlabeledM[M[_]: Monad, A](leaf: Word => M[A])(node: NonEmptyList[A] => M[A]): M[A] = this match {
+    case Leaf(word) => leaf(word)
+    case Node(label, children) =>
+      children.traverse(_.cataUnlabeledM(leaf)(node)).flatMap(node)
+  }
 
   final def depth = cataUnlabeled(_ => 0)(_.maximum + 1)
   final def beginIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.head)
@@ -57,6 +55,8 @@ import jjm.implicits._
   // final def toStringMultiline(renderWord: Word => String): String = toStringMultilineAux(0, renderWord)
   // // TODO could do this with state monad lol
   // protected[structure] def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String
+
+  final def toVector = cataUnlabeled(Vector(_))(_.toList.toVector.flatten)
 }
 
 object SyntaxTree {
@@ -88,5 +88,57 @@ object SyntaxTree {
     //   val wordStr = renderWord(word)
     //   s"$indent$wordStr"
     // }
+  }
+
+  implicit val syntaxTreeInstances = new NonEmptyTraverse[SyntaxTree] with Monad[SyntaxTree] {
+    def nonEmptyTraverse[G[_]: Apply, A, B](fa: SyntaxTree[A])(f: A => G[B]): G[SyntaxTree[B]] = fa match {
+      case Leaf(a) => f(a).map(Leaf(_))
+      case Node(label, children) => children.nonEmptyTraverse(nonEmptyTraverse(_)(f)).map(Node(label, _))
+    }
+
+    def reduceLeftTo[A, B](fa: SyntaxTree[A])(f: A => B)(g: (B, A) => B): B = fa match {
+      case Leaf(a) => f(a)
+      case Node(label, children) => children.reduceLeftTo(reduceLeftTo(_)(f)(g))((b, c) => foldLeft(c, b)(g))
+    }
+
+    def reduceRightTo[A, B](fa: SyntaxTree[A])(f: A => B)(g: (A, Eval[B]) => Eval[B]): Eval[B] = fa match {
+      case Leaf(a) => Eval.now(f(a))
+      case Node(label, children) => children.reduceRightTo(
+        reduceRightTo(_)(f)(g))(
+        (c, llb) => llb.map(lb => foldRight(c, lb)(g))
+      ).flatten
+    }
+
+    def foldLeft[A, B](fa: SyntaxTree[A], b: B)(f: (B, A) => B): B = fa match {
+      case Leaf(a) => f(b, a)
+      case Node(label, children) => children.foldLeft(b)((b, c) => foldLeft(c, b)(f))
+    }
+
+    def foldRight[A, B](fa: SyntaxTree[A], lb: Eval[B])(f: (A, Eval[B]) => Eval[B]): Eval[B] = fa match {
+      case Leaf(a) => f(a, lb)
+      case Node(label, children) => children.foldRight(lb)(foldRight(_, _)(f))
+    }
+
+    def flatMap[A, B](fa: SyntaxTree[A])(f: A => SyntaxTree[B]): SyntaxTree[B] = fa match {
+      case Leaf(a) => f(a)
+      case Node(label, children) => Node(label, children.map(flatMap(_)(f)))
+    }
+
+    // TODO: not stack safe. shouldn't be an issue bc of typical syntax tree size though.
+    def tailRecM[A, B](a: A)(f: A => SyntaxTree[Either[A, B]]): SyntaxTree[B] = {
+      flatMap(f(a)) {
+        case Right(b) => pure(b)
+        case Left(nextA) => tailRecM(nextA)(f)
+      }
+    }
+
+    // @annotation.tailrec
+    // def tailRecM[A, B](a: A)(f: A => SyntaxTree[Either[A, B]]): SyntaxTree[B] = f(a) match {
+    //   case Leaf(Left(a)) => tailRefM(a)(f)
+    //   case Leaf(Right(b)) => Leaf(b)
+    //   case Node(label, children) =>
+    // }
+
+    def pure[A](x: A): SyntaxTree[A] = Leaf(x)
   }
 }
