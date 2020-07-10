@@ -10,6 +10,8 @@ import cats.implicits._
 import fs2.Stream
 import fs2.Stream.Compiler
 
+import qfirst.datasets.SyntaxTree
+
 object PTB2Parsing {
   private[this] type SentenceState[A] = State[Int, A]
 
@@ -22,13 +24,13 @@ object PTB2Parsing {
       case (symbol, childrenState) =>
         for {
           children <- childrenState.toList.sequence
-        } yield SyntaxTreeNode(symbol, NonEmptyList.fromList(children).get): SyntaxTree[PTB2Token]
+        } yield SyntaxTree.Node(symbol, NonEmptyList.fromList(children).get): SyntaxTree[PTB2Token]
     } | P("(" ~ symbolP ~ " " ~ tokenP ~ ")" ~ " ".?).map {
       case (pos, token) =>
         for {
           index <- State.get
           _     <- State.set(index + 1)
-        } yield SyntaxTreeLeaf(PTB2Token(pos = pos, token = token)): SyntaxTree[PTB2Token]
+        } yield SyntaxTree.Leaf(PTB2Token(index = index, pos = pos, token = token)): SyntaxTree[PTB2Token]
     }
   private[this] val fullTreeP: P[SyntaxTree[PTB2Token]] =
     P("(" ~ " ".? ~ treeP ~ ")").map(_.runA(0).value)

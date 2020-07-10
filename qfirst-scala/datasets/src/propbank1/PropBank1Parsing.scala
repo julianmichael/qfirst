@@ -6,6 +6,7 @@ import cats.implicits._
 
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
+import qfirst.datasets.SyntaxTreeBranch
 import qfirst.datasets.ptb2.PTB2FilePath
 import qfirst.datasets.ptb2.PTB2SentenceId
 

@@ -33,6 +33,8 @@ import freelog.implicits._
 
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
+import qfirst.datasets.SyntaxTree
+import qfirst.datasets.SyntaxTreeBranch
 
 class CoNLL08Features(
   mode: RunMode,
@@ -529,11 +531,21 @@ class CoNLL08Features(
 
   // lazy val conllCalculatedSpans: Cell[NonMergingMap[String, ]]
 
-  // def recalculatePAStructures(
-  //   ptbSentence: ptb2.SyntaxTree,
-  //   propBankSentence: propbank1.PropBank1Sentence,
-  //   conll08Sentence: CoNLL08Sentence
-  // ): 
+  def reindexPAStructures(
+    ptbTree: SyntaxTree[ptb2.PTB2Token],
+    propBankSentence: propbank1.PropBank1Sentence,
+    conll08Sentence: CoNLL08Sentence
+  ): List[PredArgStructure[PropBankPredicate, Set[ESpan]]] = {
+    val pbArgToPtbSpan = propBankSentence.predArgStructures
+      .flatMap(_.arguments).map(_._2)
+      .flatMap { argBranch =>
+        ???
+        // ptbTree.
+      }
+    conll08Sentence.predicateArgumentStructures.map { origPAS =>
+      ???
+    }
+  }
 
   override def setup = propbank1Sentences.get.void
   // override def setup = conllToPTB2SentenceAlignments.get >> argSpans.dev >> super.setup

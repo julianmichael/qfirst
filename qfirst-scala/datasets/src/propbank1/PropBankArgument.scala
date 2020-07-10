@@ -2,6 +2,8 @@ package qfirst.datasets.propbank1
 
 import jjm.ling.ESpan
 
+import qfirst.datasets.SyntaxTreeBranch
+
 sealed trait PropBankArgument
 object PropBankArgument {
   case class Node(branch: SyntaxTreeBranch) extends PropBankArgument
@@ -9,7 +11,3 @@ object PropBankArgument {
   case class ICHConcat(nodes: List[PropBankArgument]) extends PropBankArgument
   case class Concat(nodes: List[PropBankArgument]) extends PropBankArgument
 }
-
-case class SyntaxTreeBranch(
-  beginIndex: Int,
-  constituentHeight: Int)

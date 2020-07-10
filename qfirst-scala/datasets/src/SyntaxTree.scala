@@ -1,4 +1,4 @@
-package qfirst.datasets.ontonotes
+package qfirst.datasets
 
 import cats.data.NonEmptyList
 import cats.implicits._
@@ -10,25 +10,26 @@ import jjm.implicits._
 
 /** Represents a syntax tree. */
 @JsonCodec sealed trait SyntaxTree[Word] {
+  import SyntaxTree.{Node, Leaf}
   final def cata[A](leaf: Word => A)(node: (String, NonEmptyList[A]) => A): A = this match {
-    case SyntaxTreeLeaf(word) => leaf(word)
-    case SyntaxTreeNode(label, children) => node(label, children.map(_.cata(leaf)(node)))
+    case Leaf(word) => leaf(word)
+    case Node(label, children) => node(label, children.map(_.cata(leaf)(node)))
   }
 
   final def cataUnlabeled[A](leaf: Word => A)(node: NonEmptyList[A] => A): A = this match {
-    case SyntaxTreeLeaf(word) => leaf(word)
-    case SyntaxTreeNode(label, children) => node(children.map(_.cataUnlabeled(leaf)(node)))
+    case Leaf(word) => leaf(word)
+    case Node(label, children) => node(children.map(_.cataUnlabeled(leaf)(node)))
   }
 
   // final def foldM[M: Monad](leaf: Word => M[A])(node: (String, List[A]) => M[A]): M[A] = this match {
-  //   case SyntaxTreeLeaf(word) => leaf(word)
-  //   case SyntaxTreeNode(label, children) =>
+  //   case Leaf(word) => leaf(word)
+  //   case Node(label, children) =>
   //     children.map(_.foldM(leaf)(node)).sequence.flatMap(node(label, _))
   // }
 
   // final def foldMUnlabeled[M: Monad](leaf: Word => M[A])(node: List[A] => M[A]): M[A] = this match {
-  //   case SyntaxTreeLeaf(word) => leaf(word)
-  //   case SyntaxTreeNode(label, children) =>
+  //   case Leaf(word) => leaf(word)
+  //   case Node(label, children) =>
   //     children.map(_.foldM(leaf)(node)).sequence.flatMap(node)
   // }
 
@@ -45,6 +46,8 @@ import jjm.implicits._
   final def endIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.last)
   final def toSpan(implicit ev: HasIndex[Word]) = ESpan(beginIndex, endIndex + 1)
 
+  // final def getSubtree(branch: SyntaxTreeBranch): SyntaxTree[Word]
+
   final def toStringMultiline(renderWord: Word => String) =
     cata(renderWord) { case (nodeLabel, subtreeStrings) =>
       val childrenStr = subtreeStrings.map(_.replaceAll("\n", "\n ")).toList.mkString("\n")
@@ -56,33 +59,34 @@ import jjm.implicits._
   // protected[structure] def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String
 }
 
-/** Represents a nonterminal node of a SyntaxTree.
-  *
-  * @param label the nonterminal symbol of this node
-  * @param this node's children
-  */
-@JsonCodec case class SyntaxTreeNode[Word](
-  label: String,
-  children: NonEmptyList[SyntaxTree[Word]]
-) extends SyntaxTree[Word] {
-  // override def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String = {
-  //   val indent = " " * indentLevel
-  //   val childrenStr = children.map(_.toStringMultilineAux(indentLevel + 1)).mkString("\n")
-  //   s"$indent$label\n$childrenStr"
-  // }
-}
+object SyntaxTree {
+  /** Represents a nonterminal node of a SyntaxTree.
+    *
+    * @param label the nonterminal symbol of this node
+    * @param this node's children
+    */
+  @JsonCodec case class Node[Word](
+    label: String,
+    children: NonEmptyList[SyntaxTree[Word]]
+  ) extends SyntaxTree[Word] {
+    // override def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String = {
+    //   val indent = " " * indentLevel
+    //   val childrenStr = children.map(_.toStringMultilineAux(indentLevel + 1)).mkString("\n")
+    //   s"$indent$label\n$childrenStr"
+    // }
+  }
 
-/** Represents a terminal node of a SyntaxTree.
-  *
-  * @param word the word at this node
-  */
-@JsonCodec case class SyntaxTreeLeaf[Word](
-  word: Word
-) extends SyntaxTree[Word] {
-  // override def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String = {
-  //   val indent = " " * indentLevel
-  //   val wordStr = renderWord(word)
-  //   s"$indent$wordStr"
-  // }
-
+  /** Represents a terminal node of a SyntaxTree.
+    *
+    * @param word the word at this node
+    */
+  @JsonCodec case class Leaf[Word](
+    word: Word
+  ) extends SyntaxTree[Word] {
+    // override def toStringMultilineAux(indentLevel: Int, renderWord: Word => String): String = {
+    //   val indent = " " * indentLevel
+    //   val wordStr = renderWord(word)
+    //   s"$indent$wordStr"
+    // }
+  }
 }

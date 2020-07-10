@@ -16,10 +16,10 @@ package object ptb2 {
 
   import jjm.ling._
 
-  type PTB2Token = Pos :: Token :: HNil
+  type PTB2Token = Index :: Pos :: Token :: HNil
   object PTB2Token {
-    def apply(pos: String, token: String): PTB2Token = {
-      Pos.field(pos) :: Token.field(token) :: HNil
+    def apply(index: Int, pos: String, token: String): PTB2Token = {
+      Index.field(index) :: Pos.field(pos) :: Token.field(token) :: HNil
     }
   }
 }

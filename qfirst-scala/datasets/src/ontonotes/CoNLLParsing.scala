@@ -11,6 +11,7 @@ import cats.implicits._
 
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
+import qfirst.datasets.SyntaxTree
 
 // TODO merge stuff in properly
 object PredicateArgumentStructureParsing {
@@ -76,12 +77,12 @@ object SyntaxTreeParsing {
     P("(" ~ symbolP ~ treeP.rep(1) ~ ")").map {
       case (symbol, childrenState) => for {
         children <- childrenState.toList.sequence
-      } yield SyntaxTreeNode(symbol, NonEmptyList.fromList(children).get): SyntaxTree[CoNLLToken]
+      } yield SyntaxTree.Node(symbol, NonEmptyList.fromList(children).get): SyntaxTree[CoNLLToken]
     } | (P("*") | P("-")).map { _ =>
       for {
         words <- State.get
         _ <- State.set(words.tail)
-      } yield SyntaxTreeLeaf(words.head)
+      } yield SyntaxTree.Leaf(words.head)
     }
 
   /** Parses a SyntaxTree from its flattened column representation in the CoNLL data.

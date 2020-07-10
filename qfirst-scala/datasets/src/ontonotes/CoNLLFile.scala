@@ -6,6 +6,7 @@ import jjm.ling.ESpan
 
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
+import qfirst.datasets.SyntaxTree
 
 /** Represents a single CoNLL annotation file.
   *

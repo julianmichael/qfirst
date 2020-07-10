@@ -2,6 +2,8 @@ package qfirst.datasets.ptb2
 
 import io.circe.generic.JsonCodec
 
+import qfirst.datasets.SyntaxTree
+
 @JsonCodec case class PTB2FilePath(
   section: Int,
   fileName: String) { // with .mrg suffix
