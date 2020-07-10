@@ -16,7 +16,7 @@ import jjm.implicits._
 
 /** Represents a syntax tree. */
 @JsonCodec sealed trait SyntaxTree[Word] {
-  import SyntaxTree.{Node, Leaf}
+  import SyntaxTree.{Node, Leaf, Branch}
   final def cata[A](leaf: Word => A)(node: (String, NonEmptyList[A]) => A): A = this match {
     case Leaf(word) => leaf(word)
     case Node(label, children) => node(label, children.map(_.cata(leaf)(node)))
@@ -39,12 +39,37 @@ import jjm.implicits._
       children.traverse(_.cataUnlabeledM(leaf)(node)).flatMap(node)
   }
 
+  final def size = cataUnlabeled(_ => 1)(_.sum)
   final def depth = cataUnlabeled(_ => 0)(_.maximum + 1)
   final def beginIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.head)
   final def endIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.last)
   final def toSpan(implicit ev: HasIndex[Word]) = ESpan(beginIndex, endIndex + 1)
 
-  // final def getSubtree(branch: SyntaxTreeBranch): SyntaxTree[Word]
+  final def getSubtree(branch: Branch): SyntaxTree[Word] = {
+    getSubtreeAux(0, NonEmptyList.of(NonEmptyList.of(this)), branch)
+  }
+  // levels: non-empty list of unexplored siblings. includes `this` as head of first one.
+  @annotation.tailrec
+  final def getSubtreeAux(index: Int, levels: NonEmptyList[NonEmptyList[SyntaxTree[Word]]], branch: Branch): SyntaxTree[Word] = this match {
+    case Leaf(a) =>
+      if(index == branch.tokenIndex) {
+        levels.get(branch.constituentHeight).fold(
+          throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+        )(_.head)
+      } else levels.head.tail match {
+        // done with this set of children, move up in the tree
+        case Nil => levels.tail match {
+          case Nil =>
+            throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+          case nextLevel :: remLevels =>
+            nextLevel.head.getSubtreeAux(index + 1, NonEmptyList(nextLevel, remLevels), branch)
+        }
+        // not done with this set of siblings yet
+        case next :: remSiblings =>
+          next.getSubtreeAux(index + 1, NonEmptyList(NonEmptyList(next, remSiblings), levels.tail), branch)
+      }
+    case Node(_, children) => children.head.getSubtreeAux(index, NonEmptyList(children, levels.toList), branch)
+  }
 
   final def toStringMultiline(renderWord: Word => String) =
     cata(renderWord) { case (nodeLabel, subtreeStrings) =>
@@ -89,6 +114,10 @@ object SyntaxTree {
     //   s"$indent$wordStr"
     // }
   }
+
+  case class Branch(
+    tokenIndex: Int,
+    constituentHeight: Int)
 
   implicit val syntaxTreeInstances = new NonEmptyTraverse[SyntaxTree] with Monad[SyntaxTree] {
     def nonEmptyTraverse[G[_]: Apply, A, B](fa: SyntaxTree[A])(f: A => G[B]): G[SyntaxTree[B]] = fa match {

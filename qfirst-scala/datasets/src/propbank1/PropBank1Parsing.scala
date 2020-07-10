@@ -6,17 +6,17 @@ import cats.implicits._
 
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
-import qfirst.datasets.SyntaxTreeBranch
+import qfirst.datasets.SyntaxTree
 import qfirst.datasets.ptb2.PTB2FilePath
 import qfirst.datasets.ptb2.PTB2SentenceId
 
 object PropBank1Parsing {
 
-  def readSyntaxTreeBranch(branchString: String): SyntaxTreeBranch = {
+  def readSyntaxTreeBranch(branchString: String): SyntaxTree.Branch = {
     val parts = branchString.split(":")
     val beginIndex = parts(0).toInt
     val constituentHeight = parts(1).toInt
-    SyntaxTreeBranch(beginIndex, constituentHeight)
+    SyntaxTree.Branch(beginIndex, constituentHeight)
   }
 
   def readArgumentSpec(argSpec: String): PropBankArgument = {
