@@ -72,4 +72,15 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
 
     val negationWords = Set("no", "not", "n't").map(_.lowerCase)
   }
+
+  import io.circe.{KeyEncoder, KeyDecoder}
+  val ESpanString = "\\[(-?[0-9]+), (-?[0-9]+)\\)".r
+  implicit val eSpanKeyEncoder: KeyEncoder[ESpan] = KeyEncoder.encodeKeyString.contramap[ESpan](_.toString)
+  implicit val eSpanKeyDecoder: KeyDecoder[ESpan] = KeyDecoder.instance[ESpan] {
+    case ESpanString(beginStr, endStr) => for {
+      begin <- scala.util.Try(beginStr.toInt).toOption
+      end <- scala.util.Try(endStr.toInt).toOption
+    } yield ESpan(begin, end)
+    case _ => None
+  }
 }

@@ -64,17 +64,72 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   //   }
   // }
 
-  def cacheArgFeats[A](name: String)(feats: ArgFeats[A]): CachedArgFeats[A] =
-    (args.data.zip(feats)).map { case (args, feats) =>
-      args.transform { case (verbType, args) =>
-        val featsForVerbType = feats(verbType)
-        NonMergingMap(
-          args.iterator.map { argId =>
-            argId -> featsForVerbType(argId)
-          }.toMap
-        )
-      }
-    }.toCell(name)
+  def cacheArgFeats[A](name: String, log: Boolean = false)(feats: ArgFeats[A]): CachedArgFeats[A] =
+    if(log) {
+      (args.data.zip(feats)).flatMap { case (args, feats) =>
+        Log.infoBranch(s"Caching features: $name") {
+          args.toList.infoBarFoldMapM("Verb types") { case (verbType, args) =>
+            val featsForVerbType = feats(verbType)
+            val argsForVerbType = args.toList.infoBarFoldMapM(s"$verbType") { argId =>
+              IO(NonMergingMap(argId -> featsForVerbType(argId)))
+            }
+            argsForVerbType.map(args => Map(verbType -> args))
+          }
+        }
+      }.toCell(name)
+    } else {
+      (args.data.zip(feats)).map { case (args, feats) =>
+        args.transform { case (verbType, args) =>
+          val featsForVerbType = feats(verbType)
+          NonMergingMap(
+            args.iterator.map { argId =>
+              argId -> featsForVerbType(argId)
+            }.toMap
+          )
+        }
+      }.toCell(name)
+    }
+
+  def fileCacheArgFeats[A: Encoder : Decoder](
+    name: String, log: Boolean = false)(
+    feats: ArgFeats[A])(
+    implicit argDecoder: Decoder[Arg], argEncoder: Encoder[Arg]
+  ): CachedArgFeats[A] = {
+    // for some reason, the compiler needs this up here to be happy
+    val _ = implicitly[Encoder[List[(ArgumentId[Arg], A)]]]
+    if(log) {
+      (args.data.zip(feats)).flatMap { case (args, feats) =>
+        Log.infoBranch(s"Computing features: $name") {
+          args.toList.infoBarFoldMapM("Verb types") { case (verbType, args) =>
+            val featsForVerbType = feats(verbType)
+            val argsForVerbType = args.toList.infoBarFoldMapM(s"$verbType") { argId =>
+              IO(NonMergingMap(argId -> featsForVerbType(argId)))
+            }
+            argsForVerbType.map(args => Map(verbType -> args))
+          }
+        }
+      }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+        read = path => FileUtil.readJsonLines[(VerbType,List[(ArgumentId[Arg],A)])](path).compile.toList
+          .map(_.map { case (vt, args) => vt -> NonMergingMap(args.toMap) }.toMap),
+        write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, args) => vt -> args.value.toList }.toList)
+      )
+    } else {
+      (args.data.zip(feats)).map { case (args, feats) =>
+        args.transform { case (verbType, args) =>
+          val featsForVerbType = feats(verbType)
+          NonMergingMap(
+            args.iterator.map { argId =>
+              argId -> featsForVerbType(argId)
+            }.toMap
+          )
+        }
+      }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+        read = path => FileUtil.readJsonLines[(VerbType,List[(ArgumentId[Arg],A)])](path).compile.toList
+          .map(_.map { case (vt, args) => vt -> NonMergingMap(args.toMap) }.toMap),
+        write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, args) => vt -> args.value.toList }.toList)
+      )
+    }
+  }
 
   def mapArgFeats[A, B](feats: ArgFeats[A])(f: A => B): ArgFeats[B] =
     feats.map(_.andThen(_.andThen(f)))

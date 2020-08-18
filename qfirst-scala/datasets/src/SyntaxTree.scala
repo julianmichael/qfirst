@@ -1,6 +1,5 @@
 package qfirst.datasets
 
-
 import cats.Apply
 import cats.Applicative
 import cats.Eval
@@ -45,31 +44,70 @@ import jjm.implicits._
   final def endIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.last)
   final def toSpan(implicit ev: HasIndex[Word]) = ESpan(beginIndex, endIndex + 1)
 
-  final def getSubtree(branch: Branch): SyntaxTree[Word] = {
-    getSubtreeAux(0, NonEmptyList.of(NonEmptyList.of(this)), branch)
+  final def getSubtree(branch: Branch)(
+    implicit ev: HasIndex[Word]
+  ): SyntaxTree[Word] = {
+    // System.err.println(s"Getting subtree: ${branch}")
+    // System.err.println(s"Tree: ${this}")
+    getSubtreeAux(branch, Nil).getOrElse(
+      throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+    )
   }
-  // levels: non-empty list of unexplored siblings. includes `this` as head of first one.
-  @annotation.tailrec
-  final def getSubtreeAux(index: Int, levels: NonEmptyList[NonEmptyList[SyntaxTree[Word]]], branch: Branch): SyntaxTree[Word] = this match {
-    case Leaf(a) =>
-      if(index == branch.tokenIndex) {
-        levels.get(branch.constituentHeight).fold(
+
+  final def getSubtreeAux(
+    branch: Branch, ancestors: List[SyntaxTree[Word]])(
+    implicit ev: HasIndex[Word]
+  ): Option[SyntaxTree[Word]] = this match {
+    case Leaf(token) =>
+      if(token.index == branch.tokenIndex) Some {
+        (this :: ancestors).lift(branch.constituentHeight).getOrElse(
           throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
-        )(_.head)
-      } else levels.head.tail match {
-        // done with this set of children, move up in the tree
-        case Nil => levels.tail match {
-          case Nil =>
-            throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
-          case nextLevel :: remLevels =>
-            nextLevel.head.getSubtreeAux(index + 1, NonEmptyList(nextLevel, remLevels), branch)
-        }
-        // not done with this set of siblings yet
-        case next :: remSiblings =>
-          next.getSubtreeAux(index + 1, NonEmptyList(NonEmptyList(next, remSiblings), levels.tail), branch)
-      }
-    case Node(_, children) => children.head.getSubtreeAux(index, NonEmptyList(children, levels.toList), branch)
+        )
+      } else None
+    case Node(_, children) =>
+      children.toList.flatMap(_.getSubtreeAux(branch, this :: ancestors)).headOption
   }
+
+  // levels: non-empty list of unexplored siblings. includes `this` as head of first one.
+  // @annotation.tailrec
+  // final def getSubtreeAux(
+  //   branch: Branch, levels: NonEmptyList[NonEmptyList[SyntaxTree[Word]]])(
+  //   implicit ev: HasIndex[Word]
+  // ): SyntaxTree[Word] = {
+  //   System.err.println(s"$this\n.getSubtreeAux($branch, $levels)")
+  //   this match {
+  //     case Leaf(token) =>
+  //       if(token.index == branch.tokenIndex) {
+  //         levels.get(branch.constituentHeight).fold(
+  //           throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+  //         )(_.head)
+  //       } else levels.head.tail match {
+  //         // not done with this set of siblings yet
+  //         case next :: remSiblings =>
+  //           next.getSubtreeAux(branch, NonEmptyList(NonEmptyList(next, remSiblings), levels.tail))
+  //         // done with this set of children, move up in the tree
+  //         case Nil => levels.tail match {
+  //           case nextLevel :: remLevels =>
+  //             NonEmptyList.fromList(nextLevel.tail) match {
+  //               // move on to parent's next sibling
+  //               case Some(parentRemainingSiblings) =>
+  //                 parentRemainingSiblings.head.getSubtreeAux(branch, NonEmptyList(parentRemainingSiblings, remLevels))
+  //               // or parent's parent's next sibling... etc.?
+  //               case None => NonEmptyList.fromList(remLevels) match {
+  //                 case Some(neRemLevels) =>
+  //                   neRemLevels.head.head.getSubtreeAux(branch, neRemLevels)
+  //                 case None =>
+  //                   throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+  //               }
+  //             }
+  //             // nextLevel.head.getSubtreeAux(branch, NonEmptyList(nextLevel, remLevels))
+  //           case Nil =>
+  //             throw new IllegalArgumentException(s"$branch fell outside of syntax tree (size $size, depth $depth)")
+  //         }
+  //       }
+  //     case Node(_, children) => children.head.getSubtreeAux(branch, NonEmptyList(children, levels.toList))
+  //   }
+  // }
 
   final def toStringMultiline(renderWord: Word => String) =
     cata(renderWord) { case (nodeLabel, subtreeStrings) =>
