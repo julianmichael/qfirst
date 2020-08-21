@@ -148,7 +148,7 @@ class GoldQasrlFeatures(
   // }
 
   // TODO incorporate gold question
-  override val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
+  override lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(qaPairs.data)
       .flatMap { case ((split, vidToType), qaPairs) =>
       val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")

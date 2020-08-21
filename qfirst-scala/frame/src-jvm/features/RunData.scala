@@ -106,6 +106,24 @@ object RunData {
   case object Dev extends Split
   case object Test extends Split
 
+  implicit def runDataMonoid[A](
+    implicit mode: RunMode, A: Monoid[A]
+  ): Monoid[RunData[A]] = new Monoid[RunData[A]] {
+    def empty: RunData[A] = {
+      val e = IO.pure(A.empty)
+      RunData(e, e, e)
+    }
+
+    def combine(x: RunData[A], y: RunData[A]): RunData[A] = {
+      RunData(
+        train = (x.train, y.train).mapN(_ |+| _),
+        dev = (x.dev, y.dev).mapN(_ |+| _),
+        test = (x.test, y.test).mapN(_ |+| _)
+      )
+    }
+  }
+
+
   implicit def runDataApplicative(
     implicit mode: RunMode
   ): Applicative[RunData] = new Applicative[RunData] {

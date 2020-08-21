@@ -123,27 +123,6 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank gold span instances")
 
-  override val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
-    RunData.strings.zip(verbIdToType.data).flatMap { case (split, vidToType) =>
-      val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
-      FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
-        .map { case QGen.SentencePrediction(sid, _, verbs) =>
-          verbs.foldMap { case QGen.VerbPrediction(vi, spans) =>
-            val verbId = VerbId(sid, vi)
-            val verbType = vidToType.value(verbId)
-            Map(
-              verbType -> NonMergingMap(
-                spans.map { case QGen.SpanPrediction(span, _, questions) =>
-                  ArgumentId(verbId, span) -> questions
-                }.toMap
-              )
-            )
-          }
-        }
-        .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
-    }.toCell("Question distributions for arguments")
-  }
-
   override val argSpans: ArgFeats[Map[ESpan, Double]] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
@@ -174,19 +153,7 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank span to role label mapping")
 
-  // TODO move this to main Features
-
-  @JsonCodec case class PropBankQGInput(
-    sentenceId: String,
-    sentenceTokens: Vector[String],
-    verbEntries: Map[Int, PropBankQGVerbInput]
-  )
-  @JsonCodec case class PropBankQGVerbInput(
-    verbIndex: Int,
-    argumentSpans: Set[ESpan]
-  )
-
-  val qgInputs = index.data.map { paths =>
+  override val qgInputs: RunData[Stream[IO, PropBankQGInput]] = index.data.map { paths =>
     Stream.emits[IO, CoNLLPath](paths) >>= { path =>
       Stream.eval(ontonotesService.getFile(path)) >>= { file =>
         Stream.emits[IO, PropBankQGInput](
@@ -203,21 +170,4 @@ class OntoNotes5Features(
       }
     }
   }
-
-  def getQGInputOutPath(split: String) = outDir
-    .map(_.resolve(s"qg-inputs")).flatTap(createDir)
-    .map(_.resolve(s"$split.jsonl.gz"))
-
-  val writeQGInputs = RunData.strings.zip(qgInputs).flatMap { case (split, inputStream) =>
-    getQGInputOutPath(split) >>= (outPath =>
-      IO(Files.exists(outPath)).ifM(
-        Log.info(s"QG Inputs already found at $outPath."),
-        Log.infoBranch(s"Logging QG inputs to $outPath")(
-          FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
-        )
-      )
-    )
-  }.all.void
-
-  override def setup = super.setup >> writeQGInputs
 }

@@ -182,9 +182,36 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // Various features that need to be implemented
 
-  def argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]]
-
   def argSpans: ArgFeats[Map[ESpan, Double]]
+
+  lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
+    RunData.strings.zip(verbIdToType.data).zip(argSpans).zip(verbArgSets.data).flatMap { case (((split, vidToType), allSpans), allVerbs) =>
+      val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
+      FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
+        .map { case QGen.SentencePrediction(sid, _, verbs) =>
+          verbs.foldMap { case QGen.VerbPrediction(vi, spans) =>
+            val verbId = VerbId(sid, vi)
+            val verbType = vidToType.value(verbId)
+            val argSet = allVerbs(verbType)(verbId)
+            Map(
+              verbType -> NonMergingMap(
+                argSet.map { arg =>
+                  val argId = ArgumentId(verbId, arg)
+                  val questions = allSpans(verbType)(argId).toList.foldMap { case (span, prob) =>
+                    spans.find(_.span == span).foldMap { pred =>
+                      pred.questions.mapVals(_ * prob)
+                    }
+                  }
+                  argId -> questions
+                }.toMap
+              )
+            )
+          }
+        }
+        .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
+    }.toCell("Question distributions for arguments")
+  }
+
 
   // new style arg features
   def argSemanticHeadIndices: ArgFeats[Int]
@@ -296,7 +323,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             }
             _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
             // for now don't use the normalized vectors.
-          } yield ids.zip(vecs).foldMap { case (mlmFeatureId, vec) =>
+            finalVecs = vecs // normedVecs
+            _ <- Log.info("Not using normalized vectors.") // remove "not" if using.
+          } yield ids.zip(finalVecs).foldMap { case (mlmFeatureId, vec) =>
               Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
           }
         }.toCell(s"$label MLM Vectors")
@@ -386,5 +415,46 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     )
   }.all.void
 
-  def setup = writeMLMInputs
+  @JsonCodec case class PropBankQGInput(
+    sentenceId: String,
+    sentenceTokens: Vector[String],
+    verbEntries: Map[Int, PropBankQGVerbInput]
+  )
+  @JsonCodec case class PropBankQGVerbInput(
+    verbIndex: Int,
+    argumentSpans: Set[ESpan]
+  )
+
+  def qgInputs: RunData[Stream[IO, PropBankQGInput]] = sentences.data.zip(verbArgSets.data).zip(argSpans).map { case ((sents, allVerbs), allSpans) =>
+    Stream.emits[IO, (String, List[(VerbType, (VerbId, Set[Arg]))])](
+      allVerbs.toList.flatMap(p => p._2.toList.map(p._1 -> _)).groupBy(_._2._1.sentenceId).toList
+    ).map { case (sid, verbs) =>
+        val verbInputs =  verbs.groupBy(_._2._1).map { case (verbId, verbInstances) =>
+          val spans = verbInstances.foldMap(t =>
+            t._2._2.unorderedFoldMap(arg =>
+              allSpans(t._1)(ArgumentId(verbId, arg)).keySet
+            )
+          )
+          verbId.verbIndex -> PropBankQGVerbInput(verbId.verbIndex, spans)
+        }
+        PropBankQGInput(sid, sents.value(sid), verbInputs)
+    }
+  }
+
+  def getQGInputOutPath(split: String) = outDir
+    .map(_.resolve(s"qg-inputs")).flatTap(createDir)
+    .map(_.resolve(s"$split.jsonl.gz"))
+
+  def writeQGInputs = RunData.strings.zip(qgInputs).flatMap { case (split, inputStream) =>
+    getQGInputOutPath(split) >>= (outPath =>
+      IO(Files.exists(outPath)).ifM(
+        Log.info(s"QG Inputs already found at $outPath."),
+        Log.infoBranch(s"Logging QG inputs to $outPath")(
+          FileUtil.writeJsonLinesStreaming(outPath, io.circe.Printer.noSpaces)(inputStream)
+        )
+      )
+    )
+  }.all.void
+
+  def setup = writeMLMInputs >> writeQGInputs
 }
