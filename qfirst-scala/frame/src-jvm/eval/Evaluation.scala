@@ -109,7 +109,7 @@ object Evaluation {
           modelName, precisionAxisLabel, recallAxisLabel,
           resultsDir.resolve("tuning-strategies.png")
         )
-        bestResult = tuningResults.toList.map { case (name, stats) =>
+        bestResult = tuningResults.toList.filter(_._1 != "oracle").map { case (name, stats) =>
           name -> SplitTuningCriterion.chooseBest(stats).data.head
         }.maxBy(_._2._2.f1)
         _ <- FileUtil.writeString(resultsDir.resolve("best-setting.txt"))(bestResult._1 + "=" + bestResult._2._1)

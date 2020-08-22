@@ -185,30 +185,47 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def argSpans: ArgFeats[Map[ESpan, Double]]
 
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
-    RunData.strings.zip(verbIdToType.data).zip(argSpans).zip(verbArgSets.data).flatMap { case (((split, vidToType), allSpans), allVerbs) =>
-      val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
-      FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
-        .map { case QGen.SentencePrediction(sid, _, verbs) =>
-          verbs.foldMap { case QGen.VerbPrediction(vi, spans) =>
-            val verbId = VerbId(sid, vi)
-            val verbType = vidToType.value(verbId)
-            val argSet = allVerbs(verbType)(verbId)
-            Map(
-              verbType -> NonMergingMap(
-                argSet.map { arg =>
-                  val argId = ArgumentId(verbId, arg)
-                  val questions = allSpans(verbType)(argId).toList.foldMap { case (span, prob) =>
-                    spans.find(_.span == span).foldMap { pred =>
-                      pred.questions.mapVals(_ * prob)
+    RunData.strings.zip(verbIdToType.data).zip(argSpans).zip(verbArgSets.data).zip(argSemanticHeadIndices).flatMap {
+      case ((((split, vidToType), allSpans), allVerbs), headIndices) =>
+        val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
+        FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
+          .map { case QGen.SentencePrediction(sid, _, verbs) =>
+            verbs.foldMap { case QGen.VerbPrediction(vi, spans) =>
+              val verbId = VerbId(sid, vi)
+              val verbType = vidToType.value(verbId)
+              val argSet = allVerbs(verbType)(verbId)
+              val argIds = argSet.map(ArgumentId(verbId, _))
+              val allHeadIndices = argIds.map(headIndices(verbType))
+              Map(
+                verbType -> NonMergingMap(
+                  argIds.map { argId =>
+                    val headIndex = headIndices(verbType)(argId)
+                    val priorArgSpans = allSpans(verbType)(argId)
+
+                    // use head-based span finding to include everything predicted by the model above the threshold
+                    // val otherHeads = allHeadIndices - headIndex
+                    // val questions = spans
+                    //   .filter(pred =>
+                    //     priorArgSpans.contains(pred.span) ||
+                    //       (pred.span.contains(headIndex) &&
+                    //          otherHeads.forall(h => !pred.span.contains(h))))
+                    //   .foldMap(pred =>
+                    //     pred.questions.mapVals(_ * pred.spanProb)
+                    //   )
+
+                    // use only prior arg spans.
+                    val questions = priorArgSpans.toList.foldMap { case (span, prob) =>
+                      spans.find(_.span == span).foldMap { pred =>
+                        pred.questions.mapVals(_ * pred.spanProb)
+                      }
                     }
-                  }
-                  argId -> questions
-                }.toMap
+                    argId -> questions
+                  }.toMap
+                )
               )
-            )
+            }
           }
-        }
-        .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
+          .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
     }.toCell("Question distributions for arguments")
   }
 

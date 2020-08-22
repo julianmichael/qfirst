@@ -67,6 +67,25 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
     }
   }
 
+  def drawPair[A](items: Vector[A], getSize: A => Int): (Int, Int) = {
+    val sizes = items.map(getSize)
+    val total = sizes.sum
+    val dist = sizes.map(_.toDouble / total)
+    val fstRnd = scala.util.Random.nextDouble
+    val fst = dist.zipWithIndex.foldM(fstRnd) { case (mass, (prob, index)) =>
+      if(prob >= mass) Left(index) else Right(mass - prob)
+    }.left.get
+    val sndRnd = scala.util.Random.nextDouble
+    val renorm = total.toDouble / (total - sizes(fst))
+    val renormDist = dist.map(_ * renorm)
+    val snd = renormDist.zipWithIndex.foldM(sndRnd) { case (mass, (prob, index)) =>
+      if(index == fst) Right(mass) // skip over fst
+      else if(prob >= mass) Left(index)
+      else Right(mass - prob)
+    }.left.get
+    (fst, snd)
+  }
+
   private def getBaselineLabels[VerbType, Arg](
     args: Map[VerbType, Set[ArgumentId[Arg]]],
     features: Features[VerbType, Arg])(
@@ -114,8 +133,52 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
         ).asInstanceOf[VerbType => ArgumentId[Arg] => String]
       )
     }
-    case "random" => IO(None)
+    case "random_linear" => {
+      IO(Some((vt: VerbType) => ((argId: ArgumentId[Arg]) => argId.toString)))
+    }
+    case "random" | "random_weighted" => {
+      IO(None)
+    }
     case _ => ??? // should never happen
+  }
+
+  import scala.annotation.tailrec
+  @tailrec private def randomlyCluster[A](items: NonEmptyVector[MergeTree[A]]): MergeTree[A] = {
+    // else if(items.size == 2) MergeTree.Merge(0.0, items.head, items.tail.head)
+    if(items.size == 1) items.head
+    else {
+      val i1 = (scala.util.Random.nextDouble * items.size).toInt
+      val i2 = (scala.util.Random.nextDouble * (items.size - 1)).toInt
+      val left = items.getUnsafe(i1)
+      val swappedItems = items.updatedUnsafe(i1, items.getUnsafe(items.size.toInt - 1))
+      val right = swappedItems.getUnsafe(i2)
+      randomlyCluster(NonEmptyVector.fromVectorUnsafe(items.updatedUnsafe(i2, MergeTree.Merge(0.0, left, right)).init))
+    }
+  }
+  def randomClustering[A](items: NonEmptyVector[A]): MergeTree[A] = {
+    randomlyCluster(items.map(MergeTree.Leaf(0.0, _)))
+  }
+
+  import scala.annotation.tailrec
+  @tailrec private def randomlyClusterWeighted[A](items: NonEmptyVector[MergeTree[A]]): MergeTree[A] = {
+    // else if(items.size == 2) MergeTree.Merge(0.0, items.head, items.tail.head)
+    if(items.size == 1) items.head
+    else {
+      val (i1, i2) = drawPair[MergeTree[A]](items.toVector, _.size.toInt)
+      val newItem = MergeTree.Merge(0.0, items.getUnsafe(i1), items.getUnsafe(i2))
+      val prevLast = items.getUnsafe(items.size.toInt - 1)
+      randomlyClusterWeighted(
+        NonEmptyVector.fromVectorUnsafe(
+          items
+            .updatedUnsafe(i1, newItem)
+            .updatedUnsafe(i2, prevLast)
+            .init
+        )
+      )
+    }
+  }
+  def weightedRandomClustering[A](items: NonEmptyVector[A]): MergeTree[A] = {
+    randomlyClusterWeighted(items.map(MergeTree.Leaf(0.0, _)))
   }
 
   def getArgumentClusters[VerbType, Arg : Order](
@@ -130,23 +193,30 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
       baselineLabelCountsOpt <- baselineLabelsOpt.traverse(getBaselineLabelCounts(allArgs, _))
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
         Log.info(features.renderVerbType(verbType)) >> {
-          val getOrderedVerbSets = (baselineLabelsOpt, baselineLabelCountsOpt).mapN { (baselineLabels, baselineLabelCounts) =>
+          (baselineLabelsOpt, baselineLabelCountsOpt).mapN { (baselineLabels, baselineLabelCounts) =>
             val baselineLabelsForVerb = baselineLabels(verbType)
-            (argIds: Set[ArgumentId[Arg]]) => argIds.groupBy(baselineLabelsForVerb)
+            val getOrderedVerbSets = (argIds: Set[ArgumentId[Arg]]) => argIds
+              .groupBy(baselineLabelsForVerb)
               .toVector.sortBy(p => baselineLabelCounts(p._1)).map(_._2)
+            // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+            NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+              IO {
+                verbType -> getOrderedVerbSets(args.toVector.toSet)
+                  .map(MergeTree.Leaf(0.0, _))
+                  .reduceLeft[MergeTree[Set[ArgumentId[Arg]]]](MergeTree.Merge(0.0, _, _))
+              }
+            }
           }.getOrElse {
             // random baseline
-            (argIds: Set[ArgumentId[Arg]]) => scala.util.Random.shuffle(
-              argIds.toVector.map(Set(_))
-            )
-          }
-
-          // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
-          NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
-            IO {
-              verbType -> getOrderedVerbSets(args.toVector.toSet)
-                .map(MergeTree.Leaf(0.0, _))
-                .reduceLeft[MergeTree[Set[ArgumentId[Arg]]]](MergeTree.Merge(0.0, _, _))
+            if(setting == "random") {
+              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+                IO(verbType -> randomClustering(args.map(Set(_))))
+              }
+            } else {
+              require(setting == "random_weighted")
+              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+                IO(verbType -> weightedRandomClustering(args.map(Set(_))))
+              }
             }
           }
         }
@@ -161,7 +231,7 @@ object BaselineArgumentModel {
   // TODO add better error reporting
   def fromString(x: String): Option[BaselineArgumentModel] = x match {
     case x @ (
-      "syntf" | "syntf+" | "random"
+      "syntf" | "syntf+" | "random" | "random_linear" | "random_weighted"
         | "gold_nosense" | "gold_nosense+noise"
         | "gold_wsense" | "gold_wsense+noise") => Some(BaselineArgumentModel(x))
     case _ => None

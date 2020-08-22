@@ -223,8 +223,9 @@ object FrameInductionApp extends CommandIOApp(
         }
       ) >>= {
         case (models, argModelSpecs) =>
+          val goldVerbSenseLabel = if(features.assumeGoldVerbSense) "by-sense" else "by-lemma"
           features.argRoleLabels.get.flatMap(argRoleLabels =>
-            (features.outDir, features.splitName).mapN((out, split) => out.resolve(s"eval/$split")) >>= (parentResultsDir =>
+            (features.outDir, features.splitName).mapN((out, split) => out.resolve(s"eval/$split/$goldVerbSenseLabel")) >>= (parentResultsDir =>
               argModelSpecs.toList.traverse { case (evalMode, metricSpecs) =>
                 val useSenseSpecificRoles = evalMode == "sense-specific"
                 val resultsDir = parentResultsDir.resolve(evalMode)

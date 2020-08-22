@@ -292,6 +292,51 @@ class CoNLL08Features(
     )
   }
 
+  override val argSemanticHeadIndices: ArgFeats[Int] = {
+    dataset.data.map { data =>
+      (verbType: String) => (argId: ArgumentId[Int]) => {
+        val sentence = data(argId.verbId.sentenceId)
+        val dependencies = sentence.childToParentDependencies
+        val argIndex = argId.argument
+
+        val validPrepPOS = Set("IN", "TO", "RB")
+        // together these other POS tags should cover everything interesting. they can stay heads
+        // val invalidPrepPOS = Set("VBG", "VBN", "VBD", "RP", "JJ")
+
+        // if(dependencies.contains("PMOD" -> argIndex)) {
+        //   if(!(validPrepPOS ++ invalidPrepPOS).contains(sentence.tokens(argIndex).pos)) {
+        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
+        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
+        //     val pmodIndex = dependencies.indexOf("PMOD" -> argIndex)
+        //     System.err.println(s"$pmodIndex: ${sentence.tokens(pmodIndex)}")
+        //   }
+        // }
+
+        val validToPOS = Set[String]("TO")
+        // TO is the only pos that appears with IM dependents
+        // val invalidToPOS = Set[String]()
+
+        // if(dependencies.contains("IM" -> argIndex)) {
+        //   if(!(validToPOS ++ invalidToPOS).contains(sentence.tokens(argIndex).pos)) {
+        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
+        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
+        //     val imIndex = dependencies.indexOf("IM" -> argIndex)
+        //     System.err.println(s"$imIndex: ${sentence.tokens(imIndex)}")
+        //   }
+        // }
+
+        Option(dependencies.indexOf("PMOD" -> argIndex))
+          .filter(_ >= 0)
+          .filter(i => validPrepPOS.contains(sentence.tokens(i).pos))
+          .orElse(
+            Option(dependencies.indexOf("IM" -> argIndex))
+              .filter(_ >= 0)
+              .filter(i => validToPOS.contains(sentence.tokens(i).pos))
+          ).getOrElse(argIndex)
+      }
+    }
+  }
+
   import qfirst.datasets.conll05
 
   val conll05Path = Paths.get("data/conll05st-release")
@@ -593,7 +638,8 @@ class CoNLL08Features(
   // } >> super.setup
 
   lazy val origPropBankArgSpans: ArgFeats[Map[ESpan, Double]] = {
-    fileCacheArgFeats("aligned-propbank-spans", log = true)(
+    // TODO fileCache them, once I decide what to do about including the VerbType...
+    cacheArgFeats("aligned-propbank-spans", log = true)(
       (dataset.data, argRoleLabels.data).mapN { (data, argRoleLabels) =>
         for {
           ptb2Sentences <- ptb2Sentences.get
@@ -626,9 +672,25 @@ class CoNLL08Features(
     ).data
   }
 
-  val dependencyInferredArgSpans: ArgFeats[Map[ESpan, Double]] = {
+  val validPrepPOS = Set("IN", "TO", "RB")
+
+  val prepObjectExtendedSpans: ArgFeats[Map[ESpan, Double]] = {
+    dataset.data.zip(origPropBankArgSpans).map { case (data, getPBSpans) =>
+      (verbType: String) => (argId: ArgumentId[Int]) => {
+        val pbSpans = getPBSpans(verbType)(argId)
+        val sentence = data.value(argId.verbId.sentenceId)
+        pbSpans.flatMap { case (span, prob) =>
+          if(validPrepPOS.contains(sentence.tokens(span.begin).pos) && span.length > 1) {
+            Some(ESpan(span.begin + 1, span.end) -> prob)
+          } else None
+        }
+      }
+    }
+  }
+
+  lazy val dependencyInferredArgSpans: ArgFeats[Map[ESpan, Double]] = {
     cacheArgFeats("CoNLL 2008 inferred arg spans", log = true)(
-      dataset.data.zip(argRoleLabels.data).map { case (data, roleLabels) =>
+      dataset.data.zip(argRoleLabels.data).zip(argSemanticHeadIndices).map { case ((data, roleLabels), semanticHeads) =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
 
           val argIndex = argId.argument
@@ -707,13 +769,21 @@ class CoNLL08Features(
             System.err.println(jjm.ling.Text.renderSpan(sentence.tokens, blockedSpan2))
           }
 
-          Map(span -> 0.5)
+          val semHead = semanticHeads(verbType)(argId)
+          val headSpan = ESpan(semHead, semHead + 1)
+
+          Map(span -> 0.5) |+| Map(headSpan -> 0.25)
         }
       }
     ).data
   }
 
-  override lazy val argSpans: ArgFeats[Map[ESpan, Double]] = origPropBankArgSpans |+| dependencyInferredArgSpans
+  // TODO: remove VerbType from VerbFeats and ArgFeats? Maybe?
+
+  override lazy val argSpans: ArgFeats[Map[ESpan, Double]] =
+    origPropBankArgSpans //|+|
+      // prepObjectExtendedSpans |+|
+      // dependencyInferredArgSpans
 
     // cacheArgFeats("CoNLL 2008 arg spans extracted from CoNLL 2005")(
     //   (dataset.data, conll05Sentences.data, argRoleLabels.data).mapN { (data, props, argRoleLabels) =>
@@ -811,49 +881,4 @@ class CoNLL08Features(
     //     }
     //   }
     // ).data
-
-  override val argSemanticHeadIndices: ArgFeats[Int] = {
-    dataset.data.map { data =>
-      (verbType: String) => (argId: ArgumentId[Int]) => {
-        val sentence = data(argId.verbId.sentenceId)
-        val dependencies = sentence.childToParentDependencies
-        val argIndex = argId.argument
-
-        val validPrepPOS = Set("IN", "TO", "RB")
-        // together these other POS tags should cover everything interesting. they can stay heads
-        // val invalidPrepPOS = Set("VBG", "VBN", "VBD", "RP", "JJ")
-
-        // if(dependencies.contains("PMOD" -> argIndex)) {
-        //   if(!(validPrepPOS ++ invalidPrepPOS).contains(sentence.tokens(argIndex).pos)) {
-        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
-        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
-        //     val pmodIndex = dependencies.indexOf("PMOD" -> argIndex)
-        //     System.err.println(s"$pmodIndex: ${sentence.tokens(pmodIndex)}")
-        //   }
-        // }
-
-        val validToPOS = Set[String]("TO")
-        // TO is the only pos that appears with IM dependents
-        // val invalidToPOS = Set[String]()
-
-        // if(dependencies.contains("IM" -> argIndex)) {
-        //   if(!(validToPOS ++ invalidToPOS).contains(sentence.tokens(argIndex).pos)) {
-        //     System.err.println(jjm.ling.Text.render(sentence.tokens))
-        //     System.err.println(s"$argIndex: ${sentence.tokens(argIndex)}")
-        //     val imIndex = dependencies.indexOf("IM" -> argIndex)
-        //     System.err.println(s"$imIndex: ${sentence.tokens(imIndex)}")
-        //   }
-        // }
-
-        Option(dependencies.indexOf("PMOD" -> argIndex))
-          .filter(_ >= 0)
-          .filter(i => validPrepPOS.contains(sentence.tokens(i).pos))
-          .orElse(
-            Option(dependencies.indexOf("IM" -> argIndex))
-              .filter(_ >= 0)
-              .filter(i => validToPOS.contains(sentence.tokens(i).pos))
-          ).getOrElse(argIndex)
-      }
-    }
-  }
 }
