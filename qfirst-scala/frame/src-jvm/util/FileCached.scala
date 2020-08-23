@@ -15,7 +15,7 @@ class FileCached[A](
   path: Path,
   _read: Path => IO[A],
   write: (Path, A) => IO[Unit])(
-  compute: IO[A]
+  val compute: IO[A]
 ) {
   def read(implicit Log: TreeLogger[IO, String]): IO[Option[A]] =
     IO(Files.exists(path)).ifM(

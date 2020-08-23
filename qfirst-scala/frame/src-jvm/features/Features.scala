@@ -213,10 +213,12 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
                     //     pred.questions.mapVals(_ * pred.spanProb)
                     //   )
 
+                    // TODO: experiment and find best setting of spans * weighting, etc.
+
                     // use only prior arg spans.
                     val questions = priorArgSpans.toList.foldMap { case (span, prob) =>
                       spans.find(_.span == span).foldMap { pred =>
-                        pred.questions.mapVals(_ * pred.spanProb)
+                        pred.questions.mapVals(_ * prob)
                       }
                     }
                     argId -> questions

@@ -781,9 +781,10 @@ class CoNLL08Features(
   // TODO: remove VerbType from VerbFeats and ArgFeats? Maybe?
 
   override lazy val argSpans: ArgFeats[Map[ESpan, Double]] =
-    origPropBankArgSpans //|+|
-      // prepObjectExtendedSpans |+|
-      // dependencyInferredArgSpans
+    origPropBankArgSpans
+      // |+| prepObjectExtendedSpans
+      // .map(_.map(_.map(spans => spans.mapVals(_ / spans.size))))
+      // |+| dependencyInferredArgSpans)
 
     // cacheArgFeats("CoNLL 2008 arg spans extracted from CoNLL 2005")(
     //   (dataset.data, conll05Sentences.data, argRoleLabels.data).mapN { (data, props, argRoleLabels) =>

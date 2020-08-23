@@ -58,6 +58,13 @@ object FrameInductionApp extends CommandIOApp(
 
   implicit val logLevel = LogLevel.Trace
 
+  var shouldRecomputeModel: Boolean = false
+
+  def maybeGetFromCache[A](fc: FileCached[A])(implicit Log: EphemeralTreeLogger[IO, String]): IO[A] = {
+    if(shouldRecomputeModel) fc.compute
+    else fc.get
+  }
+
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -85,7 +92,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[Unit] = {
     for {
       argTrees <- Log.infoBranch(s"Getting argument clusters") {
-        getArgumentClusters[VerbType, Arg](model, features).flatMap(_.get)
+        getArgumentClusters[VerbType, Arg](model, features).flatMap(maybeGetFromCache)
       }
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
@@ -145,7 +152,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[Unit] = {
     for {
       verbTrees <- Log.infoBranch(s"Getting verb clusters") {
-        getVerbClusters[VerbType, Arg](model, features).flatMap(_.get)
+        getVerbClusters[VerbType, Arg](model, features).flatMap(maybeGetFromCache)
       }
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
@@ -335,6 +342,10 @@ object FrameInductionApp extends CommandIOApp(
     )
   ).orNone.map(_.getOrElse(defaultTuningSpecs))
 
+  val recomputeO = Opts.flag(
+    "recompute", help = "recompute clustering model even if it is cached."
+  ).orFalse
+
   def withLogger[A](run: SequentialEphemeralTreeLogger[IO, String] => IO[A]): IO[A] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.debounced() >>= { Log =>
       val res = run(Log)
@@ -367,13 +378,14 @@ object FrameInductionApp extends CommandIOApp(
   val run = Opts.subcommand(
     name = "run",
     help = "Run clustering / frame induction.")(
-    (dataO, modeO, modelO, tuningO).mapN { (data, mode, model, tuning) =>
+    (dataO, modeO, modelO, tuningO, recomputeO).mapN { (data, mode, model, tuning, recompute) =>
       withLogger { logger =>
         implicit val Log = logger
         for {
           _ <- Log.info(s"Mode: $mode")
           _ <- Log.info(s"Data: $data")
           _ <- Log.info(s"Model: $model")
+          _ <- IO(shouldRecomputeModel = recompute)
           // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
           _ <- data match {
             case d @ DataSetting.Qasrl =>
