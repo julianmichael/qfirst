@@ -79,6 +79,64 @@ object Evaluation {
       }
     }.map(_.toMap)
 
+  def runTuningCalibration[VerbType](
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    tuningSpec: SplitTuningSpec,
+    resultsDir: NIOPath)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Unit] = {
+    val name = tuningSpec.criterion.name
+    for {
+      dataPoints <- allStats.toList
+        .groupBy(_._2.head.numItems).toList
+        .traverse { case (numItems, statSets) =>
+          tuningSpec.run(statSets.toMap)(EphemeralTreeLogger.noop).map(points =>
+            points.map { case (threshold, pr) =>
+              Plotting.WeirdLinePoint(scala.math.log(numItems.toDouble), threshold, pr.f1, (numItems * statSets.size) / 25.0)
+            }
+          )
+        }
+      _ <- Plotting.plotWeirdLines(
+        dataPoints,
+        title = s"Scores ($name) by number of instances and thresholds",
+        xAxisLabel = "Log num instances",
+        yAxisLabel = "Threshold",
+        path = resultsDir.resolve(s"tuning-calibration-$name.png")
+      )
+    } yield ()
+  }
+
+  def runTuningCalibration2[VerbType](
+    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
+    tuningSpec: SplitTuningSpec,
+    resultsDir: NIOPath
+  ): IO[Unit] = {
+    val name = tuningSpec.criterion.name
+    case class CalibrationPoint(
+      threshold: Double,
+      stats: ConfStatsPoint
+    )
+    val dataPoints: List[CalibrationPoint] = allStats.values.toList.map { choices =>
+      val threshold = SplitTuningCriterion.chooseBest(
+        tuningSpec.thresholds.map(t =>
+          t -> tuningSpec.criterion.selectPoint(t)(choices).weightedPR
+        )
+      ).data.head._1
+      CalibrationPoint(threshold, tuningSpec.criterion.selectPoint(threshold)(choices))
+    }
+    Plotting.plotWeightedScatter(
+      dataPoints.foldMap(p =>
+        Map(
+          "max F1" -> List(Plotting.WeightedScatterPoint(p.stats.numItems, p.threshold, p.stats.numItems)),
+        )
+      ),
+      title = s"Best threshold ($name) by number of instances",
+      xAxisLabel = "Num instances",
+      yAxisLabel = "Best threshold",
+      path = resultsDir.resolve(s"tuning-calibration-$name.png")
+    )
+  }
+
   def runClusterTuning[VerbType](
     modelName: String,
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -101,19 +159,40 @@ object Evaluation {
         }
         tuningResults <- tuningSpecs.traverse(
           tuningSpec => Log.infoBranch(s"Tuning (${tuningSpec.criterion.name})") {
-            tuningSpec.run(allStats).map(tuningSpec.criterion.name -> _)
+            runTuningCalibration(allStats, tuningSpec, resultsDir) >>
+              tuningSpec.run(allStats).map(tuningSpec.criterion.name -> _)
           }
         ).map(_.toList.toMap)
+        _ <- {
+          IO.unit
+        }
         _ <- Plotting.plotPrecisionRecallCurves(
           tuningResults,
           modelName, precisionAxisLabel, recallAxisLabel,
           resultsDir.resolve("tuning-strategies.png")
         )
-        bestResult = tuningResults.toList.filter(_._1 != "oracle").map { case (name, stats) =>
-          name -> SplitTuningCriterion.chooseBest(stats).data.head
-        }.maxBy(_._2._2.f1)
-        _ <- FileUtil.writeString(resultsDir.resolve("best-setting.txt"))(bestResult._1 + "=" + bestResult._2._1)
-        _ <- FileUtil.writeString(resultsDir.resolve("best-result.txt"))(getMetricsString(bestResult._2._2))
+        (bestCriterion, bestThreshold, bestStats) = tuningResults.toList.filter(_._1 != "oracle").map { case (name, stats) =>
+          val criterion = SplitTuningCriterion.fromString(name).get
+          val (threshold, result) = SplitTuningCriterion.chooseBest(stats).data.head
+          (criterion, threshold, result)
+        }.maxBy(_._3.f1)
+        bestSettingString = bestCriterion.name + "=" + bestThreshold
+        _ <- FileUtil.writeString(resultsDir.resolve("best-setting.txt"))(bestSettingString)
+        _ <- FileUtil.writeString(resultsDir.resolve("best-result.txt"))(getMetricsString(bestStats))
+        _ <- Plotting.plotWeightedScatter(
+          allStats.values.toList.foldMap { stats =>
+            val res = bestCriterion.selectPoint(bestThreshold)(stats)
+            Map(
+              "precision" -> List(Plotting.WeightedScatterPoint(res.numItems, res.precision, res.numItems)),
+              "recall" -> List(Plotting.WeightedScatterPoint(res.numItems, res.recall, res.numItems)),
+              "f1" -> List(Plotting.WeightedScatterPoint(res.numItems, res.f1, res.numItems))
+            )
+          },
+          title = s"Tuned stats ($bestSettingString) by verb frequency",
+          xAxisLabel = "Num instances",
+          yAxisLabel = "Score",
+          path = resultsDir.resolve("by-freq-stats.png")
+        )
       } yield ()
     }
   }
@@ -169,6 +248,26 @@ object Evaluation {
   ): IO[Unit] = activeMetrics.traverse(metric =>
     runClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, tuningSpecs, metric)
   ).void
+
+  def evaluateArgumentClusters[VerbType, Arg](
+    resultsDir: NIOPath,
+    modelName: String,
+    argTrees: Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]],
+    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
+    tuningSpecs: NonEmptyList[SplitTuningSpec],
+    useSenseSpecificRoles: Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = {
+    val getLabel = if(useSenseSpecificRoles) {
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId),
+    } else {
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
+    }
+
+    evaluateClusters(resultsDir, modelName, argTrees, getLabel, tuningSpecs)
+  }
+
+  // summarize
 
   def evaluateModels[VerbType, InstanceId, GoldLabel](
     resultsDir: NIOPath,
@@ -230,26 +329,6 @@ object Evaluation {
         } yield ()
       )
     } yield ()
-  }
-
-  def evaluateArgumentClusters[VerbType, Arg](
-    resultsDir: NIOPath,
-    modelName: String,
-    argTrees: Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]],
-    argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
-    tuningSpecs: NonEmptyList[SplitTuningSpec],
-    useSenseSpecificRoles: Boolean)(
-    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  ): IO[Unit] = {
-    if(useSenseSpecificRoles) evaluateClusters(
-      resultsDir, modelName,
-      argTrees, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId),
-      tuningSpecs
-    ) else evaluateClusters(
-      resultsDir, modelName,
-      argTrees, (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
-      tuningSpecs
-    )
   }
 
   def evaluateArgumentModels[VerbType, Arg](

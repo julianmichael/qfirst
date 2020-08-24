@@ -1,5 +1,6 @@
 package qfirst.frame.eval
 
+import cats.Order
 import cats.data.NonEmptyList
 import cats.effect.IO
 import cats.implicits._
@@ -16,22 +17,22 @@ import qfirst.frame.getMetricsString
 
 case class SplitTuningSpec(
   criterion: SplitTuningCriterion,
-  thresholds: Option[List[Double]] = None
+  thresholdsOverride: Option[List[Double]] = None
 ) {
+  def thresholds = thresholdsOverride.getOrElse(criterion.defaultThresholds)
   def run[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = {
-    val runThresholds = thresholds.getOrElse(criterion.defaultThresholds)
-    criterion.runTuning(allStats, runThresholds).flatTap { tuningResults =>
+    criterion.runTuning(allStats, thresholds).flatTap { tuningResults =>
       val tunedBest = SplitTuningCriterion.chooseBest(tuningResults)
       Log.info(s"Tuned results (${criterion.name}): ${getMetricsString(tunedBest)}")
     }
   }
 
   override def toString = {
-    if(thresholds.forall(_ == criterion.defaultThresholds)) criterion.name
-    else s"$criterion=" + thresholds.get.mkString(",")
+    if(thresholds == criterion.defaultThresholds) criterion.name
+    else s"$criterion=" + thresholds.mkString(",")
   }
 }
 object SplitTuningSpec {
@@ -54,11 +55,17 @@ object SplitTuningSpec {
 trait SplitTuningCriterion {
   def name: String
   def defaultThresholds: List[Double]
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint
+
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
     thresholds: List[Double])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[List[(Double, WeightedPR)]]
+  ): IO[List[(Double, WeightedPR)]] = {
+    SplitTuningCriterion.tuneWeightedStats(
+      thresholds, allStats)(
+      selectPoint)
+  }
 
   override def toString = name
 }
@@ -111,21 +118,10 @@ import SplitTuningCriterion._
 object NumClustersCriterion extends SplitTuningCriterion {
   val name: String = "num-clusters"
   val defaultThresholds = (1 to 35).toList.map(_.toDouble)
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val allStatsSortedByNumClusters = allStats.transform { case (_, results) =>
-      results.sortBy(_.numClusters)
-    }
-    tuneWeightedStats(
-      thresholds, allStatsSortedByNumClusters)(
-      t => stats => {
-        val qualified = stats.toList.dropWhile(_.numClusters < t)
-        qualified.headOption.getOrElse(stats.last)
-      }
-    )
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val choicesSorted = choices.sortBy(_.numClusters)
+    val qualified = choicesSorted.toList.dropWhile(_.numClusters < threshold)
+    qualified.headOption.getOrElse(choicesSorted.last)
   }
 }
 
@@ -133,107 +129,65 @@ object OracleCriterion extends SplitTuningCriterion {
   val name: String = "oracle"
   val defaultThresholds = {
     val logBound = 10
-      (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
+
+    (-logBound to logBound).toList.map(scala.math.pow(1.2, _))
   }
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    tuneWeightedStats(
-      thresholds, allStats)(
-      t => stats => {
-        stats.toList.maxBy(_.fMeasure(t))
-      }
-    )
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    choices.toList.maxBy(_.fMeasure(threshold))
   }
 }
 
 object TotalEntropyCriterion extends SplitTuningCriterion {
   val name: String = "entropy"
-  val defaultThresholds = (-40 to 40).map(_.toDouble / 20).toList
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
-      val numItems = s.numItems
-      s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
-    }
-    tuneWeightedStats(
-      thresholds, allStats)(
-      t => stats => {
-        val getLoss = getTotalLoss(t)
-        stats.toList.minBy(getLoss)
-      }
-    )
+  val defaultThresholds = (-5 to 40).map(_.toDouble / 20).toList
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    val numItems = s.numItems
+    s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
   }
 }
 
 object SqNumClustersPenaltyCriterion extends SplitTuningCriterion {
   val name: String = "sq-nclusters"
   val defaultThresholds = (0 to 50).map(_.toDouble / 2).toList
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
-      s.loss + (t * scala.math.pow(s.numClusters, 2.0))
-    }
-    tuneWeightedStats(
-      thresholds, allStats)(
-      t => stats => {
-        val getLoss = getTotalLoss(t)
-        stats.toList.minBy(getLoss)
-      }
-    )
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    s.loss + (t * scala.math.pow(s.numClusters, 2.0))
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
   }
 }
 
 object CuttingDeltaCriterion extends SplitTuningCriterion {
   val name: String = "cut-delta"
   val defaultThresholds = (0 to 100).map(_.toDouble / 10).toList
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val allStatsSortedByLoss = allStats.transform { case (_, results) =>
-      results.sortBy(_.loss)
-    }
-    tuneWeightedStats(
-      thresholds, allStatsSortedByLoss)(
-      t => stats => {
-        val deltaThreshold = t * stats.head.numItems
-        stats.toList.sliding(2)
-          .filter(_.size == 2)
-          .takeWhile(w => w(1).loss - w(0).loss < deltaThreshold)
-          .toList.lastOption
-          .fold(stats.head)(_(0))
-      }
-    )
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val choicesSorted = choices.sortBy(_.loss)
+    val deltaThreshold = threshold * choicesSorted.head.numItems
+    choicesSorted.toList.sliding(2)
+      .filter(_.size == 2)
+      .takeWhile(w => w(1).loss - w(0).loss < deltaThreshold)
+      .toList.lastOption
+      .fold(choicesSorted.head)(_(0))
   }
 }
 
 object LossPerItemCriterion extends SplitTuningCriterion {
   val name: String = "loss"
   val defaultThresholds = (0 to 40).toList.map(_.toDouble / 10.0)
-  def runTuning[VerbType](
-    allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
-    thresholds: List[Double])(
-    implicit Log: EphemeralTreeLogger[IO, String]
-  ) = {
-    val allStatsSortedByLoss = allStats.transform { case (_, results) =>
-      results.sortBy(-_.lossPerItem)
-    }
-    tuneWeightedStats(
-      thresholds, allStatsSortedByLoss)(
-      t => stats => {
-        val qualified = stats.toList.takeWhile(_.lossPerItem > t)
-        qualified.lastOption.getOrElse(stats.head)
-      }
-    )
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val choicesSorted = choices.sortBy(-_.lossPerItem)
+    val qualified = choicesSorted.toList.takeWhile(_.lossPerItem > threshold)
+    qualified.lastOption.getOrElse(choicesSorted.head)
   }
 }

@@ -220,7 +220,7 @@ object FrameInductionApp extends CommandIOApp(
                     metric <- IO(ClusterPRMetric.fromString(metricDir.getFileName.toString).get)
                     tuningSpecStr <- FileUtil.readString(metricDir.resolve("best-setting.txt"))
                     tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get).map(spec =>
-                      if(!features.mode.isTest) spec.copy(thresholds = None) else spec
+                      if(!features.mode.isTest) spec.copy(thresholdsOverride = None) else spec
                     )
                   } yield Map(evalDir.getFileName.toString -> Map(metric -> NonMergingMap(model.toString -> tuningSpec)))
                 }

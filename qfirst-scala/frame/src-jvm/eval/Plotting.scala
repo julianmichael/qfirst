@@ -119,7 +119,124 @@ object Plotting {
       IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
   }
 
-  def plotPrecisionRecallCurves[VerbType](
+  case class WeirdLinePoint(
+    x: Double,
+    y: Double,
+    value: Double,
+    weight: Double
+  ) extends Datum2d[WeirdLinePoint] {
+    def withXY(x: Double, y: Double) = this.copy(x = x, y = y)
+  }
+
+  def plotWeirdLines(
+    data: List[List[WeirdLinePoint]],
+    title: String,
+    xAxisLabel: String,
+    yAxisLabel: String,
+    path: NIOPath): IO[Unit] = {
+    // val colors = Color.getDefaultPaletteSeq(data.size)
+
+    // val categories = data.keySet.toList
+    // val useColoring = CategoricalColoring.themed[String]
+    // val colorFunc = useColoring(categories)
+    // val radius = size.getOrElse(theme.elements.pointSize)
+
+    // val useColoring = theme.colors.continuousColoring
+
+    val gradient = ContinuousColoring.gradient(HTMLNamedColors.blue, HTMLNamedColors.orange)
+    val colorFunc = gradient(Seq(0.7, 1.0))
+
+    val plot = Overlay.fromSeq(
+      data.map { lineData =>
+        // LinePlot.apply(
+        ScatterPlot.apply(
+          lineData,
+          Some(
+            PointRenderer.custom[WeirdLinePoint](
+              renderFn = (pt =>
+                Disc.centered(pt.weight).filled(colorFunc(pt.value).hsla.copy(opacity = 0.4))
+              )
+            )
+            // PathRenderer.custom(
+            //   (plotCtx: PlotContext, items: Seq[WeirdLinePoint]) => ???: Drawable
+            // )
+          )
+        )
+      }
+    ).title(title)
+      .xLabel(xAxisLabel)
+      .yLabel(yAxisLabel)
+      .xAxis().yAxis()
+      .frame().rightLegend()
+
+    IO(plot.render().write(new java.io.File(path.toString)))
+
+    //   data.toList.map { case (scoreName, data) =>
+    //     val summedPoints = data.groupByNel(p => p.x -> p.y)
+    //       .toList
+    //       .map { case (xy, pts) => pts.head.copy(weight = pts.foldMap(_.weight)) }
+
+    //     ScatterPlot(
+    //       summedPoints,
+    //       pointRenderer = Some(
+    //         PointRenderer.custom[WeightedScatterPoint](
+    //           renderFn = (pt =>
+    //             Disc.centered(pt.weight / 10.0).filled(colorFunc(scoreName).hsla.copy(opacity = 0.5))),
+    //           legendCtx = Some(useColoring.legendContext(categories))
+    //         )
+    //       )
+    //     )
+    //   }
+  }
+
+  case class WeightedScatterPoint(
+    x: Double,
+    y: Double,
+    weight: Double
+  ) extends Datum2d[WeightedScatterPoint] {
+    def withXY(x: Double, y: Double) = this.copy(x = x, y = y)
+  }
+
+  def plotWeightedScatter(
+    data: Map[String, List[WeightedScatterPoint]],
+    title: String,
+    xAxisLabel: String,
+    yAxisLabel: String,
+    path: NIOPath): IO[Unit] = {
+    // val colors = Color.getDefaultPaletteSeq(data.size)
+
+    val categories = data.keySet.toList
+    val useColoring = CategoricalColoring.themed[String]
+    val colorFunc = useColoring(categories)
+    // val radius = size.getOrElse(theme.elements.pointSize)
+
+    val plot = Overlay.fromSeq(
+      data.toList.map { case (scoreName, data) =>
+        val summedPoints = data.groupByNel(p => p.x -> p.y)
+          .toList
+          .map { case (xy, pts) => pts.head.copy(weight = pts.foldMap(_.weight)) }
+
+        ScatterPlot(
+          summedPoints,
+          pointRenderer = Some(
+            PointRenderer.custom[WeightedScatterPoint](
+              renderFn = (pt =>
+                Disc.centered(pt.weight / 10.0).filled(colorFunc(scoreName).hsla.copy(opacity = 0.5))),
+              legendCtx = Some(useColoring.legendContext(categories))
+            )
+          )
+        )
+      }
+    ).title(title)
+      .xLabel(xAxisLabel)
+      .yLabel(yAxisLabel)
+      .xAxis().yAxis()
+      .frame().rightLegend()
+
+    IO(plot.render().write(new java.io.File(path.toString)))
+  }
+
+  def plotPrecisionRecallCurves(
     tuningResults: Map[String, List[(Double, WeightedPR)]],
     title: String,
     precisionAxisLabel: String,
