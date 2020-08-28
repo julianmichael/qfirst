@@ -184,6 +184,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argSpans: ArgFeats[Map[ESpan, Double]]
 
+  lazy val globalQuestionPrior = argQuestionDists.data.map { qFeats =>
+    val pcounts = qFeats.values.toList.foldMap(
+      _.value.values.toList.combineAll
+    )
+    val total = pcounts.values.sum
+    pcounts.mapVals(_ / total)
+  }.toCell("Global question prior")
+
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(argSpans).zip(verbArgSets.data).zip(argSemanticHeadIndices).flatMap {
       case ((((split, vidToType), allSpans), allVerbs), headIndices) =>

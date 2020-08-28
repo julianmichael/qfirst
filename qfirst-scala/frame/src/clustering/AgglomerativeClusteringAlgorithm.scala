@@ -512,15 +512,15 @@ trait AgglomerativeClusteringAlgorithm {
     leftParam: ClusterParam,
     right: MergeTree[Index],
     rightParam: ClusterParam) = {
-    if(!(loss >= left.loss && loss >= right.loss)) {
-      println("WARNING: clusters seem to be incorrectly merged")
-      println(left)
-      println(leftParam)
-      // println(aggregateLosses(indices.map(getInstanceLoss(_, leftParam))))
-      println(right)
-      println(rightParam)
-      // println(aggregateLosses(indices.map(getInstanceLoss(_, rightParam))))
-      println(loss)
+    if(!(loss >= (left.loss - 1e-8) && loss >= (right.loss - 1e-8))) {
+      System.err.println("WARNING: clusters seem to be incorrectly merged")
+      System.err.println(left)
+      System.err.println(leftParam)
+      // System.err.println(aggregateLosses(indices.map(getInstanceLoss(_, leftParam))))
+      System.err.println(right)
+      System.err.println(rightParam)
+      // System.err.println(aggregateLosses(indices.map(getInstanceLoss(_, rightParam))))
+      System.err.println(loss)
       ???
     }
   }

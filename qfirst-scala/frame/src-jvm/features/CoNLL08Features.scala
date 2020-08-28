@@ -638,8 +638,8 @@ class CoNLL08Features(
   // } >> super.setup
 
   lazy val origPropBankArgSpans: ArgFeats[Map[ESpan, Double]] = {
-    // TODO fileCache them, once I decide what to do about including the VerbType...
-    cacheArgFeats("aligned-propbank-spans", log = true)(
+    // TODO decide what to do about including the VerbType, for sense-agnostic and sense-specific ones to share file cache...
+    fileCacheArgFeats("aligned-propbank-spans", log = true)(
       (dataset.data, argRoleLabels.data).mapN { (data, argRoleLabels) =>
         for {
           ptb2Sentences <- ptb2Sentences.get

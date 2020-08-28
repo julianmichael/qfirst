@@ -20,7 +20,10 @@ object ClusteringModel {
     if(x.startsWith("arg/")) {
       BaselineArgumentModel.fromString(x.drop("arg/".length))
         .orElse(FullArgumentModel.fromString(x.drop("arg/".length)))
-    } else if(x.startsWith("verb/")) VerbModel.fromString(x.drop("verb/".length))
+    } else if(x.startsWith("verb/")) {
+      BaselineVerbModel.fromString(x.drop("verb/".length))
+        .orElse(FullVerbModel.fromString(x.drop("verb/".length)))
+    }
     else None
   }
 }
@@ -364,8 +367,19 @@ object FullArgumentModel {
     ) = for {
       questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
       questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
-      // TODO add tf-idf transform?
+      // commented out is TF-IDF stuff
+      // globalPrior <- features.globalQuestionPrior.get
+      // lemmaPrior = {
+      //   val pcounts = questionDists.value.values.toList.combineAll
+      //   val total = pcounts.values.sum
+      //   pcounts.mapVals(_ / total)
+      // }
+      // uniformPrior = questionVocab.items.map(_ -> (1.0 / questionVocab.size)).toMap
+      // finalPrior = questionVocab.items.map(q =>
+      //   q -> ((globalPrior(q) + lemmaPrior(q) + uniformPrior(q)) / 3.0)
+      // ).toMap
       indexedInstances = questionDists.value.map { case (argId, questionDist) =>
+        // argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> (p / (finalPrior(q) * questionVocab.size)) }
         argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
       }
     } yield (
@@ -437,13 +451,225 @@ object FullArgumentModel {
   }
 }
 
-case class VerbModel private (
-  lossTerms: Map[VerbModel.LossTerm, Double]
-) extends ClusteringModel {
+sealed trait VerbModel extends ClusteringModel {
+  def getVerbClusters[VerbType, Arg](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, MergeTree[Set[VerbId]]]]
+}
+object VerbModel {
+  def fromString(x: String): Option[VerbModel] =
+    ClusteringModel.fromString(x).collect {
+      case model: VerbModel => model
+    }
+}
 
-  type Out = MergeTree[Set[VerbId]]
+case class BaselineVerbModel(setting: String) extends VerbModel {
 
-  override def toString: String = VerbModel.toString(this)
+  private def getBaselineLabelCounts[VerbType, Arg, A](
+    verbs: Set[VerbId],
+    labels: VerbId => A)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): Map[A, Int] = {
+    verbs.toList.foldMap(verbId => Map(labels(verbId) -> 1).withDefaultValue(0))
+  }
+
+  def makeDrawer[A](counts: Map[A, Int]): () => A = {
+    val total = counts.values.sum
+    val dist = counts.mapValues(_.toDouble / total).toVector
+    () => {
+      val rnd = scala.util.Random.nextDouble
+      val res = dist.foldM(rnd) { case (mass, (label, prob)) =>
+        if(prob >= mass) Left(label) else Right(mass - prob)
+      }
+      res match {
+        case Right(mass) =>
+          System.err.println(f"Didn't use all the mass! $mass%.5f")
+            ???
+        case Left(label) => label
+      }
+    }
+  }
+
+  def drawPair[A](items: Vector[A], getSize: A => Int): (Int, Int) = {
+    val sizes = items.map(getSize)
+    val total = sizes.sum
+    val dist = sizes.map(_.toDouble / total)
+    val fstRnd = scala.util.Random.nextDouble
+    val fst = dist.zipWithIndex.foldM(fstRnd) { case (mass, (prob, index)) =>
+      if(prob >= mass) Left(index) else Right(mass - prob)
+    }.left.get
+    val sndRnd = scala.util.Random.nextDouble
+    val renorm = total.toDouble / (total - sizes(fst))
+    val renormDist = dist.map(_ * renorm)
+    val snd = renormDist.zipWithIndex.foldM(sndRnd) { case (mass, (prob, index)) =>
+      if(index == fst) Right(mass) // skip over fst
+      else if(prob >= mass) Left(index)
+      else Right(mass - prob)
+    }.left.get
+    (fst, snd)
+  }
+
+  private def getBaselineLabels[VerbType, Arg](
+    verbs: Map[VerbType, Set[VerbId]],
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Option[VerbType => VerbId => String]] = setting match {
+    case "gold" => for {
+      feats <- IO(features.getIfPropBank.get)
+      verbSenseLabels <- feats.verbSenseLabels.get
+    } yield Some(verbSenseLabels).asInstanceOf[Option[VerbType => VerbId => String]]
+    case "gold+uniform_noise" => for {
+      feats <- IO(features.getIfPropBank.get)
+      verbs  <- feats.verbs.get
+      verbSenseLabels <- feats.verbSenseLabels.get
+    } yield {
+      val labelCountsByVerb = verbs.transform { case (verbType, verbIds) =>
+        val getLabel = verbSenseLabels(verbType)
+        verbIds.map(getLabel).map(_ -> 1).toMap
+      }
+      Some(
+        (verbType: String) => {
+          val goldLabels = verbSenseLabels(verbType)
+          val labelCounts = labelCountsByVerb(verbType)
+          val drawLabel = makeDrawer(labelCounts)
+          (verbId: VerbId) => {
+            val goldLabel = goldLabels(verbId)
+            if(scala.util.Random.nextDouble > 0.9) drawLabel() else goldLabel
+          }
+        }
+      ).asInstanceOf[Option[VerbType => VerbId => String]]
+    }
+    case "gold+weighted_noise" => for {
+      feats <- IO(features.getIfPropBank.get)
+      verbs  <- feats.verbs.get
+      verbSenseLabels <- feats.verbSenseLabels.get
+    } yield {
+      val labelCountsByVerb = verbs.transform { case (verbType, verbIds) =>
+        getBaselineLabelCounts(verbIds, verbSenseLabels(verbType))
+      }
+      Some(
+        (verbType: String) => {
+          val goldLabels = verbSenseLabels(verbType)
+          val labelCounts = labelCountsByVerb(verbType)
+          val drawLabel = makeDrawer(labelCounts)
+          (verbId: VerbId) => {
+            val goldLabel = goldLabels(verbId)
+            if(scala.util.Random.nextDouble > 0.9) drawLabel() else goldLabel
+          }
+        }
+      ).asInstanceOf[Option[VerbType => VerbId => String]]
+    }
+    case "random_linear" => {
+      IO(Some((vt: VerbType) => ((verbId: VerbId) => verbId.toString)))
+    }
+    case "random" | "random_weighted" => {
+      IO(None)
+    }
+    case _ => ??? // should never happen
+  }
+
+  import scala.annotation.tailrec
+  @tailrec private def randomlyCluster[A](items: NonEmptyVector[MergeTree[A]]): MergeTree[A] = {
+    // else if(items.size == 2) MergeTree.Merge(0.0, items.head, items.tail.head)
+    if(items.size == 1) items.head
+    else {
+      val i1 = (scala.util.Random.nextDouble * items.size).toInt
+      val i2 = (scala.util.Random.nextDouble * (items.size - 1)).toInt
+      val left = items.getUnsafe(i1)
+      val swappedItems = items.updatedUnsafe(i1, items.getUnsafe(items.size.toInt - 1))
+      val right = swappedItems.getUnsafe(i2)
+      randomlyCluster(NonEmptyVector.fromVectorUnsafe(items.updatedUnsafe(i2, MergeTree.Merge(0.0, left, right)).init))
+    }
+  }
+  def randomClustering[A](items: NonEmptyVector[A]): MergeTree[A] = {
+    randomlyCluster(items.map(MergeTree.Leaf(0.0, _)))
+  }
+
+  import scala.annotation.tailrec
+  @tailrec private def randomlyClusterWeighted[A](items: NonEmptyVector[MergeTree[A]]): MergeTree[A] = {
+    // else if(items.size == 2) MergeTree.Merge(0.0, items.head, items.tail.head)
+    if(items.size == 1) items.head
+    else {
+      val (i1, i2) = drawPair[MergeTree[A]](items.toVector, _.size.toInt)
+      val newItem = MergeTree.Merge(0.0, items.getUnsafe(i1), items.getUnsafe(i2))
+      val prevLast = items.getUnsafe(items.size.toInt - 1)
+      randomlyClusterWeighted(
+        NonEmptyVector.fromVectorUnsafe(
+          items
+            .updatedUnsafe(i1, newItem)
+            .updatedUnsafe(i2, prevLast)
+            .init
+        )
+      )
+    }
+  }
+  def weightedRandomClustering[A](items: NonEmptyVector[A]): MergeTree[A] = {
+    randomlyClusterWeighted(items.map(MergeTree.Leaf(0.0, _)))
+  }
+
+  def getVerbClusters[VerbType, Arg](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, MergeTree[Set[VerbId]]]] = {
+    for {
+      _ <- Log.info("Initializing model features")
+      allVerbs <- features.verbs.get
+      baselineLabelsOpt <- getBaselineLabels(allVerbs, features)
+      results <- allVerbs.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+        Log.info(features.renderVerbType(verbType)) >> {
+          baselineLabelsOpt.map { baselineLabels =>
+            val baselineLabelsForVerb = baselineLabels(verbType)
+            // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
+            NonEmptyVector.fromVector(allVerbs(verbType).toVector).traverse { verbs =>
+              IO {
+                val orderedVerbSets = verbs.toVector.toSet
+                  .groupBy(baselineLabelsForVerb)
+                  .toVector.sortBy(p => p._2.size).map(_._2)
+                verbType -> orderedVerbSets
+                  .map(MergeTree.Leaf(0.0, _))
+                  .reduceLeft[MergeTree[Set[VerbId]]](MergeTree.Merge(0.0, _, _))
+              }
+            }
+          }.getOrElse {
+            // random baseline
+            if(setting == "random") {
+              NonEmptyVector.fromVector(allVerbs(verbType).toVector).traverse { args =>
+                IO(verbType -> randomClustering(args.map(Set(_))))
+              }
+            } else {
+              require(setting == "random_weighted")
+              NonEmptyVector.fromVector(allVerbs(verbType).toVector).traverse { args =>
+                IO(verbType -> weightedRandomClustering(args.map(Set(_))))
+              }
+            }
+          }
+        }
+      }
+    } yield results.flatten.toMap
+  }
+  override def toString = BaselineVerbModel.toString(this)
+}
+object BaselineVerbModel {
+
+  // too lazy for proper parser combinators
+  // TODO add better error reporting
+  def fromString(x: String): Option[BaselineVerbModel] = x match {
+    case x @ (
+      "random" | "random_linear" | "random_weighted"
+        | "gold" | "gold+uniform_noise" | "gold+weighted_noise") => Some(BaselineVerbModel(x))
+    case _ => None
+  }
+  def toString(model: BaselineVerbModel): String = {
+    "verb/" + model.setting
+  }
+}
+
+case class FullVerbModel private (
+  lossTerms: Map[FullVerbModel.LossTerm, Double]
+) extends VerbModel {
+
+  override def toString: String = FullVerbModel.toString(this)
 
   type FlatAlg = FlatClusteringAlgorithm { type Index = VerbId }
   type AgglomAlg = AgglomerativeClusteringAlgorithm { type Index = VerbId }
@@ -471,8 +697,6 @@ case class VerbModel private (
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, MergeTree[Set[VerbId]]]] = {
-    import VerbModel._
-    val model = MLMEntropy("masked")
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)
@@ -495,15 +719,15 @@ case class VerbModel private (
   }
 }
 
-object VerbModel {
+object FullVerbModel {
 
-  def apply(terms: (LossTerm, Double)*): VerbModel = {
+  def apply(terms: (LossTerm, Double)*): FullVerbModel = {
     val total = terms.map(_._2).sum
     val termMap = terms.map { case (term, weight) =>
       term -> (scala.math.round(weight / total * 100.0) / 100.0)
     }.toMap
     require(terms.size == termMap.size)
-    new VerbModel(termMap)
+    new FullVerbModel(termMap)
   }
 
   val termIndex = List[(LossTerm, String)](
@@ -516,8 +740,8 @@ object VerbModel {
 
   // too lazy for proper parser combinators
   // TODO add better error reporting
-  def fromString(x: String): Option[VerbModel] = {
-    if(stringToTerm.contains(x)) Some(VerbModel(stringToTerm(x) -> 1.0))
+  def fromString(x: String): Option[FullVerbModel] = {
+    if(stringToTerm.contains(x)) Some(FullVerbModel(stringToTerm(x) -> 1.0))
     else scala.util.Try {
       val termStrings = x.split("\\+").toList
       val terms = termStrings.map { term =>
@@ -527,10 +751,10 @@ object VerbModel {
           stringToTerm(components(0)) -> components(1).toDouble
         }
       }
-      VerbModel(terms: _*)
+      FullVerbModel(terms: _*)
     }.toOption
   }
-  def toString(model: VerbModel): String = {
+  def toString(model: FullVerbModel): String = {
     "verb/" + model.lossTerms.toList.map { case (term, weight) =>
       if(weight == 1.0) termToString(term)
       else f"${termToString(term)}%s*${weight}%.2f"
@@ -599,7 +823,7 @@ object VerbModel {
 //   //   }
 //   // }
 
-//   case object VerbSqDist extends VerbModel[VectorMeanClustering.ClusterMean] {
+//   case object VerbSqDist extends FullVerbModel[VectorMeanClustering.ClusterMean] {
 //     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.get.as(())
 //     override def create[VerbType, Instance](
 //       features: Features[VerbType, Instance], verbType: VerbType

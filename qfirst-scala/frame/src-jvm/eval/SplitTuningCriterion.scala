@@ -139,7 +139,7 @@ object OracleCriterion extends SplitTuningCriterion {
 
 object TotalEntropyCriterion extends SplitTuningCriterion {
   val name: String = "entropy"
-  val defaultThresholds = (-5 to 40).map(_.toDouble / 20).toList
+  val defaultThresholds = (-10 to 40).map(_.toDouble / 20).toList
 
   private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
     val numItems = s.numItems
