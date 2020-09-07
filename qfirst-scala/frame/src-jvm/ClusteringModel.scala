@@ -392,12 +392,12 @@ object FullArgumentModel {
     type FlatParam = DenseMultinomial
     type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
 
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argSyntacticFunctions.get.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argSyntacticFunctionsConverted.get.as(())
 
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
-      argSyntacticFunctions <- features.argSyntacticFunctions.get.map(_.apply(verbType))
+      argSyntacticFunctions <- features.argSyntacticFunctionsConverted.get.map(_.apply(verbType))
       syntFuncVocab = Vocab.make(argSyntacticFunctions.value.values.toSet)
       // TODO add tf-idf transform?
       indexedInstances = argSyntacticFunctions.value.map { case (argId, syntFunc) =>

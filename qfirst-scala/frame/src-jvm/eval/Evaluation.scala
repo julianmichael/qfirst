@@ -340,13 +340,25 @@ object Evaluation {
     includeOracle: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = {
-    if(useSenseSpecificRoles) evaluateModels(
+    val getRoleLabel = if(useSenseSpecificRoles) {
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
+    } else {
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
+    }
+    evaluateModels(resultsDir, metric, models, getRoleLabel, includeOracle)
+  }
+
+  def evaluateVerbModels[VerbType](
+    resultsDir: NIOPath,
+    metric: ClusterPRMetric,
+    models: Map[String, (Map[VerbType, MergeTree[Set[VerbId]]], SplitTuningSpec)],
+    getVerbSenseLabel: VerbType => VerbId => String,
+    includeOracle: Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
+  ): IO[Unit] = {
+    evaluateModels(
       resultsDir, metric, models,
-      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId),
-      includeOracle
-    ) else evaluateModels(
-      resultsDir, metric, models,
-      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
+      (verbType: VerbType) => (verbId: VerbId) => getVerbSenseLabel(verbType)(verbId),
       includeOracle
     )
   }

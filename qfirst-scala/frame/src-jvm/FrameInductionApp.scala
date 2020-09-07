@@ -237,7 +237,7 @@ object FrameInductionApp extends CommandIOApp(
                 val useSenseSpecificRoles = evalMode == "sense-specific"
                 val resultsDir = parentResultsDir.resolve(evalMode)
                 metricSpecs.toList.infoBarTraverse(s"Recording stats ($evalMode)") { case (metric, modelSpecs) =>
-                  val metricDir = resultsDir.resolve(metric.name)
+                  val metricDir = resultsDir.resolve(metric.name).resolve("arg")
                   Log.info(s"Metric: $metric") >> createDir(metricDir) >> Evaluation.evaluateArgumentModels(
                     metricDir, metric,
                     models.value.zipValues(modelSpecs.value),
@@ -248,6 +248,54 @@ object FrameInductionApp extends CommandIOApp(
                 }
               }
             )
+          ).void
+      }, IO.unit
+    )
+    _ <- fileExists(modelDir.resolve("verb")).ifM(
+      getSubdirs(modelDir.resolve("verb")) >>= ((modelDirs: List[NIOPath]) =>
+        modelDirs.infoBarFoldMapM("Reading models and model info") { (modelSubdir: NIOPath) =>
+          val model = modelSubdir.getFileName.toString
+          for {
+            // reading manually to avoid having to construct the model, allowing for comparison with old models
+            // after changing code, etc.
+            // argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
+            argTrees <- FileUtil.readJsonLines[(String, MergeTree[Set[VerbId]])](
+              modelSubdir.resolve("model.jsonl.gz")
+            ).infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap)
+            results <- getSubdirs(modelSubdir).flatMap((metricDirs: List[NIOPath]) =>
+              metricDirs.foldMapM { (metricDir: NIOPath) =>
+                for {
+                  _ <- IO(System.err.println(metricDir))
+                  metric <- IO(ClusterPRMetric.fromString(metricDir.getFileName.toString).get)
+                  tuningSpecStr <- FileUtil.readString(metricDir.resolve("best-setting.txt"))
+                  tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get).map(spec =>
+                    if(!features.mode.isTest) spec.copy(thresholdsOverride = None) else spec
+                  )
+                } yield Map(metric -> NonMergingMap(model.toString -> tuningSpec))
+              }
+            )
+          } yield (NonMergingMap(model.toString -> argTrees), results)
+        }
+      ) >>= {
+        case (models, metricSpecs) =>
+          val goldVerbSenseLabel = if(features.assumeGoldVerbSense) "by-sense" else "by-lemma"
+          // System.err.println(models)
+          // System.err.println(modelSpecs)
+          features.verbSenseLabels.get.flatMap(verbSenseLabels =>
+            (features.outDir, features.splitName)
+              .mapN((out, split) => out.resolve(s"eval/$split/$goldVerbSenseLabel")) >>= { parentResultsDir =>
+              // val useSenseSpecificRoles = evalMode == "sense-specific"
+              val resultsDir = parentResultsDir.resolve("verb")
+              metricSpecs.toList.infoBarTraverse(s"Recording stats (verb)") { case (metric, modelSpecs) =>
+                val metricDir = resultsDir.resolve(metric.name)
+                Log.info(s"Metric: $metric") >> createDir(metricDir) >> Evaluation.evaluateVerbModels(
+                  metricDir, metric,
+                  models.value.zipValues(modelSpecs.value),
+                  verbSenseLabels,
+                  includeOracle = !features.mode.isTest
+                )
+              }
+            }
           ).void
       }, IO.unit
     )
