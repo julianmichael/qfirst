@@ -135,7 +135,7 @@ object FrameInductionApp extends CommandIOApp(
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, MergeTree[Set[VerbId]]]](
-            s"Argument cluster model: $model. Clustering data from $splitName")(
+            s"Verb cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[VerbId]])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
@@ -160,15 +160,88 @@ object FrameInductionApp extends CommandIOApp(
         features.verbSenseLabels.get >>= { verbSenseLabels =>
           val verbTreesRefined = verbTrees.asInstanceOf[Map[String, MergeTree[Set[VerbId]]]]
           if(features.mode.shouldEvaluate) {
-            require(!features.assumeGoldVerbSense) // should hold due to condition in runModeling
-            Log.infoBranch("Evaluating verb clustering")(
-              Evaluation.evaluateClusters(
-                evalDir, model.toString,
-                verbTreesRefined, verbSenseLabels,
-                tuningSpecs
+            if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
+              Log.infoBranch("Evaluating verb clustering")(
+                Evaluation.evaluateClusters(
+                  evalDir, model.toString,
+                  verbTreesRefined, verbSenseLabels,
+                  tuningSpecs
+                )
+              )
+            }
+          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+        }
+      }
+    } yield ()
+  }
+
+  def getVerbFrames[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: JointModel, features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
+    features.splitName >>= { splitName =>
+      features.modelDir
+        .map(_.resolve(model.toString))
+        .flatTap(createDir)
+        .map(modelDir =>
+          FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]](
+            s"Joint model: $model. Clustering data from $splitName")(
+            path = modelDir.resolve(s"model.jsonl.gz"),
+            read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType, Arg])](path)
+              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+            write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
+            model.getJointClusters(features)
+          }
+        )
+    }
+  }
+
+  def runJointFrameInduction[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: JointModel, features: Features[VerbType, Arg], tuningSpecs: NonEmptyList[SplitTuningSpec])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = {
+    for {
+      verbClusterModels <- Log.infoBranch(s"Getting verb clusters") {
+        getVerbFrames[VerbType, Arg](model, features).flatMap(maybeGetFromCache)
+      }
+      splitName <- features.splitName
+      evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
+      _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
+        val verbClusterModelsRefined = verbClusterModels.asInstanceOf[Map[String, VerbClusterModel[String, Arg]]]
+        if(!features.mode.shouldEvaluate) Log.info(s"Skipping evaluation for run mode ${features.mode}") else {
+          features.argRoleLabels.get.flatMap((argRoleLabels: Map[String,NonMergingMap[ArgumentId[Arg],PropBankRoleLabel]]) =>
+            Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+              Evaluation.evaluateArgumentClusters[String, Arg](
+                evalDir.resolve("sense-specific"),
+                s"$model (sense-specific roles)",
+                verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))), argRoleLabels,
+                tuningSpecs,
+                useSenseSpecificRoles = true
+              )
+            ) >> IO.pure(features.assumeGoldVerbSense).ifM(
+              IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                Evaluation.evaluateArgumentClusters(
+                  evalDir.resolve("sense-agnostic"),
+                  s"$model (sense-agnostic roles)",
+                  verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))), argRoleLabels,
+                  tuningSpecs,
+                  useSenseSpecificRoles = false
+                )
               )
             )
-          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+          ) >> (
+            if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
+              features.verbSenseLabels.get >>= { (verbSenseLabels: String => VerbId => String) =>
+                Log.infoBranch("Evaluating verb clustering")(
+                  Evaluation.evaluateClusters[String, VerbId, String](
+                    evalDir, model.toString,
+                    verbClusterModelsRefined.mapVals(_.verbClusterTree), verbSenseLabels,
+                    tuningSpecs
+                  )
+                )
+              }
+            }
+          )
         }
       }
     } yield ()
@@ -185,15 +258,9 @@ object FrameInductionApp extends CommandIOApp(
     case argModel: ArgumentModel =>
       runArgumentRoleInduction(argModel, features, tuningSpecs)
     case verbModel: VerbModel =>
-      // this could maybe be relaxed, but seems like it'd be useful to prevent me from tripping up
-      IO(features.getIfPropBank.exists(_.assumeGoldVerbSense)).ifM(
-        IO.raiseError(
-          new IllegalArgumentException(
-            "There's no point to running a verb sense model when assuming gold verb sense."
-          )
-        ),
-        runVerbSenseInduction(verbModel, features, tuningSpecs)
-      )
+      runVerbSenseInduction(verbModel, features, tuningSpecs)
+    case jointModel: JointModel =>
+      runJointFrameInduction(jointModel, features, tuningSpecs)
   }
 
   def runSummarize[Arg: Encoder : Decoder : Order](

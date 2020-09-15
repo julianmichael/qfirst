@@ -15,7 +15,7 @@ object Clustering {
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial
 
-  val numFlatClusters = 100 // TODO small for testing. make big for final runs, maybe.
+  val numFlatClusters = 100
 
   // soft EM hyperparams
   val flatClusteringSoftStoppingDelta = 1e-8

@@ -23,8 +23,149 @@ object ClusteringModel {
     } else if(x.startsWith("verb/")) {
       BaselineVerbModel.fromString(x.drop("verb/".length))
         .orElse(FullVerbModel.fromString(x.drop("verb/".length)))
-    }
-    else None
+    } else if(x.startsWith("joint/")) {
+      JointModel.fromString(x.drop("joint/".length))
+    } else None
+  }
+}
+
+object JointModel {
+  def fromString(x: String): Option[JointModel] = {
+    val specs = x.split(";").lift
+    for {
+      entCoeff <- specs(0).flatMap(x => scala.util.Try(x.toDouble).toOption)
+      argModel <- specs(1).map(_.replaceAll(":", "/").drop("arg/".length)).flatMap(FullArgumentModel.fromString)
+      verbModel <- specs(2).map(_.replaceAll(":", "/").drop("verb/".length)).flatMap(FullVerbModel.fromString)
+    } yield new JointModel(argModel, verbModel, 10, entCoeff)
+  }
+
+  def toString(model: JointModel): String = {
+    val argString = model.argModel.toString.replaceAll("/", ":")
+    val verbString = model.verbModel.toString.replaceAll("/", ":")
+    f"joint/${model.innerEntropyCoefficient}%.2f;$argString%s;$verbString%s"
+  }
+}
+case class JointModel(
+  argModel: FullArgumentModel,
+  verbModel: FullVerbModel,
+  numFlatInnerClusters: Int,
+  innerEntropyCoefficient: Double
+) extends ClusteringModel {
+
+  override def toString: String = JointModel.toString(this)
+
+  // type FlatAlg[Arg, RoleParam] = JointFlatClusteringAlgorithm[VerbId, ArgumentId[Arg], RoleParam]
+  // type AgglomAlg[Arg, RoleParam] = JointAgglomerativeClusteringAlgorithm[VerbId, ArgumentId[Arg], RoleParam]
+  // type AlgPair[Arg, RoleParam] = (FlatAlg[Arg, RoleParam], AgglomAlg[Arg, RoleParam])
+  type ArgFlatAlg[Arg] = FlatClusteringAlgorithm { type Index = ArgumentId[Arg] }
+  type ArgAgglomAlg[Arg] = AgglomerativeClusteringAlgorithm { type Index = ArgumentId[Arg] }
+  type ArgAlgPair[Arg] = (ArgFlatAlg[Arg], ArgAgglomAlg[Arg])
+
+  type VerbFlatAlg = FlatClusteringAlgorithm { type Index = VerbId }
+  type VerbAgglomAlg = AgglomerativeClusteringAlgorithm { type Index = VerbId }
+  type VerbAlgPair = (VerbFlatAlg, VerbAgglomAlg)
+
+  type JointFlatAlg = CompositeFlatClusteringAlgorithm {
+    type Index = VerbId
+    // type ClusterParam = (_1.ClusterParam, _2.ClusterParam)
+  }
+  type JointAgglomAlg = CompositeAgglomerativeClusteringAlgorithm {
+    type Index = VerbId
+  }
+  type JointAlgPair = (JointFlatAlg, JointAgglomAlg)
+
+  def init[VerbType, Arg](features: Features[VerbType, Arg]): IO[Unit] = {
+    features.verbArgSets.get.void >>
+      argModel.lossTerms.keySet.toList.traverse(_.init(features)).void >>
+      verbModel.lossTerms.keySet.toList.traverse(_.init(features)).void
+  }
+
+  def create[VerbType, Arg](
+    features: Features[VerbType, Arg], verbType: VerbType
+  ) = {
+    val argTermVec = argModel.lossTerms.toVector
+    val argLambdas = argModel.lossTerms.map(_._2)
+
+    val verbTermVec = verbModel.lossTerms.toVector
+    val verbLambdas = verbModel.lossTerms.map(_._2)
+
+    for {
+      verbArgSets <- features.verbArgSets.get.map(_.apply(verbType))
+      verbArgNevs = verbArgSets.collect { case (verbId, argSet) if argSet.nonEmpty =>
+        verbId -> NonEmptyVector.fromVectorUnsafe(
+          argSet.iterator.map(arg => ArgumentId(verbId, arg)).toVector
+        )
+      }
+      (argFlatAlg, argAgglomAlg) <- argTermVec
+      .traverse(_._1.create(features, verbType): IO[ArgAlgPair[Arg]])
+      .map(_.unzip[ArgFlatAlg[Arg], ArgAgglomAlg[Arg]])
+      .map { case (flatAlgs, agglomAlgs) =>
+        val weightedFlatAlg = new WeightedFlatClusteringAlgorithm[ArgumentId[Arg]](flatAlgs.zip(argLambdas))
+        val weightedAgglomAlg = new WeightedAgglomerativeClusteringAlgorithm[ArgumentId[Arg]](agglomAlgs.zip(argLambdas))
+        (weightedFlatAlg, weightedAgglomAlg)
+      }
+      (verbFlatAlg, verbAgglomAlg) <- verbTermVec
+      .traverse(_._1.create(features, verbType): IO[VerbAlgPair])
+      .map(_.unzip[VerbFlatAlg, VerbAgglomAlg])
+      .map { case (flatAlgs, agglomAlgs) =>
+        val weightedFlatAlg = new WeightedFlatClusteringAlgorithm[VerbId](flatAlgs.zip(verbLambdas))
+        val weightedAgglomAlg = new WeightedAgglomerativeClusteringAlgorithm[VerbId](agglomAlgs.zip(verbLambdas))
+        (weightedFlatAlg, weightedAgglomAlg)
+      }
+      flatAlg = new CompositeFlatClusteringAlgorithm {
+        val _1 = verbFlatAlg
+        val _1Lambda = 1.0
+        val _2 = new JointFlatClusteringAlgorithm[VerbId, ArgumentId[Arg], argFlatAlg.ClusterParam](
+          innerAlgorithm = argFlatAlg,
+          getSubInstances = verbArgNevs,
+          numInnerClusters = numFlatInnerClusters
+        )
+        val _2Lambda = 1.0
+      }
+      agglomAlg = new CompositeAgglomerativeClusteringAlgorithm {
+        val _1 = verbAgglomAlg
+        val _1Lambda = 1.0
+        val _2 = new JointAgglomerativeClusteringAlgorithm[VerbId, ArgumentId[Arg], argAgglomAlg.ClusterParam](
+          innerAlgorithm = argAgglomAlg,
+          getSubInstances = verbArgNevs,
+          getLossPenalty = (clusterSizes: Vector[Int]) => {
+            val total = clusterSizes.sum
+            clusterSizes.foldMap(size => innerEntropyCoefficient * -size * scala.math.log(size.toDouble / total))
+          }
+        )
+        val _2Lambda = 1.0
+      }
+    } yield (flatAlg, agglomAlg)
+  }
+
+  def getJointClusters[VerbType, Arg : Order](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, VerbClusterModel[VerbType, Arg]]] = {
+    for {
+      _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+      _ <- this.init(features)
+      allVerbArgSets <- features.verbArgSets.get
+      results <- allVerbArgSets.toList.infoBarTraverse("Clustering verbs") { case (verbType, verbs) =>
+        val verbIds = verbs.keySet
+        Log.info(features.renderVerbType(verbType)) >> {
+          // TODO I don't think any of these should be empty
+          NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>
+            this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
+              val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
+              Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
+                IO { // wrapped this here to make sure logging works in the correct order inside
+                  val argTrees = param._2
+                  val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
+                  val argTree = argAlgorithm.finishAgglomerativeClustering(argTrees)._1
+                  verbType -> VerbClusterModel(verbType, verbTree, argTree)
+                }
+              }
+            }
+          }
+        }
+      }
+    } yield results.flatten.toMap
   }
 }
 
@@ -310,6 +451,7 @@ object FullArgumentModel {
   }
 
   val termIndex = List[(LossTerm, String)](
+    NoOp -> "noop",
     QuestionEntropy -> "qent",
     SyntacticFunction -> "syntf",
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
@@ -406,6 +548,25 @@ object FullArgumentModel {
     } yield (
       new DirichletMAPClusteringSparse(indexedInstances, syntFuncVocab.size, 0.01),
       new MinEntropyClusteringSparse(indexedInstances, syntFuncVocab.size)
+    )
+  }
+
+  case object NoOp extends LossTerm {
+    type FlatParam = DenseMultinomial
+    type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.args.get.as(())
+
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      args <- features.args.get.map(_.apply(verbType))
+      indexedInstances = args.iterator.map { argId =>
+        argId -> Map(0 -> 1.0)
+      }.toMap
+    } yield (
+      new DirichletMAPClusteringSparse(indexedInstances, 1, 0.01),
+      new MinEntropyClusteringSparse(indexedInstances, 1)
     )
   }
 
@@ -732,6 +893,7 @@ object FullVerbModel {
 
   val termIndex = List[(LossTerm, String)](
     // QuestionEntropy -> "qent"
+    NoOp -> "noop"
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )
@@ -794,34 +956,26 @@ object FullVerbModel {
       new MinEntropyClusteringDense(verbMLMFeatures, features.mlmFeatureDim)
     )
   }
+
+  case object NoOp extends LossTerm {
+    type FlatParam = DenseMultinomial
+    type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.verbs.get.as(())
+
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      verbs <- features.verbs.get.map(_.apply(verbType))
+      indexedInstances = verbs.iterator.map { verbId =>
+        verbId -> Map(0 -> 1.0)
+      }.toMap
+    } yield (
+      new DirichletMAPClusteringSparse(indexedInstances, 1, 0.01),
+      new MinEntropyClusteringSparse(indexedInstances, 1)
+    )
+  }
 }
-
-//   // case class Joint[P, Arg](
-//   //   innerModel: ClusteringModel.ArgumentModel[P]
-//   // ) extends ClusteringModel.JointModel[P] {
-//   //   override def init[VerbType, Arg](features: Features[VerbType, Arg]) = innerModel.init(features)
-//   //   override def create[VerbType, Arg](
-//   //     features: Features[VerbType, Arg], verbType: VerbType
-//   //   ) = {
-//   //     // TODO make this a parameter // TODO actually FIX this .... see the alg. seems wrongo
-//   //     val getLossPenalty = (numClusters: Int) => scala.math.pow(numClusters, 2.0) / 2.0
-
-//   //     for {
-//   //       argumentAlgorithm <- innerModel.create(features, verbType).map(_._2)
-//   //       verbIdToArgIds <- features.verbArgSets.get.map(
-//   //         _.apply(verbType).value.map { case (verbId, argIds) =>
-//   //           // TODO: maybe do something to handle the case of no args for a verb...
-//   //           // what should the clustering do in this case?
-//   //           verbId -> NonEmptyVector.fromVector(argIds.toVector).get.map(arg => ArgumentId(verbId, arg))
-//   //         }
-//   //       )
-//   //     } yield new JointAgglomerativeClusteringAlgorithm(
-//   //       argumentAlgorithm,
-//   //       verbIdToArgIds,
-//   //       getLossPenalty
-//   //     )
-//   //   }
-//   // }
 
 //   case object VerbSqDist extends FullVerbModel[VectorMeanClustering.ClusterMean] {
 //     override def init[VerbType, Instance](features: Features[VerbType, Instance]) = features.elmoVecs.get.as(())

@@ -11,7 +11,7 @@ import freelog.EphemeralTreeLogger
 class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   val innerAlgorithm: AgglomerativeClusteringAlgorithm { type Index = InnerIndex; type ClusterParam = InnerParam },
   getSubInstances: I => NonEmptyVector[InnerIndex],
-  getLossPenalty: Int => Double // should grow monotonically
+  getLossPenalty: Vector[Int] => Double // should grow monotonically
 ) extends AgglomerativeClusteringAlgorithm {
   type Index = I
   type ClusterParam = NonEmptyVector[(MergeTree[InnerIndex], InnerParam)]
@@ -19,8 +19,10 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   val innerStoppingCondition = (
     trees: Map[Int, (MergeTree[InnerIndex], InnerParam)], i: Int, j: Int, newLoss: Double
   ) => {
-    val lossBefore = trees.values.map(_._1.loss).sum + getLossPenalty(trees.size)
-    val lossAfter = (trees - i - j).values.map(_._1.loss).sum + newLoss + getLossPenalty(trees.size - 1)
+    val sizes = trees.mapVals(_._1.size.toInt)
+    val newSize = sizes(i) + sizes(j)
+    val lossBefore = trees.values.map(_._1.loss).sum + getLossPenalty(sizes.values.toVector)
+    val lossAfter = (trees - i - j).values.map(_._1.loss).sum + newLoss + getLossPenalty((sizes - i - j + (i -> newSize)).values.toVector)
     lossAfter > lossBefore
   }
 
@@ -34,7 +36,7 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
     val res = innerAlgorithm.runAgglomerativeClustering(
       innerIndices,
       innerStoppingCondition
-    )
+    )(EphemeralTreeLogger.noop[IO, String])
     // println(s"INIT  - ${innerIndices.size}: ${res.size}")
     res
   }
@@ -43,7 +45,7 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
     instance: Index,
     param: ClusterParam
   ): Double = {
-    param.foldMap(_._1.loss) + getLossPenalty(param.size.toInt)
+    param.foldMap(_._1.loss) + getLossPenalty(param.map(_._1.size.toInt).toVector)
   }
 
   override val mergeParamsEfficient = Some(
@@ -60,7 +62,7 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
       val mergedParam = innerAlgorithm.runPartialAgglomerativeClustering(
         left |+| right, innerStoppingCondition
       )
-      mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.size.toInt)
+      mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.map(_.size.toInt).toVector)
     }
   )
 }

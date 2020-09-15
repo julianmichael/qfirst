@@ -101,11 +101,11 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
     )
 
   private[this] def makeFramesets(criterion: ClusterSplittingCriterion) = {
-    val aggFrameInfo = (childTree: MergeTree[VerbId]) => {
-      val verbIds = childTree.values
+    val aggFrameInfo = (childTree: MergeTree[Set[VerbId]]) => {
+      val verbIds = childTree.unorderedFold
       FrameInputInfo(
         verbIds.toSet,
-        verbIds.foldMap(vid =>
+        verbIds.unorderedFoldMap(vid =>
           clauseSets(vid).iterator.map(_ -> 1).toMap
         )
       )
