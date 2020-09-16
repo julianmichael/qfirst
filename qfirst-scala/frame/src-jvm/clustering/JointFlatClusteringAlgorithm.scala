@@ -23,12 +23,12 @@ import freelog.EphemeralTreeLogger
 
 class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
   val innerAlgorithm: FlatClusteringAlgorithm { type Index = InnerIndex; type ClusterParam = InnerParam },
-  getSubInstances: I => NonEmptyVector[InnerIndex],
+  getSubInstances: I => Vector[InnerIndex],
   numInnerClusters: Int
   // getLossPenalty: Int => Double // should grow monotonically
 ) extends FlatClusteringAlgorithm {
   type Index = I
-  type ClusterParam = NonEmptyVector[(Double, InnerParam)]
+  type ClusterParam = Vector[(Double, InnerParam)]
 
   val estimateClusterPrior: (Map[Int, Int], Int) => DenseMultinomial =
     (_, numClusters) => Multinomial(DenseVector.ones(numClusters))
@@ -69,7 +69,7 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
   override def estimateParameterHard(
     indices: Vector[Index],
   ): ClusterParam = {
-    val innerIndices = indices.flatMap(i => getSubInstances(i).toVector)
+    val innerIndices = indices.flatMap(i => getSubInstances(i))
     val initModel = innerAlgorithm.initPlusPlus(innerIndices, numInnerClusters)
     val (clusters, assignments, loss) = innerAlgorithm.runHardEM(
       initModel,
@@ -79,6 +79,6 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
     )(EphemeralTreeLogger.noop).unsafeRunSync()
     val prior = estimateClusterPrior(assignments.counts, numInnerClusters)
     val zippedRes = prior.params.toScalaVector.zip(clusters)
-    NonEmptyVector.fromVectorUnsafe(zippedRes)
+    zippedRes
   }
 }

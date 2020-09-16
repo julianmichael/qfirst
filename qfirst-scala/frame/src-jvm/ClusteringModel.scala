@@ -91,10 +91,8 @@ case class JointModel(
 
     for {
       verbArgSets <- features.verbArgSets.get.map(_.apply(verbType))
-      verbArgNevs = verbArgSets.collect { case (verbId, argSet) if argSet.nonEmpty =>
-        verbId -> NonEmptyVector.fromVectorUnsafe(
-          argSet.iterator.map(arg => ArgumentId(verbId, arg)).toVector
-        )
+      verbArgNevs = verbArgSets.map { case (verbId, argSet) =>
+        verbId -> argSet.iterator.map(arg => ArgumentId(verbId, arg)).toVector
       }
       (argFlatAlg, argAgglomAlg) <- argTermVec
       .traverse(_._1.create(features, verbType): IO[ArgAlgPair[Arg]])
@@ -155,7 +153,9 @@ case class JointModel(
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
               Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
                 IO { // wrapped this here to make sure logging works in the correct order inside
-                  val argTrees = param._2
+                  // if this is empty, that means there are no arguments at all.
+                  // if this ever happens, I'll need to adjust my VerbClusterModel data type.
+                  val argTrees = NonEmptyVector.fromVectorUnsafe(param._2)
                   val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
                   val argTree = argAlgorithm.finishAgglomerativeClustering(argTrees)._1
                   verbType -> VerbClusterModel(verbType, verbTree, argTree)

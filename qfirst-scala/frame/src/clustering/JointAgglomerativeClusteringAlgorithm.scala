@@ -10,11 +10,11 @@ import freelog.EphemeralTreeLogger
 
 class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   val innerAlgorithm: AgglomerativeClusteringAlgorithm { type Index = InnerIndex; type ClusterParam = InnerParam },
-  getSubInstances: I => NonEmptyVector[InnerIndex],
+  getSubInstances: I => Vector[InnerIndex],
   getLossPenalty: Vector[Int] => Double // should grow monotonically
 ) extends AgglomerativeClusteringAlgorithm {
   type Index = I
-  type ClusterParam = NonEmptyVector[(MergeTree[InnerIndex], InnerParam)]
+  type ClusterParam = Vector[(MergeTree[InnerIndex], InnerParam)]
 
   val innerStoppingCondition = (
     trees: Map[Int, (MergeTree[InnerIndex], InnerParam)], i: Int, j: Int, newLoss: Double
@@ -27,18 +27,19 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   }
 
   // don't log stuff from inner clustering
-  implicit val noopLogger = EphemeralTreeLogger.noop[IO, String]
+  // implicit val noopLogger = EphemeralTreeLogger.noop[IO, String]
 
   def getSingleInstanceParameter(
     index: Index,
   ): ClusterParam = {
-    val innerIndices = getSubInstances(index)
-    val res = innerAlgorithm.runAgglomerativeClustering(
-      innerIndices,
-      innerStoppingCondition
-    )(EphemeralTreeLogger.noop[IO, String])
-    // println(s"INIT  - ${innerIndices.size}: ${res.size}")
-    res
+    NonEmptyVector.fromVector(getSubInstances(index)).map { innerIndices =>
+      val res = innerAlgorithm.runAgglomerativeClustering(
+        innerIndices,
+        innerStoppingCondition
+      )(EphemeralTreeLogger.noop[IO, String])
+      // println(s"INIT  - ${innerIndices.size}: ${res.size}")
+      res
+    }.map(_.toVector).getOrElse(Vector())
   }
 
   def getInstanceLoss(
@@ -51,17 +52,17 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   override val mergeParamsEfficient = Some(
     (left: ClusterParam, right: ClusterParam) => {
       // println(s"MERGE - ${left.size + right.size}: ${res.size}")
-      innerAlgorithm.runPartialAgglomerativeClustering(
-        left |+| right, innerStoppingCondition
-      )
+      (NonEmptyVector.fromVector(left), NonEmptyVector.fromVector(right)).mapN { (l, r) =>
+        innerAlgorithm.runPartialAgglomerativeClustering(
+          l |+| r, innerStoppingCondition
+        )(EphemeralTreeLogger.noop[IO, String]).toVector
+      }.getOrElse(left ++ right)
     }
   )
 
   override val mergeLossEfficient = Some(
     (left: ClusterParam, right: ClusterParam) => {
-      val mergedParam = innerAlgorithm.runPartialAgglomerativeClustering(
-        left |+| right, innerStoppingCondition
-      )
+      val mergedParam = mergeParamsEfficient.get(left, right)
       mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.map(_.size.toInt).toVector)
     }
   )
