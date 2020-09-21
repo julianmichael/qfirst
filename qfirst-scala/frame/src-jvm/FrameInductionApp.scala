@@ -437,7 +437,7 @@ object FrameInductionApp extends CommandIOApp(
     "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
   ).mapValidated { string =>
     RunMode.fromString(string).map(Validated.valid).getOrElse(
-      Validated.invalidNel(s"Invalid mode $string: must be setup, sanity, dev, or test.")
+      Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test.")
     )
   }
 

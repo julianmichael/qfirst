@@ -1,6 +1,7 @@
 package qfirst.frame.browse
 import qfirst._
 import qfirst.frame._
+import qfirst.frame.features.GoldQasrlFeatures
 import qfirst.model.eval.protocols.SimpleQAs
 
 import qasrl.bank.Data
@@ -36,8 +37,6 @@ import jjm.io.HttpUtil
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 
-import EvalApp.QABeam
-
 object Serve extends CommandIOApp(
   name = "mill -i qfirst.jvm.runVerbAnn",
   header = "Spin up the annotation server for QA-SRL Clause frames.") {
@@ -49,7 +48,7 @@ object Serve extends CommandIOApp(
   def _run(
     jsDepsPath: Path, jsPath: Path,
     mode: RunMode,
-    modelConfig: ModelConfig,
+    model: JointModel,
     domain: String,
     port: Int
   ): IO[ExitCode] = {
@@ -74,22 +73,23 @@ object Serve extends CommandIOApp(
         )
 
         for {
-          fullSet <- features.dataset.full.get
-          inflectionCounts = Dataset.verbEntries.getAll(fullSet).foldMap(v => Map(v.verbInflectedForms -> 1))
-          verbModels <- FrameInductionApp.getVerbClusterModels[InflectedForms, ClausalQuestion](
-            features, modelConfig, _.allForms.mkString(", ")
+          dataset <- features.dataset.get
+          inflectionCounts = Dataset.verbEntries.getAll(dataset).foldMap(v => Map(v.verbInflectedForms -> 1))
+          verbModels <- FrameInductionApp.getVerbFrames[InflectedForms, ClausalQuestion](
+            model, features
           ).flatMap(_.read.map(_.get))
-          goldParaphrases <- features.readGoldParaphrases
-          evaluationItems <- features.evaluationItems.get
-          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+          // goldParaphrases <- features.readGoldParaphrases
+          // evaluationItems <- features.evaluationItems.get
+          // goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
           annotationService = HttpUtil.makeHttpPostServer(
             VerbFrameService.basicIOService(
               inflectionCounts,
               verbModels,
-              fullSet,
-              evaluationItems.apply,
-              goldParaphraseDataRef,
-              features.saveGoldParaphrases(_))
+              dataset
+              // evaluationItems.apply,
+              // goldParaphraseDataRef,
+              // features.saveGoldParaphrases(_))
+            )
           )
           app = Router(
             "/" -> pageService,
@@ -116,19 +116,11 @@ object Serve extends CommandIOApp(
       "js", metavar = "path", help = "Where to get the JS main file."
     )
 
-    val modeO = Opts.option[String](
-      "mode", metavar = "sanity|dev|test", help = "Which mode to run in."
-    ).mapValidated { string =>
-      RunMode.fromString(string)
-        .map(Validated.valid)
-        .getOrElse(Validated.invalidNel(s"Invalid mode $string: must be sanity, dev, or test."))
-    }
-    val modelConfigO = Opts.option[String](
-      "model", metavar = "entropy|elmo|<float>", help = "Verb sense model configuration."
-    ).mapValidated { string =>
-      ModelConfig.fromString(string)
-        .map(Validated.valid)
-        .getOrElse(Validated.invalidNel(s"Invalid model $string: must be entropy, elmo, or a float (interpolation param)."))
+    val modeO = FrameInductionApp.modeO
+
+    val modelO = FrameInductionApp.modelO.mapValidated {
+      case m: JointModel => Validated.valid(m)
+      case other => Validated.invalidNel(s"Invalid model $other: must be a joint verb frame model for browsing.")
     }
 
     val domainO = Opts.option[String](
@@ -144,6 +136,6 @@ object Serve extends CommandIOApp(
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, modeO, modelConfigO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, modeO, modelO, domainO, portO).mapN(_run)
   }
 }

@@ -129,6 +129,7 @@ object VerbAnnotationService {
     saveData: VerbFrameData => IO[Unit]
   ): DotKleisli[IO, Request] = DotKleisli.fromFunctionK(
     new DotFunctionK[IO, Request] {
+      // @SuppressWarnings(Array("unreachable code"))
       def apply[A](req: Request { type Out = A }): IO[A] = req match {
         case GetVerbs =>
           storeRef.get.map(_.inflectionCounts): IO[Map[InflectedForms, Int]]
