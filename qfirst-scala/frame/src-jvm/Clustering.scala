@@ -55,7 +55,9 @@ object Clustering {
         allEMTrials <- (1 to 3).toList.traverse(i =>
           Log.traceBranch(s"Flat clustering trial $i")(
             for {
-              initModel <- IO(flatAlgorithm.initPlusPlus(indicesVec, numFlatClusters))
+              initModel <- Log.traceBranch("Initializing clusters") {
+                IO(flatAlgorithm.initPlusPlus(indicesVec, numFlatClusters))
+              }
               // softEMModel <- flatAlgorithm.runSoftEM(
               //   initModel, argIds,
               //   flatClusteringSoftStoppingDelta,

@@ -7,7 +7,7 @@ import io.circe.generic.JsonCodec
 @JsonCodec case class VerbClusterModel[VerbType, Arg](
   verbType: VerbType,
   verbClusterTree: MergeTree[Set[VerbId]],
-  argumentClusterTree: MergeTree[ArgumentId[Arg]]
+  argumentClusterTreeOpt: Option[MergeTree[ArgumentId[Arg]]]
 ) {
   val numVerbInstances = verbClusterTree.size
 }

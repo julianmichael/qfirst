@@ -65,22 +65,27 @@ trait FlatClusteringAlgorithm {
 
   def initPlusPlus(
     indices: Vector[Index],
-    numClusters: Int
+    numClusters: Int)(
   ): Vector[ClusterParam] = {
     val rand = new scala.util.Random()
     assert(numClusters >= 1)
-    val firstClusterIndex = rand.nextInt(indices.size.toInt)
-    val firstCluster = getSingleInstanceParameter(indices(firstClusterIndex))
     // TODO: maybe not do unique instances? maybe take them as an input? idk
     val uniqueInstances = indices.toVector.groupBy(x => x).keys.toVector
-    val initMinLosses = DenseVector(uniqueInstances.map(getInstanceLoss(_, firstCluster)).toArray)
+    if(uniqueInstances.size <= numClusters) {
+      uniqueInstances.map(getSingleInstanceParameter)
+    } else {
+      val firstClusterIndex = rand.nextInt(uniqueInstances.size.toInt)
+      val firstCluster = getSingleInstanceParameter(uniqueInstances(firstClusterIndex))
 
-    val (params, minLosses) = initPlusPlusAux(uniqueInstances, Set(), Vector(firstCluster), numClusters - 1, initMinLosses, rand)
-    if(minLosses.activeValuesIterator.exists(v => v.isNaN || v.isInfinite)) {
-      System.err.println(s"Warning: NaN/Infinite loss items remain after initializing $numClusters clusters for ${indices.size} elements")
-      System.err.println(minLosses.activeValuesIterator.map(x => f"$x%.2f").mkString(","))
+      val initMinLosses = DenseVector(uniqueInstances.map(getInstanceLoss(_, firstCluster)).toArray)
+
+      val (params, minLosses) = initPlusPlusAux(uniqueInstances, Set(), Vector(firstCluster), numClusters - 1, initMinLosses, rand)
+      if(minLosses.activeValuesIterator.exists(v => v.isNaN || v.isInfinite)) {
+        System.err.println(s"Warning: NaN/Infinite loss items remain after initializing $numClusters clusters for ${indices.size} elements")
+        System.err.println(minLosses.activeValuesIterator.map(x => f"$x%.2f").mkString(","))
+      }
+      params
     }
-    params
   }
 
   @tailrec
@@ -106,7 +111,7 @@ trait FlatClusteringAlgorithm {
         }
         newIndex
       }
-      // System.errprintln(s"cur min losses: $curMinLosses")
+      // System.err.println(s"cur min losses: $curMinLosses")
       // instances.foreach(i => println(i.toString.take(200)))
       val newCluster = getSingleInstanceParameter(newCenterIndex)
       val clusterLosses = DenseVector(indices.map(getInstanceLoss(_, newCluster)).toArray)
@@ -152,6 +157,9 @@ trait FlatClusteringAlgorithm {
   import cats.effect.concurrent.Ref
 
   import freelog.EphemeralTreeLogger
+  import freelog.implicits._
+  import qfirst.frame.logLevel
+  import qfirst.frame.progressSpec
 
   def runSoftEM(
     initModel: Vector[ClusterParam],
@@ -275,47 +283,50 @@ trait FlatClusteringAlgorithm {
     implicit val rand = new scala.util.Random()
     val numClusters = initModel.size
 
-    val (initAssignments, initLosses) = hardEStep(
-      indices,
-      initModel,
-      estimateClusterPrior(initModel.indices.map(_ -> 1).toMap, initModel.size)
-    )
-    for {
-      assignmentsAndLosses <- Ref[IO].of(initAssignments -> initLosses)
-      losses <- Ref[IO].of(List(mean(initLosses)))
-      model <- Ref[IO].of(initModel)
-      stepNum <- Ref[IO].of(1)
-      shouldContinue = losses.get.map {
-        case last :: secondLast :: _ => (secondLast - last) > stoppingThreshold
-        case _ => true
-      }
-      _ <- Log.traceBranch("Running Hard EM") {
-        Monad[IO].whileM_(shouldContinue) {
-          for {
-            _ <- Log.rewind
-            curAssignments <- assignmentsAndLosses.get.map(_._1)
-            curModel <- model.updateAndGet(_ => hardMStep(numClusters, indices, curAssignments))
-            clusterPrior = estimateClusterPrior(curAssignments.counts, numClusters)
-            (newAssignments, newLosses) <- assignmentsAndLosses.updateAndGet(_ => hardEStep(indices, curModel, clusterPrior))
-            newLoss = mean(newLosses)
-            _ <- losses.update(newLoss :: _)
-            curStepNum <- stepNum.getAndUpdate(_ + 1)
-            _ <- Log.trace {
-              val prior = newAssignments.counts.values.toVector.map(_ / newAssignments.size.toDouble)
-              val diversity = exp(prior.foldMap(p => -p*log(p)))
-              val priorString = prior.sortBy(-_).take(10).map(x => f"$x%.3f").mkString(", ") + " ..."
-              s"""Step $curStepNum
-               |Loss: $newLoss
-               |Diversity: $diversity
-               |Prior: $priorString
-             """.trim.stripMargin
-            }
-          } yield ()
+    if(numClusters == 0) IO.pure(Vector(), Vector(), 0.0) else {
+      val (initAssignments, initLosses) = hardEStep(
+        indices,
+        initModel,
+        estimateClusterPrior(initModel.indices.map(_ -> 1).toMap, initModel.size)
+      )
+      for {
+        assignmentsAndLosses <- Ref[IO].of(initAssignments -> initLosses)
+        losses <- Ref[IO].of(List(mean(initLosses)))
+        model <- Ref[IO].of(initModel)
+        stepNum <- Ref[IO].of(1)
+        shouldContinue = losses.get.map {
+          case last :: secondLast :: _ => (secondLast - last) > stoppingThreshold
+          case _ => true
         }
-      }
-      finalModel <- model.get
-      finalAssignments <- assignmentsAndLosses.get.map(_._1)
-      finalLoss <- losses.get.map(_.head)
-    } yield (finalModel, finalAssignments, finalLoss)
+        _ <- Log.traceBranch("Running Hard EM") {
+          Monad[IO].whileM_(shouldContinue) {
+            for {
+              _ <- Log.rewind
+              curAssignments <- assignmentsAndLosses.get.map(_._1)
+              curModel <- model.updateAndGet(_ => hardMStep(numClusters, indices, curAssignments))
+              // curModel <- model.updateAndGet(_ => hardMStep(numClusters, indices, curAssignments))
+              clusterPrior = estimateClusterPrior(curAssignments.counts, numClusters)
+              (newAssignments, newLosses) <- assignmentsAndLosses.updateAndGet(_ => hardEStep(indices, curModel, clusterPrior))
+              newLoss = mean(newLosses)
+              _ <- losses.update(newLoss :: _)
+              curStepNum <- stepNum.getAndUpdate(_ + 1)
+              _ <- Log.trace {
+                val prior = newAssignments.counts.values.toVector.map(_ / newAssignments.size.toDouble)
+                val diversity = exp(prior.foldMap(p => -p*log(p)))
+                val priorString = prior.sortBy(-_).take(10).map(x => f"$x%.3f").mkString(", ") + " ..."
+                s"""Step $curStepNum
+                |Loss: $newLoss
+                |Diversity: $diversity
+                |Prior: $priorString
+              """.trim.stripMargin
+              }
+            } yield ()
+          }
+        }
+        finalModel <- model.get
+        finalAssignments <- assignmentsAndLosses.get.map(_._1)
+        finalLoss <- losses.get.map(_.head)
+      } yield (finalModel, finalAssignments, finalLoss)
+    }
   }
 }

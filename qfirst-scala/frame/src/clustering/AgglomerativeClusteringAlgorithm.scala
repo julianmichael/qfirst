@@ -51,20 +51,28 @@ trait AgglomerativeClusteringAlgorithm {
   ) = newLoss - leftLoss - rightLoss
 
   // override for efficiency
+  // TODO currently assumes nonempty argument
   def estimateParameterHard(
     indices: Vector[Index]
   ): ClusterParam = {
-    indices.iterator.map { index =>
-      val param = getSingleInstanceParameter(index)
-      val loss = getInstanceLoss(index, param)
-      val tree: MergeTree[Index] = MergeTree.Leaf(loss, index)
-      tree -> param
-    }.reduce { (left, right) =>
-      val param = mergeParams(left._1, left._2, right._1, right._2)
-      val loss = mergeLoss(left._1, left._2, right._1, right._2)
-      val tree: MergeTree[Index] = MergeTree.Merge(loss, left._1, right._1)
-      tree -> param
-    }._2
+    // indices.iterator.map { index =>
+    //   val param = getSingleInstanceParameter(index)
+    //   val loss = getInstanceLoss(index, param)
+    //   val tree: MergeTree[Index] = MergeTree.Leaf(loss, index)
+    //   tree -> param
+    // }.reduce { (left, right) =>
+    //   val param = mergeParams(left._1, left._2, right._1, right._2)
+    //   val loss = mergeLoss(left._1, left._2, right._1, right._2)
+    //   val tree: MergeTree[Index] = MergeTree.Merge(loss, left._1, right._1)
+    //   tree -> param
+    // }._2
+
+    // TODO put this here instead...maybe?
+    NonEmptyVector.fromVector(indices).map { innerIndices =>
+      runFullAgglomerativeClustering(
+        innerIndices
+      )(EphemeralTreeLogger.noop[IO, String])
+    }.get._2
   }
 
   def mergeParamsEfficient: Option[(ClusterParam, ClusterParam) => ClusterParam] = None

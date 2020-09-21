@@ -29,24 +29,43 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   // don't log stuff from inner clustering
   // implicit val noopLogger = EphemeralTreeLogger.noop[IO, String]
 
+  // do no clustering at the beginning
   def getSingleInstanceParameter(
     index: Index,
   ): ClusterParam = {
-    NonEmptyVector.fromVector(getSubInstances(index)).map { innerIndices =>
-      val res = innerAlgorithm.runAgglomerativeClustering(
-        innerIndices,
-        innerStoppingCondition
-      )(EphemeralTreeLogger.noop[IO, String])
-      // println(s"INIT  - ${innerIndices.size}: ${res.size}")
-      res
-    }.map(_.toVector).getOrElse(Vector())
+    getSubInstances(index).map { i =>
+      val param = innerAlgorithm.getSingleInstanceParameter(i)
+      val loss = innerAlgorithm.getInstanceLoss(i, param)
+      MergeTree.Leaf(loss, i) -> param
+    }
+    // NonEmptyVector.fromVector(getSubInstances(index)).map { innerIndices =>
+    //   val res = innerAlgorithm.runAgglomerativeClustering(
+    //     innerIndices,
+    //     innerStoppingCondition
+    //   )(EphemeralTreeLogger.noop[IO, String])
+    //   // println(s"INIT  - ${innerIndices.size}: ${res.size}")
+    //   res
+    // }.map(_.toVector).getOrElse(Vector())
   }
 
   def getInstanceLoss(
     instance: Index,
     param: ClusterParam
   ): Double = {
-    param.foldMap(_._1.loss) + getLossPenalty(param.map(_._1.size.toInt).toVector)
+    getSubInstances(instance).foldMap { subInstance =>
+      param.find(_._1.exists(_ == subInstance)).map(_._2).foldMap(innerParam =>
+        innerAlgorithm.getInstanceLoss(subInstance, innerParam)
+      )
+    }
+
+    // param.foldMap(_._1.loss)
+
+    // val numSubInstances = getSubInstances(instance).size
+    // if(numSubInstances == 0) 0.0 else {
+    //   param.foldMap(_._1.loss) / numSubInstances
+    // }
+
+    // + getLossPenalty(param.map(_._1.size.toInt).toVector)
   }
 
   override val mergeParamsEfficient = Some(
@@ -63,7 +82,7 @@ class JointAgglomerativeClusteringAlgorithm[I, InnerIndex, InnerParam](
   override val mergeLossEfficient = Some(
     (left: ClusterParam, right: ClusterParam) => {
       val mergedParam = mergeParamsEfficient.get(left, right)
-      mergedParam.foldMap(_._1.loss) + getLossPenalty(mergedParam.map(_.size.toInt).toVector)
+      mergedParam.foldMap(_._1.loss) // + getLossPenalty(mergedParam.map(_.size.toInt).toVector)
     }
   )
 }

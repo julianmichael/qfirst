@@ -37,12 +37,18 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
   //   innerIndices: Vector[InnerIndex],
   // )
 
-  // // override for efficiency
-  // def getSingleInstanceParameter(
-  //   index: Index,
-  // ): ClusterParam = {
-  //   estimateParameterHard(Vector(index))
-  // }
+  // override for efficiency: just randomly choose clusters
+  override def getSingleInstanceParameter(
+    index: Index,
+  ): ClusterParam = {
+    val subInstances = getSubInstances(index)
+    val numClusters = math.min(numInnerClusters, subInstances.size)
+    scala.util.Random.shuffle(subInstances).take(numClusters).map { i =>
+      val param = innerAlgorithm.getSingleInstanceParameter(i)
+      val loss = innerAlgorithm.getInstanceLoss(i, param)
+      (1.0 / numClusters) -> param
+    }
+  }
 
   def getInstanceLoss(
     index: Index,
@@ -76,7 +82,8 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
       innerIndices,
       stoppingThreshold = qfirst.frame.Clustering.flatClusteringHardStoppingDelta,
       estimateClusterPrior = estimateClusterPrior
-    )(EphemeralTreeLogger.noop).unsafeRunSync()
+    )(EphemeralTreeLogger.noop[cats.effect.IO, String]).unsafeRunSync()
+    // )(qfirst.frame.loggerUnsafe).unsafeRunSync()
     val prior = estimateClusterPrior(assignments.counts, numInnerClusters)
     val zippedRes = prior.params.toScalaVector.zip(clusters)
     zippedRes

@@ -77,9 +77,11 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
 
   private[this] def getFrames(infos: Vector[FrameInputInfo]) = {
     val infosWithIndex = infos.zipWithIndex
-    val questionClusterTrees = model.argumentClusterTree.groupBy(qid =>
-      infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
-    )
+    val questionClusterTrees = model.argumentClusterTreeOpt.map(
+      _.groupBy(qid =>
+        infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
+      )
+    ).getOrElse(Map())
     infos.indices.toList.map { index =>
       val info = infos(index)
       val numInstancesInFrame = info.verbIds.size
@@ -95,10 +97,11 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
     }
   }
 
-  val clauseSets = model.argumentClusterTree
-    .unorderedFoldMap(qid =>
+  val clauseSets = model.argumentClusterTreeOpt.foldMap(
+    _.unorderedFoldMap(qid =>
       Map(qid.verbId -> Set(qid.argument.clauseTemplate))
     )
+  )
 
   private[this] def makeFramesets(criterion: ClusterSplittingCriterion) = {
     val aggFrameInfo = (childTree: MergeTree[Set[VerbId]]) => {

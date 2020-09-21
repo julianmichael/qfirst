@@ -214,7 +214,11 @@ object FrameInductionApp extends CommandIOApp(
               Evaluation.evaluateArgumentClusters[String, Arg](
                 evalDir.resolve("sense-specific"),
                 s"$model (sense-specific roles)",
-                verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))), argRoleLabels,
+                // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
+                verbClusterModelsRefined.flatMap { case (vt, model) =>
+                  model.argumentClusterTreeOpt.map(_.map(Set(_))).map(vt -> _)
+                },
+                argRoleLabels,
                 tuningSpecs,
                 useSenseSpecificRoles = true
               )
@@ -223,7 +227,11 @@ object FrameInductionApp extends CommandIOApp(
                 Evaluation.evaluateArgumentClusters(
                   evalDir.resolve("sense-agnostic"),
                   s"$model (sense-agnostic roles)",
-                  verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))), argRoleLabels,
+                  // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
+                  verbClusterModelsRefined.flatMap { case (vt, model) =>
+                    model.argumentClusterTreeOpt.map(_.map(Set(_))).map(vt -> _)
+                  },
+                  argRoleLabels,
                   tuningSpecs,
                   useSenseSpecificRoles = false
                 )
@@ -463,6 +471,7 @@ object FrameInductionApp extends CommandIOApp(
 
   def withLogger[A](run: SequentialEphemeralTreeLogger[IO, String] => IO[A]): IO[A] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.debounced() >>= { Log =>
+      loggerUnsafe = Log
       val res = run(Log)
       res.handleErrorWith { e =>
         import java.io.{PrintWriter,StringWriter}

@@ -155,10 +155,11 @@ case class JointModel(
                 IO { // wrapped this here to make sure logging works in the correct order inside
                   // if this is empty, that means there are no arguments at all.
                   // if this ever happens, I'll need to adjust my VerbClusterModel data type.
-                  val argTrees = NonEmptyVector.fromVectorUnsafe(param._2)
-                  val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
-                  val argTree = argAlgorithm.finishAgglomerativeClustering(argTrees)._1
-                  verbType -> VerbClusterModel(verbType, verbTree, argTree)
+                  val argTreeOpt = NonEmptyVector.fromVector(param._2).map { argTrees =>
+                    val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
+                    argAlgorithm.finishAgglomerativeClustering(argTrees)._1
+                  }
+                  verbType -> VerbClusterModel(verbType, verbTree, argTreeOpt)
                 }
               }
             }

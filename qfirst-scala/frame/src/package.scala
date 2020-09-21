@@ -27,6 +27,9 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
   implicit val progressSpec = ProgressSpec.simple(barLength = 50)
 
+  import freelog.EphemeralTreeLogger
+  var loggerUnsafe: EphemeralTreeLogger[cats.effect.IO, String] = null
+
   type QuestionId = ArgumentId[ClausalQuestion]
   object QuestionId {
     def apply(verbId: VerbId, question: ClausalQuestion) = ArgumentId(verbId, question)
