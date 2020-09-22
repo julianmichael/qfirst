@@ -1,6 +1,6 @@
 package qfirst.frame
 
-import qfirst.frame.features.RunData
+// import qfirst.frame.features.RunData
 
 import io.circe.generic.JsonCodec
 
@@ -11,9 +11,9 @@ import cats.effect.IO
 
   // run mode details / data choices etc. are defined here
 
-  def get[A](data: RunData[A]): IO[A] = {
-    if(isSanity) data.dev
-    else data.train
+  def dataSplit: DataSplit = {
+    if(isSanity) DataSplit.Dev
+    else DataSplit.Train
   }
 
   def shouldEvaluate = isSanity || isTest

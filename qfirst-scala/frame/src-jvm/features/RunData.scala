@@ -1,6 +1,7 @@
 package qfirst.frame.features
 
 import qfirst.frame.ArgumentId
+import qfirst.frame.DataSplit
 import qfirst.frame.RunMode
 import qfirst.frame.VerbId
 
@@ -24,14 +25,14 @@ case class RunData[+A](
   implicit mode: RunMode
 ) {
 
-  def get = mode.get(this)
+  def get = apply(mode.dataSplit)
 
   def all = List(train, dev, test).sequence
 
-  def apply(split: RunData.Split): IO[A] = split match {
-    case RunData.Train => train
-    case RunData.Dev => dev
-    case RunData.Test => test
+  def apply(split: DataSplit): IO[A] = split match {
+    case DataSplit.Train => train
+    case DataSplit.Dev => dev
+    case DataSplit.Test => test
   }
 
   def map[B](f: A => B) = RunData(
@@ -97,14 +98,9 @@ object RunData {
   def apply[A](train: A, dev: A, test: A)(implicit mode: RunMode): RunData[A] = RunData(
     IO.pure(train), IO.pure(dev), IO.pure(test)
   )
-  def splits(implicit mode: RunMode) = RunData[Split](
-    IO.pure(Train), IO.pure(Dev), IO.pure(Test)
+  def splits(implicit mode: RunMode) = RunData[DataSplit](
+    IO.pure(DataSplit.Train), IO.pure(DataSplit.Dev), IO.pure(DataSplit.Test)
   )
-
-  sealed trait Split
-  case object Train extends Split
-  case object Dev extends Split
-  case object Test extends Split
 
   implicit def runDataMonoid[A](
     implicit mode: RunMode, A: Monoid[A]
@@ -153,10 +149,10 @@ class RunDataCell[+A](
   implicit mode: RunMode, Log: TreeLogger[IO, String]
 ) {
 
-  def apply(split: RunData.Split): IO[A] = split match {
-    case RunData.Train => train.get
-    case RunData.Dev => dev.get
-    case RunData.Test => test.get
+  def apply(split: DataSplit): IO[A] = split match {
+    case DataSplit.Train => train.get
+    case DataSplit.Dev => dev.get
+    case DataSplit.Test => test.get
   }
 
   def data = RunData(train.get, dev.get, test.get)
