@@ -78,17 +78,17 @@ object Serve extends CommandIOApp(
           verbModels <- FrameInductionApp.getVerbFrames[InflectedForms, ClausalQuestion](
             model, features
           ).flatMap(_.read.map(_.get))
-          // goldParaphrases <- features.readGoldParaphrases
-          // evaluationItems <- features.evaluationItems.get
-          // goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
+          goldParaphrases <- features.readGoldParaphrases
+          evaluationItems <- features.evaluationItems.get
+          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
           annotationService = HttpUtil.makeHttpPostServer(
             VerbFrameService.basicIOService(
               inflectionCounts,
               verbModels,
-              dataset
-              // evaluationItems.apply,
-              // goldParaphraseDataRef,
-              // features.saveGoldParaphrases(_))
+              dataset,
+              evaluationItems.apply,
+              goldParaphraseDataRef,
+              features.saveGoldParaphrases(_)
             )
           )
           app = Router(

@@ -580,6 +580,7 @@ object VerbAnnUI {
     ).whenDefined
   }
 
+  // beh
   def tagModForStructureLabel(
     structure: (ArgStructure, ArgumentSlot),
     argStructureChoiceOpt: StateSnapshot[Option[(ArgStructure, ArgumentSlot)]],

@@ -18,6 +18,14 @@ import qfirst.metrics.HasMetrics.ops._
 
 trait PackagePlatformExtensions {
 
+  type ParaphraseAnnotations = Map[
+    // sentence
+    String, Map[
+      // verb index
+      Int, VerbParaphraseLabels
+    ]
+  ]
+
   // import cats.effect.Blocker
   // import fs2.io.file
 

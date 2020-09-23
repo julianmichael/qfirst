@@ -209,4 +209,53 @@ class GoldQasrlFeatures(
   def argSyntacticFunctions: CachedArgFeats[String] = ???
 
   def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
+
+  val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
+
+  // TODO refactor into RunData framework. is this done?
+  // actually TODO: delete!
+  val evaluationItemsPath = (liveDir, splitName).mapN((dir, split) => dir.resolve(s"eval-sample-$split.jsonl"))
+  val evaluationItems = {
+      new Cell(
+        "Evaluation items",
+        evaluationItemsPath >>= (evalItemsPath =>
+          FileCached.get[Vector[(InflectedForms, String, Int)]](
+            "Evaluation Items")(
+            path = evalItemsPath,
+            read = path => FileUtil.readJsonLines[(InflectedForms, String, Int)](path).compile.toVector,
+            write = (path, items) => FileUtil.writeJsonLines(path)(items))(
+            Log.infoBranch(s"Creating new sample for evaluation at $evalItemsPath")(
+              dataset.get.map { evalSet =>
+                (new scala.util.Random(86735932569L)).shuffle(
+                  evalSet.sentences.values.iterator.flatMap(sentence =>
+                    sentence.verbEntries.values.toList.map(verb =>
+                      (verb.verbInflectedForms, sentence.sentenceId, verb.verbIndex)
+                    )
+                  )
+                ).take(1000).toVector
+              }
+            )
+          )
+        )
+    )
+  }
+
+  val paraphraseGoldPath = liveDir.map(_.resolve("gold-paraphrases.json"))
+
+  def readGoldParaphrases = {
+    paraphraseGoldPath >>= (ppGoldPath =>
+      IO(Files.exists(ppGoldPath)).ifM(
+        FileUtil.readJson[ParaphraseAnnotations](ppGoldPath),
+        Log.warn(s"No gold paraphrase annotations found at $ppGoldPath. Initializing to empty annotations.") >>
+          IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]]),
+        )
+    )
+  }
+  def saveGoldParaphrases(data: ParaphraseAnnotations) = {
+    paraphraseGoldPath >>= (ppGoldPath =>
+      Log.infoBranch(s"Saving gold paraphrases to $ppGoldPath")(
+        FileUtil.writeJson(ppGoldPath, io.circe.Printer.noSpaces)(data)
+      )
+    )
+  }
 }
