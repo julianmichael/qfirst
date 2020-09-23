@@ -484,4 +484,52 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }.all.void
 
   def setup = writeMLMInputs >> writeQGInputs
+
+  // TODO: probably get rid of this
+  lazy val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
+
+  // TODO refactor into RunData framework. is this done?
+  // actually TODO: delete!
+  lazy val evaluationItemsPath = (liveDir, splitName).mapN((dir, split) => dir.resolve(s"eval-sample-$split.jsonl"))
+  lazy val evaluationItems = {
+      new Cell(
+        "Evaluation items",
+        evaluationItemsPath >>= (evalItemsPath =>
+          FileCached.get[Vector[(VerbType, String, Int)]](
+            "Evaluation Items")(
+            path = evalItemsPath,
+            read = path => FileUtil.readJsonLines[(VerbType, String, Int)](path).compile.toVector,
+            write = (path, items) => FileUtil.writeJsonLines(path)(items))(
+            Log.infoBranch(s"Creating new sample for evaluation at $evalItemsPath")(
+              verbs.get.map { verbMap =>
+                (new scala.util.Random(86735932569L)).shuffle(
+                  verbMap.iterator
+                    .flatMap { case (vt, vids) => vids.map(vid => (vt, vid.sentenceId, vid.verbIndex)) }
+                    .toVector
+                ).take(1000).toVector
+              }
+            )
+          )
+        )
+    )
+  }
+
+  lazy val paraphraseGoldPath = liveDir.map(_.resolve("gold-paraphrases.json"))
+
+  def readGoldParaphrases = {
+    paraphraseGoldPath >>= (ppGoldPath =>
+      IO(Files.exists(ppGoldPath)).ifM(
+        FileUtil.readJson[ParaphraseAnnotations](ppGoldPath),
+        Log.warn(s"No gold paraphrase annotations found at $ppGoldPath. Initializing to empty annotations.") >>
+          IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]]),
+        )
+    )
+  }
+  def saveGoldParaphrases(data: ParaphraseAnnotations) = {
+    paraphraseGoldPath >>= (ppGoldPath =>
+      Log.infoBranch(s"Saving gold paraphrases to $ppGoldPath")(
+        FileUtil.writeJson(ppGoldPath, io.circe.Printer.noSpaces)(data)
+      )
+    )
+  }
 }
