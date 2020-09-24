@@ -36,6 +36,11 @@
     )
     @input(
       `type` := "hidden",
+      value := config.dataSetting.toString,
+      id := SharedConstants.dataSettingElementId
+    )
+    @input(
+      `type` := "hidden",
       value := config.featureApiUrl,
       id := SharedConstants.featureApiUrlElementId
     )

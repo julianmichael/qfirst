@@ -376,53 +376,16 @@ object FrameInductionApp extends CommandIOApp(
     )
   } yield ()
 
-  sealed trait DataSetting {
-    type VerbType; type Arg
-    def getFeatures(
-      mode: RunMode)(
-      implicit Log: EphemeralTreeLogger[IO, String]
-    ): Features[VerbType, Arg]
-  }
-  object DataSetting {
-    case object Qasrl extends DataSetting {
-      type VerbType = InflectedForms; type Arg = ClausalQuestion
-      override def toString = "qasrl"
-      override def getFeatures(
-        mode: RunMode)(
-        implicit Log: EphemeralTreeLogger[IO, String]
-      ) = new GoldQasrlFeatures(mode)
-    }
-    case class Ontonotes5(assumeGoldVerbSense: Boolean) extends DataSetting {
-      type VerbType = String; type Arg = ESpan
-      override def toString = {
-        val senseLemma = if(assumeGoldVerbSense) "sense" else "lemma"
-        s"ontonotes-$senseLemma"
-      }
-      override def getFeatures(
-        mode: RunMode)(
-        implicit Log: EphemeralTreeLogger[IO, String]
-      ) = new OntoNotes5Features(mode, assumeGoldVerbSense)
-    }
-    case class CoNLL08(assumeGoldVerbSense: Boolean) extends DataSetting {
-      type VerbType = String; type Arg = Int
-      override def toString = {
-        val senseLemma = if(assumeGoldVerbSense) "sense" else "lemma"
-        s"conll08-$senseLemma"
-      }
-      override def getFeatures(
-        mode: RunMode)(
-        implicit Log: EphemeralTreeLogger[IO, String]
-      ) = new CoNLL08Features(mode, assumeGoldVerbSense)
-    }
-
-    def all = List[DataSetting](
-      Qasrl, Ontonotes5(false), Ontonotes5(true),
-      CoNLL08(false), CoNLL08(true)
-    )
-
-    def fromString(x: String): Option[DataSetting] = {
-      all.find(_.toString == x)
-    }
+  def getFeatures(
+    setting: DataSetting, mode: RunMode)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): Features[setting.VerbType, setting.Arg] = setting match {
+    case DataSetting.Qasrl => new GoldQasrlFeatures(mode)
+        .asInstanceOf[Features[setting.VerbType, setting.Arg]]
+    case DataSetting.Ontonotes5(assumeGoldVerbSense) => new OntoNotes5Features(mode, assumeGoldVerbSense)
+        .asInstanceOf[Features[setting.VerbType, setting.Arg]]
+    case DataSetting.CoNLL08(assumeGoldVerbSense) => new CoNLL08Features(mode, assumeGoldVerbSense)
+        .asInstanceOf[Features[setting.VerbType, setting.Arg]]
   }
 
   val dataO = Opts.option[String](
@@ -493,7 +456,7 @@ object FrameInductionApp extends CommandIOApp(
           _ <- Log.info(s"Mode: setup")
           dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
           _ <- Log.info(s"Data: " + dataSettings.mkString(", "))
-          _ <- dataSettings.traverse(_.getFeatures(RunMode.Sanity).setup)
+          _ <- dataSettings.traverse(d => getFeatures(d, RunMode.Sanity).setup)
         } yield ExitCode.Success
       }
     }
@@ -513,11 +476,11 @@ object FrameInductionApp extends CommandIOApp(
           // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
           _ <- data match {
             case d @ DataSetting.Qasrl =>
-              runModeling(model, d.getFeatures(mode), tuning)
+              runModeling(model, getFeatures(d, mode), tuning)
             case d @ DataSetting.Ontonotes5(_) =>
-              runModeling(model, d.getFeatures(mode), tuning)
+              runModeling(model, getFeatures(d, mode), tuning)
             case d @ DataSetting.CoNLL08(_) =>
-              runModeling(model, d.getFeatures(mode), tuning)
+              runModeling(model, getFeatures(d, mode), tuning)
           }
         } yield ExitCode.Success
       }
@@ -538,9 +501,9 @@ object FrameInductionApp extends CommandIOApp(
             case d @ DataSetting.Qasrl =>
               IO.raiseError(new IllegalArgumentException("Cannot evaluate on QA-SRL."))
             case d @ DataSetting.Ontonotes5(_) =>
-              runSummarize(d.getFeatures(mode))
+              runSummarize(getFeatures(d, mode).getIfPropBank.get)
             case d @ DataSetting.CoNLL08(_) =>
-              runSummarize(d.getFeatures(mode))
+              runSummarize(getFeatures(d, mode).getIfPropBank.get)
           }
         } yield ExitCode.Success
       }

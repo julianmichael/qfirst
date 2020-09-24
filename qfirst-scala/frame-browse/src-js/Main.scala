@@ -1,4 +1,6 @@
 package qfirst.frame.browse
+
+import qfirst.frame.DataSetting
 import qfirst.frame.RunMode
 
 import japgolly.scalajs.react._
@@ -15,6 +17,8 @@ import scalacss.DevDefaults._
 import qasrl.bank._
 import qasrl.bank.service._
 
+import io.circe.{Encoder, Decoder}
+
 import scala.concurrent.Future
 
 import jjm.DotKleisli
@@ -26,8 +30,7 @@ import jjm.implicits._
 import radhoc._
 
 object Main {
-  def main(args: Array[String]): Unit = {
-
+  def runApp[VerbType: Encoder, Arg: Encoder : Decoder] = {
     VerbAnnStyles.addToDocument()
 
     import scala.concurrent.ExecutionContext.Implicits.global
@@ -50,6 +53,16 @@ object Main {
       ).andThenK(OrWrapped.mapK(wrapCallback))
     )
 
+    // TODO cache
+    val featureApiEndpoint: String = dom.document
+      .getElementById(SharedConstants.featureApiUrlElementId)
+      .getAttribute("value")
+    val featureService = HttpUtil
+      .makeHttpPostClient[FeatureReq[VerbType, Arg]](featureApiEndpoint)
+      .andThenK(wrapCallback)
+      .asInstanceOf[FeatureService[AsyncCallback, jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]]
+    // TODO remove cast
+
     val verbApiEndpoint: String = dom.document
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
@@ -61,25 +74,33 @@ object Main {
         .andThenK(wrapCallback)
     )
 
-    // TODO cache
-    val featureApiEndpoint: String = dom.document
-      .getElementById(SharedConstants.featureApiUrlElementId)
-      .getAttribute("value")
-    val featureService = HttpUtil
-      .makeHttpPostClient[FeatureReq[jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]](featureApiEndpoint)
-      .andThenK(wrapCallback)
-
     val query = NavQuery.fromString(dom.window.location.pathname.tail)
+
+    val runMode = io.circe.parser.decode[RunMode](
+      dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
+    ).right.get
 
     VerbAnnUI.Component(
       VerbAnnUI.Props(
-        documentService, verbFrameService, query,
-        io.circe.parser.decode[RunMode](
-          dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
-        ).right.get
+        documentService, verbFrameService, featureService,
+        query, runMode
       )
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)
     )
+  }
+
+  def main(args: Array[String]): Unit = {
+    val dataSetting: DataSetting = DataSetting.fromString(
+      dom.document
+      .getElementById(SharedConstants.dataSettingElementId)
+      .getAttribute("value")
+    ).get
+
+    dataSetting match {
+      case d @ DataSetting.Qasrl => runApp[d.VerbType, d.Arg]
+      case d @ DataSetting.Ontonotes5(_) => () // runApp[d.VerbType, d.Arg]
+      case d @ DataSetting.CoNLL08(_) => () // runApp[d.VerbType, d.Arg]
+    }
   }
 }

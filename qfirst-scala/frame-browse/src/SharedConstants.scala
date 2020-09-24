@@ -6,4 +6,5 @@ object SharedConstants {
   val docApiUrlElementId = "doc-url"
   val featureApiUrlElementId = "feature-url"
   val devFlagElementId = "dev-flag"
+  val dataSettingElementId = "data-setting"
 }

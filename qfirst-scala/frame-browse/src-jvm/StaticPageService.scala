@@ -1,4 +1,6 @@
 package qfirst.frame.browse
+
+import qfirst.frame.DataSetting
 import qfirst.frame.RunMode
 
 import cats.effect.IO
@@ -80,6 +82,7 @@ object StaticPageService {
     docApiSuffix: String,
     verbApiSuffix: String,
     featureApiSuffix: String,
+    dataSetting: DataSetting,
     mode: RunMode,
     jsDepsPath: Path,
     jsPath: Path,
@@ -97,6 +100,7 @@ object StaticPageService {
         featureApiUrl = s"http://$domain:$port/$featureApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
+        dataSetting = dataSetting,
         mode = mode,
         jsDepsPath = jsDepsSuffix,
         jsPath = jsSuffix

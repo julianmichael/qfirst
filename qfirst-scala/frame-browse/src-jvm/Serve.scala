@@ -47,7 +47,7 @@ object Serve extends CommandIOApp(
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
-    data: FrameInductionApp.DataSetting,
+    dataSetting: DataSetting,
     mode: RunMode,
     model: JointModel,
     domain: String,
@@ -64,7 +64,7 @@ object Serve extends CommandIOApp(
       val pageService = StaticPageService.makeService(
         domain,
         docApiSuffix, verbApiSuffix, featureApiSuffix,
-        mode,
+        dataSetting, mode,
         jsDepsPath, jsPath, port
       )
 
