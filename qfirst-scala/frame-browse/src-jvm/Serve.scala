@@ -47,23 +47,28 @@ object Serve extends CommandIOApp(
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
+    data: FrameInductionApp.DataSetting,
     mode: RunMode,
     model: JointModel,
     domain: String,
     port: Int
   ): IO[ExitCode] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.create().flatMap { implicit Log =>
+      // val features = data.getFeatures(mode)
       val features = new GoldQasrlFeatures(mode)
-      features.qasrlBank.get.flatMap { data =>
-        val docApiSuffix = "doc"
-        val verbApiSuffix = "verb"
-        val pageService = StaticPageService.makeService(
-          domain,
-          docApiSuffix, verbApiSuffix,
-          mode,
-          jsDepsPath, jsPath, port
-        )
 
+      val docApiSuffix = "doc"
+      val verbApiSuffix = "verb"
+      val featureApiSuffix = "feature"
+
+      val pageService = StaticPageService.makeService(
+        domain,
+        docApiSuffix, verbApiSuffix, featureApiSuffix,
+        mode,
+        jsDepsPath, jsPath, port
+      )
+
+      features.qasrlBank.get.flatMap { data =>
         val index = data.index
         val docs = data.documentsById
         val searchIndex = Search.createSearchIndex(docs.values.toList)
@@ -71,6 +76,7 @@ object Serve extends CommandIOApp(
           DocumentService.basic(index, docs, searchIndex)
             .andThenK(Lambda[Id ~> IO](IO.pure(_)))
         )
+        val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
 
         for {
           dataset <- features.dataset.get
@@ -95,7 +101,8 @@ object Serve extends CommandIOApp(
             "/" -> pageService,
             s"/$docApiSuffix" -> docService,
             s"/$verbApiSuffix" -> annotationService,
-            ).orNotFound
+            s"/$featureApiSuffix" -> featureService
+          ).orNotFound
           _ <- Log.info("Starting server.")
           _ <- BlazeServerBuilder[IO]
           .bindHttp(port, "0.0.0.0")
@@ -115,6 +122,8 @@ object Serve extends CommandIOApp(
     val jsPathO = Opts.option[Path](
       "js", metavar = "path", help = "Where to get the JS main file."
     )
+
+    val dataO = FrameInductionApp.dataO
 
     val modeO = FrameInductionApp.modeO
 
@@ -136,6 +145,6 @@ object Serve extends CommandIOApp(
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, modeO, modelO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, dataO, modeO, modelO, domainO, portO).mapN(_run)
   }
 }

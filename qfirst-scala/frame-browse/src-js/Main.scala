@@ -54,53 +54,20 @@ object Main {
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
 
+    // TODO cache
     val verbFrameService = VerbFrameService(
       HttpUtil
         .makeHttpPostClient[VerbFrameService.Request](verbApiEndpoint)
         .andThenK(wrapCallback)
     )
 
-    // // TODO replace with simple caching transformation thing thing
-    // import qasrl.bank.service.WebClientDocumentService
-    // val dataService = new WebClientDocumentService(docApiEndpoint)
-    // object CachedDataService extends DocumentService[OrWrapped[Future, ?]] {
-    //   import scala.concurrent.ExecutionContext.Implicits.global
-    //   import scala.collection.mutable
-    //   import DocumentService._
-    //   var indexCache: Option[DataIndex] = None
-    //   val documentCache = mutable.Map.empty[DocumentId, Document]
-    //   val documentRequestCache = mutable.Map.empty[DocumentId, Future[Document]]
-
-    //   def getDataIndex = indexCache.map(OrWrapped.pure[Future](_)).getOrElse {
-    //     val fut = dataService.getDataIndex
-    //     fut.foreach { doc =>
-    //       indexCache = Some(doc)
-    //     }
-    //     OrWrapped.wrapped(fut)
-    //   }
-
-    //   def getDocument(id: DocumentId) = {
-    //     documentCache.get(id).map(OrWrapped.pure[Future](_)).getOrElse {
-    //       documentRequestCache.get(id).map(OrWrapped.wrapped(_)).getOrElse {
-    //         val fut = dataService.getDocument(id)
-    //         documentRequestCache.put(id, fut)
-    //         fut.foreach { doc =>
-    //           documentRequestCache.remove(id)
-    //           documentCache.put(id, doc)
-    //         }
-    //         OrWrapped.wrapped(fut)
-    //       }
-    //     }
-    //   }
-
-    //   override def searchDocuments(query: Search.Query) = {
-    //     if(query.isEmpty) {
-    //       getDataIndex.map(_.allDocumentIds)
-    //     } else {
-    //       OrWrapped.wrapped(dataService.searchDocuments(query))
-    //     }
-    //   }
-    // }
+    // TODO cache
+    val featureApiEndpoint: String = dom.document
+      .getElementById(SharedConstants.featureApiUrlElementId)
+      .getAttribute("value")
+    val featureService = HttpUtil
+      .makeHttpPostClient[FeatureReq[jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]](featureApiEndpoint)
+      .andThenK(wrapCallback)
 
     val query = NavQuery.fromString(dom.window.location.pathname.tail)
 

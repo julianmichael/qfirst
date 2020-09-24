@@ -79,6 +79,7 @@ object StaticPageService {
     domain: String,
     docApiSuffix: String,
     verbApiSuffix: String,
+    featureApiSuffix: String,
     mode: RunMode,
     jsDepsPath: Path,
     jsPath: Path,
@@ -93,6 +94,7 @@ object StaticPageService {
       PageConfig(
         docApiUrl = s"http://$domain:$port/$docApiSuffix",
         verbApiUrl = s"http://$domain:$port/$verbApiSuffix",
+        featureApiUrl = s"http://$domain:$port/$featureApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
         mode = mode,

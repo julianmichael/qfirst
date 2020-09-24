@@ -7,6 +7,7 @@ import java.nio.file.Path
 case class PageConfig(
   docApiUrl: String,
   verbApiUrl: String,
+  featureApiUrl: String,
   bootstrapLink: Frag,
   bootstrapScripts: Frag,
   mode: RunMode,

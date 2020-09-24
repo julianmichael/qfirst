@@ -36,6 +36,11 @@
     )
     @input(
       `type` := "hidden",
+      value := config.featureApiUrl,
+      id := SharedConstants.featureApiUrlElementId
+    )
+    @input(
+      `type` := "hidden",
       value := io.circe.Printer.noSpaces.pretty(config.mode.asJson),
       id := SharedConstants.devFlagElementId
     )
