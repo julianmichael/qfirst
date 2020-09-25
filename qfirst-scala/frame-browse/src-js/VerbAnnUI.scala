@@ -116,6 +116,7 @@ object VerbAnnUI {
   }
 
   val S = VerbAnnStyles
+  import HOCs._
 
   val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[InflectedForms, Int])]
   val DocFetch = new CacheCallContent[DocumentId, Document]
@@ -132,8 +133,6 @@ object VerbAnnUI {
   val IntSetLocal = new LocalState[Set[Int]]
   val FrameChoiceLocal = new LocalState[Set[(QuestionId, ArgStructure, ArgumentSlot)]]
   val QuestionSetLocal = new LocalState[Set[QuestionId]]
-  val BoolLocal = new LocalState[Boolean]
-  val StringLocal = new LocalState[String]
 
   val (inflToString, inflFromString) = {
     import io.circe.syntax._
@@ -165,101 +164,6 @@ object VerbAnnUI {
   case class State()
   object State {
     val initial = State()
-  }
-
-  // TODO add typed style argument
-  def checkboxToggle(
-    label: String,
-    isValueActive: StateSnapshot[Boolean]
-  ) = <.span(S.checkboxSpan)(
-    <.input(S.checkbox)(
-      ^.`type` := "checkbox",
-      ^.value := label,
-      ^.checked := isValueActive.value,
-      ^.onChange --> isValueActive.modState(!_)
-    ),
-    <.span(S.checkboxLabel)(
-      label
-    )
-  )
-
-  // TODO add style, also improve name
-  def typedTextField[A](
-    label: Option[String],
-    value: StateSnapshot[A],
-    makeValue: String => Option[A]
-  ) = {
-    <.span(
-      label.whenDefined, // TODO more styling
-      StringLocal.make(initialValue = value.value.toString) { inputText =>
-        <.input(S.textField)(
-          ^.`type` := "text",
-          ^.value := inputText.value,
-          ^.onChange ==> ((e: ReactEventFromInput) => inputText.setState(e.target.value)),
-          ^.onKeyDown ==> ((e: ReactKeyboardEventFromInput) =>
-            CallbackOption.keyCodeSwitch(e) {
-              case KeyCode.Enter =>
-                makeValue(inputText.value).fold(Callback.empty)(value.setState)
-            }
-          )
-        )
-      }
-    )
-  }
-
-  // TODO more styling
-  def liveTextField[A](style: TagMod)(
-    label: Option[String],
-    value: StateSnapshot[A],
-    makeValue: String => Option[A]
-  ) = {
-    <.span(
-      label.whenDefined, " ",
-      StringLocal.make(initialValue = value.value.toString) { inputText =>
-        BoolLocal.make(initialValue = false) { isInvalid =>
-          <.input(S.textField, S.invalidTextBackground.when(isInvalid.value), style)(
-            ^.`type` := "text",
-            ^.value := inputText.value,
-            ^.onChange ==> ((e: ReactEventFromInput) =>
-              inputText.setState(e.target.value) >>
-                makeValue(e.target.value).fold(isInvalid.setState(true))(v =>
-                  isInvalid.setState(false) >> value.setState(v)
-                )
-            )
-          )
-        }
-      }
-    )
-  }
-
-  def doubleTextField(style: TagMod)(
-    label: Option[String],
-    value: StateSnapshot[Double],
-    onChange: Double => Callback = _ => Callback.empty
-  ): VdomElement = liveTextField[Double](style)(
-    label, value, (s: String) => scala.util.Try(s.toDouble).toOption
-  )
-  // def doubleTextField(style: TagMod)(
-  //   label: String,
-  //   value: StateSnapshot[Double]
-  // ): VdomElement = doubleTextField(style)(Some(label), value)
-
-  def intArrowField(style: TagMod)(
-    label: Option[String],
-    value: StateSnapshot[Int],
-    onChange: Int => Callback = _ => Callback.empty
-  ) = {
-    <.span(style)(
-      label.whenDefined(l => "$l: "),
-      <.input(S.intArrowFieldInput)(
-        ^.`type` := "number",
-        ^.min := 1,
-        ^.value := value.value,
-        ^.onChange ==> ((e: ReactEventFromInput) =>
-          value.setState(e.target.value.toInt)
-        )
-      )
-    )
   }
 
   @Lenses case class ClusterCriterionControl(
@@ -299,14 +203,14 @@ object VerbAnnUI {
           ),
           ": ",
           zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
-            intArrowField(S.shortTextField)(
+            View.intArrowField(S.shortTextField)(
               None,
               numClusters,
               criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
             )
           ),
           zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)).whenDefined(maxLoss =>
-            doubleTextField(S.shortTextField)(
+            View.doubleTextField(S.shortTextField)(
               None,
               maxLoss,
               criterionControl.zoomStateL(ClusterCriterionControl.maxLoss).setState(_)
@@ -334,31 +238,6 @@ object VerbAnnUI {
         //   )
         // }
       }
-    )
-  }
-
-  def sliderField(
-    label: String,
-    min: Double,
-    max: Double,
-    value: StateSnapshot[Double],
-    numSigFigs: Int = 3
-  ) = {
-    val magnitude = scala.math.pow(10, numSigFigs).toInt
-    def int(x: Double) = (x * magnitude).toInt
-    def double(n: Int) = n.toDouble / magnitude
-    <.span(
-      doubleTextField(S.shortTextField)(Some(label), value),
-      " ",
-      <.input(/*TODO style*/)(
-        ^.`type` := "range",
-        ^.min := int(min),
-        ^.max := int(max),
-        ^.value := int(value.value),
-        ^.onChange ==> ((e: ReactEventFromInput) =>
-          value.setState(double(e.target.value.toInt))
-        )
-      )
     )
   }
 
@@ -1165,8 +1044,8 @@ object VerbAnnUI {
       <.div(S.paraphrasingFilterDisplay)(
         clusterCriterionField("Verb", paraphrasingFilter.zoomStateL(ParaphrasingFilter.verbCriterion)),
         clusterCriterionField("Question", paraphrasingFilter.zoomStateL(ParaphrasingFilter.questionCriterion)),
-        <.div(sliderField("Clause", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minClauseProb))),
-        <.div(sliderField("Paraphrase", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minParaphrasingProb))),
+        <.div(View.sliderField("Clause", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minClauseProb))),
+        <.div(View.sliderField("Paraphrase", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minParaphrasingProb))),
         <.div(
           <.button(
             "cache",
@@ -1769,7 +1648,7 @@ object VerbAnnUI {
                                           <.span(S.sentenceLink)("Link: ", <.a(^.href := linkPath, linkPath.tail))
                                         )
                                       }.whenDefined,
-                                      checkboxToggle("Show invalid questions", showInvalidQuestions)
+                                      View.checkboxToggle("Show invalid questions", showInvalidQuestions)
                                     ),
                                     ArgStructureOptLocal.make(initialValue = None) { argStructureChoiceOpt =>
                                       ArgStructureOptLocal.make(initialValue = None) { argStructureHoverOpt =>
@@ -1927,7 +1806,7 @@ object VerbAnnUI {
                                         )))(
                                       <.span(S.sentenceLink)("Link: ", <.a(^.href := linkPath, linkPath.tail))
                                     ),
-                                    checkboxToggle("Show invalid questions", showInvalidQuestions)
+                                    View.checkboxToggle("Show invalid questions", showInvalidQuestions)
                                   ),
                                   ArgStructureOptLocal.make(initialValue = None) { argStructureChoiceOpt =>
                                     ArgStructureOptLocal.make(initialValue = None) { argStructureHoverOpt =>
