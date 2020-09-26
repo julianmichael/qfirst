@@ -105,7 +105,8 @@ object SplitTuningCriterion {
     TotalEntropyCriterion,
     SqNumClustersPenaltyCriterion,
     CuttingDeltaCriterion,
-    LossPerItemCriterion
+    LossPerItemCriterion,
+    MaxLossPerItemCriterion
   )
 
   def fromString(x: String): Option[SplitTuningCriterion] = {
@@ -189,5 +190,17 @@ object LossPerItemCriterion extends SplitTuningCriterion {
     val choicesSorted = choices.sortBy(-_.lossPerItem)
     val qualified = choicesSorted.toList.takeWhile(_.lossPerItem > threshold)
     qualified.lastOption.getOrElse(choicesSorted.head)
+  }
+}
+
+object MaxLossPerItemCriterion extends SplitTuningCriterion {
+  val name: String = "max-loss"
+  val defaultThresholds = (0 to 100).toList.map(_.toDouble / 100.0)
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val choicesWithLPIs = choices.map(p => p -> p.lossesPerItem.max)
+    val choicesSorted = choicesWithLPIs.sortBy(-_._2)
+    val qualified = choicesSorted.toList.takeWhile(_._2 > threshold)
+    qualified.lastOption.getOrElse(choicesSorted.head)._1
   }
 }

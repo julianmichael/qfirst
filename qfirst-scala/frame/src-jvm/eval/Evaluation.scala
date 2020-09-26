@@ -37,11 +37,11 @@ object Evaluation {
   ): NonEmptyList[ConfStatsPoint] = {
     val goldClusterSizes = goldLabelTree.unorderedFold
     NonEmptyList.fromList(
-      goldLabelTree.clusterSplittingsStream.take(1000).map { clusters =>
-        val loss = clusters.foldMap(_.loss)
+      goldLabelTree.clusterSplittingsStreamByMaxLossPerItem.take(1000).map { clusters =>
+        val losses = clusters.map(_.loss)
         val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
         val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold))
-        ConfStatsPoint(loss, clusterSizes, weightedPR)
+        ConfStatsPoint(losses, clusterSizes, weightedPR)
       }.compile.toList
     ).get
   }
@@ -52,10 +52,10 @@ object Evaluation {
   ): ConfStatsPoint = {
     val goldClusterSizes = goldLabelTree.unorderedFold
     val clusters = goldLabelTree.valuesWithLosses
-    val loss = clusters.foldMap(_._1)
+    val losses = clusters.map(_._1)
     val clusterSizes = clusters.map(_._2.unorderedFold)
     val weightedPR = metric(goldClusterSizes, clusters.map(_._2))
-    ConfStatsPoint(loss, clusterSizes, weightedPR)
+    ConfStatsPoint(losses, clusterSizes, weightedPR)
   }
 
   def getAllPRStats[VerbType, InstanceId, GoldLabel](
