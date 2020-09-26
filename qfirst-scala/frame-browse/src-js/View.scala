@@ -135,4 +135,77 @@ object View {
     )
   }
 
+  import jjm.ling.ESpan
+  import jjm.ling.Text
+
+  import cats.data.NonEmptyList
+  import cats.implicits._
+
+  import scalajs.js
+
+  val transparent = Rgba(255, 255, 255, 0.0)
+
+  sealed trait SpanColoringSpec {
+    def spansWithColors: List[(ESpan, Rgba)]
+  }
+  case class RenderWholeSentence(val spansWithColors: List[(ESpan, Rgba)]) extends SpanColoringSpec
+  case class RenderRelevantPortion(spansWithColorsNel: NonEmptyList[(ESpan, Rgba)]) extends SpanColoringSpec {
+    def spansWithColors = spansWithColorsNel.toList
+  }
+
+  def renderSentenceWithHighlights(
+    sentenceTokens: Vector[String],
+    coloringSpec: SpanColoringSpec,
+    wordRenderers : Map[Int, VdomTag => VdomTag] = Map()
+  ) = {
+    val containingSpan = coloringSpec match {
+      case RenderWholeSentence(_) =>
+        ESpan(0, sentenceTokens.size)
+      case RenderRelevantPortion(swcNel) =>
+        val spans = swcNel.map(_._1)
+        ESpan(spans.map(_.begin).minimum, spans.map(_.end).maximum)
+    }
+    val wordIndexToLayeredColors = (containingSpan.begin until containingSpan.end).map { i =>
+      i -> coloringSpec.spansWithColors.collect {
+        case (span, color) if span.contains(i) => color
+      }
+    }.toMap
+    val indexAfterToSpaceLayeredColors = ((containingSpan.begin + 1) to containingSpan.end).map { i =>
+      i -> coloringSpec.spansWithColors.collect {
+        case (span, color) if span.contains(i - 1) && span.contains(i) => color
+      }
+    }.toMap
+    Text.renderTokens[Int, List, List[VdomElement]](
+      words = sentenceTokens.indices.toList,
+      getToken = (index: Int) => sentenceTokens(index),
+      spaceFromNextWord = (nextIndex: Int) => {
+        if(!containingSpan.contains(nextIndex) || nextIndex == containingSpan.begin) List() else {
+          val colors = indexAfterToSpaceLayeredColors(nextIndex)
+          val colorStr = NonEmptyList[Rgba](transparent, colors)
+            .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
+          List(
+            <.span(
+              ^.key := s"space-$nextIndex",
+              ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
+              " "
+            )
+          )
+        }
+      },
+      renderWord = (index: Int) => {
+        if(!containingSpan.contains(index)) List() else {
+          val colorStr = NonEmptyList(transparent, wordIndexToLayeredColors(index))
+            .reduce((x: Rgba, y: Rgba) => x add y).toColorStyleString
+          val render: (VdomTag => VdomTag) = wordRenderers.get(index).getOrElse((x: VdomTag) => x)
+          val element: VdomTag = render(
+            <.span(
+              ^.style := js.Dynamic.literal("backgroundColor" -> colorStr),
+              Text.normalizeToken(sentenceTokens(index))
+            )
+          )
+          List(element(^.key := s"word-$index"))
+        }
+      }
+    ).toVdomArray(x => x)
+  }
 }

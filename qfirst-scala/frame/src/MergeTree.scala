@@ -83,9 +83,9 @@ import scala.annotation.tailrec
     // using vars bc too lazy to look into foldRight on stream
     var splits = this.clusterSplittings
     var cur = splits.head
-    while(splits.headOption.exists(_.size < n)) {
-      cur = splits.head
+    while(cur.size < n && splits.headOption.nonEmpty) {
       splits = splits.tail
+      cur = splits.head
     }
     cur
   }

@@ -30,7 +30,7 @@ import jjm.implicits._
 import radhoc._
 
 object Main {
-  def runApp[VerbType: Encoder, Arg: Encoder : Decoder] = {
+  def runApp[VerbType: Encoder : Decoder, Arg: Encoder : Decoder] = {
     VerbAnnStyles.addToDocument()
 
     import scala.concurrent.ExecutionContext.Implicits.global
@@ -44,34 +44,29 @@ object Main {
       AsyncCallback.fromFuture(f())
     )
 
-    val initialCache = DotMap.empty[Id, DocumentService.Request]
+    val initialFeatureCache = DotMap.empty[Id, FeatureReq[VerbType, Arg]]
 
-    val documentService = DocumentService(
-      jjm.Memo.memoizeDotFuture(
-        HttpUtil.makeHttpPostClient[DocumentService.Request](docApiEndpoint),
-        initialCache
-      ).andThenK(OrWrapped.mapK(wrapCallback))
-    )
-
-    // TODO cache
     val featureApiEndpoint: String = dom.document
       .getElementById(SharedConstants.featureApiUrlElementId)
       .getAttribute("value")
-    val featureService = HttpUtil
-      .makeHttpPostClient[FeatureReq[VerbType, Arg]](featureApiEndpoint)
-      .andThenK(wrapCallback)
-      .asInstanceOf[FeatureService[AsyncCallback, jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]]
-    // TODO remove cast
+    val featureService = jjm.Memo.memoizeDotFuture(
+      HttpUtil.makeHttpPostClient[FeatureReq[VerbType, Arg]](featureApiEndpoint),
+      initialFeatureCache
+        // TODO remove cast
+    ).andThenK(OrWrapped.mapK(wrapCallback))
+      .asInstanceOf[FeatureService[OrWrapped[AsyncCallback, ?], jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]]
 
     val verbApiEndpoint: String = dom.document
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
 
-    // TODO cache
+    val initialVerbCache = DotMap.empty[Id, VerbFrameService.Request]
+
     val verbFrameService = VerbFrameService(
-      HttpUtil
-        .makeHttpPostClient[VerbFrameService.Request](verbApiEndpoint)
-        .andThenK(wrapCallback)
+      jjm.Memo.memoizeDotFuture(
+        HttpUtil.makeHttpPostClient[VerbFrameService.Request](verbApiEndpoint),
+        initialVerbCache
+      ).andThenK(OrWrapped.mapK(wrapCallback))
     )
 
     val query = NavQuery.fromString(dom.window.location.pathname.tail)
@@ -80,9 +75,9 @@ object Main {
       dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
     ).right.get
 
-    VerbAnnUI.Component(
-      VerbAnnUI.Props(
-        documentService, verbFrameService, featureService,
+    NewVerbUI.Component(
+      NewVerbUI.Props(
+        verbFrameService, featureService,
         query, runMode
       )
     ).renderIntoDOM(

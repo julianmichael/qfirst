@@ -150,6 +150,22 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   val verbArgSets: RunDataCell[Map[VerbType, Map[VerbId, Set[Arg]]]]
 
+  lazy val sentenceInfos: RunDataCell[Map[String, SentenceInfo[VerbType, Arg]]] = {
+    (sentences.data, verbArgSets.data).mapN { (sents, argSets) =>
+      val sentMaps = argSets.toList.foldMap { case (verbType, allVerbs) =>
+        allVerbs.toList.foldMap { case (verbId, args) =>
+          Map(verbId.sentenceId -> NonMergingMap(verbId.verbIndex -> VerbInfo(verbId.verbIndex, verbType, args)))
+        }
+      }
+      sentMaps.map { case (sid, sentMap) =>
+        sid -> SentenceInfo(sid, sents.value(sid), sentMap.value)
+      }
+    }.toCell("Sentence infos")
+  }
+
+  lazy val sentencesByVerbType: RunDataCell[Map[VerbType, Set[String]]] =
+    verbArgSets.data.map(_.mapVals(_.keySet.map(_.sentenceId))).toCell("Sentence IDs by verb type")
+
   lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.data.map(
     _.transform { case (_, verbs) =>
       verbs.toList.foldMap { case (verbId, args) =>
