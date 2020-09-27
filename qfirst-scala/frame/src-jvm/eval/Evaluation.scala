@@ -37,7 +37,7 @@ object Evaluation {
   ): NonEmptyList[ConfStatsPoint] = {
     val goldClusterSizes = goldLabelTree.unorderedFold
     NonEmptyList.fromList(
-      goldLabelTree.clusterSplittingsStreamByMaxLossPerItem.take(1000).map { clusters =>
+      goldLabelTree.clusterSplittingsStreamByMaxLossPerCount(_.unorderedFold).take(1000).map { clusters =>
         val losses = clusters.map(_.loss)
         val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
         val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold))

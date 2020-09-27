@@ -47,7 +47,9 @@ trait AgglomerativeClusteringAlgorithm {
   def getLossChangePriority(
     newLoss: Double,
     leftLoss: Double,
-    rightLoss: Double
+    leftParam: ClusterParam,
+    rightLoss: Double,
+    rightParam: ClusterParam
   ) = newLoss - leftLoss - rightLoss
 
   // override for efficiency
@@ -152,7 +154,7 @@ trait AgglomerativeClusteringAlgorithm {
           case (leftIndex, (left, leftParam)) :: rights =>
             rights.iterator.map { case (rightIndex, (right, rightParam)) =>
               val loss = mergeLoss(left, leftParam, right, rightParam)
-              val delta = getLossChangePriority(loss, left.loss, right.loss)
+              val delta = getLossChangePriority(loss, left.loss, leftParam, right.loss, rightParam)
               MergeCandidate(leftIndex, rightIndex, delta, loss)
             }
         }.toVector.sorted
@@ -244,7 +246,7 @@ trait AgglomerativeClusteringAlgorithm {
                   val (leftTree, leftParam) = currentTrees(i)
                   val (rightTree, rightParam) = currentTrees(j)
                   val loss = mergeLoss(leftTree, leftParam, rightTree, rightParam)
-                  val delta = getLossChangePriority(loss, leftTree.loss, rightTree.loss)
+                  val delta = getLossChangePriority(loss, leftTree.loss, leftParam, rightTree.loss, rightParam)
                   val candidate = MergeCandidate(i, j, delta, loss)
                   // insert it into the appropriate location in the sequence
                   val insertOps = mergeQueue.insert(candidate)
@@ -297,7 +299,7 @@ trait AgglomerativeClusteringAlgorithm {
           case (leftIndex, (left, leftParam)) :: rights =>
             rights.iterator.map { case (rightIndex, (right, rightParam)) =>
               val loss = mergeLoss(left, leftParam, right, rightParam)
-              val delta = getLossChangePriority(loss, left.loss, right.loss)
+              val delta = getLossChangePriority(loss, left.loss, leftParam, right.loss, rightParam)
               MergeCandidate(leftIndex, rightIndex, delta, loss)
             }
         }.toList.sorted
@@ -389,7 +391,7 @@ trait AgglomerativeClusteringAlgorithm {
                   val (leftTree, leftParam) = currentTrees(i)
                   val (rightTree, rightParam) = currentTrees(j)
                   val loss = mergeLoss(leftTree, leftParam, rightTree, rightParam)
-                  val delta = getLossChangePriority(loss, leftTree.loss, rightTree.loss)
+                  val delta = getLossChangePriority(loss, leftTree.loss, leftParam, rightTree.loss, rightParam)
                   val candidate = MergeCandidate(i, j, delta, loss)
                   // insert it into the appropriate location in the sequence
                   orderedMerges = {
@@ -435,7 +437,7 @@ trait AgglomerativeClusteringAlgorithm {
         if(rights.isEmpty) queues -= leftIndex // remove empty queue
         else rights.foreach { case (rightIndex, (right, rightParam)) =>
           val loss = mergeLoss(left, leftParam, right, rightParam)
-          val delta = getLossChangePriority(loss, left.loss, right.loss)
+          val delta = getLossChangePriority(loss, left.loss, leftParam, right.loss, rightParam)
           distances(leftIndex)(rightIndex) = delta
           distances(rightIndex)(leftIndex) = delta
           queues(leftIndex) += (rightIndex -> loss)
@@ -464,7 +466,7 @@ trait AgglomerativeClusteringAlgorithm {
                                     // get new merge candidates before adding new cluster back in
         val newMerges = currentTrees.iterator.map { case (k, (right, rightParam)) =>
           val loss = mergeLoss(newTree, newParam, right, rightParam)
-          val delta = getLossChangePriority(loss, newTree.loss, right.loss)
+          val delta = getLossChangePriority(loss, newTree.loss, newParam, right.loss, rightParam)
           // update distances before inserting anything into queues to keep things consistent
           distances(i)(k) = delta
           distances(k)(i) = delta

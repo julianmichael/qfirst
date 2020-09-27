@@ -14,6 +14,16 @@ class AgglomerativeSetClustering[I, P](
   type Index = Set[I]
   type ClusterParam = P
 
+  override def getLossChangePriority(
+    newLoss: Double,
+    leftLoss: Double,
+    leftParam: ClusterParam,
+    rightLoss: Double,
+    rightParam: ClusterParam
+  ) = {
+    innerAlg.getLossChangePriority(newLoss, leftLoss, leftParam, rightLoss, rightParam)
+  }
+
   def getSingleInstanceParameter(
     index: Index
   ): ClusterParam = {

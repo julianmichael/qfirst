@@ -29,6 +29,17 @@ class MinEntropyClusteringSparse[I](
   type ClusterParam = ClusterMixture
   type Index = I
 
+  // override def getLossChangePriority(
+  //   newLoss: Double,
+  //   leftLoss: Double,
+  //   leftParam: ClusterParam,
+  //   rightLoss: Double,
+  //   rightParam: ClusterParam
+  // ) = {
+  //   require(newLoss >= leftLoss + rightLoss) // likelihood should worsen
+  //   newLoss / (leftParam.total + rightParam.total) // just use entropy of new cluster
+  // }
+
   def getSingleInstanceParameter(
     index: Index
   ): ClusterParam = {

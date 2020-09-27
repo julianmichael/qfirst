@@ -106,7 +106,8 @@ object SplitTuningCriterion {
     SqNumClustersPenaltyCriterion,
     CuttingDeltaCriterion,
     LossPerItemCriterion,
-    MaxLossPerItemCriterion
+    MaxLossPerItemCriterion,
+    WorstCaseEntropyCriterion
   )
 
   def fromString(x: String): Option[SplitTuningCriterion] = {
@@ -144,7 +145,28 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
 
   private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
     val numItems = s.numItems
-    s.loss + (t * s.clusterSizes.foldMap(size => -size * scala.math.log(size.toDouble / numItems)))
+    val mixingLoss = s.clusterSizes.foldMap(size =>
+      -size * scala.math.log(size.toDouble / numItems)
+    )
+    s.loss + (t * mixingLoss)
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
+  }
+}
+
+object WorstCaseEntropyCriterion extends SplitTuningCriterion {
+  val name: String = "max-entropy"
+  val defaultThresholds = (-10 to 100).map(_.toDouble / 20).toList
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    val numItems = s.numItems
+    val mixingEntropy = s.clusterSizes.foldMap(size =>
+      -(size.toDouble / numItems) * scala.math.log(size.toDouble / numItems)
+    )
+    s.lossesPerItem.max + (t * mixingEntropy)
   }
 
   def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {

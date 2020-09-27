@@ -15,6 +15,7 @@ object Clustering {
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial
 
+  val flatClusteringThreshold = 100
   val numFlatClusters = 100
 
   // soft EM hyperparams
@@ -43,7 +44,7 @@ object Clustering {
     agglomAlgorithm: AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = AP })(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[(MergeTree[Set[I]], AP)] = {
-    if(indices.size <= numFlatClusters) { // we can immediately do agglom. clustering
+    if(indices.size <= flatClusteringThreshold) { // we can immediately do agglom. clustering
       IO {
         val (argClusterTree, params) = agglomAlgorithm.runFullAgglomerativeClustering(indices)
         argClusterTree.map(Set(_)) -> params

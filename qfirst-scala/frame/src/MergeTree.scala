@@ -148,7 +148,10 @@ import scala.annotation.tailrec
 
   def clusterSplittings = MergeTree.clusterSplittings(Vector(this))
   def clusterSplittingsStream = MergeTree.clusterSplittingsStream(this)
-  def clusterSplittingsStreamByMaxLossPerItem = MergeTree.clusterSplittingsStreamByMaxLossPerItem(this)
+  def clusterSplittingsStreamByMaxLossPerItem =
+    MergeTree.clusterSplittingsStreamByMaxLossPerItem(this)
+  def clusterSplittingsStreamByMaxLossPerCount(count: A => Double) =
+    MergeTree.clusterSplittingsStreamByMaxLossPerCount(this, count)
 
   def cata[B](
     leaf: (Double, A) => B,
@@ -221,6 +224,19 @@ object MergeTree {
         trees.flatMap(t =>
           MergeTree.merge.getOption(t)
             .filter(_ => t.loss / t.size >= maxLossPerItem)
+            .fold(Vector(t))(m => Vector(m.left, m.right))
+        )
+      }
+    }.takeWhile(_.nonEmpty)
+  }
+
+  def clusterSplittingsStreamByMaxLossPerCount[A](tree: MergeTree[A], count: A => Double): fs2.Stream[cats.Id, Vector[MergeTree[A]]] = {
+    def getSize(t: MergeTree[A]) = t.unorderedFoldMap(count)
+    fs2.Stream.iterate(Vector(tree)) { trees =>
+      trees.filter(_.isMerge).map(t => t.loss / getSize(t)).maximumOption.foldMap { maxLossPerItem =>
+        trees.flatMap(t =>
+          MergeTree.merge.getOption(t)
+            .filter(_ => t.loss / getSize(t) >= maxLossPerItem)
             .fold(Vector(t))(m => Vector(m.left, m.right))
         )
       }

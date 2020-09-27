@@ -68,7 +68,13 @@ class CompleteLinkageClustering(
   override def getLossChangePriority(
     newLoss: Double,
     leftLoss: Double,
-    rightLoss: Double
-  ) = List(newLoss, leftLoss, rightLoss).max // though newLoss should always be biggest?
+    leftParam: ClusterParam,
+    rightLoss: Double,
+    rightParam: ClusterParam
+  ) = {
+    require(newLoss >= leftLoss)
+    require(newLoss >= rightLoss)
+    newLoss
+  }
 
 }
