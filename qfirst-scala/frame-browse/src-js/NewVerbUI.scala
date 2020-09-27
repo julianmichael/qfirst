@@ -258,7 +258,7 @@ object NewVerbUI {
   // }
 
   def sentenceSelectionPane(
-    sentenceIds: Vector[String], // TODO maybe sort?
+    sentenceIds: SortedSet[String],
     curSentenceId: StateSnapshot[String]
   ) = {
     val sentencesWord = if(sentenceIds.size == 1) "sentence" else "sentences"
@@ -405,7 +405,7 @@ object NewVerbUI {
   // TODO color-code the answer spans by _question_ instead of by verb
 
   val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
-  val ParaphrasingFilterLocal = new LocalState[ParaphrasingFilter]
+  val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
 
   def zoomStateP[A, B](
     s: StateSnapshot[A],
@@ -445,10 +445,9 @@ object NewVerbUI {
     )
   )
 
-  val defaultParaphrasingFilter = ParaphrasingFilter(
+  val defaultClusterSplittingSpec = ClusterSplittingSpec(
     ClusterSplittingCriterion.Number(1),
-    ClusterSplittingCriterion.Number(5),
-    0.02, 0.3
+    ClusterSplittingCriterion.Number(5)
   )
 
   def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
@@ -464,7 +463,7 @@ object NewVerbUI {
 
   def frameContainer(
     props: Props,
-    cachedParaphrasingFilter: StateSnapshot[ParaphrasingFilter],
+    cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     verb: InflectedForms
   ) = {
     VerbModelFetch.make(
@@ -473,10 +472,10 @@ object NewVerbUI {
       case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
       case VerbModelFetch.Loaded(model) =>
         val numVerbInstances = model.verbClusterTree.size.toInt
-        ParaphrasingFilterLocal.make(initialValue = cachedParaphrasingFilter.value) { paraphrasingFilter =>
-          def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
+        ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
+          // def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
 
-          val verbTrees = paraphrasingFilter.value.verbCriterion.splitTree(model.verbClusterTree)
+          val verbTrees = clusterSplittingSpec.value.verbCriterion.splitTree(model.verbClusterTree)
           val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
             tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
           }.toMap
@@ -487,15 +486,13 @@ object NewVerbUI {
 
 
           <.div(S.framesetContainer)(
-            <.div(S.paraphrasingFilterDisplay)(
-              clusterCriterionField("Verb", paraphrasingFilter.zoomStateL(ParaphrasingFilter.verbCriterion)),
-              clusterCriterionField("Question", paraphrasingFilter.zoomStateL(ParaphrasingFilter.questionCriterion)),
-              <.div(View.sliderField("Clause", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minClauseProb))),
-              <.div(View.sliderField("Paraphrase", 0.0, 1.0, paraphrasingFilter.zoomStateL(ParaphrasingFilter.minParaphrasingProb))),
+            <.div(S.clusterSplittingSpecDisplay)(
+              clusterCriterionField("Verb", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)),
+              clusterCriterionField("Argument", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)),
               <.div(
                 <.button(
                   "cache",
-                  ^.onClick --> cachedParaphrasingFilter.setState(paraphrasingFilter.value)
+                  ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
                 )
               )
               // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
@@ -503,7 +500,7 @@ object NewVerbUI {
             <.div(S.frameSpecDisplay, S.scrollPane) {
               verbTrees.zipWithIndex.toVdomArray { case (verbTree, frameIndex) =>
                 val argTree = argTrees(frameIndex)
-                val roleTrees = paraphrasingFilter.value.questionCriterion.splitTree(argTree)
+                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree(argTree)
                 val numInstances = verbTree.size.toInt
                 val frameProb = numInstances.toDouble / numVerbInstances
                 val isFrameChosen = false // TODO
@@ -841,13 +838,15 @@ object NewVerbUI {
         request = curVerb.value,
         sendRequest = verb => featureService(FeatureReq.Sentences(verb))) {
         case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
-        case SentencesFetch.Loaded(sentenceIds) =>
+        case SentencesFetch.Loaded(_sentenceIds) =>
           // TODO use sorted set
+          import scala.collection.immutable.TreeSet
+          val sentenceIds: SortedSet[String] = TreeSet(_sentenceIds.toSeq: _*)
           val initSentenceId = sentenceIds.head
           StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
             <.div(S.dataContainer)(
               sentenceSelectionPane(
-                sentenceIds.toVector,
+                sentenceIds,
                 curSentenceId
               ),
               SentenceFetch.make(
@@ -881,12 +880,12 @@ object NewVerbUI {
             )
           )
           val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
-          ParaphrasingFilterLocal.make(initialValue = defaultParaphrasingFilter) { cachedParaphrasingFilter =>
+          ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
             VerbLocal.make(initialValue = initVerb) { curVerb =>
               <.div(S.mainContainer)(
                 headerContainer(sortedVerbCounts, curVerb),
                 <.div(S.dataContainer)(
-                  frameContainer(props, cachedParaphrasingFilter, curVerb.value),
+                  frameContainer(props, cachedClusterSplittingSpec, curVerb.value),
                   dataContainer(props.featureService, curVerb)
                 )
               )

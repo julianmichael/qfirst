@@ -638,6 +638,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
     addClassNames("pb-2")
   )
 
+  val clusterSplittingSpecDisplay = style(
+    addClassNames("pb-2")
+  )
+
   val indexUnificationThresholdDisplay = style(
     addClassNames("pb-2")
   )

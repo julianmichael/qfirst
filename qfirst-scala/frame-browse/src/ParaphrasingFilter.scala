@@ -1,4 +1,10 @@
-package qfirst.frame
+package qfirst.frame.browse
+
+import qfirst.frame.ArgumentId
+import qfirst.frame.ClausalQuestion
+import qfirst.frame.ClusterSplittingCriterion
+import qfirst.frame.MergeTree
+import qfirst.frame.VerbFrame
 
 import qfirst.clause.ArgStructure
 
@@ -20,8 +26,8 @@ import cats.implicits._
   // assume the question is in the tree
   def getParaphrases(
     frame: VerbFrame,
-    question: QuestionId,
-    questionClusterTree: MergeTree[QuestionId]
+    question: ArgumentId[ClausalQuestion],
+    questionClusterTree: MergeTree[ArgumentId[ClausalQuestion]]
   ): Set[(ArgStructure, ArgumentSlot)] = {
     val structureCounts = questionClusterTree.unorderedFoldMap(qid =>
       Map(qid.argument.template -> 1)
