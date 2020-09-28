@@ -123,7 +123,7 @@ object NewVerbUI {
 
   @Lenses case class ClusterCriterionControl(
     numClusters: Int,
-    maxLoss: Double
+    entropyPenalty: Double
   )
   object ClusterCriterionControl {
     def default = ClusterCriterionControl(1, 0.0)
@@ -141,18 +141,18 @@ object NewVerbUI {
           label + " ",
           <.span(S.disabledCriterionText.unless(criterion.value.isNumber))(
             "clusters",
-            ^.onClick --> criterion.value.getLoss.foldMap(_ =>
+            ^.onClick --> criterion.value.getEntropy.foldMap(_ =>
               criterion.setState(
                 ClusterSplittingCriterion.Number(criterionControl.value.numClusters)
               )
             )
           ),
           " / ",
-          <.span(S.disabledCriterionText.unless(criterion.value.isLoss))(
-            "loss",
+          <.span(S.disabledCriterionText.unless(criterion.value.isEntropy))(
+            "entropy",
             ^.onClick --> criterion.value.getNumber.foldMap(_ =>
               criterion.setState(
-                ClusterSplittingCriterion.Loss(criterionControl.value.maxLoss)
+                ClusterSplittingCriterion.Entropy(criterionControl.value.entropyPenalty)
               )
             )
           ),
@@ -164,34 +164,14 @@ object NewVerbUI {
               criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
             )
           ),
-          zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)).whenDefined(maxLoss =>
+          zoomStateP(criterion, ClusterSplittingCriterion.entropy)(Reusability.double(1e-3)).whenDefined(entropyPenalty =>
             View.doubleTextField(S.shortTextField)(
               None,
-              maxLoss,
-              criterionControl.zoomStateL(ClusterCriterionControl.maxLoss).setState(_)
+              entropyPenalty,
+              criterionControl.zoomStateL(ClusterCriterionControl.entropyPenalty).setState(_)
             )
           )
         )
-        // zoomStateP(criterion, ClusterSplittingCriterion.number) match {
-        //   case Some(numClusters) => intArrowField(s"$label clusters", numClusters)
-        //   case None => <.span(
-        //     s"$label clusters: ",
-        //     <.input(S.shortTextField)(
-        //       ^.`type` := "text",
-        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Number(numClustersFallback))
-        //     )
-        //   )
-        // },
-        // zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)) match {
-        //   case Some(maxLoss) => doubleTextField(S.shortTextField)(Some(s"$label loss"), maxLoss)
-        //   case None => <.span(
-        //     s"$label loss: ",
-        //     <.input(S.shortTextField)(
-        //       ^.`type` := "text",
-        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Loss(maxLossFallback))
-        //     )
-        //   )
-        // }
       }
     )
   }
@@ -475,7 +455,7 @@ object NewVerbUI {
         ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
           // def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
 
-          val verbTrees = clusterSplittingSpec.value.verbCriterion.splitTree(model.verbClusterTree)
+          val verbTrees = clusterSplittingSpec.value.verbCriterion.splitTree[Set[VerbId]](model.verbClusterTree, _.size.toDouble)
           val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
             tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
           }.toMap
@@ -500,7 +480,7 @@ object NewVerbUI {
             <.div(S.frameSpecDisplay, S.scrollPane) {
               verbTrees.zipWithIndex.toVdomArray { case (verbTree, frameIndex) =>
                 val argTree = argTrees(frameIndex)
-                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree(argTree)
+                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree[ArgumentId[ClausalQuestion]](argTree, _ => 1.0)
                 val numInstances = verbTree.size.toInt
                 val frameProb = numInstances.toDouble / numVerbInstances
                 val isFrameChosen = false // TODO

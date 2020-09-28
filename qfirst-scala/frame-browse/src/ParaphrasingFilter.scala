@@ -2,7 +2,7 @@ package qfirst.frame.browse
 
 import qfirst.frame.ArgumentId
 import qfirst.frame.ClausalQuestion
-import qfirst.frame.ClusterSplittingCriterion
+import qfirst.frame.OldClusterSplittingCriterion
 import qfirst.frame.MergeTree
 import qfirst.frame.VerbFrame
 
@@ -17,8 +17,8 @@ import monocle.macros._
 import cats.implicits._
 
 @Lenses @JsonCodec case class ParaphrasingFilter(
-  verbCriterion: ClusterSplittingCriterion,
-  questionCriterion: ClusterSplittingCriterion,
+  verbCriterion: OldClusterSplittingCriterion,
+  questionCriterion: OldClusterSplittingCriterion,
   minClauseProb: Double,
   minParaphrasingProb: Double
 ) {

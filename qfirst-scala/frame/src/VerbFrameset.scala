@@ -21,7 +21,7 @@ import jjm.ling.en.VerbForm
 
 import monocle.macros._
 
-class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], initialCriterion: ClusterSplittingCriterion = ClusterSplittingCriterion.Number(5)) {
+class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], initialCriterion: OldClusterSplittingCriterion = OldClusterSplittingCriterion.Number(5)) {
   case class FrameInputInfo(
     verbIds: Set[VerbId],
     clauseCounts: Map[ArgStructure, Int])
@@ -65,7 +65,7 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
     )
   )
 
-  private[this] def makeFramesets(criterion: ClusterSplittingCriterion) = {
+  private[this] def makeFramesets(criterion: OldClusterSplittingCriterion) = {
     val aggFrameInfo = (childTree: MergeTree[Set[VerbId]]) => {
       val verbIds = childTree.unorderedFold
       FrameInputInfo(
@@ -76,8 +76,8 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
       )
     }
     var aggTree = criterion match {
-      case ClusterSplittingCriterion.Number(numClusters) => model.verbClusterTree.cutMapAtN(numClusters, aggFrameInfo)
-      case ClusterSplittingCriterion.Loss(maxLoss) => model.verbClusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
+      case OldClusterSplittingCriterion.Number(numClusters) => model.verbClusterTree.cutMapAtN(numClusters, aggFrameInfo)
+      case OldClusterSplittingCriterion.Loss(maxLoss) => model.verbClusterTree.cutMap(_.loss > maxLoss, aggFrameInfo)
     }
     var resList = List.empty[(Double, VerbFrameset)]
     var nextSize = aggTree.size.toInt - 1
@@ -96,18 +96,18 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
     resList
   }
 
-  private[this] def refreshClusters(criterion: ClusterSplittingCriterion) = {
+  private[this] def refreshClusters(criterion: OldClusterSplittingCriterion) = {
     framesetResolutions = makeFramesets(criterion)
   }
 
   private[this] var allFramesetsLoaded: Boolean = false
   private[this] var framesetResolutions: List[(Double, VerbFrameset)] = makeFramesets(initialCriterion)
 
-  def getFrameset(criterion: ClusterSplittingCriterion): (Double, VerbFrameset) = {
+  def getFrameset(criterion: OldClusterSplittingCriterion): (Double, VerbFrameset) = {
     criterion match {
-      case ClusterSplittingCriterion.Number(numClusters) =>
+      case OldClusterSplittingCriterion.Number(numClusters) =>
         getFramesetWithNFrames(numClusters)
-      case ClusterSplittingCriterion.Loss(maxLoss) =>
+      case OldClusterSplittingCriterion.Loss(maxLoss) =>
         getFramesetWithMaxLoss(maxLoss)
     }
   }
@@ -115,13 +115,13 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
   def getFramesetWithNFrames(n: Int) = {
     val numFramesetsLoaded = framesetResolutions.size
     if(numFramesetsLoaded < n && !allFramesetsLoaded) {
-      refreshClusters(ClusterSplittingCriterion.Number(scala.math.max(n, numFramesetsLoaded) * 2))
+      refreshClusters(OldClusterSplittingCriterion.Number(scala.math.max(n, numFramesetsLoaded) * 2))
     }
     framesetResolutions.lift(n - 1).getOrElse(framesetResolutions.last)
   }
   def getFramesetWithMaxLoss(maxLoss: Double): (Double, VerbFrameset) = {
     framesetResolutions.find(_._1 <= maxLoss).getOrElse {
-      refreshClusters(ClusterSplittingCriterion.Loss(maxLoss))
+      refreshClusters(OldClusterSplittingCriterion.Loss(maxLoss))
       getFramesetWithMaxLoss(maxLoss)
     }
   }

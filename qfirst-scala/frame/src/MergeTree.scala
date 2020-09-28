@@ -21,6 +21,7 @@ import scala.annotation.tailrec
 
 /*@JsonCodec */sealed trait MergeTree[A] {
   def loss: Double
+  def leaves: Vector[MergeTree.Leaf[A]]
   def values: Vector[A]
   def valuesWithLosses: Vector[(Double, A)]
 
@@ -430,6 +431,7 @@ object MergeTree {
 
   @Lenses @JsonCodec case class Leaf[A](
     loss: Double, value: A) extends MergeTree[A] {
+    def leaves: Vector[MergeTree.Leaf[A]] = Vector(this)
     def values: Vector[A] = Vector(value)
     def valuesWithLosses: Vector[(Double, A)] = Vector(loss -> value)
   }
@@ -439,6 +441,7 @@ object MergeTree {
     left: MergeTree[A],
     right: MergeTree[A]
   ) extends MergeTree[A] {
+    def leaves: Vector[MergeTree.Leaf[A]] = left.leaves ++ right.leaves
     def values: Vector[A] = left.values ++ right.values
     def valuesWithLosses: Vector[(Double, A)] = left.valuesWithLosses ++ right.valuesWithLosses
     def delta: Double = loss - left.loss - right.loss

@@ -163,7 +163,7 @@ object VerbAnnUI {
 
   def clusterCriterionField(
     label: String,
-    criterion: StateSnapshot[ClusterSplittingCriterion]
+    criterion: StateSnapshot[OldClusterSplittingCriterion]
   ): VdomElement = {
     <.div(
       LocalClusterCriterionControl.make(ClusterCriterionControl.default) { criterionControl =>
@@ -173,7 +173,7 @@ object VerbAnnUI {
             "clusters",
             ^.onClick --> criterion.value.getLoss.foldMap(_ =>
               criterion.setState(
-                ClusterSplittingCriterion.Number(criterionControl.value.numClusters)
+                OldClusterSplittingCriterion.Number(criterionControl.value.numClusters)
               )
             )
           ),
@@ -182,19 +182,19 @@ object VerbAnnUI {
             "loss",
             ^.onClick --> criterion.value.getNumber.foldMap(_ =>
               criterion.setState(
-                ClusterSplittingCriterion.Loss(criterionControl.value.maxLoss)
+                OldClusterSplittingCriterion.Loss(criterionControl.value.maxLoss)
               )
             )
           ),
           ": ",
-          zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
+          zoomStateP(criterion, OldClusterSplittingCriterion.number).whenDefined(numClusters =>
             View.intArrowField(S.shortTextField)(
               None,
               numClusters,
               criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
             )
           ),
-          zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)).whenDefined(maxLoss =>
+          zoomStateP(criterion, OldClusterSplittingCriterion.loss)(Reusability.double(1e-3)).whenDefined(maxLoss =>
             View.doubleTextField(S.shortTextField)(
               None,
               maxLoss,
@@ -202,23 +202,23 @@ object VerbAnnUI {
             )
           )
         )
-        // zoomStateP(criterion, ClusterSplittingCriterion.number) match {
+        // zoomStateP(criterion, OldClusterSplittingCriterion.number) match {
         //   case Some(numClusters) => intArrowField(s"$label clusters", numClusters)
         //   case None => <.span(
         //     s"$label clusters: ",
         //     <.input(S.shortTextField)(
         //       ^.`type` := "text",
-        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Number(numClustersFallback))
+        //       ^.onClick --> criterion.setState(OldClusterSplittingCriterion.Number(numClustersFallback))
         //     )
         //   )
         // },
-        // zoomStateP(criterion, ClusterSplittingCriterion.loss)(Reusability.double(1e-3)) match {
+        // zoomStateP(criterion, OldClusterSplittingCriterion.loss)(Reusability.double(1e-3)) match {
         //   case Some(maxLoss) => doubleTextField(S.shortTextField)(Some(s"$label loss"), maxLoss)
         //   case None => <.span(
         //     s"$label loss: ",
         //     <.input(S.shortTextField)(
         //       ^.`type` := "text",
-        //       ^.onClick --> criterion.setState(ClusterSplittingCriterion.Loss(maxLossFallback))
+        //       ^.onClick --> criterion.setState(OldClusterSplittingCriterion.Loss(maxLossFallback))
         //     )
         //   )
         // }
@@ -979,8 +979,8 @@ object VerbAnnUI {
   // TODO color-code the answer spans by _question_ instead of by verb
 
   val defaultParaphrasingFilter = ParaphrasingFilter(
-    ClusterSplittingCriterion.Number(1),
-    ClusterSplittingCriterion.Number(5),
+    OldClusterSplittingCriterion.Number(1),
+    OldClusterSplittingCriterion.Number(5),
     0.02, 0.3
   )
 
