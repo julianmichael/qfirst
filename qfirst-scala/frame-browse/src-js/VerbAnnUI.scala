@@ -140,7 +140,7 @@ object VerbAnnUI {
 
   case class Props(
     docService: DocumentService[OrWrapped[AsyncCallback, ?]],
-    verbService: VerbFrameService[AsyncCallback],
+    verbService: OldVerbGrameService[AsyncCallback],
     featureService: FeatureService[AsyncCallback, InflectedForms, ClausalQuestion],
     urlNavQuery: NavQuery,
     mode: RunMode

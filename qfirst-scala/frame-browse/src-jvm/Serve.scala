@@ -1,8 +1,7 @@
 package qfirst.frame.browse
 import qfirst._
 import qfirst.frame._
-import qfirst.frame.features.GoldQasrlFeatures
-import qfirst.model.eval.protocols.SimpleQAs
+import qfirst.frame.features._
 
 import qasrl.bank.Data
 import qasrl.data.Dataset
@@ -10,6 +9,7 @@ import qasrl.labeling.SlotBasedLabel
 
 import cats.~>
 import cats.Id
+import cats.Order
 import cats.data.NonEmptySet
 import cats.data.Validated
 import cats.effect.IO
@@ -18,6 +18,8 @@ import cats.effect.concurrent.Ref
 import cats.implicits._
 
 import fs2.Stream
+
+import io.circe.{Encoder, Decoder}
 
 import qasrl.bank.service.DocumentService
 import qasrl.bank.service.Search
@@ -37,13 +39,46 @@ import jjm.io.HttpUtil
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 
+import freelog.EphemeralTreeLogger
+
 object Serve extends CommandIOApp(
   name = "mill -i qfirst.jvm.runVerbAnn",
   header = "Spin up the annotation server for QA-SRL Clause frames.") {
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
-  // val protocol = SimpleQAs.protocol[SlotBasedLabel[VerbForm]](useMaxQuestionDecoding = false)
+  val docApiSuffix = "doc"
+  val verbApiSuffix = "verb"
+  val featureApiSuffix = "feature"
+
+  def _runSpecified[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    features: Features[VerbType, Arg],
+    pageService: org.http4s.HttpRoutes[IO],
+    model: JointModel,
+    port: Int)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[ExitCode] = {
+    val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
+
+    for {
+      verbModels <- FrameInductionApp.getVerbFrames[VerbType, Arg](
+        model, features
+      ).flatMap(_.read.map(_.get))
+      verbModelService = HttpUtil.makeHttpPostServer(
+        VerbFrameService.basicIOService(verbModels)
+      )
+      app = Router(
+        "/" -> pageService,
+        s"/$verbApiSuffix" -> verbModelService,
+        s"/$featureApiSuffix" -> featureService
+      ).orNotFound
+      _ <- Log.info("Starting server.")
+      _ <- BlazeServerBuilder[IO]
+      .bindHttp(port, "0.0.0.0")
+      .withHttpApp(app)
+      .serve.compile.drain
+    } yield ExitCode.Success
+  }
 
   def _run(
     jsDepsPath: Path, jsPath: Path,
@@ -54,13 +89,6 @@ object Serve extends CommandIOApp(
     port: Int
   ): IO[ExitCode] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.create().flatMap { implicit Log =>
-      // val features = data.getFeatures(mode)
-      val features = new GoldQasrlFeatures(mode)
-
-      val docApiSuffix = "doc"
-      val verbApiSuffix = "verb"
-      val featureApiSuffix = "feature"
-
       val pageService = StaticPageService.makeService(
         domain,
         docApiSuffix, verbApiSuffix, featureApiSuffix,
@@ -68,47 +96,10 @@ object Serve extends CommandIOApp(
         jsDepsPath, jsPath, port
       )
 
-      features.qasrlBank.get.flatMap { data =>
-        val index = data.index
-        val docs = data.documentsById
-        val searchIndex = Search.createSearchIndex(docs.values.toList)
-        val docService = HttpUtil.makeHttpPostServer(
-          DocumentService.basic(index, docs, searchIndex)
-            .andThenK(Lambda[Id ~> IO](IO.pure(_)))
-        )
-        val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
-
-        for {
-          dataset <- features.dataset.get
-          inflectionCounts = Dataset.verbEntries.getAll(dataset).foldMap(v => Map(v.verbInflectedForms -> 1))
-          verbModels <- FrameInductionApp.getVerbFrames[InflectedForms, ClausalQuestion](
-            model, features
-          ).flatMap(_.read.map(_.get))
-          goldParaphrases <- features.readGoldParaphrases
-          evaluationItems <- features.evaluationItems.get
-          goldParaphraseDataRef <- Ref[IO].of(goldParaphrases)
-          annotationService = HttpUtil.makeHttpPostServer(
-            VerbFrameService.basicIOService(
-              inflectionCounts,
-              verbModels,
-              dataset,
-              evaluationItems.apply,
-              goldParaphraseDataRef,
-              features.saveGoldParaphrases(_)
-            )
-          )
-          app = Router(
-            "/" -> pageService,
-            s"/$docApiSuffix" -> docService,
-            s"/$verbApiSuffix" -> annotationService,
-            s"/$featureApiSuffix" -> featureService
-          ).orNotFound
-          _ <- Log.info("Starting server.")
-          _ <- BlazeServerBuilder[IO]
-          .bindHttp(port, "0.0.0.0")
-          .withHttpApp(app)
-          .serve.compile.drain
-        } yield ExitCode.Success
+      dataSetting match {
+        case d @ DataSetting.Qasrl         => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
+        case d @ DataSetting.Ontonotes5(_) => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
+        case d @ DataSetting.CoNLL08(_)    => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
       }
     }
   }

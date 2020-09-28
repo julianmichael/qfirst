@@ -7,6 +7,7 @@ import japgolly.scalajs.react._
 
 import cats.~>
 import cats.Id
+import cats.Order
 import cats.implicits._
 
 import org.scalajs.dom
@@ -30,7 +31,10 @@ import jjm.implicits._
 import radhoc._
 
 object Main {
-  def runApp[VerbType: Encoder : Decoder, Arg: Encoder : Decoder] = {
+  def runApp[
+    VerbType: Encoder : Decoder : VerbTypeRendering,
+    Arg: Encoder : Decoder : Order : ArgRendering[VerbType, ?]
+  ]: Unit = {
     VerbAnnStyles.addToDocument()
 
     import scala.concurrent.ExecutionContext.Implicits.global
@@ -52,19 +56,17 @@ object Main {
     val featureService = jjm.Memo.memoizeDotFuture(
       HttpUtil.makeHttpPostClient[FeatureReq[VerbType, Arg]](featureApiEndpoint),
       initialFeatureCache
-        // TODO remove cast
     ).andThenK(OrWrapped.mapK(wrapCallback))
-      .asInstanceOf[FeatureService[OrWrapped[AsyncCallback, ?], jjm.ling.en.InflectedForms, qfirst.frame.ClausalQuestion]]
 
     val verbApiEndpoint: String = dom.document
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
 
-    val initialVerbCache = DotMap.empty[Id, VerbFrameService.Request]
+    val initialVerbCache = DotMap.empty[Id, VerbFrameService.Request[VerbType, Arg]]
 
     val verbFrameService = VerbFrameService(
       jjm.Memo.memoizeDotFuture(
-        HttpUtil.makeHttpPostClient[VerbFrameService.Request](verbApiEndpoint),
+        HttpUtil.makeHttpPostClient[VerbFrameService.Request[VerbType, Arg]](verbApiEndpoint),
         initialVerbCache
       ).andThenK(OrWrapped.mapK(wrapCallback))
     )
@@ -75,8 +77,10 @@ object Main {
       dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
     ).right.get
 
-    NewVerbUI.Component(
-      NewVerbUI.Props(
+    val UI = new NewVerbUI[VerbType, Arg]
+
+    UI.Component(
+      UI.Props(
         verbFrameService, featureService,
         query, runMode
       )
@@ -94,8 +98,8 @@ object Main {
 
     dataSetting match {
       case d @ DataSetting.Qasrl => runApp[d.VerbType, d.Arg]
-      case d @ DataSetting.Ontonotes5(_) => () // runApp[d.VerbType, d.Arg]
-      case d @ DataSetting.CoNLL08(_) => () // runApp[d.VerbType, d.Arg]
+      case d @ DataSetting.Ontonotes5(_) => runApp[d.VerbType, d.Arg]
+      case d @ DataSetting.CoNLL08(_) => runApp[d.VerbType, d.Arg]
     }
   }
 }

@@ -59,7 +59,47 @@ import io.circe._
 
 import scala.concurrent.Future
 
-object NewVerbUI {
+// case class UISpec[VerbType, Arg](
+//   renderArg: (SentenceInfo[VerbType, Arg]
+// )
+trait VerbTypeRendering[VerbType] {
+  def fromString(x: String): VerbType
+  def toString(verbType: VerbType): String
+}
+object VerbTypeRendering {
+  implicit val inflectedFormsVerbTypeRendering = new VerbTypeRendering[InflectedForms] {
+    import io.circe.syntax._
+    import io.circe.parser.decode
+    val printer = io.circe.Printer.noSpaces
+    def fromString(x: String) = decode[InflectedForms](x).right.get
+    def toString(verbType: InflectedForms): String = printer.pretty(verbType.asJson)
+  }
+  implicit val stringVerbTypeRendering = new VerbTypeRendering[String] {
+    def fromString(x: String) = x
+    def toString(verbType: String): String = verbType
+  }
+}
+
+trait ArgRendering[VerbType, Arg] {
+  // def fromString(x: String): Arg
+  def toString(sentence: SentenceInfo[VerbType, Arg], arg: Arg): String
+}
+object ArgRendering {
+  implicit val qasrlArgRendering = new ArgRendering[InflectedForms, ClausalQuestion] {
+    def toString(sentence: SentenceInfo[InflectedForms, ClausalQuestion], arg: ClausalQuestion): String = arg.questionString
+  }
+  implicit val ontonotes5ArgRendering = new ArgRendering[String, ESpan] {
+    def toString(sentence: SentenceInfo[String, ESpan], arg: ESpan): String = Text.renderSpan(sentence.tokens, arg)
+  }
+  implicit val conll08ArgRendering = new ArgRendering[String, Int] {
+    def toString(sentence: SentenceInfo[String, Int], arg: Int): String = sentence.tokens(arg)
+  }
+}
+
+class NewVerbUI[VerbType, Arg: Order](
+  implicit VerbType: VerbTypeRendering[VerbType],
+  Arg: ArgRendering[VerbType, Arg],
+){
 
   implicit val callbackMonoid = new Monoid[Callback] {
     override def empty = Callback.empty
@@ -69,49 +109,30 @@ object NewVerbUI {
   val S = VerbAnnStyles
   import HOCs._
 
-  val VerbsFetch = new CacheCallContent[Unit, Map[InflectedForms, Int]]
-  val VerbModelFetch = new CacheCallContent[InflectedForms, VerbClusterModel[InflectedForms, ClausalQuestion]]
-  val SentencesFetch = new CacheCallContent[InflectedForms, Set[String]]
-  val SentenceFetch = new CacheCallContent[String, SentenceInfo[InflectedForms, ClausalQuestion]]
+  val VerbsFetch = new CacheCallContent[Unit, Map[VerbType, Int]]
+  val VerbModelFetch = new CacheCallContent[VerbType, VerbClusterModel[VerbType, Arg]]
+  val SentencesFetch = new CacheCallContent[VerbType, Set[String]]
+  val SentenceFetch = new CacheCallContent[String, SentenceInfo[VerbType, Arg]]
 
-  val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[InflectedForms, Int])]
+  val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[VerbType, Int])]
   val DocFetch = new CacheCallContent[DocumentId, Document]
   val DocOptFetch = new CacheCallContent[Option[DocumentId], Option[Document]]
   val SearchFetch = new CacheCallContent[Search.Query, Set[DocumentId]]
   // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
-  val VerbLocal = new LocalState[InflectedForms]
-  val VerbModelLocal = new LocalState[Option[VerbClusterModel[InflectedForms, ClausalQuestion]]]
+  val VerbLocal = new LocalState[VerbType]
+  val VerbModelLocal = new LocalState[Option[VerbClusterModel[VerbType, Arg]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]
   val IntSetLocal = new LocalState[Set[Int]]
-  val FrameChoiceLocal = new LocalState[Set[(ArgumentId[ClausalQuestion], ArgStructure, ArgumentSlot)]]
-  val QuestionSetLocal = new LocalState[Set[ArgumentId[ClausalQuestion]]]
-
-  val (inflToString, inflFromString) = {
-    import io.circe.syntax._
-    import io.circe.parser.decode
-    val printer = io.circe.Printer.noSpaces
-    val toStr = (f: InflectedForms) => printer.pretty(f.asJson)
-    val fromStr = (s: String) => decode[InflectedForms](s).right.get
-    (toStr, fromStr)
-  }
-
-  def makeQidMap(sentenceId: String, verb: VerbEntry): Map[String, ArgumentId[ClausalQuestion]] = {
-    val questionSlotsWithStrings = verb.questionLabels.toList.map { case (qString, qLabel) => qLabel.questionSlots -> qString }
-    val questionToQid = questionSlotsWithStrings.map(_._2).zip(
-      qfirst.clause.ClauseResolution.getResolvedFramePairs(
-        verb.verbInflectedForms, questionSlotsWithStrings.map(_._1)
-      ).map { case (frame, slot) => ArgumentId[ClausalQuestion](VerbId(sentenceId, verb.verbIndex), ClausalQuestion(frame, slot)) }
-    ).toMap
-    questionToQid
-  }
+  val FrameChoiceLocal = new LocalState[Set[(ArgumentId[Arg], ArgStructure, ArgumentSlot)]]
+  val QuestionSetLocal = new LocalState[Set[ArgumentId[Arg]]]
 
   case class Props(
-    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?]],
-    featureService: FeatureService[OrWrapped[AsyncCallback, ?], InflectedForms, ClausalQuestion],
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     urlNavQuery: NavQuery,
     mode: RunMode
   )
@@ -267,10 +288,9 @@ object NewVerbUI {
   }
 
 
-  // // var qidToFramesCache = Map.empty[ArgumentId[ClausalQuestion], Set[(Frame, ArgumentSlot)]]
   def sentenceDisplayPane(
-    verb: InflectedForms,
-    sentence: SentenceInfo[InflectedForms, ClausalQuestion]
+    verb: VerbType,
+    sentence: SentenceInfo[VerbType, Arg]
   ) = {
     val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
     IntSetLocal.make(initialValue = Set.empty[Int]) { highlightedVerbIndices =>
@@ -344,7 +364,7 @@ object NewVerbUI {
               <.table(S.verbQAsTable)( // arg table
                 <.tbody(S.verbQAsTableBody)(
                   verb.args.toVector.sorted.toVdomArray(arg =>
-                    <.tr(<.td(arg.questionString))
+                    <.tr(<.td(Arg.toString(sentence, arg)))
                   )
                 )
               )
@@ -407,19 +427,20 @@ object NewVerbUI {
   }
 
   def headerContainer(
-    sortedVerbCounts: List[(InflectedForms, Int)],
-    curVerb: StateSnapshot[InflectedForms]
+    sortedVerbCounts: List[(VerbType, Int)],
+    curVerb: StateSnapshot[VerbType]
   ) = <.div(S.headerContainer)(
     <.select(S.verbDropdown)(
-      ^.value := inflToString(curVerb.value),
+      ^.value := VerbType.toString(curVerb.value),
       ^.onChange ==> ((e: ReactEventFromInput) =>
-        curVerb.setState(inflFromString(e.target.value))
+        curVerb.setState(VerbType.fromString(e.target.value))
       ),
-      sortedVerbCounts.toVdomArray { case (forms, count) =>
+      sortedVerbCounts.toVdomArray { case (verb, count) =>
         <.option(
-          ^.key := inflToString(forms),
-          ^.value := inflToString(forms),
-          f"$count%5d ${forms.allForms.mkString(", ")}%s"
+          ^.key := VerbType.toString(verb),
+          ^.value := VerbType.toString(verb),
+          VerbType.toString(verb)
+          // f"$count%5d ${forms.allForms.mkString(", ")}%s"
         )
       }
     )
@@ -444,7 +465,7 @@ object NewVerbUI {
   def frameContainer(
     props: Props,
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
-    verb: InflectedForms
+    verb: VerbType
   ) = {
     VerbModelFetch.make(
       request = verb,
@@ -480,7 +501,7 @@ object NewVerbUI {
             <.div(S.frameSpecDisplay, S.scrollPane) {
               verbTrees.zipWithIndex.toVdomArray { case (verbTree, frameIndex) =>
                 val argTree = argTrees(frameIndex)
-                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree[ArgumentId[ClausalQuestion]](argTree, _ => 1.0)
+                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree[ArgumentId[Arg]](argTree, _ => 1.0)
                 val numInstances = verbTree.size.toInt
                 val frameProb = numInstances.toDouble / numVerbInstances
                 val isFrameChosen = false // TODO
@@ -512,7 +533,7 @@ object NewVerbUI {
               //     .composeLens(unsafeListAt[VerbFrame](frameIndex))
               //   val roleClusters = paraphrasingFilter.value.questionCriterion.splitTree(frame.questionClusterTree)
               //   // clause -> slot -> role -> sorted qids
-              //   val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[ArgumentId[ClausalQuestion]]]]] = {
+              //   val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[ArgumentId[Arg]]]]] = {
               //     roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
               //       tree.unorderedFoldMap { case qid @ ArgumentId(_, question) =>
               //         Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
@@ -810,8 +831,8 @@ object NewVerbUI {
   }
 
   def dataContainer(
-    featureService: FeatureService[OrWrapped[AsyncCallback, ?], InflectedForms, ClausalQuestion],
-    curVerb: StateSnapshot[InflectedForms]
+    featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    curVerb: StateSnapshot[VerbType]
   ) = {
     <.div(S.dataContainer)(
       SentencesFetch.make(
@@ -854,8 +875,8 @@ object NewVerbUI {
           val sortedVerbCounts = verbCounts.toList.sorted(
             Order.catsKernelOrderingForOrder(
               Order.whenEqual(
-                Order.by[(InflectedForms, Int), Int](-_._2),
-                Order.by[(InflectedForms, Int), String](p => inflToString(p._1))
+                Order.by[(VerbType, Int), Int](-_._2),
+                Order.by[(VerbType, Int), String](p => VerbType.toString(p._1))
               )
             )
           )
