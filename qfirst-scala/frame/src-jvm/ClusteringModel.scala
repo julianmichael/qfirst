@@ -159,7 +159,7 @@ case class JointModel(
                     val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
                     argAlgorithm.finishAgglomerativeClustering(argTrees)._1
                   }
-                  verbType -> VerbClusterModel(verbType, verbTree, argTreeOpt)
+                  verbType -> VerbClusterModel(verbType, verbTree, argTreeOpt.map(_.map(Set(_))))
                 }
               }
             }

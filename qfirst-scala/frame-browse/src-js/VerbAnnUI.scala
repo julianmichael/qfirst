@@ -1076,8 +1076,10 @@ object VerbAnnUI {
           // clause -> slot -> role -> sorted qids
           val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[QuestionId]]]] = {
             roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
-              tree.unorderedFoldMap { case qid @ QuestionId(_, question) =>
-                Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
+              tree.unorderedFoldMap { qids =>
+                qids.unorderedFoldMap { case qid @ QuestionId(_, question) =>
+                  Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
+                }
               }
             }
           }

@@ -51,22 +51,38 @@ object Serve extends CommandIOApp(
   val verbApiSuffix = "verb"
   val featureApiSuffix = "feature"
 
+  def readCompleteClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    model: ClusteringModel, features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, VerbClusterModel[VerbType, Arg]]] = model match {
+    case m: JointModel => FrameInductionApp.getVerbFrames(m, features).flatMap(_.read.map(_.get))
+    case m: VerbModel => FrameInductionApp.getVerbClusters(m, features).flatMap(_.read.map(_.get))
+        .map(clusterings =>
+          clusterings.map { case (verbType, verbTree) =>
+            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, None)
+          }
+        )
+    case m: ArgumentModel => FrameInductionApp.getArgumentClusters(m, features).flatMap(_.read.map(_.get))
+        .map(clusterings =>
+          clusterings.map { case (verbType, argTree) =>
+            val verbTree = MergeTree.Leaf(0.0, argTree.values.foldMap(_.map(_.verbId)).toSet)
+            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, Some(argTree))
+          }
+        )
+  }
+
   def _runSpecified[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     features: Features[VerbType, Arg],
     pageService: org.http4s.HttpRoutes[IO],
-    model: JointModel,
+    model: ClusteringModel,
     port: Int)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[ExitCode] = {
     val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
 
     for {
-      verbModels <- FrameInductionApp.getVerbFrames[VerbType, Arg](
-        model, features
-      ).flatMap(_.read.map(_.get))
-      verbModelService = HttpUtil.makeHttpPostServer(
-        VerbFrameService.basicIOService(verbModels)
-      )
+      verbModels <- readCompleteClusterModels[VerbType, Arg](model, features)
+      verbModelService = HttpUtil.makeHttpPostServer(VerbFrameService.basicIOService(verbModels))
       app = Router(
         "/" -> pageService,
         s"/$verbApiSuffix" -> verbModelService,
@@ -84,7 +100,7 @@ object Serve extends CommandIOApp(
     jsDepsPath: Path, jsPath: Path,
     dataSetting: DataSetting,
     mode: RunMode,
-    model: JointModel,
+    model: ClusteringModel,
     domain: String,
     port: Int
   ): IO[ExitCode] = {
@@ -118,10 +134,7 @@ object Serve extends CommandIOApp(
 
     val modeO = FrameInductionApp.modeO
 
-    val modelO = FrameInductionApp.modelO.mapValidated {
-      case m: JointModel => Validated.valid(m)
-      case other => Validated.invalidNel(s"Invalid model $other: must be a joint verb frame model for browsing.")
-    }
+    val modelO = FrameInductionApp.modelO
 
     val domainO = Opts.option[String](
       "domain", metavar = "domain", help = "domain name the server is being hosted at."

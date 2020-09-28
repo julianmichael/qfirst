@@ -27,10 +27,12 @@ import cats.implicits._
   def getParaphrases(
     frame: VerbFrame,
     question: ArgumentId[ClausalQuestion],
-    questionClusterTree: MergeTree[ArgumentId[ClausalQuestion]]
+    questionClusterTree: MergeTree[Set[ArgumentId[ClausalQuestion]]]
   ): Set[(ArgStructure, ArgumentSlot)] = {
-    val structureCounts = questionClusterTree.unorderedFoldMap(qid =>
-      Map(qid.argument.template -> 1)
+    val structureCounts = questionClusterTree.unorderedFoldMap(qids =>
+      qids.unorderedFoldMap(qid =>
+        Map(qid.argument.template -> 1)
+      )
     )
     val total = structureCounts.values.sum
     structureCounts.collect {

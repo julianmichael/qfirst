@@ -216,7 +216,7 @@ object FrameInductionApp extends CommandIOApp(
                 s"$model (sense-specific roles)",
                 // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
                 verbClusterModelsRefined.flatMap { case (vt, model) =>
-                  model.argumentClusterTreeOpt.map(_.map(Set(_))).map(vt -> _)
+                  model.argumentClusterTreeOpt.map(vt -> _)
                 },
                 argRoleLabels,
                 tuningSpecs,
@@ -229,7 +229,7 @@ object FrameInductionApp extends CommandIOApp(
                   s"$model (sense-agnostic roles)",
                   // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
                   verbClusterModelsRefined.flatMap { case (vt, model) =>
-                    model.argumentClusterTreeOpt.map(_.map(Set(_))).map(vt -> _)
+                    model.argumentClusterTreeOpt.map(vt -> _)
                   },
                   argRoleLabels,
                   tuningSpecs,

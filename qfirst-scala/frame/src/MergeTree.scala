@@ -137,6 +137,20 @@ import scala.annotation.tailrec
     )
   }
 
+  // partition by an indexing function, like groupBy, but allows the inside to be grouped as well.
+  def group[B](index: A => Map[B, A]): Map[B, MergeTree[A]] = {
+    cata[Map[B, MergeTree[A]]](
+      leaf = (loss, value) => index(value).mapVals(Leaf(loss, _)),
+      merge = (loss, left, right) => left.merge(right).transform {
+        case (_, treeIor) => treeIor match {
+          case Ior.Left(tree) => tree
+          case Ior.Right(tree) => tree
+          case Ior.Both(l, r) => Merge(loss, l, r)
+        }
+      }
+    )
+  }
+
   // returns Some if value appears at most once in the merge tree
   def clustersForValue(value: A): Option[List[MergeTree[A]]] = this match {
     case Leaf(_, `value`) => Some(List(this)) // 0 because thresholding doesn't affect leaves

@@ -482,7 +482,7 @@ class NewVerbUI[VerbType, Arg: Order](
           }.toMap
           // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
           val argTrees = model.argumentClusterTreeOpt
-            .map(_.groupBy(argId => verbIndices(argId.verbId)))
+            .map(_.group(argIds => argIds.groupBy(argId => verbIndices(argId.verbId))))
             .getOrElse(Map())
 
 
@@ -501,7 +501,8 @@ class NewVerbUI[VerbType, Arg: Order](
             <.div(S.frameSpecDisplay, S.scrollPane) {
               verbTrees.zipWithIndex.toVdomArray { case (verbTree, frameIndex) =>
                 val argTree = argTrees(frameIndex)
-                val roleTrees = clusterSplittingSpec.value.argumentCriterion.splitTree[ArgumentId[Arg]](argTree, _ => 1.0)
+                val roleTrees = clusterSplittingSpec.value.argumentCriterion
+                  .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
                 val numInstances = verbTree.size.toInt
                 val frameProb = numInstances.toDouble / numVerbInstances
                 val isFrameChosen = false // TODO

@@ -40,8 +40,10 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
   private[this] def getFrames(infos: Vector[FrameInputInfo]) = {
     val infosWithIndex = infos.zipWithIndex
     val questionClusterTrees = model.argumentClusterTreeOpt.map(
-      _.groupBy(qid =>
-        infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
+      _.group(qids =>
+        qids.groupBy(qid =>
+          infosWithIndex.find(_._1.verbIds.contains(qid.verbId)).fold(-1)(_._2)
+        )
       )
     ).getOrElse(Map())
     infos.indices.toList.map { index =>
@@ -60,8 +62,10 @@ class LazyFramesets(model: VerbClusterModel[InflectedForms, ClausalQuestion], in
   }
 
   val clauseSets = model.argumentClusterTreeOpt.foldMap(
-    _.unorderedFoldMap(qid =>
-      Map(qid.verbId -> Set(qid.argument.clauseTemplate))
+    _.unorderedFoldMap(qids =>
+      qids.unorderedFoldMap(qid =>
+        Map(qid.verbId -> Set(qid.argument.clauseTemplate))
+      )
     )
   )
 
@@ -136,7 +140,7 @@ object FrameClause
 @Lenses @JsonCodec case class VerbFrame(
   verbIds: Set[VerbId],
   clauseTemplates: List[FrameClause],
-  questionClusterTree: MergeTree[ArgumentId[ClausalQuestion]],
+  questionClusterTree: MergeTree[Set[ArgumentId[ClausalQuestion]]],
   probability: Double) {
 
   // // TODO shim for current functionality
