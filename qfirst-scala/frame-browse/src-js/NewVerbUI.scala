@@ -59,9 +59,6 @@ import io.circe._
 
 import scala.concurrent.Future
 
-// case class UISpec[VerbType, Arg](
-//   renderArg: (SentenceInfo[VerbType, Arg]
-// )
 trait VerbTypeRendering[VerbType] {
   def fromString(x: String): VerbType
   def toString(verbType: VerbType): String
@@ -81,7 +78,6 @@ object VerbTypeRendering {
 }
 
 trait ArgRendering[VerbType, Arg] {
-  // def fromString(x: String): Arg
   def toString(sentence: SentenceInfo[VerbType, Arg], arg: Arg): String
 }
 object ArgRendering {
@@ -121,7 +117,7 @@ class NewVerbUI[VerbType, Arg: Order](
   // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
-  val VerbLocal = new LocalState[VerbType]
+  val VerbFeaturesLocal = new LocalState[VerbFeatures]
   val VerbModelLocal = new LocalState[Option[VerbClusterModel[VerbType, Arg]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
@@ -129,6 +125,15 @@ class NewVerbUI[VerbType, Arg: Order](
   val IntSetLocal = new LocalState[Set[Int]]
   val FrameChoiceLocal = new LocalState[Set[(ArgumentId[Arg], ArgStructure, ArgumentSlot)]]
   val QuestionSetLocal = new LocalState[Set[ArgumentId[Arg]]]
+
+  val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
+  val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
+  val DoubleLocal = new LocalState[Double]
+
+  val colspan = VdomAttr("colspan")
+  val textFocusingRef = Ref[html.Element]
+
+  // val ArgStructureOptLocal = new LocalState[Option[(ArgStructure, ArgumentSlot)]]
 
   case class Props(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
@@ -207,10 +212,6 @@ class NewVerbUI[VerbType, Arg: Order](
     Rgba(128,   0, 255, 0.1), // mystery
     Rgba(  0, 255, 128, 0.1)  // blue-green
   )
-
-  val colspan = VdomAttr("colspan")
-
-  val ArgStructureOptLocal = new LocalState[Option[(ArgStructure, ArgumentSlot)]]
 
   // def paraphrasingHighlightStyle(
   //   structure: (ArgStructure, ArgumentSlot),
@@ -384,8 +385,6 @@ class NewVerbUI[VerbType, Arg: Order](
     }
   }
 
-  val textFocusingRef = Ref[html.Element]
-
   def unsafeListAt[A](index: Int) =
     Lens[List[A], A](s => s(index))(a => s => s.updated(index, a))
 
@@ -400,12 +399,7 @@ class NewVerbUI[VerbType, Arg: Order](
     )
   }
 
-  val DoubleLocal = new LocalState[Double]
-
   // TODO color-code the answer spans by _question_ instead of by verb
-
-  val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
-  val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
 
   def zoomStateP[A, B](
     s: StateSnapshot[A],
@@ -426,50 +420,179 @@ class NewVerbUI[VerbType, Arg: Order](
     }
   }
 
-  def headerContainer(
-    sortedVerbCounts: List[(VerbType, Int)],
-    curVerb: StateSnapshot[VerbType]
-  ) = <.div(S.headerContainer)(
-    <.select(S.verbDropdown)(
-      ^.value := VerbType.toString(curVerb.value),
-      ^.onChange ==> ((e: ReactEventFromInput) =>
-        curVerb.setState(VerbType.fromString(e.target.value))
-      ),
-      sortedVerbCounts.toVdomArray { case (verb, count) =>
-        <.option(
-          ^.key := VerbType.toString(verb),
-          ^.value := VerbType.toString(verb),
-          VerbType.toString(verb)
-          // f"$count%5d ${forms.allForms.mkString(", ")}%s"
+  @Lenses case class FeatureOptions(
+    questionDist: Boolean,
+    argIndex: Boolean,
+    argSpans: Boolean,
+    argMlmDist: Option[String],
+    verbMlmDist: Option[String]
+  )
+  object FeatureOptions {
+    val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
+    def init = FeatureOptions(false, false, false, None, None)
+  }
+
+  @Lenses case class FeatureValues(
+    verbType: VerbType,
+    questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
+    argIndex: Option[Map[ArgumentId[Arg], Int]],
+    argSpans: Option[Map[ArgumentId[Arg], Set[ESpan]]],
+    argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Double]]],
+    verbMlmDist: Option[Map[VerbId, Map[String, Double]]]
+  )
+  object FeatureValues {
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None)
+  }
+
+  val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
+  val FeatureOptionsLocal = new LocalState[FeatureOptions]
+
+  import scala.util.{Try, Success, Failure}
+
+  object VerbFeatures {
+    case class Props(
+      initVerb: VerbType,
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
+    )
+
+    @Lenses case class State(
+      options: FeatureOptions,
+      features: FeatureValues
+    )
+    object State {
+      def initial(verb: VerbType) = State(FeatureOptions.init, FeatureValues.empty(verb))
+    }
+
+    def pullFeature[A](
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      verbFeatures: StateSnapshot[State],
+      req: FeatureReq[VerbType, Arg] { type Out = A },
+      getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
+    ): Callback = {
+      val (valueLens, includeFeature) = getLens(verbFeatures.value.options)
+      val featureSnap = verbFeatures.zoomStateL(State.features.composeLens(valueLens))
+      if(!includeFeature) {
+        if(featureSnap.value.isEmpty) Callback.empty else featureSnap.setState(None)
+      } else {
+        featureService(req).cata(
+          pure = feats => if(featureSnap.value != feats) featureSnap.setState(Some(feats)) else Callback.empty,
+          wrapped = _.completeWith {
+            case Success(feats) => featureSnap.setState(Some(feats))
+            case Failure(err) => Callback(err.printStackTrace)
+          }
         )
       }
+    }
+
+    class Backend(scope: BackendScope[Props, State]) {
+
+      def pullFeatures(
+        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      ): Callback = scope.state >>= { state =>
+        pullFeature(
+          featureService, StateSnapshot(state).setStateVia(scope),
+          FeatureReq.QuestionDists(state.features.verbType),
+          opts => (FeatureValues.questionDist, opts.questionDist)
+        )
+      }
+
+      def render(props: Props, state: State) = {
+        val optionsSnap = StateSnapshot(state.options) { (optionsOpt, cb) => 
+          val fullCb = cb >> pullFeatures(props.featureService)
+          scope.modStateOption(s => optionsOpt.map(State.options.set(_)(s)), fullCb)
+        }
+        val verbSnap = StateSnapshot(state.features.verbType) { (verbOpt, cb) =>
+          val fullCb = cb >> pullFeatures(props.featureService)
+          scope.modStateOption(s => verbOpt.map(State.features.composeLens(FeatureValues.verbType).set(_)(s)), fullCb)
+        }
+        props.render(
+          optionsSnap,
+          verbSnap,
+          state.features
+        )
+      }
+    }
+
+    val Component = ScalaComponent.builder[Props]("Verb Features")
+      .initialStateFromProps(p => State.initial(p.initVerb))
+      .renderBackend[Backend]
+      .build
+
+    def make(
+      initVerb: VerbType,
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg])(
+      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
+    ) = Component(Props(initVerb, featureService, render))
+  }
+
+  def headerContainer(
+    featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    sortedVerbCounts: List[(VerbType, Int)],
+    verb: StateSnapshot[VerbType],
+    verbFeatures: StateSnapshot[FeatureOptions]
+  ) = {
+    <.div(S.headerContainer)(
+      <.select(S.verbDropdown)(
+        ^.value := VerbType.toString(verb.value),
+        ^.onChange ==> ((e: ReactEventFromInput) =>
+          verb.setState(VerbType.fromString(e.target.value))
+        ),
+        sortedVerbCounts.toVdomArray { case (verb, count) =>
+          <.option(
+            ^.key := VerbType.toString(verb),
+            ^.value := VerbType.toString(verb),
+            f"$count%5d ${VerbType.toString(verb)}"
+          )
+        }
+      ),
+      <.div(S.featureOptions)(
+        View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
+        View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
+        View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
+        <.span(S.labeledDropdown)(
+          <.span(S.labeledDropdownLabel)("Arg MLM:"),
+          OptionalStringSelect(
+            FeatureOptions.mlmTypes,
+            verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
+          )
+        ),
+        <.span(S.labeledDropdown)(
+          <.span(S.labeledDropdownLabel)("Verb MLM:"),
+          OptionalStringSelect(
+            FeatureOptions.mlmTypes,
+            verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
+          )
+        )
+      )
     )
-  )
+  }
 
   val defaultClusterSplittingSpec = ClusterSplittingSpec(
     ClusterSplittingCriterion.Number(1),
     ClusterSplittingCriterion.Number(5)
   )
 
-  def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
-    Frame(
-      forms, structure.args,
-      tense = (if(useModal) Modal("might".lowerCase) else PresentTense),
-      isPassive = structure.isPassive,
-      isPerfect = false,
-      isProgressive = false,
-      isNegated = false
-    )
-  }
+  // def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
+  //   Frame(
+  //     forms, structure.args,
+  //     tense = (if(useModal) Modal("might".lowerCase) else PresentTense),
+  //     isPassive = structure.isPassive,
+  //     isPerfect = false,
+  //     isProgressive = false,
+  //     isNegated = false
+  //   )
+  // }
 
   def frameContainer(
-    props: Props,
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
-    verb: VerbType
+    verbFeatures: FeatureValues
   ) = {
+    val verb = verbFeatures.verbType
     VerbModelFetch.make(
       request = verb,
-      sendRequest = verb => props.verbService.getModel(verb)) {
+      sendRequest = verb => verbService.getModel(verb)) {
       case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
       case VerbModelFetch.Loaded(model) =>
         val numVerbInstances = model.verbClusterTree.size.toInt
@@ -510,13 +633,24 @@ class NewVerbUI[VerbType, Arg: Order](
                   ^.key := "frame-" + frameIndex.toString,
                   <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
                     <.span(S.frameHeadingText)(
-                      f"Frame $frameIndex%s (${frameProb}%.4f)"
+                      f"Frame $frameIndex%s (${frameProb}%.3f)"
                     )
                   ),
                   <.div(S.clauseSetDisplay)(
-                    roleTrees.toVdomArray(roleTree =>
-                      <.div(s"Arg: ${roleTree.size} instances.")
-                    )
+                    roleTrees.sortBy(-_.size).toVdomArray { roleTree =>
+                      val questionDistsOpt = verbFeatures.questionDist.map { dists =>
+                        roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+                      }
+
+                      <.div(
+                        <.div(s"Arg: ${roleTree.size} instances."),
+                        questionDistsOpt.whenDefined(questionDists =>
+                          questionDists.toVector.sortBy(-_._2).toVdomArray { case (template, prob) =>
+                            <.div(f"$prob%.3f ", template.toTemplateString)
+                          }
+                        )
+                      )
+                    }
                   )
                 )
               }
@@ -831,13 +965,13 @@ class NewVerbUI[VerbType, Arg: Order](
     }
   }
 
-  def dataContainer(
+  def sentenceContainer(
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-    curVerb: StateSnapshot[VerbType]
+    verbFeatures: FeatureValues
   ) = {
     <.div(S.dataContainer)(
       SentencesFetch.make(
-        request = curVerb.value,
+        request = verbFeatures.verbType,
         sendRequest = verb => featureService(FeatureReq.Sentences(verb))) {
         case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
         case SentencesFetch.Loaded(_sentenceIds) =>
@@ -857,7 +991,7 @@ class NewVerbUI[VerbType, Arg: Order](
                 case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
                 case SentenceFetch.Loaded(sentenceInfo) =>
                   sentenceDisplayPane(
-                    curVerb.value,
+                    verbFeatures.verbType,
                     sentenceInfo
                   )
               }
@@ -873,22 +1007,15 @@ class NewVerbUI[VerbType, Arg: Order](
       VerbsFetch.make(request = (), sendRequest = _ => props.verbService.getVerbs) {
         case VerbsFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
         case VerbsFetch.Loaded(verbCounts) =>
-          val sortedVerbCounts = verbCounts.toList.sorted(
-            Order.catsKernelOrderingForOrder(
-              Order.whenEqual(
-                Order.by[(VerbType, Int), Int](-_._2),
-                Order.by[(VerbType, Int), String](p => VerbType.toString(p._1))
-              )
-            )
-          )
+          val sortedVerbCounts = verbCounts.toList.sortBy(p => -p._2 -> VerbType.toString(p._1))
           val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
           ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
-            VerbLocal.make(initialValue = initVerb) { curVerb =>
+            VerbFeatures.make(initVerb, props.featureService) { (options, verb, features) =>
               <.div(S.mainContainer)(
-                headerContainer(sortedVerbCounts, curVerb),
+                headerContainer(props.featureService, sortedVerbCounts, verb, options),
                 <.div(S.dataContainer)(
-                  frameContainer(props, cachedClusterSplittingSpec, curVerb.value),
-                  dataContainer(props.featureService, curVerb)
+                  frameContainer(props.verbService, cachedClusterSplittingSpec, features),
+                  sentenceContainer(props.featureService, features)
                 )
               )
             }

@@ -96,6 +96,18 @@ object VerbAnnStyles extends StyleSheet.Inline {
     color(headerContentColor),
   )
 
+  val featureOptions = style(
+    flexyHeaderThing
+  )
+
+  val labeledDropdown = style(
+    addClassNames("px-2")
+  )
+
+  val labeledDropdownLabel = style(
+    addClassNames("pr-1")
+  )
+
   val titleAndSearchContainer = style()
 
   // title

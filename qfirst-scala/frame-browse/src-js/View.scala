@@ -1,6 +1,7 @@
 package qfirst.frame.browse
 
 import japgolly.scalajs.react.vdom.html_<^._
+import japgolly.scalajs.react.vdom.TagOf
 import japgolly.scalajs.react.CatsReact._
 import japgolly.scalajs.react.MonocleReact._
 import japgolly.scalajs.react._
@@ -9,7 +10,11 @@ import japgolly.scalajs.react.extra.StateSnapshot
 import scalacss.DevDefaults._
 import scalacss.ScalaCssReact._
 
+import org.scalajs.dom.html
 import org.scalajs.dom.ext.KeyCode
+
+import cats.Order
+import cats.implicits._
 
 object View {
   val S = VerbAnnStyles
@@ -18,13 +23,14 @@ object View {
   // TODO add typed style argument
   def checkboxToggle(
     label: String,
-    isValueActive: StateSnapshot[Boolean]
+    isValueActive: StateSnapshot[Boolean],
+    didUpdate: Callback = Callback.empty
   ) = <.span(S.checkboxSpan)(
     <.input(S.checkbox)(
       ^.`type` := "checkbox",
       ^.value := label,
       ^.checked := isValueActive.value,
-      ^.onChange --> isValueActive.modState(!_)
+      ^.onChange --> (isValueActive.modState(!_) >> didUpdate)
     ),
     <.span(S.checkboxLabel)(
       label
@@ -133,6 +139,60 @@ object View {
         )
       )
     )
+  }
+
+  // def liveSlider(
+  //   value: StateSnapshot[Double],
+  //   min: Double,
+  //   max: Double,
+  //   step: Double,
+  //   fromValue: Double => Double,
+  //   toValue: Double => Double,
+  //   onChange: Double => Callback,
+  // ) = {
+  //   <.input(
+  //     ^.`type` := "range",
+  //     ^.min := min,
+  //     ^.max := max,
+  //     ^.step := step,
+  //     ^.value := fromValue(value.value),
+  //     ^.onChange ==> (
+  //       (e: ReactEventFromInput) => {
+  //         val newValue = toValue(e.target.value.toDouble)
+  //         value.setState(newValue) >> onChange(newValue)
+  //       })
+  //   )
+  // }
+
+  class OptionalSelect[A: Order](
+    show: A => String,
+    none: String = "None") {
+
+    def apply(
+      choices: Set[A],
+      curChoice: Option[A],
+      setChoice: Option[A] => Callback
+    ): TagOf[html.Select] = <.select(
+      ^.value := curChoice.fold(none)(show),
+      ^.onChange ==> (
+        (e: ReactEventFrom[org.scalajs.dom.html.Select]) => {
+          val valStr = e.target.value
+          val value = {
+            if(valStr == none) None
+            else choices.find(c => show(c) == valStr)
+          }
+          if(value != curChoice) setChoice(value) else Callback.empty
+        }
+      ),
+      <.option(^.key := none, ^.value := none, none),
+      choices.toList.sorted.map(show).zipWithIndex.toVdomArray { case (c, i) =>
+        <.option(^.key := s"$c-$i", ^.value := c, c)
+      }
+    )
+
+    def apply(choices: Set[A], curChoice: StateSnapshot[Option[A]]): TagOf[html.Select] = {
+      apply(choices, curChoice.value, curChoice.setState(_))
+    }
   }
 
   import jjm.ling.ESpan
