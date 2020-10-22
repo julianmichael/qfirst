@@ -190,7 +190,7 @@ class GoldQasrlFeatures(
     }.toCell("Question distributions for arguments")
   }
 
-  override val argSpans: ArgFeats[Map[ESpan, Double]] = qaPairs.data.map(
+  override val argSpans: CachedArgFeats[Map[ESpan, Double]] = qaPairs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, qaPairs) =>
         NonMergingMap(
@@ -200,7 +200,7 @@ class GoldQasrlFeatures(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping").data
+  ).toCell("PropBank span to role label mapping")
 
   override val argSemanticHeadIndices: ArgFeats[Int] = {
     RunData.strings.map(_ => ???)

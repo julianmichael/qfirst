@@ -637,7 +637,7 @@ class CoNLL08Features(
   //   }
   // } >> super.setup
 
-  lazy val origPropBankArgSpans: ArgFeats[Map[ESpan, Double]] = {
+  lazy val origPropBankArgSpans: CachedArgFeats[Map[ESpan, Double]] = {
     // TODO decide what to do about including the VerbType, for sense-agnostic and sense-specific ones to share file cache...
     fileCacheArgFeats("aligned-propbank-spans", log = true)(
       (dataset.data, argRoleLabels.data).mapN { (data, argRoleLabels) =>
@@ -669,13 +669,13 @@ class CoNLL08Features(
           }
         }
       }.flatMap(x => x)
-    ).data
+    )
   }
 
   val validPrepPOS = Set("IN", "TO", "RB")
 
   val prepObjectExtendedSpans: ArgFeats[Map[ESpan, Double]] = {
-    dataset.data.zip(origPropBankArgSpans).map { case (data, getPBSpans) =>
+    dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
       (verbType: String) => (argId: ArgumentId[Int]) => {
         val pbSpans = getPBSpans(verbType)(argId)
         val sentence = data.value(argId.verbId.sentenceId)
@@ -780,7 +780,7 @@ class CoNLL08Features(
 
   // TODO: remove VerbType from VerbFeats and ArgFeats? Maybe?
 
-  override lazy val argSpans: ArgFeats[Map[ESpan, Double]] =
+  override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
     origPropBankArgSpans
       // |+| prepObjectExtendedSpans
       // .map(_.map(_.map(spans => spans.mapVals(_ / spans.size))))

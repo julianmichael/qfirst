@@ -335,36 +335,6 @@ object VerbAnnUI {
     ).toVdomArray(x => x)
   }
 
-  def makeAllHighlightedAnswer(
-    sentenceTokens: Vector[String],
-    answers: NonEmptyList[Answer],
-    color: Rgba
-  ): VdomArray = {
-    val orderedSpans = answers.flatMap(a => NonEmptyList.fromList(a.spans.toList).get).sorted
-    case class GroupingState(
-      completeGroups: List[NonEmptyList[ESpan]],
-      currentGroup: NonEmptyList[ESpan]
-    )
-    val groupingState = orderedSpans.tail.foldLeft(GroupingState(Nil, NonEmptyList.of(orderedSpans.head))) {
-      case (GroupingState(groups, curGroup), span) =>
-        if(curGroup.exists(s => s.overlaps(span))) {
-          GroupingState(groups, span :: curGroup)
-        } else {
-          GroupingState(curGroup :: groups, NonEmptyList.of(span))
-        }
-    }
-    val contigSpanLists = NonEmptyList(groupingState.currentGroup, groupingState.completeGroups)
-    val answerHighlighties = contigSpanLists.reverse.map(spanList =>
-      List(
-        <.span(
-          renderSentenceWithHighlights(sentenceTokens, RenderRelevantPortion(spanList.map(_ -> color)))
-        )
-      )
-    ).intercalate(List(<.span(" / ")))
-    answerHighlighties.zipWithIndex.toVdomArray { case (a, i) =>
-      a(^.key := s"answerString-$i")
-    }
-  }
 
   def isQuestionValid(
     label: QuestionLabel
@@ -422,7 +392,8 @@ object VerbAnnUI {
               case AnswerLabel(sourceId, Answer(spans)) => Answer(spans)
             }
           ).whenDefined { answersNel =>
-            makeAllHighlightedAnswer(sentence.sentenceTokens, answersNel, color)
+            val allSpans = answersNel.flatMap(a => NonEmptyList.fromList(a.spans.toList).get)
+            View.makeAllHighlightedAnswer(sentence.sentenceTokens, allSpans, color)
           }
         }
       )

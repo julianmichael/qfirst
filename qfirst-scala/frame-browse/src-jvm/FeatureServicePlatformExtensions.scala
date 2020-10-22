@@ -20,6 +20,10 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.QuestionDists(vt) => features.argQuestionDists.get
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.ArgSpans(vt) => features.argSpans.get
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
+      case _ => ??? // TODO rest of cases
     }
   }
 }

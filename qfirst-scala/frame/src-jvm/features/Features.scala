@@ -198,7 +198,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // Various features that need to be implemented
 
-  def argSpans: ArgFeats[Map[ESpan, Double]]
+  def argSpans: CachedArgFeats[Map[ESpan, Double]]
 
   lazy val globalQuestionPrior = argQuestionDists.data.map { qFeats =>
     val pcounts = qFeats.values.toList.foldMap(
@@ -209,7 +209,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }.toCell("Global question prior")
 
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
-    RunData.strings.zip(verbIdToType.data).zip(argSpans).zip(verbArgSets.data).zip(argSemanticHeadIndices).flatMap {
+    RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices).flatMap {
       case ((((split, vidToType), allSpans), allVerbs), headIndices) =>
         val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
         FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
@@ -468,7 +468,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     argumentSpans: Set[ESpan]
   )
 
-  def qgInputs: RunData[Stream[IO, PropBankQGInput]] = sentences.data.zip(verbArgSets.data).zip(argSpans).map { case ((sents, allVerbs), allSpans) =>
+  def qgInputs: RunData[Stream[IO, PropBankQGInput]] = sentences.data.zip(verbArgSets.data).zip(argSpans.data).map { case ((sents, allVerbs), allSpans) =>
     Stream.emits[IO, (String, List[(VerbType, (VerbId, Set[Arg]))])](
       allVerbs.toList.flatMap(p => p._2.toList.map(p._1 -> _)).groupBy(_._2._1.sentenceId).toList
     ).map { case (sid, verbs) =>

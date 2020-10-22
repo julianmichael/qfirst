@@ -268,4 +268,36 @@ object View {
       }
     ).toVdomArray(x => x)
   }
+
+  def makeAllHighlightedAnswer(
+    sentenceTokens: Vector[String],
+    spans: NonEmptyList[ESpan],
+    color: Rgba
+  ): VdomArray = {
+    val orderedSpans = spans.sorted
+      // answers.flatMap(a => NonEmptyList.fromList(a.spans.toList).get).sorted
+    case class GroupingState(
+      completeGroups: List[NonEmptyList[ESpan]],
+      currentGroup: NonEmptyList[ESpan]
+    )
+    val groupingState = orderedSpans.tail.foldLeft(GroupingState(Nil, NonEmptyList.of(orderedSpans.head))) {
+      case (GroupingState(groups, curGroup), span) =>
+        if(curGroup.exists(s => s.overlaps(span))) {
+          GroupingState(groups, span :: curGroup)
+        } else {
+          GroupingState(curGroup :: groups, NonEmptyList.of(span))
+        }
+    }
+    val contigSpanLists = NonEmptyList(groupingState.currentGroup, groupingState.completeGroups)
+    val answerHighlighties = contigSpanLists.reverse.map(spanList =>
+      List(
+        <.span(
+          renderSentenceWithHighlights(sentenceTokens, RenderRelevantPortion(spanList.map(_ -> color)))
+        )
+      )
+    ).intercalate(List(<.span(" / ")))
+    answerHighlighties.zipWithIndex.toVdomArray { case (a, i) =>
+      a(^.key := s"answerString-$i")
+    }
+  }
 }

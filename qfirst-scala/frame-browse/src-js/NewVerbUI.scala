@@ -117,7 +117,6 @@ class NewVerbUI[VerbType, Arg: Order](
   // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
-  val VerbFeaturesLocal = new LocalState[VerbFeatures]
   val VerbModelLocal = new LocalState[Option[VerbClusterModel[VerbType, Arg]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
@@ -291,65 +290,70 @@ class NewVerbUI[VerbType, Arg: Order](
 
   def sentenceDisplayPane(
     verb: VerbType,
-    sentence: SentenceInfo[VerbType, Arg]
+    sentence: SentenceInfo[VerbType, Arg],
+    features: FeatureValues
   ) = {
     val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
-    IntSetLocal.make(initialValue = Set.empty[Int]) { highlightedVerbIndices =>
-      // val answerSpansWithColors = for {
-      //   (verbIndex, index) <- sortedVerbIndices.zipWithIndex
-      //   if highlightedVerbIndices.value.contains(verb.verbIndex)
-      //   question <- verb.questionLabels.values.toList
-      //   answerLabel <- question.answerJudgments
-      //   Answer(spans) <- answerLabel.judgment.getAnswer.toList
-      //   span <- spans.toList
-      // } yield span -> highlightLayerColors(index % highlightLayerColors.size)
-      // val verbColorMap = sortedVerbs
-      //   .zipWithIndex.map { case (verb, index) =>
-      //     verb.verbIndex -> highlightLayerColors(index % highlightLayerColors.size)
-      // }.toMap
+    val (currentVerbs, otherVerbs) = sortedVerbs.partition(_.verbType == verb)
+    val currentVerbIndices = currentVerbs.map(_.index).toSet
+    IntSetLocal.make(initialValue = currentVerbIndices) { highlightedVerbIndices =>
+      // val spansOpt = features.argSpans
+      val answerSpansWithColors = for {
+        (verb, index) <- currentVerbs.zipWithIndex
+        if highlightedVerbIndices.value.contains(verb.index)
+        verbId = VerbId(sentence.sentenceId, verb.index)
+        (span, prob) <- features.argSpans.foldMap(spans =>
+          verb.args.unorderedFoldMap(arg => spans(ArgumentId(verbId, arg)))
+        ).toList
+      } yield span -> highlightLayerColors(index % highlightLayerColors.size).copy(a = prob / 4)
+      val verbColorMap = currentVerbs.zipWithIndex.map { case (verb, index) =>
+          verb.index -> highlightLayerColors(index % highlightLayerColors.size)
+      }.toMap
 
       <.div(S.sentenceDisplayPane)(
         <.div(S.sentenceTextContainer)(
           <.span(S.sentenceText)(
-            Text.render(sentence.tokens)
-            // View.renderSentenceWithHighlights(
-            //   sentence.tokens,
-            //   View.RenderWholeSentence(answerSpansWithColors),
-            //   verbColorMap.collect { case (verbIndex, color) =>
-            //     verbIndex -> (
-            //       (v: VdomTag) => <.a(
-            //         S.verbAnchorLink,
-            //         ^.href := s"#verb-$verbIndex",
-            //         v(
-            //           ^.color := color.copy(a = 1.0).toColorStyleString,
-            //           ^.fontWeight := "bold",
-            //           ^.onMouseMove --> (
-            //             if(highlightedVerbIndices.value == Set(verbIndex)) {
-            //               Callback.empty
-            //             } else highlightedVerbIndices.setState(Set(verbIndex))
-            //           ),
-            //           ^.onMouseOut --> highlightedVerbIndices.setState(searchedVerbIndices)
-            //         )
-            //       )
-            //     )
-            //   }
-            // )
+            // Text.render(sentence.tokens)
+            View.renderSentenceWithHighlights(
+              sentence.tokens,
+              View.RenderWholeSentence(answerSpansWithColors),
+              verbColorMap.collect { case (verbIndex, color) =>
+                verbIndex -> (
+                  (v: VdomTag) => <.a(
+                    S.verbAnchorLink,
+                    ^.href := s"#verb-$verbIndex",
+                    v(
+                      ^.color := color.copy(a = 1.0).toColorStyleString,
+                      ^.fontWeight := "bold",
+                      ^.onMouseMove --> (
+                        if(highlightedVerbIndices.value == Set(verbIndex)) {
+                          Callback.empty
+                        } else highlightedVerbIndices.setState(Set(verbIndex))
+                      ),
+                      ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
+                    )
+                  )
+                )
+              }
+            )
           )
         ),
         <.div(S.verbEntriesContainer)(
-          sortedVerbs.toVdomArray { verb =>
+          currentVerbs.toVdomArray { verb =>
+            val verbId = VerbId(sentence.sentenceId, verb.index)
+            val color = verbColorMap(verb.index)
             <.div(S.verbEntryDisplay)(
-              // <.div(
-              //   <.a(
-              //     ^.name := s"verb-${verb.verbIndex}",
-              //     ^.display := "block",
-              //     ^.position := "relative",
-              //     ^.visibility := "hidden"
-              //   )
-              // ),
+              <.div(
+                <.a(
+                  ^.name := s"verb-${verb.index}",
+                  ^.display := "block",
+                  ^.position := "relative",
+                  ^.visibility := "hidden"
+                )
+              ),
               <.div(S.verbHeading)(
                 <.span(S.verbHeadingText)(
-                  // ^.color := color.copy(a = 1.0).toColorStyleString,
+                  ^.color := color.copy(a = 1.0).toColorStyleString,
                   // ^.onClick --> (
                   //   navQuery.setState(
                   //     DatasetQuery(
@@ -359,13 +363,22 @@ class NewVerbUI[VerbType, Arg: Order](
                   //     )
                   //   )
                   // ),
-                  sentence.tokens(verb.index)
+                  verb.verbType.toString
                 )
               ),
               <.table(S.verbQAsTable)( // arg table
                 <.tbody(S.verbQAsTableBody)(
                   verb.args.toVector.sorted.toVdomArray(arg =>
-                    <.tr(<.td(Arg.toString(sentence, arg)))
+                    <.tr(
+                      <.td(Arg.toString(sentence, arg)),
+                      features.argSpans.whenDefined(argSpans =>
+                        NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList).whenDefined(spansNel =>
+                          <.td(
+                            View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                          )
+                        )
+                      )
+                    )
                   )
                 )
               )
@@ -377,9 +390,20 @@ class NewVerbUI[VerbType, Arg: Order](
                   Callback.empty
                 } else highlightedVerbIndices.setState(Set(verb.index))
               ),
-              ^.onMouseOut --> highlightedVerbIndices.setState(Set.empty[Int])
+              ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
             )
-          }
+          },
+          <.div(S.verbEntryDisplay)(
+            "Other verbs: ",
+            otherVerbs.map(verb =>
+              Vector(
+                <.span(
+                  ^.fontWeight := "bold",
+                  verb.verbType.toString
+                )
+              )
+            ).intercalate(Vector(<.span(", "))).toVdomArray
+          )
         )
       )
     }
@@ -436,7 +460,7 @@ class NewVerbUI[VerbType, Arg: Order](
     verbType: VerbType,
     questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     argIndex: Option[Map[ArgumentId[Arg], Int]],
-    argSpans: Option[Map[ArgumentId[Arg], Set[ESpan]]],
+    argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
     argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     verbMlmDist: Option[Map[VerbId, Map[String, Double]]]
   )
@@ -494,6 +518,11 @@ class NewVerbUI[VerbType, Arg: Order](
           featureService, StateSnapshot(state).setStateVia(scope),
           FeatureReq.QuestionDists(state.features.verbType),
           opts => (FeatureValues.questionDist, opts.questionDist)
+        ) >>
+        pullFeature(
+          featureService, StateSnapshot(state).setStateVia(scope),
+          FeatureReq.ArgSpans(state.features.verbType),
+          opts => (FeatureValues.argSpans, opts.argSpans)
         )
       }
 
@@ -992,7 +1021,8 @@ class NewVerbUI[VerbType, Arg: Order](
                 case SentenceFetch.Loaded(sentenceInfo) =>
                   sentenceDisplayPane(
                     verbFeatures.verbType,
-                    sentenceInfo
+                    sentenceInfo,
+                    verbFeatures
                   )
               }
             )

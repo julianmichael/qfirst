@@ -123,7 +123,7 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank gold span instances")
 
-  override val argSpans: ArgFeats[Map[ESpan, Double]] = verbSenseAndArgs.data.map(
+  override val argSpans: CachedArgFeats[Map[ESpan, Double]] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>
         NonMergingMap(
@@ -133,7 +133,7 @@ class OntoNotes5Features(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping").data
+  ).toCell("PropBank span to role label mapping")
 
   override def argSemanticHeadIndices: ArgFeats[Int] = ???
 
