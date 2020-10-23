@@ -195,6 +195,24 @@ object View {
     }
   }
 
+  def select[A](style: StyleA)(
+    show: A => String,
+    choices: List[A],
+    curChoice: A, setChoice: A => Callback
+  ): TagOf[html.Select] = <.select(style)(
+    ^.value := show(curChoice),
+    ^.onChange ==> (
+      (e: ReactEventFrom[org.scalajs.dom.html.Select]) => {
+        val valStr = e.target.value
+        val value = choices.find(c => show(c) == valStr).get
+        if(value != curChoice) setChoice(value) else Callback.empty
+      }
+    ),
+    choices.map(show).zipWithIndex.toVdomArray { case (c, i) =>
+      <.option(^.key := s"$c-$i", ^.value := c, c)
+    }
+  )
+
   import jjm.ling.ESpan
   import jjm.ling.Text
 

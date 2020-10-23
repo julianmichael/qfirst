@@ -15,6 +15,9 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.Sentence(sid) => features.sentenceInfos.get
           .map(_.apply(sid))
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.AllInflectedForms(vt) => features.verbInflectedFormLists
+          .map(_.apply(vt))
+          .asInstanceOf[IO[req.Out]]
       case FeatureReq.Sentences(vt) => features.sentencesByVerbType.get
           .map(_.apply(vt))
           .asInstanceOf[IO[req.Out]]

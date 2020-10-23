@@ -58,6 +58,7 @@ import radhoc._
 import io.circe._
 
 import scala.concurrent.Future
+import scalacss.internal.Literal.Typed.initial
 
 trait VerbTypeRendering[VerbType] {
   def fromString(x: String): VerbType
@@ -109,6 +110,7 @@ class NewVerbUI[VerbType, Arg: Order](
   val VerbModelFetch = new CacheCallContent[VerbType, VerbClusterModel[VerbType, Arg]]
   val SentencesFetch = new CacheCallContent[VerbType, Set[String]]
   val SentenceFetch = new CacheCallContent[String, SentenceInfo[VerbType, Arg]]
+  val InflectedFormSetFetch = new CacheCallContent[VerbType, List[InflectedForms]]
 
   val DataFetch = new CacheCallContent[Unit, (DataIndex, Map[VerbType, Int])]
   val DocFetch = new CacheCallContent[DocumentId, Document]
@@ -124,6 +126,7 @@ class NewVerbUI[VerbType, Arg: Order](
   val IntSetLocal = new LocalState[Set[Int]]
   val FrameChoiceLocal = new LocalState[Set[(ArgumentId[Arg], ArgStructure, ArgumentSlot)]]
   val QuestionSetLocal = new LocalState[Set[ArgumentId[Arg]]]
+  val InflectedFormsLocal = new LocalState[Option[InflectedForms]]
 
   val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
   val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
@@ -432,7 +435,6 @@ class NewVerbUI[VerbType, Arg: Order](
             ^.onClick --> curSentenceId.setState(sentenceId),
             <.span(S.sentenceSelectionEntryText)(
               sentenceId
-              // Text.render(sentence.sentenceTokens) // TODO maybe show sentence text
             )
           )
         }
@@ -444,7 +446,8 @@ class NewVerbUI[VerbType, Arg: Order](
   def sentenceDisplayPane(
     verb: VerbType,
     sentence: SentenceInfo[VerbType, Arg],
-    features: FeatureValues
+    features: FeatureValues,
+    inflectedForms: InflectedForms
   ) = {
     val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
     val (currentVerbs, otherVerbs) = sortedVerbs.partition(_.verbType == verb)
@@ -540,22 +543,47 @@ class NewVerbUI[VerbType, Arg: Order](
               ),
               <.table(S.verbQAsTable)( // arg table
                 <.tbody(S.verbQAsTableBody)(
-                  verb.args.toVector.sorted.toVdomArray(arg =>
-                    <.tr(
-                      features.goldLabels.flatten.whenDefined(goldLabels =>
-                        <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
+                  verb.args.toVector.sorted.flatMap(arg =>
+                    List(
+                      <.tr(
+                        features.goldLabels.flatten.whenDefined(goldLabels =>
+                          <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
+                        ),
+                        <.td(Arg.toString(sentence, arg)),
+                        features.argSpans.whenDefined(argSpans =>
+                          NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
+                            .whenDefined(spansNel =>
+                              <.td(
+                                View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                              )
+                            )
+                        )
                       ),
-                      <.td(Arg.toString(sentence, arg)),
-                      features.argSpans.whenDefined(argSpans =>
-                        NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
-                          .whenDefined(spansNel =>
-                            <.td(
-                              View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                      features.questionDist.whenDefined(questionDist =>
+                        <.tr(
+                          <.td(),
+                          <.td(
+                            ^.colSpan := 2,
+                            <.table(
+                              <.tbody(
+                                questionDist(ArgumentId(verbId, arg))
+                                  .toVector
+                                  .sortBy(-_._2)
+                                  .takeWhile(_._2 >= 0.05)
+                                  .map { case (qt, prob) =>
+                                    <.tr(
+                                      ^.key := qt.toString,
+                                      <.td(f"$prob%.3f"),
+                                      <.td(qt.toSlots.renderQuestionString(inflectedForms.apply))
+                                    )
+                                  }.toVdomArray
+                              )
                             )
                           )
+                        )
                       )
                     )
-                  )
+                  ): _*
                 )
               )
             )(
@@ -647,9 +675,12 @@ class NewVerbUI[VerbType, Arg: Order](
   def frameContainer(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
-    verbFeatures: FeatureValues
+    verbFeatures: FeatureValues,
+    allInflectedForms: List[InflectedForms],
+    inflectedForms: StateSnapshot[Option[InflectedForms]]
   ) = {
     val verb = verbFeatures.verbType
+    val curInflectedForms = inflectedForms.value.getOrElse(genericVerbForms)
     VerbModelFetch.make(
       request = verb,
       sendRequest = verb => verbService.getModel(verb)) {
@@ -670,6 +701,12 @@ class NewVerbUI[VerbType, Arg: Order](
 
 
           <.div(S.framesetContainer)(
+            inflectedForms.value match {
+              case None => <.div("No inflected forms available.")
+              case Some(forms) => View.select[InflectedForms](S.verbDropdown)(
+                _.allForms.mkString(", "), allInflectedForms, forms, f => inflectedForms.setState(Some(f))
+              ),
+            },
             <.div(S.clusterSplittingSpecDisplay)(
               clusterCriterionField("Verb", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)),
               clusterCriterionField("Argument", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)),
@@ -706,7 +743,7 @@ class NewVerbUI[VerbType, Arg: Order](
                         <.div(s"Arg: ${roleTree.size} instances."),
                         questionDistsOpt.whenDefined(questionDists =>
                           questionDists.toVector.sortBy(-_._2).toVdomArray { case (template, prob) =>
-                            <.div(f"$prob%.3f ", template.toTemplateString)
+                            <.div(f"$prob%.3f ", template.toSlots.renderQuestionString(curInflectedForms.apply))
                           }
                         )
                       )
@@ -1027,7 +1064,8 @@ class NewVerbUI[VerbType, Arg: Order](
 
   def sentenceContainer(
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-    verbFeatures: FeatureValues
+    verbFeatures: FeatureValues,
+    inflectedForms: InflectedForms
   ) = {
     <.div(S.dataContainer)(
       SentencesFetch.make(
@@ -1053,7 +1091,8 @@ class NewVerbUI[VerbType, Arg: Order](
                   sentenceDisplayPane(
                     verbFeatures.verbType,
                     sentenceInfo,
-                    verbFeatures
+                    verbFeatures,
+                    inflectedForms
                   )
               }
             )
@@ -1061,6 +1100,8 @@ class NewVerbUI[VerbType, Arg: Order](
       }
     )
   }
+
+  val genericVerbForms = InflectedForms.fromStrings("verb", "verbs", "verbing", "verbed", "verben")
 
   class Backend(scope: BackendScope[Props, State]) {
 
@@ -1072,13 +1113,21 @@ class NewVerbUI[VerbType, Arg: Order](
           val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
           ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
             VerbFeatures.make(initVerb, props.featureService) { (options, verb, features) =>
-              <.div(S.mainContainer)(
-                headerContainer(props.featureService, sortedVerbCounts, verb, options),
-                <.div(S.dataContainer)(
-                  frameContainer(props.verbService, cachedClusterSplittingSpec, features),
-                  sentenceContainer(props.featureService, features)
-                )
-              )
+              InflectedFormSetFetch.make(
+                request = verb.value,
+                sendRequest = verb => props.featureService(FeatureReq.AllInflectedForms(verb))) {
+                case InflectedFormSetFetch.Loading => <.div(S.loadingNotice)("Loading inflections...")
+                case InflectedFormSetFetch.Loaded(formList) =>
+                  InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
+                    <.div(S.mainContainer)(
+                      headerContainer(props.featureService, sortedVerbCounts, verb, options),
+                      <.div(S.dataContainer)(
+                        frameContainer(props.verbService, cachedClusterSplittingSpec, features, formList, inflectedForms),
+                        sentenceContainer(props.featureService, features, inflectedForms.value.getOrElse(genericVerbForms))
+                      )
+                    )
+                  }
+              }
             }
           }
       }

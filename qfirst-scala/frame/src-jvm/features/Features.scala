@@ -158,6 +158,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // indices of important info
 
+  def verbInflectedFormLists: IO[VerbType => List[InflectedForms]]
+
   val sentences: RunDataCell[NonMergingMap[String, Vector[String]]]
 
   val verbArgSets: RunDataCell[Map[VerbType, Map[VerbId, Set[Arg]]]]

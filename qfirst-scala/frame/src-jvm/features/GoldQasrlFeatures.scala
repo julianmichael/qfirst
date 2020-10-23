@@ -129,6 +129,8 @@ class GoldQasrlFeatures(
   //   .map(NonMergingMap.apply[String, Vector[String]])
   //   .toCell("QA-SRL sentences")
 
+  override val verbInflectedFormLists = IO(List(_))
+
   override val sentences = dataset.data
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
     .map(NonMergingMap.apply[String, Vector[String]])

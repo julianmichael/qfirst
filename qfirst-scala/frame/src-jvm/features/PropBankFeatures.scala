@@ -28,6 +28,7 @@ import io.circe.{Encoder, Decoder}
 
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
+import java.net.URL
 
 abstract class PropBankFeatures[Arg](
   mode: RunMode,
@@ -42,6 +43,45 @@ abstract class PropBankFeatures[Arg](
     if(assumeGoldVerbSense) verbType.takeWhile(_ != '.')
     else verbType
   }
+
+  // val inflectionDictionary
+  import jjm.ling.en.Inflections
+
+  val wiktionaryInflectionsURL = "https://www.dropbox.com/s/1wpsydqsuf9jm8v/en_verb_inflections.txt.gz?dl=1"
+  def allInflectionLists(path: Path) = FileCached[List[InflectedForms]]("verb inflections")(
+    path = path,
+    read = path => FileUtil.readJsonLines[InflectedForms](path).compile.toList,
+    write = (path, inflections) => FileUtil.writeJsonLines(path)(inflections))(
+    Stream.resource(FileUtil.blockingExecutionContext).flatMap { ec =>
+      val urlStream = IO(new URL(wiktionaryInflectionsURL).openConnection.getInputStream)
+      fs2.io.readInputStream(urlStream, 4096, ec, true)
+        .through(fs2.compress.gunzip(4096))
+        .through(fs2.text.utf8Decode)
+        .through(fs2.text.lines)
+        .filter(_.trim.nonEmpty)
+        .map { line =>
+          val f = line.trim.split("\\t")
+          InflectedForms.fromStrings(
+            stem = f(0),
+            presentSingular3rd = f(1),
+            presentParticiple = f(2),
+            past = f(3),
+            pastParticiple = f(4)
+          )
+        }
+    }.compile.toList
+  )
+
+  lazy val verbInflectedFormsByStem = new Cell(
+    "Inflected forms by stem", {
+      cacheDir.flatMap(dir => allInflectionLists(dir.resolve("en_verb_inflections.txt.gz")).get)
+        .map(_.groupBy(_.stem))
+    }
+  )
+
+  lazy val verbInflectedFormLists: IO[String => List[InflectedForms]] =
+    verbInflectedFormsByStem.get.map(m => lemma => m.apply(lemma.lowerCase))
+
 
   def renderVerbType(verbType: String): String = verbType
 

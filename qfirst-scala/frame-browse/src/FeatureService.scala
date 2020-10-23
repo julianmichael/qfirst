@@ -8,6 +8,7 @@ import qfirst.frame.VerbId
 
 import jjm.DotKleisli
 import jjm.ling.ESpan
+import jjm.ling.en.InflectedForms
 
 import io.circe.{Encoder, Decoder}
 import io.circe.generic.JsonCodec
@@ -37,11 +38,14 @@ object GoldVerbInfo {
 
 @JsonCodec sealed trait FeatureReq[VerbType, Arg] { type Out }
 object FeatureReq {
-  case class Sentence[VerbType, Arg](sentenceId: String) extends FeatureReq[VerbType, Arg] {
-    type Out = SentenceInfo[VerbType, Arg]
+  case class AllInflectedForms[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
+    type Out = List[InflectedForms]
   }
   case class Sentences[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Set[String]
+  }
+  case class Sentence[VerbType, Arg](sentenceId: String) extends FeatureReq[VerbType, Arg] {
+    type Out = SentenceInfo[VerbType, Arg]
   }
   case class GoldLabels[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Option[GoldVerbInfo[Arg]]
@@ -67,6 +71,8 @@ object FeatureReq {
 
   implicit def featureReqDotEncoder[VerbType: Encoder, Arg: Encoder] = new DotKleisli[Encoder, FeatureReq[VerbType, Arg]] {
     def apply(req: FeatureReq[VerbType, Arg]): Encoder[req.Out] = req match {
+      case AllInflectedForms(_) => implicitly[Encoder[List[InflectedForms]]]
+          .asInstanceOf[Encoder[req.Out]]
       case Sentence(_) => implicitly[Encoder[SentenceInfo[VerbType, Arg]]]
           .asInstanceOf[Encoder[req.Out]]
       case Sentences(_) => implicitly[Encoder[Set[String]]]
@@ -93,6 +99,8 @@ object FeatureReq {
 
   implicit def featureReqDotDecoder[VerbType: Decoder, Arg: Decoder] = new DotKleisli[Decoder, FeatureReq[VerbType, Arg]] {
     def apply(req: FeatureReq[VerbType, Arg]): Decoder[req.Out] = req match {
+      case AllInflectedForms(_) => implicitly[Decoder[List[InflectedForms]]]
+          .asInstanceOf[Decoder[req.Out]]
       case Sentence(_) => implicitly[Decoder[SentenceInfo[VerbType, Arg]]]
           .asInstanceOf[Decoder[req.Out]]
       case Sentences(_) => implicitly[Decoder[Set[String]]]

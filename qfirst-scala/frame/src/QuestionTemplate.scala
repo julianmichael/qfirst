@@ -10,6 +10,7 @@ import jjm.implicits._
 import cats.implicits._
 
 import io.circe.Json
+import qasrl.Prep
 
 case class QuestionTemplate(
   wh: LowerCaseString,
@@ -27,7 +28,25 @@ case class QuestionTemplate(
     prep,
     obj2
   ).flatten.mkString(" ")
+
+  import jjm.ling.en.InflectedForms
+  import qasrl._
+  import cats.Id
+  import jjm.DependentMap
+  import jjm.DependentPair
+
+  def toSlots = SlotBasedLabel[VerbForm](
+    wh = wh,
+    aux = if(hasSubj) Some("does".lowerCase) else None,
+    subj = if(hasSubj) Some("something".lowerCase) else None,
+    verbPrefix = Nil,
+    verb = if(hasSubj) VerbForm.Stem else VerbForm.PresentSingular3rd,
+    obj = if(hasObj) Some("something".lowerCase) else None,
+    prep = prep,
+    obj2 = obj2
+  )
 }
+
 object QuestionTemplate {
   // extremely unnecessary amounts of computation here, lol
   def fromClausalQuestion(clausalQ: ClausalQuestion) = {
