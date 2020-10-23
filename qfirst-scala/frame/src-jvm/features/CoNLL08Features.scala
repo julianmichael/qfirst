@@ -178,10 +178,12 @@ class CoNLL08Features(
     ).toCell("CoNLL 2008 verb arg sets")
 
   override val verbSenseLabels =
-    mapVerbFeats(predArgStructures.data) { pas =>
-      val predicate = pas.predicate
-      s"${predicate.lemma}.${predicate.sense}"
-    }
+    cacheVerbFeats("CoNLL 2008 verb sense labels")(
+      mapVerbFeats(predArgStructures.data) { pas =>
+        val predicate = pas.predicate
+        s"${predicate.lemma}.${predicate.sense}"
+      }
+    )
 
   override val argRoleLabels: CachedArgFeats[PropBankRoleLabel] =
     predArgStructures.data.map(predArgStructures =>

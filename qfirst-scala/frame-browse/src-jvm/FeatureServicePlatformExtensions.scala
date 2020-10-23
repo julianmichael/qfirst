@@ -5,6 +5,7 @@ import qfirst.frame.features.Features
 import jjm.DotKleisli
 
 import cats.effect.IO
+import cats.implicits._
 
 trait FeatureServiceCompanionPlatformExtensions {
   def baseService[VerbType, Arg](
@@ -17,6 +18,16 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.Sentences(vt) => features.sentencesByVerbType.get
           .map(_.apply(vt))
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.GoldLabels(vt) => features.getIfPropBank
+          .traverse(feats =>
+            for {
+              senses <- feats.verbSenseLabels.get
+              roles <- feats.argRoleLabels.get
+            } yield GoldVerbInfo(
+              senses(vt.asInstanceOf[String]).value,
+              roles(vt.asInstanceOf[String]).value
+            )
+          ).asInstanceOf[IO[req.Out]]
       case FeatureReq.QuestionDists(vt) => features.argQuestionDists.get
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]

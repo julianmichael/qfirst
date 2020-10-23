@@ -134,6 +134,41 @@ class NewVerbUI[VerbType, Arg: Order](
 
   // val ArgStructureOptLocal = new LocalState[Option[(ArgStructure, ArgumentSlot)]]
 
+  def unsafeListAt[A](index: Int) =
+    Lens[List[A], A](s => s(index))(a => s => s.updated(index, a))
+
+  def lensProduct[A, B, C](l1: Lens[A, B], l2: Lens[A, C]) =
+    Lens[A, (B, C)](a => l1.get(a) -> l2.get(a)) {
+      case (b, c) => a => l2.set(c)(l1.set(b)(a))
+    }
+
+  def throughOption[A, B](l: Lens[A, Option[B]])(implicit M: Monoid[B]): Lens[A, B] = {
+    Lens[A, B](a => l.get(a).combineAll)(
+      b => a => if(b == M.empty) l.set(None)(a) else l.set(Some(b))(a)
+    )
+  }
+
+  // TODO color-code the answer spans by _question_ instead of by verb
+
+  def zoomStateP[A, B](
+    s: StateSnapshot[A],
+    prism: Prism[A, B])(
+    implicit ev: Reusability[B]
+  ): Option[StateSnapshot[B]] = {
+    prism.getOption(s.value).map { b =>
+      StateSnapshot.withReuse.prepare[B]((bOpt, cb) => s.setStateOption(bOpt.map(prism.reverseGet), cb))(b)
+    }
+  }
+
+  def zoomOpt[A](
+    s: StateSnapshot[Option[A]])(
+    implicit r: Reusability[A]
+  ): Option[StateSnapshot[A]] = {
+    s.value.map { a =>
+      StateSnapshot.withReuse.prepare[A](s.setState)(a)
+    }
+  }
+
   case class Props(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
@@ -199,6 +234,124 @@ class NewVerbUI[VerbType, Arg: Order](
         )
       }
     )
+  }
+
+  @Lenses case class FeatureOptions(
+    questionDist: Boolean,
+    argIndex: Boolean,
+    argSpans: Boolean,
+    argMlmDist: Option[String],
+    verbMlmDist: Option[String],
+    goldLabels: Boolean
+  )
+  object FeatureOptions {
+    val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
+    def init = FeatureOptions(false, false, false, None, None, false)
+  }
+
+  @Lenses case class FeatureValues(
+    verbType: VerbType,
+    questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
+    argIndex: Option[Map[ArgumentId[Arg], Int]],
+    argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
+    argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Double]]],
+    verbMlmDist: Option[Map[VerbId, Map[String, Double]]],
+    goldLabels: Option[Option[GoldVerbInfo[Arg]]]
+  )
+  object FeatureValues {
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None)
+  }
+
+  val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
+  val FeatureOptionsLocal = new LocalState[FeatureOptions]
+
+  import scala.util.{Try, Success, Failure}
+
+  object VerbFeatures {
+    case class Props(
+      initVerb: VerbType,
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
+    )
+
+    @Lenses case class State(
+      options: FeatureOptions,
+      features: FeatureValues
+    )
+    object State {
+      def initial(verb: VerbType) = State(FeatureOptions.init, FeatureValues.empty(verb))
+    }
+
+    def pullFeature[A](
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      verbFeatures: StateSnapshot[State],
+      req: FeatureReq[VerbType, Arg] { type Out = A },
+      getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
+    ): Callback = {
+      val (valueLens, includeFeature) = getLens(verbFeatures.value.options)
+      val featureSnap = verbFeatures.zoomStateL(State.features.composeLens(valueLens))
+      if(!includeFeature) {
+        if(featureSnap.value.isEmpty) Callback.empty else featureSnap.setState(None)
+      } else {
+        featureService(req).cata(
+          pure = feats => if(featureSnap.value != feats) featureSnap.setState(Some(feats)) else Callback.empty,
+          wrapped = _.completeWith {
+            case Success(feats) => featureSnap.setState(Some(feats))
+            case Failure(err) => Callback(err.printStackTrace)
+          }
+        )
+      }
+    }
+
+    class Backend(scope: BackendScope[Props, State]) {
+
+      def pullFeatures(
+        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      ): Callback = scope.state >>= { state =>
+        pullFeature(
+          featureService, StateSnapshot(state).setStateVia(scope),
+          FeatureReq.QuestionDists(state.features.verbType),
+          opts => (FeatureValues.questionDist, opts.questionDist)
+        ) >>
+          pullFeature(
+            featureService, StateSnapshot(state).setStateVia(scope),
+            FeatureReq.ArgSpans(state.features.verbType),
+            opts => (FeatureValues.argSpans, opts.argSpans)
+          ) >>
+          pullFeature(
+            featureService, StateSnapshot(state).setStateVia(scope),
+            FeatureReq.GoldLabels(state.features.verbType),
+            opts => (FeatureValues.goldLabels, opts.goldLabels)
+          )
+      }
+
+      def render(props: Props, state: State) = {
+        val optionsSnap = StateSnapshot(state.options) { (optionsOpt, cb) => 
+          val fullCb = cb >> pullFeatures(props.featureService)
+          scope.modStateOption(s => optionsOpt.map(State.options.set(_)(s)), fullCb)
+        }
+        val verbSnap = StateSnapshot(state.features.verbType) { (verbOpt, cb) =>
+          val fullCb = cb >> pullFeatures(props.featureService)
+          scope.modStateOption(s => verbOpt.map(State.features.composeLens(FeatureValues.verbType).set(_)(s)), fullCb)
+        }
+        props.render(
+          optionsSnap,
+          verbSnap,
+          state.features
+        )
+      }
+    }
+
+    val Component = ScalaComponent.builder[Props]("Verb Features")
+      .initialStateFromProps(p => State.initial(p.initVerb))
+      .renderBackend[Backend]
+      .build
+
+    def make(
+      initVerb: VerbType,
+      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg])(
+      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
+    ) = Component(Props(initVerb, featureService, render))
   }
 
   val queryKeywordHighlightLayer = Rgba(255, 255, 0, 0.4)
@@ -311,9 +464,13 @@ class NewVerbUI[VerbType, Arg: Order](
       }.toMap
 
       <.div(S.sentenceDisplayPane)(
+        features.goldLabels.whenDefined(goldLabelsOpt =>
+          <.div(S.sentenceInfoContainer)(
+            "No gold labels available."
+          ).when(goldLabelsOpt.isEmpty)
+        ),
         <.div(S.sentenceTextContainer)(
           <.span(S.sentenceText)(
-            // Text.render(sentence.tokens)
             View.renderSentenceWithHighlights(
               sentence.tokens,
               View.RenderWholeSentence(answerSpansWithColors),
@@ -363,20 +520,39 @@ class NewVerbUI[VerbType, Arg: Order](
                   //     )
                   //   )
                   // ),
-                  verb.verbType.toString
-                )
+                  verb.verbType.toString,
+                ),
+                features.goldLabels.flatten.whenDefined { goldLabels =>
+                  val sense = goldLabels.verbSenses(verbId)
+                  val lemma = if(sense.contains(".")) {
+                    sense.substring(0, sense.lastIndexOf("."))
+                  } else sense
+
+                  <.span(
+                    " ",
+                    <.a(
+                      ^.href := s"http://verbs.colorado.edu/propbank/framesets-english-aliases/$lemma.html#$sense",
+                      ^.target := "_blank",
+                      sense
+                    )
+                  )
+                }
               ),
               <.table(S.verbQAsTable)( // arg table
                 <.tbody(S.verbQAsTableBody)(
                   verb.args.toVector.sorted.toVdomArray(arg =>
                     <.tr(
+                      features.goldLabels.flatten.whenDefined(goldLabels =>
+                        <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
+                      ),
                       <.td(Arg.toString(sentence, arg)),
                       features.argSpans.whenDefined(argSpans =>
-                        NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList).whenDefined(spansNel =>
-                          <.td(
-                            View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                        NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
+                          .whenDefined(spansNel =>
+                            <.td(
+                              View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                            )
                           )
-                        )
                       )
                     )
                   )
@@ -407,152 +583,6 @@ class NewVerbUI[VerbType, Arg: Order](
         )
       )
     }
-  }
-
-  def unsafeListAt[A](index: Int) =
-    Lens[List[A], A](s => s(index))(a => s => s.updated(index, a))
-
-  def lensProduct[A, B, C](l1: Lens[A, B], l2: Lens[A, C]) =
-    Lens[A, (B, C)](a => l1.get(a) -> l2.get(a)) {
-      case (b, c) => a => l2.set(c)(l1.set(b)(a))
-    }
-
-  def throughOption[A, B](l: Lens[A, Option[B]])(implicit M: Monoid[B]): Lens[A, B] = {
-    Lens[A, B](a => l.get(a).combineAll)(
-      b => a => if(b == M.empty) l.set(None)(a) else l.set(Some(b))(a)
-    )
-  }
-
-  // TODO color-code the answer spans by _question_ instead of by verb
-
-  def zoomStateP[A, B](
-    s: StateSnapshot[A],
-    prism: Prism[A, B])(
-    implicit ev: Reusability[B]
-  ): Option[StateSnapshot[B]] = {
-    prism.getOption(s.value).map { b =>
-      StateSnapshot.withReuse.prepare[B]((bOpt, cb) => s.setStateOption(bOpt.map(prism.reverseGet), cb))(b)
-    }
-  }
-
-  def zoomOpt[A](
-    s: StateSnapshot[Option[A]])(
-    implicit r: Reusability[A]
-  ): Option[StateSnapshot[A]] = {
-    s.value.map { a =>
-      StateSnapshot.withReuse.prepare[A](s.setState)(a)
-    }
-  }
-
-  @Lenses case class FeatureOptions(
-    questionDist: Boolean,
-    argIndex: Boolean,
-    argSpans: Boolean,
-    argMlmDist: Option[String],
-    verbMlmDist: Option[String]
-  )
-  object FeatureOptions {
-    val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, None, None)
-  }
-
-  @Lenses case class FeatureValues(
-    verbType: VerbType,
-    questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
-    argIndex: Option[Map[ArgumentId[Arg], Int]],
-    argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
-    argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Double]]],
-    verbMlmDist: Option[Map[VerbId, Map[String, Double]]]
-  )
-  object FeatureValues {
-    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None)
-  }
-
-  val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
-  val FeatureOptionsLocal = new LocalState[FeatureOptions]
-
-  import scala.util.{Try, Success, Failure}
-
-  object VerbFeatures {
-    case class Props(
-      initVerb: VerbType,
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
-    )
-
-    @Lenses case class State(
-      options: FeatureOptions,
-      features: FeatureValues
-    )
-    object State {
-      def initial(verb: VerbType) = State(FeatureOptions.init, FeatureValues.empty(verb))
-    }
-
-    def pullFeature[A](
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-      verbFeatures: StateSnapshot[State],
-      req: FeatureReq[VerbType, Arg] { type Out = A },
-      getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
-    ): Callback = {
-      val (valueLens, includeFeature) = getLens(verbFeatures.value.options)
-      val featureSnap = verbFeatures.zoomStateL(State.features.composeLens(valueLens))
-      if(!includeFeature) {
-        if(featureSnap.value.isEmpty) Callback.empty else featureSnap.setState(None)
-      } else {
-        featureService(req).cata(
-          pure = feats => if(featureSnap.value != feats) featureSnap.setState(Some(feats)) else Callback.empty,
-          wrapped = _.completeWith {
-            case Success(feats) => featureSnap.setState(Some(feats))
-            case Failure(err) => Callback(err.printStackTrace)
-          }
-        )
-      }
-    }
-
-    class Backend(scope: BackendScope[Props, State]) {
-
-      def pullFeatures(
-        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-      ): Callback = scope.state >>= { state =>
-        pullFeature(
-          featureService, StateSnapshot(state).setStateVia(scope),
-          FeatureReq.QuestionDists(state.features.verbType),
-          opts => (FeatureValues.questionDist, opts.questionDist)
-        ) >>
-        pullFeature(
-          featureService, StateSnapshot(state).setStateVia(scope),
-          FeatureReq.ArgSpans(state.features.verbType),
-          opts => (FeatureValues.argSpans, opts.argSpans)
-        )
-      }
-
-      def render(props: Props, state: State) = {
-        val optionsSnap = StateSnapshot(state.options) { (optionsOpt, cb) => 
-          val fullCb = cb >> pullFeatures(props.featureService)
-          scope.modStateOption(s => optionsOpt.map(State.options.set(_)(s)), fullCb)
-        }
-        val verbSnap = StateSnapshot(state.features.verbType) { (verbOpt, cb) =>
-          val fullCb = cb >> pullFeatures(props.featureService)
-          scope.modStateOption(s => verbOpt.map(State.features.composeLens(FeatureValues.verbType).set(_)(s)), fullCb)
-        }
-        props.render(
-          optionsSnap,
-          verbSnap,
-          state.features
-        )
-      }
-    }
-
-    val Component = ScalaComponent.builder[Props]("Verb Features")
-      .initialStateFromProps(p => State.initial(p.initVerb))
-      .renderBackend[Backend]
-      .build
-
-    def make(
-      initVerb: VerbType,
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg])(
-      render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
-    ) = Component(Props(initVerb, featureService, render))
   }
 
   def headerContainer(
@@ -592,7 +622,8 @@ class NewVerbUI[VerbType, Arg: Order](
             FeatureOptions.mlmTypes,
             verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
           )
-        )
+        ),
+        View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
       )
     )
   }

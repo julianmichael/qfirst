@@ -64,6 +64,18 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   //   }
   // }
 
+  def cacheVerbFeats[A](name: String)(feats: VerbFeats[A]): CachedVerbFeats[A] =
+    (verbs.data.zip(feats)).map { case (verbs, feats) =>
+      verbs.transform { case (verbType, verbs) =>
+        val featsForVerbType = feats(verbType)
+        NonMergingMap(
+          verbs.iterator.map { verbId =>
+            verbId -> featsForVerbType(verbId)
+          }.toMap
+        )
+      }
+    }.toCell(name)
+
   def cacheArgFeats[A](name: String, log: Boolean = false)(feats: ArgFeats[A]): CachedArgFeats[A] =
     if(log) {
       (args.data.zip(feats)).flatMap { case (args, feats) =>

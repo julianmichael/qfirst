@@ -1,6 +1,7 @@
 package qfirst.frame.browse
 
 import qfirst.frame.ArgumentId
+import qfirst.frame.PropBankRoleLabel
 import qfirst.frame.QuestionTemplate
 import qfirst.frame.SentenceInfo
 import qfirst.frame.VerbId
@@ -21,6 +22,19 @@ object FeatureService extends FeatureServiceCompanionPlatformExtensions {
   // }
 }
 
+case class GoldVerbInfo[Arg](
+  verbSenses: Map[VerbId, String],
+  argRoles: Map[ArgumentId[Arg], PropBankRoleLabel]
+)
+object GoldVerbInfo {
+  implicit def goldVerbInfoEncoder[Arg: Encoder] = implicitly[
+    Encoder[(List[(VerbId, String)], List[(ArgumentId[Arg], PropBankRoleLabel)])]
+  ].contramap[GoldVerbInfo[Arg]](i => i.verbSenses.toList -> i.argRoles.toList)
+  implicit def goldVerbInfoDecoder[Arg: Decoder] = implicitly[
+    Decoder[(List[(VerbId, String)], List[(ArgumentId[Arg], PropBankRoleLabel)])]
+  ].map { case (v, a) => GoldVerbInfo[Arg](v.toMap, a.toMap) }
+}
+
 @JsonCodec sealed trait FeatureReq[VerbType, Arg] { type Out }
 object FeatureReq {
   case class Sentence[VerbType, Arg](sentenceId: String) extends FeatureReq[VerbType, Arg] {
@@ -28,6 +42,9 @@ object FeatureReq {
   }
   case class Sentences[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Set[String]
+  }
+  case class GoldLabels[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
+    type Out = Option[GoldVerbInfo[Arg]]
   }
   case class QuestionDists[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]
@@ -54,6 +71,8 @@ object FeatureReq {
           .asInstanceOf[Encoder[req.Out]]
       case Sentences(_) => implicitly[Encoder[Set[String]]]
           .asInstanceOf[Encoder[req.Out]]
+      case GoldLabels(_) => implicitly[Encoder[Option[GoldVerbInfo[Arg]]]]
+          .asInstanceOf[Encoder[req.Out]]
       case QuestionDists(_) => implicitly[Encoder[List[(ArgumentId[Arg], List[(QuestionTemplate, Double)])]]]
           .contramap[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
@@ -77,6 +96,8 @@ object FeatureReq {
       case Sentence(_) => implicitly[Decoder[SentenceInfo[VerbType, Arg]]]
           .asInstanceOf[Decoder[req.Out]]
       case Sentences(_) => implicitly[Decoder[Set[String]]]
+          .asInstanceOf[Decoder[req.Out]]
+      case GoldLabels(_) => implicitly[Decoder[Option[GoldVerbInfo[Arg]]]]
           .asInstanceOf[Decoder[req.Out]]
       case QuestionDists(_) => implicitly[Decoder[List[(ArgumentId[Arg], List[(QuestionTemplate, Double)])]]]
           .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
