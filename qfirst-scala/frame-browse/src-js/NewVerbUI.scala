@@ -98,6 +98,13 @@ class NewVerbUI[VerbType, Arg: Order](
   Arg: ArgRendering[VerbType, Arg],
 ){
 
+  val sentenceIdOrder = Order.by[String, (String, Int)](id =>
+    if(id.contains(":")) {
+      val index = id.lastIndexOf(":")
+      id.substring(0, index) -> id.substring(index + 1).toInt
+    } else id -> -1
+  )
+
   implicit val callbackMonoid = new Monoid[Callback] {
     override def empty = Callback.empty
     override def combine(x: Callback, y: Callback) = x >> y
@@ -285,57 +292,62 @@ class NewVerbUI[VerbType, Arg: Order](
       def initial(verb: VerbType) = State(FeatureOptions.init, FeatureValues.empty(verb))
     }
 
-    def pullFeature[A](
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-      verbFeatures: StateSnapshot[State],
-      req: FeatureReq[VerbType, Arg] { type Out = A },
-      getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
-    ): Callback = {
-      val (valueLens, includeFeature) = getLens(verbFeatures.value.options)
-      val featureSnap = verbFeatures.zoomStateL(State.features.composeLens(valueLens))
-      if(!includeFeature) {
-        if(featureSnap.value.isEmpty) Callback.empty else featureSnap.setState(None)
-      } else {
-        featureService(req).cata(
-          pure = feats => if(featureSnap.value != feats) featureSnap.setState(Some(feats)) else Callback.empty,
-          wrapped = _.completeWith {
-            case Success(feats) => featureSnap.setState(Some(feats))
-            case Failure(err) => Callback(err.printStackTrace)
-          }
-        )
-      }
-    }
-
     class Backend(scope: BackendScope[Props, State]) {
+
+      def pullFeature[A](
+        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+        req: FeatureReq[VerbType, Arg] { type Out = A },
+        getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
+      ): Callback = scope.state >>= { state =>
+        val (valueLens, includeFeature) = getLens(state.options)
+        def updateFeature(fOpt: Option[A]) = scope
+          .zoomStateL(State.features.composeLens(valueLens))
+          .setState(fOpt)
+        val curFeat = valueLens.get(state.features)
+        if(!includeFeature) {
+          if(curFeat.isEmpty) Callback.empty else updateFeature(None)
+        } else {
+          featureService(req).cata(
+            pure = feats => if(curFeat != Some(feats)) updateFeature(Some(feats)) else Callback.empty,
+            wrapped = _.completeWith {
+              // don't use snapshot, which may be out of date here
+              case Success(feats) => updateFeature(Some(feats))
+              case Failure(err) => Callback(err.printStackTrace)
+            }
+          )
+        }
+      }
 
       def pullFeatures(
         featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
       ): Callback = scope.state >>= { state =>
         pullFeature(
-          featureService, StateSnapshot(state).setStateVia(scope),
+          featureService,
           FeatureReq.QuestionDists(state.features.verbType),
           opts => (FeatureValues.questionDist, opts.questionDist)
         ) >>
           pullFeature(
-            featureService, StateSnapshot(state).setStateVia(scope),
+            featureService,
             FeatureReq.ArgSpans(state.features.verbType),
             opts => (FeatureValues.argSpans, opts.argSpans)
           ) >>
           pullFeature(
-            featureService, StateSnapshot(state).setStateVia(scope),
+            featureService,
             FeatureReq.GoldLabels(state.features.verbType),
             opts => (FeatureValues.goldLabels, opts.goldLabels)
           )
       }
 
       def render(props: Props, state: State) = {
+        // def resetValues(vt: VerbType) = scope.modState(State.features.set(FeatureValues.empty(vt)))
         val optionsSnap = StateSnapshot(state.options) { (optionsOpt, cb) => 
           val fullCb = cb >> pullFeatures(props.featureService)
           scope.modStateOption(s => optionsOpt.map(State.options.set(_)(s)), fullCb)
         }
         val verbSnap = StateSnapshot(state.features.verbType) { (verbOpt, cb) =>
           val fullCb = cb >> pullFeatures(props.featureService)
-          scope.modStateOption(s => verbOpt.map(State.features.composeLens(FeatureValues.verbType).set(_)(s)), fullCb)
+          // clear values before fetching new ones
+          scope.modStateOption(s => verbOpt.map(vt => State.features.set(FeatureValues.empty(vt))(s)), fullCb)
         }
         props.render(
           optionsSnap,
@@ -349,6 +361,8 @@ class NewVerbUI[VerbType, Arg: Order](
       .initialStateFromProps(p => State.initial(p.initVerb))
       .renderBackend[Backend]
       .build
+    // might make sense to add if we want to start with some features.
+    // .componentDidMount($ => $.backend.pullFeatures($.props.featureService))
 
     def make(
       initVerb: VerbType,
@@ -415,7 +429,7 @@ class NewVerbUI[VerbType, Arg: Order](
   // }
 
   def sentenceSelectionPane(
-    sentenceIds: SortedSet[String],
+    sentenceIds: List[String],
     curSentenceId: StateSnapshot[String]
   ) = {
     val sentencesWord = if(sentenceIds.size == 1) "sentence" else "sentences"
@@ -1078,9 +1092,7 @@ class NewVerbUI[VerbType, Arg: Order](
         sendRequest = verb => featureService(FeatureReq.Sentences(verb))) {
         case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
         case SentencesFetch.Loaded(_sentenceIds) =>
-          // TODO use sorted set
-          import scala.collection.immutable.TreeSet
-          val sentenceIds: SortedSet[String] = TreeSet(_sentenceIds.toSeq: _*)
+          val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
           val initSentenceId = sentenceIds.head
           StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
             <.div(S.dataContainer)(
