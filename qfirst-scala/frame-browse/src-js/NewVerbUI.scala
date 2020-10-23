@@ -564,21 +564,7 @@ class NewVerbUI[VerbType, Arg: Order](
                           <.td(),
                           <.td(
                             ^.colSpan := 2,
-                            <.table(
-                              <.tbody(
-                                questionDist(ArgumentId(verbId, arg))
-                                  .toVector
-                                  .sortBy(-_._2)
-                                  .takeWhile(_._2 >= 0.05)
-                                  .map { case (qt, prob) =>
-                                    <.tr(
-                                      ^.key := qt.toString,
-                                      <.td(f"$prob%.3f"),
-                                      <.td(qt.toSlots.renderQuestionString(inflectedForms.apply))
-                                    )
-                                  }.toVdomArray
-                              )
-                            )
+                            questionDistributionTable(inflectedForms, questionDist(ArgumentId(verbId, arg)))
                           )
                         )
                       )
@@ -672,6 +658,27 @@ class NewVerbUI[VerbType, Arg: Order](
   //   )
   // }
 
+  def questionDistributionTable(
+    inflectedForms: InflectedForms,
+    dist: Map[QuestionTemplate, Double]
+  ) = {
+    val total = dist.unorderedFold
+    <.table(S.questionDistTable)(
+      <.tbody(
+        dist.toVector
+          .sortBy(-_._2)
+          .takeWhile(_._2 / total >= 0.05)
+          .map { case (qt, prob) =>
+            <.tr(
+              ^.key := qt.toString,
+              <.td(S.questionProbCell)(f"${prob/total}%.3f"),
+              <.td(qt.toSlots.renderQuestionString(inflectedForms.apply))
+            )
+          }.toVdomArray
+      )
+    )
+  }
+
   def frameContainer(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
@@ -741,11 +748,9 @@ class NewVerbUI[VerbType, Arg: Order](
 
                       <.div(
                         <.div(s"Arg: ${roleTree.size} instances."),
-                        questionDistsOpt.whenDefined(questionDists =>
-                          questionDists.toVector.sortBy(-_._2).toVdomArray { case (template, prob) =>
-                            <.div(f"$prob%.3f ", template.toSlots.renderQuestionString(curInflectedForms.apply))
-                          }
-                        )
+                        questionDistsOpt.whenDefined { questionDists =>
+                          questionDistributionTable(curInflectedForms, questionDists)
+                        }
                       )
                     }
                   )

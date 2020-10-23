@@ -573,6 +573,14 @@ object VerbAnnStyles extends StyleSheet.Inline {
     backgroundColor(rgba(64, 192, 0, 0.4))
   )
 
+  val questionDistTable = style(
+    addClassNames("m-2", "small"),
+  )
+
+  val questionProbCell = style(
+    backgroundColor(alternatingRowBackgroundColor2)
+  )
+
   val coveredQuestion = coveredClause
   val hoveredQuestion = hoveredClause
 
