@@ -264,8 +264,8 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     argIndex: Option[Map[ArgumentId[Arg], Int]],
     argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
-    argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Double]]],
-    verbMlmDist: Option[Map[VerbId, Map[String, Double]]],
+    argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
+    verbMlmDist: Option[Map[VerbId, Map[String, Float]]],
     goldLabels: Option[Option[GoldVerbInfo[Arg]]]
   )
   object FeatureValues {
@@ -294,20 +294,19 @@ class NewVerbUI[VerbType, Arg: Order](
 
     class Backend(scope: BackendScope[Props, State]) {
 
-      def pullFeature[A](
+      def pullFeature[A, B](
         featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-        req: FeatureReq[VerbType, Arg] { type Out = A },
-        getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], Boolean)
+        getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], B),
+        makeReq: B => Option[FeatureReq[VerbType, Arg] { type Out = A }]
       ): Callback = scope.state >>= { state =>
-        val (valueLens, includeFeature) = getLens(state.options)
+        val (valueLens, featureSpec) = getLens(state.options)
         def updateFeature(fOpt: Option[A]) = scope
           .zoomStateL(State.features.composeLens(valueLens))
           .setState(fOpt)
         val curFeat = valueLens.get(state.features)
-        if(!includeFeature) {
-          if(curFeat.isEmpty) Callback.empty else updateFeature(None)
-        } else {
-          featureService(req).cata(
+        makeReq(featureSpec) match {
+          case None => if(curFeat.isEmpty) Callback.empty else updateFeature(None)
+          case Some(req) => featureService(req).cata(
             pure = feats => if(curFeat != Some(feats)) updateFeature(Some(feats)) else Callback.empty,
             wrapped = _.completeWith {
               // don't use snapshot, which may be out of date here
@@ -323,18 +322,38 @@ class NewVerbUI[VerbType, Arg: Order](
       ): Callback = scope.state >>= { state =>
         pullFeature(
           featureService,
-          FeatureReq.QuestionDists(state.features.verbType),
-          opts => (FeatureValues.questionDist, opts.questionDist)
+          opts => (FeatureValues.questionDist, opts.questionDist),
+          (b: Boolean) => Option(
+            FeatureReq.QuestionDists[VerbType, Arg](state.features.verbType)
+          ).filter(_ => b)
         ) >>
           pullFeature(
             featureService,
-            FeatureReq.ArgSpans(state.features.verbType),
-            opts => (FeatureValues.argSpans, opts.argSpans)
+            opts => (FeatureValues.argSpans, opts.argSpans),
+            (b: Boolean) => Option(
+              FeatureReq.ArgSpans[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
           ) >>
           pullFeature(
             featureService,
-            FeatureReq.GoldLabels(state.features.verbType),
-            opts => (FeatureValues.goldLabels, opts.goldLabels)
+            opts => (FeatureValues.argMlmDist, opts.argMlmDist),
+            (label: Option[String]) => label.map(l =>
+              FeatureReq.ArgMLMDist[VerbType, Arg](state.features.verbType, l)
+            )
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.verbMlmDist, opts.verbMlmDist),
+            (label: Option[String]) => label.map(l =>
+              FeatureReq.VerbMLMDist[VerbType, Arg](state.features.verbType, l)
+            )
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.goldLabels, opts.goldLabels),
+            (b: Boolean) => Option(
+              FeatureReq.GoldLabels[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
           )
       }
 
@@ -555,6 +574,9 @@ class NewVerbUI[VerbType, Arg: Order](
                   )
                 }
               ),
+              features.verbMlmDist.whenDefined { dists =>
+                mlmDisplay(dists(verbId))
+              },
               <.table(S.verbQAsTable)( // arg table
                 <.tbody(S.verbQAsTableBody)(
                   verb.args.toVector.sorted.flatMap(arg =>
@@ -693,6 +715,23 @@ class NewVerbUI[VerbType, Arg: Order](
     )
   }
 
+  def mlmDisplay(
+    dist: Map[String, Float],
+    numToShow: Int = 20
+  ) = {
+    val topItems = dist.toVector.sortBy(-_._2).take(numToShow)
+      <.div(S.mlmItemsBlock)(
+        topItems.toVdomArray { case (word, prob) =>
+          val clampedProb = scala.math.min(1.0, prob + 0.1)
+          <.span(S.mlmItemText)(
+            ^.color := Rgba(0, 0, 0, clampedProb).toColorStyleString,
+            ^.onClick --> Callback(println(f"$word%s: $prob%.5f")),
+            f"$word%s"
+          )
+        }
+      )
+  }
+
   def frameContainer(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
@@ -754,6 +793,12 @@ class NewVerbUI[VerbType, Arg: Order](
                       f"Frame $frameIndex%s (${frameProb}%.3f)"
                     )
                   ),
+                  verbFeatures.verbMlmDist.whenDefined { dists =>
+                    val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+                    val total = senseCounts.values.sum
+                    val senseDist = senseCounts.mapVals(_ / total)
+                    mlmDisplay(senseDist)
+                  },
                   <.div(S.clauseSetDisplay)(
                     roleTrees.sortBy(-_.size).toVdomArray { roleTree =>
                       val questionDistsOpt = verbFeatures.questionDist.map { dists =>

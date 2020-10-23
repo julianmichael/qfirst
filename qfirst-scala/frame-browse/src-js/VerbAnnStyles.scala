@@ -540,7 +540,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val verbDropdown = style()
   val framesetContainer = style(
     addClassNames("p-3"),
-    width(45 rem)
+    width(30 rem)
   )
   val disabledCriterionText = style(
     color(grey(192))
@@ -575,6 +575,14 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val questionDistTable = style(
     addClassNames("m-2", "small"),
+  )
+
+  val mlmItemsBlock = style(
+    wordWrap.breakWord
+  )
+
+  val mlmItemText = style(
+    addClassNames("mr-1", "small"),
   )
 
   val questionProbCell = style(

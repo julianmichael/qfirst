@@ -149,6 +149,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def mapVerbFeats[A, B](feats: VerbFeats[A])(f: A => B): VerbFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
 
+  def mapVerbFeatsWithType[A, B](feats: VerbFeats[A])(f: VerbType => A => B): VerbFeats[B] =
+    feats.map(func => (vt => func(vt).andThen(f(vt))))
+
   def widen[A](feats: ArgFeats[A]): RunData[VerbType => ArgumentId[Arg] => A] = feats
 
   // overriden for propbank features
@@ -402,6 +405,24 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
         mlmFeats(getVerbLemma(verbType))(verbId.sentenceId).value(verbId.verbIndex)
       }
     }
+
+  lazy val postprocessedVerbMLMFeatures: Map[String, Cell[CachedVerbFeats[Map[String, Float]]]] = {
+    mlmSettings.map(setting =>
+      setting -> new Cell(
+        s"Postprocessed MLM features ($setting)",
+        verbMLMVocab(setting).get.map(_.value).map { vocabs =>
+          cacheVerbFeats("Postprocessed MLM features")(
+            mapVerbFeatsWithType(getVerbMLMFeatures(setting)) { verbType => vec =>
+              val vocab = vocabs(getVerbLemma(verbType))
+              vec.toScalaVector.zipWithIndex.map { case (prob, i) =>
+                vocab(i) -> prob
+              }.toMap
+            }
+          )
+        }
+      )
+    ).toMap
+  }
 
   def getArgMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
     argMLMVectors(featureMode).data.zip(argSemanticHeadIndices).map { case (mlmFeats, getArgIndex) =>

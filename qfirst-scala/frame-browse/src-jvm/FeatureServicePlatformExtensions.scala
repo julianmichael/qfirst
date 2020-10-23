@@ -37,6 +37,11 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.ArgSpans(vt) => features.argSpans.get
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.VerbMLMDist(vt, label) => features
+          .postprocessedVerbMLMFeatures(label).get
+          .flatMap(_.get)
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
       case _ => ??? // TODO rest of cases
     }
   }
