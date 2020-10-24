@@ -37,10 +37,14 @@ case class QuestionTemplate(
 
   def toSlots = SlotBasedLabel[VerbForm](
     wh = wh,
-    aux = if(hasSubj) Some("does".lowerCase) else None,
+    aux = if(isPassive) Some("is".lowerCase)
+          else if(hasSubj) Some("does".lowerCase)
+          else None,
     subj = if(hasSubj) Some("something".lowerCase) else None,
     verbPrefix = Nil,
-    verb = if(hasSubj) VerbForm.Stem else VerbForm.PresentSingular3rd,
+    verb = if(isPassive) VerbForm.PastParticiple
+           else if(hasSubj) VerbForm.Stem
+           else VerbForm.PresentSingular3rd,
     obj = if(hasObj) Some("something".lowerCase) else None,
     prep = prep,
     obj2 = obj2
