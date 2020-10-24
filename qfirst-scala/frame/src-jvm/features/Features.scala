@@ -146,6 +146,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def mapArgFeats[A, B](feats: ArgFeats[A])(f: A => B): ArgFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
 
+  def mapArgFeatsWithType[A, B](feats: ArgFeats[A])(f: VerbType => A => B): ArgFeats[B] =
+    feats.map(func => (vt => func(vt).andThen(f(vt))))
+
   def mapVerbFeats[A, B](feats: VerbFeats[A])(f: A => B): VerbFeats[B] =
     feats.map(_.andThen(_.andThen(f)))
 
@@ -409,9 +412,9 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   lazy val postprocessedVerbMLMFeatures: Map[String, Cell[CachedVerbFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
       setting -> new Cell(
-        s"Postprocessed MLM features ($setting)",
+        s"Postprocessed verb MLM features ($setting)",
         verbMLMVocab(setting).get.map(_.value).map { vocabs =>
-          cacheVerbFeats("Postprocessed MLM features")(
+          cacheVerbFeats("Postprocessed verb MLM features")(
             mapVerbFeatsWithType(getVerbMLMFeatures(setting)) { verbType => vec =>
               val vocab = vocabs(getVerbLemma(verbType))
               vec.toScalaVector.zipWithIndex.map { case (prob, i) =>
@@ -430,6 +433,24 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
     }
+  }
+
+  lazy val postprocessedArgMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
+    mlmSettings.map(setting =>
+      setting -> new Cell(
+        s"Postprocessed arg MLM features ($setting)",
+        argMLMVocab(setting).get.map(_.value).map { vocabs =>
+          cacheArgFeats("Postprocessed arg MLM features")(
+            mapArgFeatsWithType(getArgMLMFeatures(setting)) { verbType => vec =>
+              val vocab = vocabs(getVerbLemma(verbType))
+              vec.toScalaVector.zipWithIndex.map { case (prob, i) =>
+                vocab(i) -> prob
+              }.toMap
+            }
+          )
+        }
+      )
+    ).toMap
   }
 
   // XXXXXXXXX

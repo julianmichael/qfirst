@@ -42,7 +42,12 @@ trait FeatureServiceCompanionPlatformExtensions {
           .flatMap(_.get)
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
-      case _ => ??? // TODO rest of cases
+      case FeatureReq.ArgMLMDist(vt, label) => features
+          .postprocessedArgMLMFeatures(label).get
+          .flatMap(_.get)
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
+      case _ => ??? // TODO rest of cases: ArgIndices
     }
   }
 }

@@ -422,6 +422,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   val verbQAsTable = style(
+    tableLayout.fixed,
     width(100 %%)
   )
 
@@ -431,6 +432,14 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val hoverHighlightedVerbTable = style(
     // backgroundColor(hoverHighlightColor)
+  )
+
+  val argFirstRow = style(
+    addClassNames("pt-2")
+  )
+
+  val roleDisplay = style(
+    addClassNames("pb-2")
   )
 
   val qaPairRow = style(

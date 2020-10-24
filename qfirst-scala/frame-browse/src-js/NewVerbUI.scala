@@ -581,7 +581,7 @@ class NewVerbUI[VerbType, Arg: Order](
                 <.tbody(S.verbQAsTableBody)(
                   verb.args.toVector.sorted.flatMap(arg =>
                     List(
-                      <.tr(
+                      <.tr(S.argFirstRow)(
                         features.goldLabels.flatten.whenDefined(goldLabels =>
                           <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
                         ),
@@ -595,11 +595,18 @@ class NewVerbUI[VerbType, Arg: Order](
                             )
                         )
                       ),
+                      <.tr(
+                        <.td(
+                          ^.colSpan := 3,
+                          features.argMlmDist.whenDefined { dists =>
+                            mlmDisplay(dists(ArgumentId(verbId, arg)))
+                          }
+                        )
+                      ),
                       features.questionDist.whenDefined(questionDist =>
                         <.tr(
-                          <.td(),
                           <.td(
-                            ^.colSpan := 2,
+                            ^.colSpan := 3,
                             questionDistributionTable(inflectedForms, questionDist(ArgumentId(verbId, arg)))
                           )
                         )
@@ -707,7 +714,7 @@ class NewVerbUI[VerbType, Arg: Order](
           .map { case (qt, prob) =>
             <.tr(
               ^.key := qt.toString,
-              <.td(S.questionProbCell)(f"${prob/total}%.3f"),
+              <.td(S.questionProbCell)(f"${prob/total}%.2f"),
               <.td(qt.toSlots.renderQuestionString(inflectedForms.apply))
             )
           }.toVdomArray
@@ -716,17 +723,20 @@ class NewVerbUI[VerbType, Arg: Order](
   }
 
   def mlmDisplay(
-    dist: Map[String, Float],
+    counts: Map[String, Float],
     numToShow: Int = 20
   ) = {
+    val total = counts.values.sum
+    val dist = counts.mapVals(_ / total)
     val topItems = dist.toVector.sortBy(-_._2).take(numToShow)
       <.div(S.mlmItemsBlock)(
         topItems.toVdomArray { case (word, prob) =>
+          val sanitizedWord = if(word == "-PRON-") "<pro>" else word
           val clampedProb = scala.math.min(1.0, prob + 0.1)
           <.span(S.mlmItemText)(
             ^.color := Rgba(0, 0, 0, clampedProb).toColorStyleString,
-            ^.onClick --> Callback(println(f"$word%s: $prob%.5f")),
-            f"$word%s"
+            ^.onClick --> Callback(println(f"$sanitizedWord%s: $prob%.5f")),
+            f"$sanitizedWord%s"
           )
         }
       )
@@ -795,20 +805,24 @@ class NewVerbUI[VerbType, Arg: Order](
                   ),
                   verbFeatures.verbMlmDist.whenDefined { dists =>
                     val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
-                    val total = senseCounts.values.sum
-                    val senseDist = senseCounts.mapVals(_ / total)
-                    mlmDisplay(senseDist)
+                    mlmDisplay(senseCounts)
                   },
                   <.div(S.clauseSetDisplay)(
-                    roleTrees.sortBy(-_.size).toVdomArray { roleTree =>
-                      val questionDistsOpt = verbFeatures.questionDist.map { dists =>
+                    roleTrees.sortBy(-_.size).zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
+                      val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
+                        roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+                      }
+                      val questionDistOpt = verbFeatures.questionDist.map { dists =>
                         roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
                       }
 
-                      <.div(
-                        <.div(s"Arg: ${roleTree.size} instances."),
-                        questionDistsOpt.whenDefined { questionDists =>
-                          questionDistributionTable(curInflectedForms, questionDists)
+                      <.div(S.roleDisplay)(
+                        <.div(s"Arg $roleIndex: ${roleTree.size} instances."),
+                        mlmDistOpt.whenDefined { mlmDist =>
+                          mlmDisplay(mlmDist)
+                        },
+                        questionDistOpt.whenDefined { questionDist =>
+                          questionDistributionTable(curInflectedForms, questionDist)
                         }
                       )
                     }
