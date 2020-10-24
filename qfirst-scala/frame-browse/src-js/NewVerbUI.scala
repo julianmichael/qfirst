@@ -329,6 +329,13 @@ class NewVerbUI[VerbType, Arg: Order](
         ) >>
           pullFeature(
             featureService,
+            opts => (FeatureValues.argIndex, opts.argIndex),
+            (b: Boolean) => Option(
+              FeatureReq.ArgIndices[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
+          ) >>
+          pullFeature(
+            featureService,
             opts => (FeatureValues.argSpans, opts.argSpans),
             (b: Boolean) => Option(
               FeatureReq.ArgSpans[VerbType, Arg](state.features.verbType)
@@ -586,6 +593,9 @@ class NewVerbUI[VerbType, Arg: Order](
                           <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
                         ),
                         <.td(Arg.toString(sentence, arg)),
+                        features.argIndex.whenDefined(argIndices =>
+                          <.td(<.i(sentence.tokens(argIndices(ArgumentId(verbId, arg)))))
+                        ),
                         features.argSpans.whenDefined(argSpans =>
                           NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
                             .whenDefined(spansNel =>
@@ -597,7 +607,7 @@ class NewVerbUI[VerbType, Arg: Order](
                       ),
                       <.tr(
                         <.td(
-                          ^.colSpan := 3,
+                          ^.colSpan := 4,
                           features.argMlmDist.whenDefined { dists =>
                             mlmDisplay(dists(ArgumentId(verbId, arg)))
                           }
@@ -606,7 +616,7 @@ class NewVerbUI[VerbType, Arg: Order](
                       features.questionDist.whenDefined(questionDist =>
                         <.tr(
                           <.td(
-                            ^.colSpan := 3,
+                            ^.colSpan := 4,
                             questionDistributionTable(inflectedForms, questionDist(ArgumentId(verbId, arg)))
                           )
                         )
@@ -614,16 +624,16 @@ class NewVerbUI[VerbType, Arg: Order](
                     )
                   ): _*
                 )
+              )(
+                S.hoverHighlightedVerbTable.when(highlightedVerbIndices.value == Set(verb.index)),
+                ^.key := verb.index,
+                ^.onMouseMove --> (
+                  if(highlightedVerbIndices.value == Set(verb.index)) {
+                    Callback.empty
+                  } else highlightedVerbIndices.setState(Set(verb.index))
+                ),
+                ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
               )
-            )(
-              S.hoverHighlightedVerbTable.when(highlightedVerbIndices.value == Set(verb.index)),
-              ^.key := verb.index,
-              ^.onMouseMove --> (
-                if(highlightedVerbIndices.value == Set(verb.index)) {
-                  Callback.empty
-                } else highlightedVerbIndices.setState(Set(verb.index))
-              ),
-              ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
             )
           },
           <.div(S.verbEntryDisplay)(

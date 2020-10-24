@@ -229,7 +229,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }.toCell("Global question prior")
 
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
-    RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices).flatMap {
+    RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices.data).flatMap {
       case ((((split, vidToType), allSpans), allVerbs), headIndices) =>
         val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
         FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
@@ -277,7 +277,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
 
   // new style arg features
-  def argSemanticHeadIndices: ArgFeats[Int]
+  def argSemanticHeadIndices: CachedArgFeats[Int]
 
   def argSyntacticFunctions: CachedArgFeats[String]
 
@@ -428,7 +428,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }
 
   def getArgMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
-    argMLMVectors(featureMode).data.zip(argSemanticHeadIndices).map { case (mlmFeats, getArgIndex) =>
+    argMLMVectors(featureMode).data.zip(argSemanticHeadIndices.data).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
         mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
       }
@@ -478,7 +478,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   )
 
   lazy val mlmFeatureGenInputs = {
-    (verbs.data, args.data, sentences.data, verbIdToType.data, widen(argSemanticHeadIndices)).mapN {
+    (verbs.data, args.data, sentences.data, verbIdToType.data, widen(argSemanticHeadIndices.data)).mapN {
       (verbs, args, sentences, verbIdToType, argSemanticHeadIndices) =>
         val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
         val argsBySentenceId = args.values.reduce(_ union _).groupBy(_.verbId.sentenceId)

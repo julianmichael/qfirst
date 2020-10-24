@@ -47,7 +47,9 @@ trait FeatureServiceCompanionPlatformExtensions {
           .flatMap(_.get)
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
-      case _ => ??? // TODO rest of cases: ArgIndices
+      case FeatureReq.ArgIndices(vt) => features.argSemanticHeadIndices.get
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
     }
   }
 }
