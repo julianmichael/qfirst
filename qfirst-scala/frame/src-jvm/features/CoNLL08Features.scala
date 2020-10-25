@@ -330,11 +330,11 @@ class CoNLL08Features(
 
           Option(dependencies.indexOf("PMOD" -> argIndex))
             .filter(_ >= 0)
-            .filter(i => validPrepPOS.contains(sentence.tokens(i).pos))
+            .filter(i => validPrepPOS.contains(sentence.tokens(argIndex).pos))
             .orElse(
               Option(dependencies.indexOf("IM" -> argIndex))
                 .filter(_ >= 0)
-                .filter(i => validToPOS.contains(sentence.tokens(i).pos))
+                .filter(i => validToPOS.contains(sentence.tokens(argIndex).pos))
             ).getOrElse(argIndex)
         }
       }
