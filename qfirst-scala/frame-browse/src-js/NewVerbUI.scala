@@ -267,7 +267,10 @@ class NewVerbUI[VerbType, Arg: Order](
     argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
     verbMlmDist: Option[Map[VerbId, Map[String, Float]]],
     goldLabels: Option[Option[GoldVerbInfo[Arg]]]
-  )
+  ) {
+    // TODO cache more effectively
+    val questionPrior = questionDist.map(_.unorderedFold)
+  }
   object FeatureValues {
     def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None)
   }
@@ -453,204 +456,6 @@ class NewVerbUI[VerbType, Arg: Order](
   //     ^.onMouseOut --> argStructureHoverOpt.setState(None)
   //   )
   // }
-
-  def sentenceSelectionPane(
-    sentenceIds: List[String],
-    curSentenceId: StateSnapshot[String]
-  ) = {
-    val sentencesWord = if(sentenceIds.size == 1) "sentence" else "sentences"
-    val sentenceCountLabel = s"${sentenceIds.size} $sentencesWord"
-
-    <.div(S.sentenceSelectionPaneContainer)(
-      <.div(S.sentenceCountLabel)(
-        <.span(S.sentenceCountLabelText)(
-          sentenceCountLabel
-        )
-      ),
-      <.div(S.sentenceSelectionPane)(
-        sentenceIds.toVdomArray { sentenceId =>
-          <.div(S.sentenceSelectionEntry)(
-            ^.key := sentenceId,
-            if(sentenceId == curSentenceId.value) S.currentSelectionEntry else S.nonCurrentSelectionEntry,
-            ^.onClick --> curSentenceId.setState(sentenceId),
-            <.span(S.sentenceSelectionEntryText)(
-              sentenceId
-            )
-          )
-        }
-      )
-    )
-  }
-
-
-  def sentenceDisplayPane(
-    verb: VerbType,
-    sentence: SentenceInfo[VerbType, Arg],
-    features: FeatureValues,
-    inflectedForms: InflectedForms
-  ) = {
-    val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
-    val (currentVerbs, otherVerbs) = sortedVerbs.partition(_.verbType == verb)
-    val currentVerbIndices = currentVerbs.map(_.index).toSet
-    IntSetLocal.make(initialValue = currentVerbIndices) { highlightedVerbIndices =>
-      // val spansOpt = features.argSpans
-      val answerSpansWithColors = for {
-        (verb, index) <- currentVerbs.zipWithIndex
-        if highlightedVerbIndices.value.contains(verb.index)
-        verbId = VerbId(sentence.sentenceId, verb.index)
-        (span, prob) <- features.argSpans.foldMap(spans =>
-          verb.args.unorderedFoldMap(arg => spans(ArgumentId(verbId, arg)))
-        ).toList
-      } yield span -> highlightLayerColors(index % highlightLayerColors.size).copy(a = prob / 4)
-      val verbColorMap = currentVerbs.zipWithIndex.map { case (verb, index) =>
-          verb.index -> highlightLayerColors(index % highlightLayerColors.size)
-      }.toMap
-
-      <.div(S.sentenceDisplayPane)(
-        features.goldLabels.whenDefined(goldLabelsOpt =>
-          <.div(S.sentenceInfoContainer)(
-            "No gold labels available."
-          ).when(goldLabelsOpt.isEmpty)
-        ),
-        <.div(S.sentenceTextContainer)(
-          <.span(S.sentenceText)(
-            View.renderSentenceWithHighlights(
-              sentence.tokens,
-              View.RenderWholeSentence(answerSpansWithColors),
-              verbColorMap.collect { case (verbIndex, color) =>
-                verbIndex -> (
-                  (v: VdomTag) => <.a(
-                    S.verbAnchorLink,
-                    ^.href := s"#verb-$verbIndex",
-                    v(
-                      ^.color := color.copy(a = 1.0).toColorStyleString,
-                      ^.fontWeight := "bold",
-                      ^.onMouseMove --> (
-                        if(highlightedVerbIndices.value == Set(verbIndex)) {
-                          Callback.empty
-                        } else highlightedVerbIndices.setState(Set(verbIndex))
-                      ),
-                      ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
-                    )
-                  )
-                )
-              }
-            )
-          )
-        ),
-        <.div(S.verbEntriesContainer)(
-          currentVerbs.toVdomArray { verb =>
-            val verbId = VerbId(sentence.sentenceId, verb.index)
-            val color = verbColorMap(verb.index)
-            <.div(S.verbEntryDisplay)(
-              <.div(
-                <.a(
-                  ^.name := s"verb-${verb.index}",
-                  ^.display := "block",
-                  ^.position := "relative",
-                  ^.visibility := "hidden"
-                )
-              ),
-              <.div(S.verbHeading)(
-                <.span(S.verbHeadingText)(
-                  ^.color := color.copy(a = 1.0).toColorStyleString,
-                  // ^.onClick --> (
-                  //   navQuery.setState(
-                  //     DatasetQuery(
-                  //       verb.verbInflectedForms.allForms.toSet,
-                  //       Set(SentenceId.fromString(curSentence.sentenceId).documentId.toString.lowerCase),
-                  //       Set(curSentence.sentenceId.lowerCase)
-                  //     )
-                  //   )
-                  // ),
-                  verb.verbType.toString,
-                ),
-                features.goldLabels.flatten.whenDefined { goldLabels =>
-                  val sense = goldLabels.verbSenses(verbId)
-                  val lemma = if(sense.contains(".")) {
-                    sense.substring(0, sense.lastIndexOf("."))
-                  } else sense
-
-                  <.span(
-                    " ",
-                    <.a(
-                      ^.href := s"http://verbs.colorado.edu/propbank/framesets-english-aliases/$lemma.html#$sense",
-                      ^.target := "_blank",
-                      sense
-                    )
-                  )
-                }
-              ),
-              features.verbMlmDist.whenDefined { dists =>
-                mlmDisplay(dists(verbId))
-              },
-              <.table(S.verbQAsTable)( // arg table
-                <.tbody(S.verbQAsTableBody)(
-                  verb.args.toVector.sorted.flatMap(arg =>
-                    List(
-                      <.tr(S.argFirstRow)(
-                        features.goldLabels.flatten.whenDefined(goldLabels =>
-                          <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
-                        ),
-                        <.td(Arg.toString(sentence, arg)),
-                        features.argIndex.whenDefined(argIndices =>
-                          <.td(<.i(sentence.tokens(argIndices(ArgumentId(verbId, arg)))))
-                        ),
-                        features.argSpans.whenDefined(argSpans =>
-                          NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
-                            .whenDefined(spansNel =>
-                              <.td(
-                                View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
-                              )
-                            )
-                        )
-                      ),
-                      <.tr(
-                        <.td(
-                          ^.colSpan := 4,
-                          features.argMlmDist.whenDefined { dists =>
-                            mlmDisplay(dists(ArgumentId(verbId, arg)))
-                          }
-                        )
-                      ),
-                      features.questionDist.whenDefined(questionDist =>
-                        <.tr(
-                          <.td(
-                            ^.colSpan := 4,
-                            questionDistributionTable(inflectedForms, questionDist(ArgumentId(verbId, arg)))
-                          )
-                        )
-                      )
-                    )
-                  ): _*
-                )
-              )(
-                S.hoverHighlightedVerbTable.when(highlightedVerbIndices.value == Set(verb.index)),
-                ^.key := verb.index,
-                ^.onMouseMove --> (
-                  if(highlightedVerbIndices.value == Set(verb.index)) {
-                    Callback.empty
-                  } else highlightedVerbIndices.setState(Set(verb.index))
-                ),
-                ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
-              )
-            )
-          },
-          <.div(S.verbEntryDisplay)(
-            "Other verbs: ",
-            otherVerbs.map(verb =>
-              Vector(
-                <.span(
-                  ^.fontWeight := "bold",
-                  verb.verbType.toString
-                )
-              )
-            ).intercalate(Vector(<.span(", "))).toVdomArray
-          )
-        )
-      )
-    }
-  }
 
   def headerContainer(
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
@@ -1186,6 +991,236 @@ class NewVerbUI[VerbType, Arg: Order](
       }
     )
   }
+
+  def sentenceSelectionPane(
+    sentenceIds: List[String],
+    curSentenceId: StateSnapshot[String]
+  ) = {
+    val sentencesWord = if(sentenceIds.size == 1) "sentence" else "sentences"
+    val sentenceCountLabel = s"${sentenceIds.size} $sentencesWord"
+
+    <.div(S.sentenceSelectionPaneContainer)(
+      <.div(S.sentenceCountLabel)(
+        <.span(S.sentenceCountLabelText)(
+          sentenceCountLabel
+        )
+      ),
+      <.div(S.sentenceSelectionPane)(
+        sentenceIds.toVdomArray { sentenceId =>
+          <.div(S.sentenceSelectionEntry)(
+            ^.key := sentenceId,
+            if(sentenceId == curSentenceId.value) S.currentSelectionEntry else S.nonCurrentSelectionEntry,
+            ^.onClick --> curSentenceId.setState(sentenceId),
+            <.span(S.sentenceSelectionEntryText)(
+              sentenceId
+            )
+          )
+        }
+      )
+    )
+  }
+
+  @Lenses case class TFIDFConfig(
+    use: Boolean,
+    priorSmoothingLambda: Double,
+    headProbabilityMass: Double)
+  object TFIDFConfig {
+    def init = TFIDFConfig(false, 0.5, 0.95)
+  }
+  val TFIDFConfigLocal = new LocalState[TFIDFConfig]
+
+  def sentenceDisplayPane(
+    verb: VerbType,
+    sentence: SentenceInfo[VerbType, Arg],
+    features: FeatureValues,
+    inflectedForms: InflectedForms
+  ) = {
+    val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
+    val (currentVerbs, otherVerbs) = sortedVerbs.partition(_.verbType == verb)
+    val currentVerbIndices = currentVerbs.map(_.index).toSet
+    TFIDFConfigLocal.make(initialValue = TFIDFConfig.init) { tfidfConfig =>
+      IntSetLocal.make(initialValue = currentVerbIndices) { highlightedVerbIndices =>
+        // val spansOpt = features.argSpans
+        val answerSpansWithColors = for {
+          (verb, index) <- currentVerbs.zipWithIndex
+          if highlightedVerbIndices.value.contains(verb.index)
+          verbId = VerbId(sentence.sentenceId, verb.index)
+          (span, prob) <- features.argSpans.foldMap(spans =>
+            verb.args.unorderedFoldMap(arg => spans(ArgumentId(verbId, arg)))
+          ).toList
+        } yield span -> highlightLayerColors(index % highlightLayerColors.size).copy(a = prob / 4)
+        val verbColorMap = currentVerbs.zipWithIndex.map { case (verb, index) =>
+            verb.index -> highlightLayerColors(index % highlightLayerColors.size)
+        }.toMap
+
+        <.div(S.sentenceDisplayPane)(
+          features.goldLabels.whenDefined(goldLabelsOpt =>
+            <.div(S.sentenceInfoContainer)(
+              "No gold labels available."
+            ).when(goldLabelsOpt.isEmpty)
+          ),
+          features.questionDist.whenDefined(_ =>
+            <.div(
+              <.div(View.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
+              <.div(View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))),
+              <.div(View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass)))
+            )
+          ),
+          <.div(S.sentenceTextContainer)(
+            <.span(S.sentenceText)(
+              View.renderSentenceWithHighlights(
+                sentence.tokens,
+                View.RenderWholeSentence(answerSpansWithColors),
+                verbColorMap.collect { case (verbIndex, color) =>
+                  verbIndex -> (
+                    (v: VdomTag) => <.a(
+                      S.verbAnchorLink,
+                      ^.href := s"#verb-$verbIndex",
+                      v(
+                        ^.color := color.copy(a = 1.0).toColorStyleString,
+                        ^.fontWeight := "bold",
+                        ^.onMouseMove --> (
+                          if(highlightedVerbIndices.value == Set(verbIndex)) {
+                            Callback.empty
+                          } else highlightedVerbIndices.setState(Set(verbIndex))
+                        ),
+                        ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
+                      )
+                    )
+                  )
+                }
+              )
+            )
+          ),
+          <.div(S.verbEntriesContainer)(
+            currentVerbs.toVdomArray { verb =>
+              val verbId = VerbId(sentence.sentenceId, verb.index)
+              val color = verbColorMap(verb.index)
+              <.div(S.verbEntryDisplay)(
+                <.div(
+                  <.a(
+                    ^.name := s"verb-${verb.index}",
+                    ^.display := "block",
+                    ^.position := "relative",
+                    ^.visibility := "hidden"
+                  )
+                ),
+                <.div(S.verbHeading)(
+                  <.span(S.verbHeadingText)(
+                    ^.color := color.copy(a = 1.0).toColorStyleString,
+                    // ^.onClick --> (
+                    //   navQuery.setState(
+                    //     DatasetQuery(
+                    //       verb.verbInflectedForms.allForms.toSet,
+                    //       Set(SentenceId.fromString(curSentence.sentenceId).documentId.toString.lowerCase),
+                    //       Set(curSentence.sentenceId.lowerCase)
+                    //     )
+                    //   )
+                    // ),
+                    verb.verbType.toString,
+                  ),
+                  features.goldLabels.flatten.whenDefined { goldLabels =>
+                    val sense = goldLabels.verbSenses(verbId)
+                    val lemma = if(sense.contains(".")) {
+                      sense.substring(0, sense.lastIndexOf("."))
+                    } else sense
+
+                    <.span(
+                      " ",
+                      <.a(
+                        ^.href := s"http://verbs.colorado.edu/propbank/framesets-english-aliases/$lemma.html#$sense",
+                        ^.target := "_blank",
+                        sense
+                      )
+                    )
+                  }
+                ),
+                features.verbMlmDist.whenDefined { dists =>
+                  mlmDisplay(dists(verbId))
+                },
+                <.table(S.verbQAsTable)( // arg table
+                  <.tbody(S.verbQAsTableBody)(
+                    verb.args.toVector.sorted.flatMap(arg =>
+                      List(
+                        <.tr(S.argFirstRow)(
+                          features.goldLabels.flatten.whenDefined(goldLabels =>
+                            <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
+                          ),
+                          <.td(Arg.toString(sentence, arg)),
+                          features.argIndex.whenDefined(argIndices =>
+                            <.td(<.i(sentence.tokens(argIndices(ArgumentId(verbId, arg)))))
+                          ),
+                          features.argSpans.whenDefined(argSpans =>
+                            NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
+                              .whenDefined(spansNel =>
+                                <.td(
+                                  View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                                )
+                              )
+                          )
+                        ),
+                        <.tr(
+                          <.td(
+                            ^.colSpan := 4,
+                            features.argMlmDist.whenDefined { dists =>
+                              mlmDisplay(dists(ArgumentId(verbId, arg)))
+                            }
+                          )
+                        ),
+                        features.questionDist.whenDefined { questionDist =>
+                          val initDist = questionDist(ArgumentId(verbId, arg))
+                          val dist = features.questionPrior
+                            .filter(_ => tfidfConfig.value.use)
+                            .fold(initDist) { prior =>
+                              import TFIDF._
+                              val truncatedDist = truncate(
+                                initDist, tfidfConfig.value.headProbabilityMass
+                              )
+                              val smoothedPrior = addLambda(
+                                prior, tfidfConfig.value.priorSmoothingLambda
+                              )
+                              rebalance(truncatedDist, smoothedPrior)
+                            }
+
+                          <.tr(
+                            <.td(
+                              ^.colSpan := 4,
+                              questionDistributionTable(inflectedForms, dist)
+                            )
+                          )
+                        }
+                      )
+                    ): _*
+                  )
+                )(
+                  S.hoverHighlightedVerbTable.when(highlightedVerbIndices.value == Set(verb.index)),
+                  ^.key := verb.index,
+                  ^.onMouseMove --> (
+                    if(highlightedVerbIndices.value == Set(verb.index)) {
+                      Callback.empty
+                    } else highlightedVerbIndices.setState(Set(verb.index))
+                  ),
+                  ^.onMouseOut --> highlightedVerbIndices.setState(currentVerbIndices)
+                )
+              )
+            },
+            <.div(S.verbEntryDisplay)(
+              "Other verbs: ",
+              otherVerbs.map(verb =>
+                Vector(
+                  <.span(
+                    ^.fontWeight := "bold",
+                    verb.verbType.toString
+                  )
+                )
+              ).intercalate(Vector(<.span(", "))).toVdomArray
+            )
+          )
+        )
+      }
+    }
+  }
+
 
   val genericVerbForms = InflectedForms.fromStrings("verb", "verbs", "verbing", "verbed", "verben")
 
