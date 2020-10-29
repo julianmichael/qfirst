@@ -1,3 +1,5 @@
 package qfirst.frame
 
-trait PackagePlatformExtensions
+trait PackagePlatformExtensions {
+  trait TFIDFPlatformExtensions
+}

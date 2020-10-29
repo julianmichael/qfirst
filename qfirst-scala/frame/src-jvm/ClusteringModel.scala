@@ -510,20 +510,15 @@ object FullArgumentModel {
     ) = for {
       questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
       questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
-      // commented out is TF-IDF stuff
-      // globalPrior <- features.globalQuestionPrior.get
-      // lemmaPrior = {
-      //   val pcounts = questionDists.value.values.toList.combineAll
-      //   val total = pcounts.values.sum
-      //   pcounts.mapVals(_ / total)
-      // }
-      // uniformPrior = questionVocab.items.map(_ -> (1.0 / questionVocab.size)).toMap
-      // finalPrior = questionVocab.items.map(q =>
-      //   q -> ((globalPrior(q) + lemmaPrior(q) + uniformPrior(q)) / 3.0)
-      // ).toMap
+      // tfidf = TFIDF.makeTransform(
+      //   headProbabilityMass = 0.99,
+      //   priorSmoothingLambda = 1000.0,
+      //   priorTruncationHead = .99
+      // )(questionDists.value)
       indexedInstances = questionDists.value.map { case (argId, questionDist) =>
-        // argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> (p / (finalPrior(q) * questionVocab.size)) }
-        argId -> questionDist.map { case (q, p) => questionVocab.getIndex(q) -> p }
+        // val dist = tfidf(questionDist)
+        val dist = questionDist
+        argId -> dist.map { case (q, p) => questionVocab.getIndex(q) -> p }
       }
     } yield (
       new DirichletMAPClusteringSparse(indexedInstances, questionVocab.size, 0.01),
@@ -605,7 +600,11 @@ object FullArgumentModel {
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
       argMLMFeatures <- features.getArgMLMFeatures(mode).get.map(_.apply(verbType))
-      // TODO add tf-idf transform?
+      // tfidf = TFIDF.makeTransform(
+      //   headProbabilityMass = 0.99,
+      //   priorSmoothingLambda = 1000.0,
+      //   priorTruncationHead = .99
+      // )(questionDists.value)
     } yield (
       new DirichletMAPClusteringDense(argMLMFeatures, features.mlmFeatureDim, 0.01f),
       new MinEntropyClusteringDense(argMLMFeatures, features.mlmFeatureDim)

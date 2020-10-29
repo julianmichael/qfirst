@@ -1,5 +1,6 @@
 package qfirst.frame
 
+import cats.UnorderedFoldable
 import cats.implicits._
 
 object TFIDF {
@@ -25,5 +26,13 @@ object TFIDF {
     val adjusted = counts.transform { case (a, prob) => prob / prior(a) }
     val adjustedTotal = adjusted.unorderedFold
     adjusted.mapVals(_ / adjustedTotal)
+  }
+
+  def makeTransform[F[_]: UnorderedFoldable, A](
+    headProbabilityMass: Double, priorSmoothingLambda: Double, priorTruncationHead: Double = 1.0
+  )(dists: F[Map[A, Double]]): Map[A, Double] => Map[A, Double] = {
+    require(priorTruncationHead >= headProbabilityMass)
+    val prior = addLambda(dists.unorderedFoldMap(truncate(_, priorTruncationHead)), priorSmoothingLambda)
+    (dist: Map[A, Double]) => rebalance(truncate(dist, headProbabilityMass), prior)
   }
 }
