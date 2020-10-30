@@ -84,6 +84,15 @@ class CoNLL08Features(
     NonMergingMap(ds.value.map { case (sid, sent) => sid -> keepOnlyCommonPredicates(sent, lemmasToKeep) })
   }
 
+  def dropIrrelevantRoles(sentence: CoNLL08Sentence) = {
+    CoNLL08Sentence.predicateArgumentStructures
+      .composeTraversal(Optics.each)
+      .composeLens(PredArgStructure.arguments)
+      .modify(
+        _.filterNot(arg => PropBankRoleLabel.roleLabelIsIrrelevant(arg._1))
+      )(sentence)
+  }
+
   def dropCorefAndResumptiveRoles(sentence: CoNLL08Sentence) = {
     import jjm.ling.en.PTBPosTags
     sentence.copy(
@@ -133,14 +142,18 @@ class CoNLL08Features(
     )
   }
 
-  // TODO add unfiltered dataset separately for feature generation
+  // TODO add unfiltered dataset separately for feature generation?
 
   val dataset: RunDataCell[NonMergingMap[String, CoNLL08Sentence]] = {
     import scala.concurrent.ExecutionContext.Implicits.global
     splits.flatMap(split =>
       dataService
         .streamSentences[IO](split)
-        .map(s => NonMergingMap(Map(s.id.toString -> dropCorefAndResumptiveRoles(keepOnlyVerbalPredicates(s)))))
+        .map(s =>
+          NonMergingMap(
+            Map(s.id.toString -> dropCorefAndResumptiveRoles(keepOnlyVerbalPredicates(s)))
+          )
+        )
         .infoCompile(s"Reading CoNLL 2008 data ($split)")(_.foldMonoid)
     ).toCell("CoNLL 2008 dataset")
   }

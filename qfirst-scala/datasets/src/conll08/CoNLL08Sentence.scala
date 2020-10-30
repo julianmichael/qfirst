@@ -6,6 +6,8 @@ import io.circe.generic.JsonCodec
 import qfirst.datasets.PredArgStructure
 import qfirst.datasets.PropBankPredicate
 
+import monocle.macros.Lenses
+
 case class CoNLL08SentenceId(
   split: CoNLL08Split, // train, dev, test
   index: Int // sentence index
@@ -30,7 +32,7 @@ object CoNLL08SentenceId {
   //   )
 }
 
-case class CoNLL08Sentence(
+@Lenses case class CoNLL08Sentence(
   id: CoNLL08SentenceId,
   tokens: Vector[CoNLL08Token],
   paddingIndices: Set[Int], // keep track of split word forms
