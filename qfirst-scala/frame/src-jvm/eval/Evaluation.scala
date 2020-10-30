@@ -232,8 +232,9 @@ object Evaluation {
       // b3mfs,
       // b3lfs,
       // b3label,
-      // b3verb,
       purityCollocation
+      // b3verb,
+      // purityCollocationByVerb
     )
   }
 

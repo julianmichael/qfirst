@@ -19,11 +19,7 @@ trait ClusterPRMetric {
 
 object ClusterPRMetric {
 
-  val purityCollocation: ClusterPRMetric = new ClusterPRMetric {
-    override def name: String = "pur-coll"
-    override def precisionName: String = "Purity"
-    override def recallName: String = "Collocation"
-    override def apply[A](
+  def purityCollocationScores[A](
       goldClusterSizes: Map[A, Int],
       clusters: Vector[Map[A, Int]]
     ): WeightedPR = {
@@ -48,6 +44,25 @@ object ClusterPRMetric {
         WeightedNumbers(collocation, weight = numItems.toDouble)
       )
     }
+
+  val purityCollocation: ClusterPRMetric = new ClusterPRMetric {
+    override def name: String = "pur-coll"
+    override def precisionName: String = "Purity"
+    override def recallName: String = "Collocation"
+    override def apply[A](
+      goldClusterSizes: Map[A, Int],
+      clusters: Vector[Map[A, Int]]
+    ): WeightedPR = purityCollocationScores(goldClusterSizes, clusters)
+  }
+
+  val purityCollocationByVerb: ClusterPRMetric = new ClusterPRMetric {
+    override def name: String = "pur-coll-verb"
+    override def precisionName: String = "Purity"
+    override def recallName: String = "Collocation"
+    override def apply[A](
+      goldClusterSizes: Map[A, Int],
+      clusters: Vector[Map[A, Int]]
+    ): WeightedPR = purityCollocationScores(goldClusterSizes, clusters).normalize
   }
 
   def b3PerInstanceByLabel[A](
@@ -126,7 +141,7 @@ object ClusterPRMetric {
   }
 
   val all = List[ClusterPRMetric](
-    b3instance, b3label, b3lfs, b3mfs, b3verb, purityCollocation
+    b3instance, b3label, b3lfs, b3mfs, b3verb, purityCollocation, purityCollocationByVerb
   )
 
   def fromString(x: String) = all.find(_.name == x)
