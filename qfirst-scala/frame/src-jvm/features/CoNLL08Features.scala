@@ -341,6 +341,7 @@ class CoNLL08Features(
           //   }
           // }
 
+          // XXX currently collected MLM distributions are for index i, not argIndex. need to update
           Option(dependencies.indexOf("PMOD" -> argIndex))
             .filter(_ >= 0)
             .filter(i => validPrepPOS.contains(sentence.tokens(argIndex).pos))

@@ -178,6 +178,11 @@ import scala.annotation.tailrec
     merge = (_, l, r) => scala.math.max(l, r) + 1
   )
 
+  def contains(x: A) = cata[Boolean](
+    leaf = (_, y) => x == y,
+    merge = (_, y, z) => y || z
+  )
+
   def toJsonStringSafe(implicit e: io.circe.Encoder[A]) = {
     import io.circe.syntax._
     cata[Vector[String]](
