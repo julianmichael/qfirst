@@ -103,6 +103,8 @@ object SplitTuningCriterion {
     OracleCriterion,
     NumClustersCriterion,
     TotalEntropyCriterion,
+    LinearPenaltyCriterion,
+    LogPenaltyCriterion,
     SqNumClustersPenaltyCriterion,
     CuttingDeltaCriterion,
     LossPerItemCriterion,
@@ -149,6 +151,34 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
       -size * scala.math.log(size.toDouble / numItems)
     )
     s.loss + (t * mixingLoss)
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
+  }
+}
+
+object LogPenaltyCriterion extends SplitTuningCriterion {
+  val name: String = "log-penalty"
+  val defaultThresholds = (1 to 100).map(_.toDouble / 100).toList
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    s.loss + (t * scala.math.log(s.numClusters) * s.numItems)
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
+  }
+}
+
+object LinearPenaltyCriterion extends SplitTuningCriterion {
+  val name: String = "linear-penalty"
+  val defaultThresholds = (0 to 100).map(_.toDouble / 1000).toList
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    s.loss + (t * s.numClusters * s.numItems)
   }
 
   def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {

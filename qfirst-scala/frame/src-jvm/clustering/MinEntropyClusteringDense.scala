@@ -96,6 +96,6 @@ class MinEntropyClusteringDense[I](
       //   .filter(_ > 0.0) // prevent log of 0
       //   .map(c => c * log(c / param.total)) // count * log probability = log likelihood
       //   .sum * -1.0
-}
+    }
   )
 }
