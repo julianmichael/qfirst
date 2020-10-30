@@ -98,6 +98,8 @@ class NewVerbUI[VerbType, Arg: Order](
   Arg: ArgRendering[VerbType, Arg],
 ){
 
+  val genericVerbForms = InflectedForms.fromStrings("verb", "verbs", "verbing", "verbed", "verben")
+
   val sentenceIdOrder = Order.by[String, (String, Int)](id =>
     if(id.contains(":")) {
       val index = id.lastIndexOf(":")
@@ -557,402 +559,396 @@ class NewVerbUI[VerbType, Arg: Order](
       )
   }
 
+  case class ResolvedFrame(
+    verbTree: MergeTree[Set[VerbId]],
+    roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
+  )
+
+  def framesetDisplay(
+    verbFeatures: FeatureValues,
+    inflectedForms: InflectedForms,
+    frames: Vector[ResolvedFrame]
+  ) = {
+    val numVerbInstances = frames.foldMap(_.verbTree.size.toInt)
+    <.div(S.frameSpecDisplay, S.scrollPane) {
+      frames.zipWithIndex.toVdomArray { case (frame, frameIndex) =>
+        val verbTree = frame.verbTree
+        val roleTrees = frame.roleTrees
+        val numInstances = verbTree.size.toInt
+        val frameProb = numInstances.toDouble / numVerbInstances
+        val isFrameChosen = false // TODO
+        <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
+          ^.key := "frame-" + frameIndex.toString,
+          <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
+            <.span(S.frameHeadingText)(
+              f"Frame $frameIndex%s (${frameProb}%.3f)"
+            )
+          ),
+          verbFeatures.verbMlmDist.whenDefined { dists =>
+            val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+            mlmDisplay(senseCounts)
+          },
+          <.div(S.clauseSetDisplay)(
+            roleTrees.sortBy(-_.size).zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
+              val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
+                roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+              }
+              val questionDistOpt = verbFeatures.questionDist.map { dists =>
+                roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+              }
+
+              <.div(S.roleDisplay)(
+                <.div(s"Arg $roleIndex: ${roleTree.size} instances."),
+                mlmDistOpt.whenDefined { mlmDist =>
+                  mlmDisplay(mlmDist)
+                },
+                questionDistOpt.whenDefined { questionDist =>
+                  questionDistributionTable(inflectedForms, questionDist)
+                }
+              )
+            }
+          )
+        )
+      }
+
+      // val frameList = frameset.frames.zipWithIndex
+      // frameList.toVdomArray { case (frame, frameIndex) =>
+      //   val isFrameChosen = {
+      //     val bools = for {
+      //       sentence <- sentenceOpt.toList
+      //       verbIndex <- verbIndices.toList
+      //     } yield frame.verbIds.contains(VerbId(sentence.sentenceId, verbIndex))
+      //     bools.exists(identity)
+      //   }
+      //   val frameLens = VerbFrameset.frames
+      //     .composeLens(unsafeListAt[VerbFrame](frameIndex))
+      //   val roleClusters = paraphrasingFilter.value.questionCriterion.splitTree(frame.questionClusterTree)
+      //   // clause -> slot -> role -> sorted qids
+      //   val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[ArgumentId[Arg]]]]] = {
+      //     roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
+      //       tree.unorderedFoldMap { case qid @ ArgumentId(_, question) =>
+      //         Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
+      //       }
+      //     }
+      //   }
+      //   val baseArgSigils = Vector("X", "Y", "Z", "A", "B", "C")
+      //   val argSigils = baseArgSigils ++ (2 to 9).toVector.flatMap(i =>
+      //     baseArgSigils.map(_ + i.toString)
+      //   )
+      //   val getArgSigil = argSigils(_)
+
+      //   val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
+      //     (frame.verbIds.map(vid => SentenceId.fromString(vid.sentenceId)).toSet + SentenceId.fromString(sentence.sentenceId)).toList
+      //       .map(sid => sid -> docIdToDocMeta(sid.documentId))
+      //       .sorted(
+      //         Order.catsKernelOrderingForOrder(
+      //           Order.whenEqual[(SentenceId, DocumentMetadata)](
+      //             Order.by[(SentenceId, DocumentMetadata), String](_._2.title),
+      //             Order.by[(SentenceId, DocumentMetadata), SentenceId](_._1)
+      //           )
+      //         )
+      //       )
+      //   }
+
+      //   def makeNavQueryForSentenceIndexOpt(index: Int) = {
+      //     frameSentenceDocPairsOpt.map { allSentencesForFrame =>
+      //       val sid = allSentencesForFrame(index)._1
+      //       val sidStr = SentenceId.toString(sid)
+      //       val docIdStr = sid.documentId.toString
+      //       DatasetQuery(verbInflectedForms.allForms.toSet, Set(docIdStr.lowerCase), Set(sidStr.lowerCase))
+      //     }
+      //   }
+      //   val curSentenceIndexOpt = (frameSentenceDocPairsOpt, sentenceIdOpt).mapN { (frameSentenceDocPairs, sentenceId) =>
+      //     frameSentenceDocPairs
+      //       .zipWithIndex
+      //       .find(t => t._1._1 == sentenceId)
+      //       .map(_._2)
+      //   }.flatten
+      //   def makePrevQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
+      //     makeNavQueryForSentenceIndexOpt(
+      //       (curSentenceIndex - 1 + frameSentenceDocPairs.size) % frameSentenceDocPairs.size
+      //     )
+      //   }.flatten
+      //   def makeNextQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
+      //     makeNavQueryForSentenceIndexOpt(
+      //       (curSentenceIndex + 1) % frameSentenceDocPairs.size
+      //     )
+      //   }.flatten
+
+      //   def goToPrev(ids: SortedSet[ArgumentId[ClausalQuestion]]) = {
+      //     sentenceIdOpt.foldMap { sentenceId =>
+      //       val querySentenceIds = {
+      //         val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
+      //         (sids + sentenceId).toList
+      //       }
+      //       (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
+      //         _._2 == sentenceId
+      //       ).map(_._1).foldMap(newSid =>
+      //         navQuery.setState(
+      //           DatasetQuery(
+      //             verbInflectedForms.allForms.toSet,
+      //             Set(newSid.documentId.toString.lowerCase),
+      //             Set(SentenceId.toString(newSid).lowerCase)
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
+      //   def goToNext(ids: SortedSet[ArgumentId[ClausalQuestion]]) = {
+      //     sentenceIdOpt.foldMap { sentenceId =>
+      //       val querySentenceIds = {
+      //         val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
+      //         (sids + sentenceId).toList
+      //       }
+      //       (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
+      //         _._1 == sentenceId
+      //       ).map(_._2).foldMap(newSid =>
+      //         navQuery.setState(
+      //           DatasetQuery(
+      //             verbInflectedForms.allForms.toSet,
+      //             Set(newSid.documentId.toString.lowerCase),
+      //             Set(SentenceId.toString(newSid).lowerCase)
+      //           )
+      //         )
+      //       )
+      //     }
+      //   }
+      //   def sigilNavigationMod(ids: SortedSet[ArgumentId[ClausalQuestion]]) = TagMod(
+      //     ^.onClick ==> ((e: ReactMouseEvent) =>
+      //       if(e.altKey) goToPrev(ids) else goToNext(ids)
+      //     )
+      //   )
+
+      //   <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
+      //     ^.key := "clause-set-" + frameIndex.toString,
+      //     <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
+      //       <.span(S.frameHeadingText)(
+      //         f"Frame $frameIndex%s (${frame.probability}%.4f)"
+      //       ),
+      //       makePrevQuery.whenDefined(goToPrev =>
+      //         <.span(S.prevFrameInstanceText)(
+      //           " (prev)",
+      //           ^.onClick --> navQuery.setState(goToPrev))
+      //       ),
+      //       makeNextQuery.whenDefined(goToNext =>
+      //         <.span(S.prevFrameInstanceText)(
+      //           " (next)",
+      //           ^.onClick --> navQuery.setState(goToNext))
+      //       )
+      //     ),
+      //     <.div(S.clauseSetDisplay)(
+      //       frame.clauseTemplates.zipWithIndex
+      //         .filter(p => isClauseProbabilityAcceptable(p._1.probability))
+      //         .sortBy(-_._1.probability)
+      //         .toVdomArray { case (frameClause, clauseIndex) =>
+      //           val numQuestions = argMappings(frameClause.args).unorderedFoldMap(_.unorderedFoldMap(_.size))
+      //           val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
+
+      //           <.div(S.clauseDisplay, S.matchingClause.when(predictedParaphraseClauseTemplatesOpt.exists(_.contains(frameClause.args))))(
+      //             ^.key := "clause-" + clauseIndex.toString,
+      //             <.div(
+      //               goldParaphrasesOpt.whenDefined { goldParaphrases =>
+      //                 val clauseCorrectLens = VerbParaphraseLabels.correctClauses.composeLens(Optics.at(frameClause.args))
+      //                 val clauseIncorrectLens = VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(frameClause.args))
+      //                 val clauseCorrectness = goldParaphrases.zoomStateL(lensProduct(clauseCorrectLens, clauseIncorrectLens))
+      //                   <.div(S.goldClauseMarkerDisplay)(
+      //                     <.label(S.goldClauseCheckLabel)(
+      //                       <.input(
+      //                         ^.`type` := "checkbox",
+      //                         ^.value := clauseCorrectness.value._1,
+      //                         ^.onChange ==> ((e: ReactEventFromInput) =>
+      //                           if(clauseCorrectness.value._1) clauseCorrectness.setState(false -> false)
+      //                           else clauseCorrectness.setState(true -> false)
+      //                         )
+      //                       ),
+      //                       <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(clauseCorrectness.value._1))
+      //                     ),
+      //                     <.label(S.goldClauseXLabel)(
+      //                       <.input(
+      //                         ^.`type` := "checkbox",
+      //                         ^.value := clauseCorrectness.value._2,
+      //                         ^.onChange ==> ((e: ReactEventFromInput) =>
+      //                           if(clauseCorrectness.value._2) clauseCorrectness.setState(false -> false)
+      //                           else clauseCorrectness.setState(false -> true)
+      //                         )
+      //                       ),
+      //                       <.div(S.goldClauseX, S.goldClauseXIncorrect.when(clauseCorrectness.value._2))
+      //                     )
+      //                   )
+      //               },
+      //               <.span(S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
+      //                 <.span(f"(${frameClause.probability}%.2f) "),
+      //                 surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
+      //                   case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
+      //                   case (Right(argSlot), i) => <.span(
+      //                     ^.key := s"frame-clause-$i",
+      //                     BoolLocal.make(initialValue = false) { isEditingSlot =>
+      //                       val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
+      //                         case Noun(_) => ""
+      //                         case Prep(p, _) =>
+      //                           if(p.toString.contains("doing")) "[ng]"
+      //                           else if(p.toString.contains(" do")) "[inf]"
+      //                           else ""
+      //                         case Locative => "[where]"
+      //                       }
+      //                       val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
+      //                         goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+      //                       )
+      //                       val selectionMod = tagModForStructureLabel(
+      //                         frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
+      //                       )
+      //                       def getSigilSpan(roleIndex: Int, ids: SortedSet[ArgumentId[ClausalQuestion]]): VdomElement = {
+      //                         val goldMatchingMod = S.goldMatchingArgMarker.when(
+      //                           sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
+      //                         )
+
+      //                         <.span(
+      //                           S.argSigil, genericGoldMatchingMod,
+      //                           goldMatchingMod, /* predMatchingMod, */
+      //                           S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
+      //                           sigilNavigationMod(ids))(
+      //                           getArgSigil(roleIndex) + sigilSuffix
+      //                         )
+      //                       }
+      //                       def getRoleSpan(roleCounts: Map[Int, SortedSet[ArgumentId[ClausalQuestion]]]) = {
+      //                         <.span(selectionMod)(
+      //                           if(roleCounts.size == 1) {
+      //                             val (roleIndex, ids) = roleCounts.head
+      //                             getSigilSpan(roleIndex, ids)
+      //                           } else {
+      //                             val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
+      //                               <.span(
+      //                                 "[",
+      //                                 argSigils.map(Vector(_))
+      //                                   .intercalate(Vector(<.span(" / ")))
+      //                                   // .zipWithIndex
+      //                                   // .map { case (x, i) => x(^.key := s"sigil-$i") }
+      //                                   .toVdomArray,
+      //                                 "]"
+      //                               )
+      //                           }
+      //                         )
+      //                       }
+
+      //                       argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map { roleCounts =>
+      //                         getRoleSpan(roleCounts)
+      //                       }.getOrElse {
+      //                         <.span(S.argPlaceholder, genericGoldMatchingMod, /* predMatchingMod, */ selectionMod){
+      //                           val prefix = surrogateFrame.args.get(argSlot) match {
+      //                             case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
+      //                             case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
+      //                             case _ => ""
+      //                           }
+      //                           prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+      //                         }
+      //                       }
+      //                       // TODO integrate these into the common tag mod
+      //                       // val predMatchingMod = S.predMatchingArgMarker.when(
+      //                       //   predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+      //                       // )
+
+      //                       // argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map(s =>
+      //                       //   <.span(S.argSigil, goldMatchingMod, /* predMatchingMod, */selectionMod)(s + sigilSuffix): VdomElement
+      //                       // ).getOrElse(
+      //                       //   <.span(S.argPlaceholder, goldMatchingMod, /* predMatchingMod, */ selectionMod){
+      //                       //     val prefix = surrogateFrame.args.get(argSlot) match {
+      //                       //       case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
+      //                       //       case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
+      //                       //       case _ => ""
+      //                       //     }
+      //                       //     prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
+      //                       //   }
+      //                       // )
+      //                     }
+      //                   )
+      //                 }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.toVdomArray(p => p._1(^.key := s"frame-clause-tok-${p._2}"))
+      //               ),
+      //               <.div(S.adverbialRoles)(
+      //                 argMappings.get(frameClause.args).whenDefined { argSlotToRoleCounts =>
+      //                   argSlotToRoleCounts.toVector.collect { case (argSlot @ Adv(wh), roleCounts) =>
+      //                     val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
+      //                       goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
+      //                     )
+      //                     val selectionMod = tagModForStructureLabel(
+      //                       frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
+      //                     )
+      //                     def getSigilSpan(roleIndex: Int, ids: SortedSet[ArgumentId[ClausalQuestion]]): VdomElement = {
+      //                       val goldMatchingMod = S.goldMatchingArgMarker.when(
+      //                         sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
+      //                       )
+
+      //                       <.span(
+      //                         S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod,
+      //                         S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
+      //                         sigilNavigationMod(ids))(
+      //                         getArgSigil(roleIndex)
+      //                       )
+      //                     }
+      //                     def getRoleSpan(roleCounts: Map[Int, SortedSet[ArgumentId[ClausalQuestion]]]) = {
+      //                       if(roleCounts.size == 1) {
+      //                         val (roleIndex, ids) = roleCounts.head
+      //                         getSigilSpan(roleIndex, ids)
+      //                       } else {
+      //                         val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
+      //                           <.span(
+      //                             "[",
+      //                             argSigils.map(Vector(_))
+      //                               .intercalate(Vector(<.span(" / ")))
+      //                               // .zipWithIndex
+      //                               // .map { case (x, i) => x(^.key := s"sigil-$i") }
+      //                               .toVdomArray,
+      //                             "]"
+      //                           )
+      //                       }
+      //                     }
+
+      //                     <.span(S.adverbialRole)(
+      //                       <.span(S.adverbialRoleAdverb)(s"$wh: "),
+      //                       getRoleSpan(roleCounts)
+      //                     )
+      //                   }.toVdomArray
+      //                 }
+      //               )
+      //             )
+      //           )
+      //         }
+      //     )
+      //   )
+      // }
+    }
+  }
+
   def frameContainer(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
-    verbFeatures: FeatureValues,
+    clusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     allInflectedForms: List[InflectedForms],
-    inflectedForms: StateSnapshot[Option[InflectedForms]]
+    inflectedForms: StateSnapshot[Option[InflectedForms]],
+    verbFeatures: FeatureValues,
+    frames: Vector[ResolvedFrame]
   ) = {
-    val verb = verbFeatures.verbType
-    val curInflectedForms = inflectedForms.value.getOrElse(genericVerbForms)
-    VerbModelFetch.make(
-      request = verb,
-      sendRequest = verb => verbService.getModel(verb)) {
-      case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
-      case VerbModelFetch.Loaded(model) =>
-        val numVerbInstances = model.verbClusterTree.size.toInt
-        ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
-          // def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
+    // def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
 
-          val verbTrees = clusterSplittingSpec.value.verbCriterion.splitTree[Set[VerbId]](model.verbClusterTree, _.size.toDouble)
-          val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
-            tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
-          }.toMap
-          // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
-          val argTrees = model.argumentClusterTreeOpt
-            .map(_.group(argIds => argIds.groupBy(argId => verbIndices(argId.verbId))))
-            .getOrElse(Map())
-
-
-          <.div(S.framesetContainer)(
-            inflectedForms.value match {
-              case None => <.div("No inflected forms available.")
-              case Some(forms) => View.select[InflectedForms](S.verbDropdown)(
-                _.allForms.mkString(", "), allInflectedForms, forms, f => inflectedForms.setState(Some(f))
-              ),
-            },
-            <.div(S.clusterSplittingSpecDisplay)(
-              clusterCriterionField("Verb", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)),
-              clusterCriterionField("Argument", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)),
-              <.div(
-                <.button(
-                  "cache",
-                  ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
-                )
-              )
-              // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
-            ),
-            <.div(S.frameSpecDisplay, S.scrollPane) {
-              verbTrees.zipWithIndex.toVdomArray { case (verbTree, frameIndex) =>
-                val argTree = argTrees(frameIndex)
-                val roleTrees = clusterSplittingSpec.value.argumentCriterion
-                  .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
-                val numInstances = verbTree.size.toInt
-                val frameProb = numInstances.toDouble / numVerbInstances
-                val isFrameChosen = false // TODO
-                <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
-                  ^.key := "frame-" + frameIndex.toString,
-                  <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
-                    <.span(S.frameHeadingText)(
-                      f"Frame $frameIndex%s (${frameProb}%.3f)"
-                    )
-                  ),
-                  verbFeatures.verbMlmDist.whenDefined { dists =>
-                    val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
-                    mlmDisplay(senseCounts)
-                  },
-                  <.div(S.clauseSetDisplay)(
-                    roleTrees.sortBy(-_.size).zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
-                      val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
-                        roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
-                      }
-                      val questionDistOpt = verbFeatures.questionDist.map { dists =>
-                        roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
-                      }
-
-                      <.div(S.roleDisplay)(
-                        <.div(s"Arg $roleIndex: ${roleTree.size} instances."),
-                        mlmDistOpt.whenDefined { mlmDist =>
-                          mlmDisplay(mlmDist)
-                        },
-                        questionDistOpt.whenDefined { questionDist =>
-                          questionDistributionTable(curInflectedForms, questionDist)
-                        }
-                      )
-                    }
-                  )
-                )
-              }
-
-              // val frameList = frameset.frames.zipWithIndex
-              // frameList.toVdomArray { case (frame, frameIndex) =>
-              //   val isFrameChosen = {
-              //     val bools = for {
-              //       sentence <- sentenceOpt.toList
-              //       verbIndex <- verbIndices.toList
-              //     } yield frame.verbIds.contains(VerbId(sentence.sentenceId, verbIndex))
-              //     bools.exists(identity)
-              //   }
-              //   val frameLens = VerbFrameset.frames
-              //     .composeLens(unsafeListAt[VerbFrame](frameIndex))
-              //   val roleClusters = paraphrasingFilter.value.questionCriterion.splitTree(frame.questionClusterTree)
-              //   // clause -> slot -> role -> sorted qids
-              //   val argMappings: Map[ArgStructure, Map[ArgumentSlot, Map[Int, SortedSet[ArgumentId[Arg]]]]] = {
-              //     roleClusters.zipWithIndex.foldMap { case (tree, roleIndex) =>
-              //       tree.unorderedFoldMap { case qid @ ArgumentId(_, question) =>
-              //         Map(question.clauseTemplate -> Map(question.slot -> Map(roleIndex -> SortedSet(qid))))
-              //       }
-              //     }
-              //   }
-              //   val baseArgSigils = Vector("X", "Y", "Z", "A", "B", "C")
-              //   val argSigils = baseArgSigils ++ (2 to 9).toVector.flatMap(i =>
-              //     baseArgSigils.map(_ + i.toString)
-              //   )
-              //   val getArgSigil = argSigils(_)
-
-              //   val frameSentenceDocPairsOpt = (docIdToDocMetaOpt, sentenceOpt).mapN { (docIdToDocMeta, sentence) =>
-              //     (frame.verbIds.map(vid => SentenceId.fromString(vid.sentenceId)).toSet + SentenceId.fromString(sentence.sentenceId)).toList
-              //       .map(sid => sid -> docIdToDocMeta(sid.documentId))
-              //       .sorted(
-              //         Order.catsKernelOrderingForOrder(
-              //           Order.whenEqual[(SentenceId, DocumentMetadata)](
-              //             Order.by[(SentenceId, DocumentMetadata), String](_._2.title),
-              //             Order.by[(SentenceId, DocumentMetadata), SentenceId](_._1)
-              //           )
-              //         )
-              //       )
-              //   }
-
-              //   def makeNavQueryForSentenceIndexOpt(index: Int) = {
-              //     frameSentenceDocPairsOpt.map { allSentencesForFrame =>
-              //       val sid = allSentencesForFrame(index)._1
-              //       val sidStr = SentenceId.toString(sid)
-              //       val docIdStr = sid.documentId.toString
-              //       DatasetQuery(verbInflectedForms.allForms.toSet, Set(docIdStr.lowerCase), Set(sidStr.lowerCase))
-              //     }
-              //   }
-              //   val curSentenceIndexOpt = (frameSentenceDocPairsOpt, sentenceIdOpt).mapN { (frameSentenceDocPairs, sentenceId) =>
-              //     frameSentenceDocPairs
-              //       .zipWithIndex
-              //       .find(t => t._1._1 == sentenceId)
-              //       .map(_._2)
-              //   }.flatten
-              //   def makePrevQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
-              //     makeNavQueryForSentenceIndexOpt(
-              //       (curSentenceIndex - 1 + frameSentenceDocPairs.size) % frameSentenceDocPairs.size
-              //     )
-              //   }.flatten
-              //   def makeNextQuery = (frameSentenceDocPairsOpt, curSentenceIndexOpt).mapN { (frameSentenceDocPairs, curSentenceIndex) =>
-              //     makeNavQueryForSentenceIndexOpt(
-              //       (curSentenceIndex + 1) % frameSentenceDocPairs.size
-              //     )
-              //   }.flatten
-
-              //   def goToPrev(ids: SortedSet[ArgumentId[ClausalQuestion]]) = {
-              //     sentenceIdOpt.foldMap { sentenceId =>
-              //       val querySentenceIds = {
-              //         val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
-              //         (sids + sentenceId).toList
-              //       }
-              //       (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
-              //         _._2 == sentenceId
-              //       ).map(_._1).foldMap(newSid =>
-              //         navQuery.setState(
-              //           DatasetQuery(
-              //             verbInflectedForms.allForms.toSet,
-              //             Set(newSid.documentId.toString.lowerCase),
-              //             Set(SentenceId.toString(newSid).lowerCase)
-              //           )
-              //         )
-              //       )
-              //     }
-              //   }
-              //   def goToNext(ids: SortedSet[ArgumentId[ClausalQuestion]]) = {
-              //     sentenceIdOpt.foldMap { sentenceId =>
-              //       val querySentenceIds = {
-              //         val sids = ids.map(qid => SentenceId.fromString(qid.verbId.sentenceId))
-              //         (sids + sentenceId).toList
-              //       }
-              //       (querySentenceIds.last :: querySentenceIds).zip(querySentenceIds).find(
-              //         _._1 == sentenceId
-              //       ).map(_._2).foldMap(newSid =>
-              //         navQuery.setState(
-              //           DatasetQuery(
-              //             verbInflectedForms.allForms.toSet,
-              //             Set(newSid.documentId.toString.lowerCase),
-              //             Set(SentenceId.toString(newSid).lowerCase)
-              //           )
-              //         )
-              //       )
-              //     }
-              //   }
-              //   def sigilNavigationMod(ids: SortedSet[ArgumentId[ClausalQuestion]]) = TagMod(
-              //     ^.onClick ==> ((e: ReactMouseEvent) =>
-              //       if(e.altKey) goToPrev(ids) else goToNext(ids)
-              //     )
-              //   )
-
-              //   <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
-              //     ^.key := "clause-set-" + frameIndex.toString,
-              //     <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
-              //       <.span(S.frameHeadingText)(
-              //         f"Frame $frameIndex%s (${frame.probability}%.4f)"
-              //       ),
-              //       makePrevQuery.whenDefined(goToPrev =>
-              //         <.span(S.prevFrameInstanceText)(
-              //           " (prev)",
-              //           ^.onClick --> navQuery.setState(goToPrev))
-              //       ),
-              //       makeNextQuery.whenDefined(goToNext =>
-              //         <.span(S.prevFrameInstanceText)(
-              //           " (next)",
-              //           ^.onClick --> navQuery.setState(goToNext))
-              //       )
-              //     ),
-              //     <.div(S.clauseSetDisplay)(
-              //       frame.clauseTemplates.zipWithIndex
-              //         .filter(p => isClauseProbabilityAcceptable(p._1.probability))
-              //         .sortBy(-_._1.probability)
-              //         .toVdomArray { case (frameClause, clauseIndex) =>
-              //           val numQuestions = argMappings(frameClause.args).unorderedFoldMap(_.unorderedFoldMap(_.size))
-              //           val surrogateFrame = makeSurrogateFrame(frameClause.args, verbInflectedForms, useModal = false)
-
-              //           <.div(S.clauseDisplay, S.matchingClause.when(predictedParaphraseClauseTemplatesOpt.exists(_.contains(frameClause.args))))(
-              //             ^.key := "clause-" + clauseIndex.toString,
-              //             <.div(
-              //               goldParaphrasesOpt.whenDefined { goldParaphrases =>
-              //                 val clauseCorrectLens = VerbParaphraseLabels.correctClauses.composeLens(Optics.at(frameClause.args))
-              //                 val clauseIncorrectLens = VerbParaphraseLabels.incorrectClauses.composeLens(Optics.at(frameClause.args))
-              //                 val clauseCorrectness = goldParaphrases.zoomStateL(lensProduct(clauseCorrectLens, clauseIncorrectLens))
-              //                   <.div(S.goldClauseMarkerDisplay)(
-              //                     <.label(S.goldClauseCheckLabel)(
-              //                       <.input(
-              //                         ^.`type` := "checkbox",
-              //                         ^.value := clauseCorrectness.value._1,
-              //                         ^.onChange ==> ((e: ReactEventFromInput) =>
-              //                           if(clauseCorrectness.value._1) clauseCorrectness.setState(false -> false)
-              //                           else clauseCorrectness.setState(true -> false)
-              //                         )
-              //                       ),
-              //                       <.div(S.goldClauseCheck, S.goldClauseCheckCorrect.when(clauseCorrectness.value._1))
-              //                     ),
-              //                     <.label(S.goldClauseXLabel)(
-              //                       <.input(
-              //                         ^.`type` := "checkbox",
-              //                         ^.value := clauseCorrectness.value._2,
-              //                         ^.onChange ==> ((e: ReactEventFromInput) =>
-              //                           if(clauseCorrectness.value._2) clauseCorrectness.setState(false -> false)
-              //                           else clauseCorrectness.setState(false -> true)
-              //                         )
-              //                       ),
-              //                       <.div(S.goldClauseX, S.goldClauseXIncorrect.when(clauseCorrectness.value._2))
-              //                     )
-              //                   )
-              //               },
-              //               <.span(S.shiftedClauseTemplateDisplay.when(goldParaphrasesOpt.nonEmpty))(
-              //                 <.span(f"(${frameClause.probability}%.2f) "),
-              //                 surrogateFrame.clausesWithArgMarkers.head.zipWithIndex.map {
-              //                   case (Left(s), i) => <.span(^.key := s"frame-clause-$i", s)
-              //                   case (Right(argSlot), i) => <.span(
-              //                     ^.key := s"frame-clause-$i",
-              //                     BoolLocal.make(initialValue = false) { isEditingSlot =>
-              //                       val sigilSuffix = surrogateFrame.args.get(argSlot).get match {
-              //                         case Noun(_) => ""
-              //                         case Prep(p, _) =>
-              //                           if(p.toString.contains("doing")) "[ng]"
-              //                           else if(p.toString.contains(" do")) "[inf]"
-              //                           else ""
-              //                         case Locative => "[where]"
-              //                       }
-              //                       val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
-              //                         goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
-              //                       )
-              //                       val selectionMod = tagModForStructureLabel(
-              //                         frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
-              //                       )
-              //                       def getSigilSpan(roleIndex: Int, ids: SortedSet[ArgumentId[ClausalQuestion]]): VdomElement = {
-              //                         val goldMatchingMod = S.goldMatchingArgMarker.when(
-              //                           sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
-              //                         )
-
-              //                         <.span(
-              //                           S.argSigil, genericGoldMatchingMod,
-              //                           goldMatchingMod, /* predMatchingMod, */
-              //                           S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
-              //                           sigilNavigationMod(ids))(
-              //                           getArgSigil(roleIndex) + sigilSuffix
-              //                         )
-              //                       }
-              //                       def getRoleSpan(roleCounts: Map[Int, SortedSet[ArgumentId[ClausalQuestion]]]) = {
-              //                         <.span(selectionMod)(
-              //                           if(roleCounts.size == 1) {
-              //                             val (roleIndex, ids) = roleCounts.head
-              //                             getSigilSpan(roleIndex, ids)
-              //                           } else {
-              //                             val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
-              //                               <.span(
-              //                                 "[",
-              //                                 argSigils.map(Vector(_))
-              //                                   .intercalate(Vector(<.span(" / ")))
-              //                                   // .zipWithIndex
-              //                                   // .map { case (x, i) => x(^.key := s"sigil-$i") }
-              //                                   .toVdomArray,
-              //                                 "]"
-              //                               )
-              //                           }
-              //                         )
-              //                       }
-
-              //                       argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map { roleCounts =>
-              //                         getRoleSpan(roleCounts)
-              //                       }.getOrElse {
-              //                         <.span(S.argPlaceholder, genericGoldMatchingMod, /* predMatchingMod, */ selectionMod){
-              //                           val prefix = surrogateFrame.args.get(argSlot) match {
-              //                             case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
-              //                             case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
-              //                             case _ => ""
-              //                           }
-              //                           prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
-              //                         }
-              //                       }
-              //                       // TODO integrate these into the common tag mod
-              //                       // val predMatchingMod = S.predMatchingArgMarker.when(
-              //                       //   predStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
-              //                       // )
-
-              //                       // argMappings.get(frameClause.args).flatMap(_.get(argSlot)).map(s =>
-              //                       //   <.span(S.argSigil, goldMatchingMod, /* predMatchingMod, */selectionMod)(s + sigilSuffix): VdomElement
-              //                       // ).getOrElse(
-              //                       //   <.span(S.argPlaceholder, goldMatchingMod, /* predMatchingMod, */ selectionMod){
-              //                       //     val prefix = surrogateFrame.args.get(argSlot) match {
-              //                       //       case Some(Prep(p, _)) if p.endsWith(" doing".lowerCase) => "doing "
-              //                       //       case Some(Prep(p, _)) if p == "do".lowerCase || p.endsWith(" do".lowerCase) => "do "
-              //                       //       case _ => ""
-              //                       //     }
-              //                       //     prefix + surrogateFrame.args.get(argSlot).get.placeholder.mkString(" ")
-              //                       //   }
-              //                       // )
-              //                     }
-              //                   )
-              //                 }.map(List(_)).intercalate(List(<.span(" "))).zipWithIndex.toVdomArray(p => p._1(^.key := s"frame-clause-tok-${p._2}"))
-              //               ),
-              //               <.div(S.adverbialRoles)(
-              //                 argMappings.get(frameClause.args).whenDefined { argSlotToRoleCounts =>
-              //                   argSlotToRoleCounts.toVector.collect { case (argSlot @ Adv(wh), roleCounts) =>
-              //                     val genericGoldMatchingMod = S.genericGoldMatchingArgMarker.when(
-              //                       goldStructureRelationOpt.exists(_.preimage(frameClause.args -> argSlot).nonEmpty)
-              //                     )
-              //                     val selectionMod = tagModForStructureLabel(
-              //                       frameClause.args -> argSlot, argStructureChoiceOpt, argStructureHoverOpt, goldParaphrasesOpt
-              //                     )
-              //                     def getSigilSpan(roleIndex: Int, ids: SortedSet[ArgumentId[ClausalQuestion]]): VdomElement = {
-              //                       val goldMatchingMod = S.goldMatchingArgMarker.when(
-              //                         sentenceOpt.exists(sent => ids.exists(_.verbId.sentenceId == sent.sentenceId))
-              //                       )
-
-              //                       <.span(
-              //                         S.argSigil, genericGoldMatchingMod, goldMatchingMod, /* predMatchingMod, */selectionMod,
-              //                         S.sigilProportionalColor((ids.size.toDouble / numQuestions * 20).toInt),
-              //                         sigilNavigationMod(ids))(
-              //                         getArgSigil(roleIndex)
-              //                       )
-              //                     }
-              //                     def getRoleSpan(roleCounts: Map[Int, SortedSet[ArgumentId[ClausalQuestion]]]) = {
-              //                       if(roleCounts.size == 1) {
-              //                         val (roleIndex, ids) = roleCounts.head
-              //                         getSigilSpan(roleIndex, ids)
-              //                       } else {
-              //                         val argSigils = roleCounts.toList.map(Function.tupled(getSigilSpan(_, _)))
-              //                           <.span(
-              //                             "[",
-              //                             argSigils.map(Vector(_))
-              //                               .intercalate(Vector(<.span(" / ")))
-              //                               // .zipWithIndex
-              //                               // .map { case (x, i) => x(^.key := s"sigil-$i") }
-              //                               .toVdomArray,
-              //                             "]"
-              //                           )
-              //                       }
-              //                     }
-
-              //                     <.span(S.adverbialRole)(
-              //                       <.span(S.adverbialRoleAdverb)(s"$wh: "),
-              //                       getRoleSpan(roleCounts)
-              //                     )
-              //                   }.toVdomArray
-              //                 }
-              //               )
-              //             )
-              //           )
-              //         }
-              //     )
-              //   )
-              // }
-            }
+    <.div(S.framesetContainer)(
+      inflectedForms.value match {
+        case None => <.div("No inflected forms available.")
+        case Some(forms) => View.select[InflectedForms](S.verbDropdown)(
+          _.allForms.mkString(", "), allInflectedForms, forms, f => inflectedForms.setState(Some(f))
+        ),
+      },
+      <.div(S.clusterSplittingSpecDisplay)(
+        clusterCriterionField("Verb", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)),
+        clusterCriterionField("Argument", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)),
+        <.div(
+          <.button(
+            "cache",
+            ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
           )
-        }
-    }
+        )
+          // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
+      ),
+      framesetDisplay(verbFeatures, inflectedForms.value.getOrElse(genericVerbForms), frames)
+    )
   }
 
   def sentenceContainer(
@@ -1062,8 +1058,12 @@ class NewVerbUI[VerbType, Arg: Order](
           features.questionDist.whenDefined(_ =>
             <.div(
               <.div(View.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
-              <.div(View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))),
-              <.div(View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass)))
+              <.div(
+                View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))
+              ).when(tfidfConfig.value.use),
+              <.div(
+                View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass))
+              ).when(tfidfConfig.value.use)
             )
           ),
           <.div(S.sentenceTextContainer)(
@@ -1221,9 +1221,6 @@ class NewVerbUI[VerbType, Arg: Order](
     }
   }
 
-
-  val genericVerbForms = InflectedForms.fromStrings("verb", "verbs", "verbing", "verbed", "verben")
-
   class Backend(scope: BackendScope[Props, State]) {
 
     def render(props: Props, state: State) = {
@@ -1239,14 +1236,39 @@ class NewVerbUI[VerbType, Arg: Order](
                 sendRequest = verb => props.featureService(FeatureReq.AllInflectedForms(verb))) {
                 case InflectedFormSetFetch.Loading => <.div(S.loadingNotice)("Loading inflections...")
                 case InflectedFormSetFetch.Loaded(formList) =>
-                  InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
-                    <.div(S.mainContainer)(
-                      headerContainer(props.featureService, sortedVerbCounts, verb, options),
-                      <.div(S.dataContainer)(
-                        frameContainer(props.verbService, cachedClusterSplittingSpec, features, formList, inflectedForms),
-                        sentenceContainer(props.featureService, features, inflectedForms.value.getOrElse(genericVerbForms))
-                      )
-                    )
+                  VerbModelFetch.make(
+                    request = verb.value,
+                    sendRequest = verb => props.verbService.getModel(verb)) {
+                    case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
+                    case VerbModelFetch.Loaded(model) =>
+                      InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
+                        ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
+
+                          val verbTrees = clusterSplittingSpec.value.verbCriterion
+                            .splitTree[Set[VerbId]](model.verbClusterTree, _.size.toDouble)
+                          val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
+                            tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
+                          }.toMap
+                          // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
+                          val argTrees = model.argumentClusterTreeOpt
+                            .map(_.group(argIds => argIds.groupBy(argId => verbIndices(argId.verbId))))
+                            .getOrElse(Map())
+                          val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
+                            val argTree = argTrees(i)
+                            val roleTrees = clusterSplittingSpec.value.argumentCriterion
+                              .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                            ResolvedFrame(verbTree, roleTrees)
+                          }
+
+                          <.div(S.mainContainer)(
+                            headerContainer(props.featureService, sortedVerbCounts, verb, options),
+                            <.div(S.dataContainer)(
+                              frameContainer(props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec, formList, inflectedForms, features, frames),
+                              sentenceContainer(props.featureService, features, inflectedForms.value.getOrElse(genericVerbForms))
+                            )
+                          )
+                        }
+                      }
                   }
               }
             }
