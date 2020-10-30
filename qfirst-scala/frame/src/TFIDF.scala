@@ -3,7 +3,7 @@ package qfirst.frame
 import cats.UnorderedFoldable
 import cats.implicits._
 
-object TFIDF {
+object TFIDF extends TFIDFPlatformExtensions {
 
   def truncate[A](counts: Map[A, Double], headProportion: Double) = {
     val total = counts.unorderedFold

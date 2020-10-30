@@ -28,9 +28,9 @@ trait TFIDFPlatformExtensions {
     }
 
     def rebalance[A](counts: DenseVector[Float], prior: DenseVector[Float]): DenseVector[Float] = {
-      val adjusted = counts /:/ prior
+      val adjusted = (counts /:/ prior).map(x => if(x.isNaN) 0.0f else x)
       val adjustedTotal = adjusted.sum
-      adjusted / adjustedTotal
+      (adjusted / adjustedTotal).map(x => if(x.isNaN) 0.0f else x)
     }
 
     def makeTransform[F[_]: Foldable, A](

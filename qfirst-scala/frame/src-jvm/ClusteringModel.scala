@@ -949,11 +949,19 @@ object FullVerbModel {
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
+      verbIds <- features.verbArgSets.get.map(_.apply(verbType).keySet)
       verbMLMFeatures <- features.getVerbMLMFeatures(mode).get.map(_.apply(verbType))
-      // TODO add tf-idf transform?
+      // featsCached = verbIds.iterator.map(verbId => verbId -> verbMLMFeatures(verbId)).toMap
+      // tfidf = TFIDF.Dense.makeTransform(
+      //   headProbabilityMass = 0.97f,
+      //   priorSmoothingLambda = 0.1f,
+      //   priorTruncationHead = 0.99f
+      // )(featsCached.values.toList)
+      // feats = featsCached.mapVals(tfidf) 
+      feats = verbMLMFeatures
     } yield (
-      new DirichletMAPClusteringDense(verbMLMFeatures, features.mlmFeatureDim, 0.01f),
-      new MinEntropyClusteringDense(verbMLMFeatures, features.mlmFeatureDim)
+      new DirichletMAPClusteringDense(feats, features.mlmFeatureDim, 0.01f),
+      new MinEntropyClusteringDense(feats, features.mlmFeatureDim)
     )
   }
 

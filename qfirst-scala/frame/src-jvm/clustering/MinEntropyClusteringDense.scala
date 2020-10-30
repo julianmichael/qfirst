@@ -40,7 +40,14 @@ class MinEntropyClusteringDense[I](
     index: Index,
     param: ClusterParam
   ): Double = {
-    -1.0 * sum(getInstance(index) *:* log(param.counts /:/ param.total)) // no entries should be 0. hope we don't get NaNs
+    -1.0 * sum(
+      getInstance(index) *:* log(param.counts /:/ param.total)
+    ) // no entries should be 0. hope we don't get NaNs
+    // expensive nan check. need right for tfidf.
+    // param.counts.activeValuesIterator
+    //   .filter(_ > 0.0) // prevent log of 0
+    //   .map(c => c * log(c / param.total)) // count * log probability = log likelihood
+    //   .sum * -1.0
   }
 
   // just get MLE by counting
@@ -80,11 +87,15 @@ class MinEntropyClusteringDense[I](
   override val mergeLossEfficient = Some(
     (left: ClusterParam, right: ClusterParam) => {
       val param = mergeParamsEfficient.get(left, right)
-      -1.0 * sum(param.counts *:* log(param.counts /:/ param.total)) // no entries should be 0. hope we don't get NaNs
+      -1.0 * sum(
+        param.counts *:* log(param.counts /:/ param.total)
+      ) // no entries should be 0. hope we don't get NaNs
+
+      // expensive(?) nan check. need for tfidf.
       // param.counts.activeValuesIterator
       //   .filter(_ > 0.0) // prevent log of 0
       //   .map(c => c * log(c / param.total)) // count * log probability = log likelihood
       //   .sum * -1.0
-    }
+}
   )
 }
