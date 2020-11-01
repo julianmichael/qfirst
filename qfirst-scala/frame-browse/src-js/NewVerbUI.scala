@@ -608,9 +608,9 @@ class NewVerbUI[VerbType, Arg: Order](
     )
   }
 
-  case class ResolvedFrame(
-    verbTree: MergeTree[Set[VerbId]],
-    roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
+  class ResolvedFrame private (
+    val verbTree: MergeTree[Set[VerbId]],
+    val roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
   ) {
     val sents = {
       val base = verbTree.unorderedFold
@@ -627,17 +627,31 @@ class NewVerbUI[VerbType, Arg: Order](
       base.headOption.fold(base)(base :+ _)
     }
 
-    def nextSentence(id: String): Option[String] = sents.find(_ > id).orElse(sents.headOption)
-    def prevSentence(id: String): Option[String] = sents.sliding(2).find(_(1) >= id).map(_(0)).orElse(sents.lastOption)
+    def nextSentence(id: String): Option[String] = sents
+      .find(x => sentenceIdOrder.gt(x, id))
+      .orElse(sents.headOption)
+    def prevSentence(id: String): Option[String] = sents.sliding(2)
+      .find(x => sentenceIdOrder.gteqv(x(1), id))
+      .map(_(0))
+      .orElse(sents.lastOption)
 
     def nextSentenceForRole(roleIndex: Int, id: String): Option[String] = {
       val xs = roleSents(roleIndex)
-      xs.find(_ > id).orElse(xs.headOption)
+      xs.find(x => sentenceIdOrder.gt(x, id))
+        .orElse(xs.headOption)
     }
     def prevSentenceForRole(roleIndex: Int, id: String): Option[String] = {
       val xs = roleSents(roleIndex)
-      xs.sliding(2).find(_(1) >= id).map(_(0)).orElse(xs.lastOption)
+      xs.sliding(2)
+        .find(x => sentenceIdOrder.gteqv(x(1), id))
+        .map(_(0)).orElse(xs.lastOption)
     }
+  }
+  object ResolvedFrame {
+    def apply(
+      verbTree: MergeTree[Set[VerbId]],
+      roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
+    ): ResolvedFrame = new ResolvedFrame(verbTree, roleTrees.sortBy(-_.size))
   }
 
   def framesetDisplay(
@@ -676,7 +690,7 @@ class NewVerbUI[VerbType, Arg: Order](
             mlmDisplay(senseCounts)
           },
           <.div(S.clauseSetDisplay)(
-            roleTrees.sortBy(-_.size).zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
+            roleTrees.zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
               val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
                 roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
               }
@@ -1052,45 +1066,6 @@ class NewVerbUI[VerbType, Arg: Order](
       framesetDisplay(verbFeatures, inflectedForms.value.getOrElse(genericVerbForms), frames, curSentenceId)
     )
   }
-
-  // def sentenceContainer(
-  //   featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-  //   verbFeatures: FeatureValues,
-  //   inflectedForms: InflectedForms,
-  //   frames: Vector[ResolvedFrame]
-  // ) = {
-  //   <.div(S.dataContainer)(
-  //     SentencesFetch.make(
-  //       request = verbFeatures.verbType,
-  //       sendRequest = verb => featureService(FeatureReq.Sentences(verb))) {
-  //       case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
-  //       case SentencesFetch.Loaded(_sentenceIds) =>
-  //         val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
-  //         val initSentenceId = sentenceIds.head
-  //         StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
-  //           <.div(S.dataContainer)(
-  //             sentenceSelectionPane(
-  //               sentenceIds,
-  //               curSentenceId
-  //             ),
-  //             SentenceFetch.make(
-  //               request = curSentenceId.value,
-  //               sendRequest = sid => featureService(FeatureReq.Sentence(sid))) {
-  //               case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
-  //               case SentenceFetch.Loaded(sentenceInfo) =>
-  //                 sentenceDisplayPane(
-  //                   verbFeatures.verbType,
-  //                   sentenceInfo,
-  //                   verbFeatures,
-  //                   inflectedForms,
-  //                   frames
-  //                 )
-  //             }
-  //           )
-  //         }
-  //     }
-  //   )
-  // }
 
   def sentenceSelectionPane(
     sentenceIds: List[String],
