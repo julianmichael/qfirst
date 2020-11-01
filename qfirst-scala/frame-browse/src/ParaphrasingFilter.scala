@@ -4,7 +4,7 @@ import qfirst.frame.ArgumentId
 import qfirst.frame.ClausalQuestion
 import qfirst.frame.OldClusterSplittingCriterion
 import qfirst.frame.MergeTree
-import qfirst.frame.VerbFrame
+// import qfirst.frame.VerbFrame
 
 import qfirst.clause.ArgStructure
 
@@ -24,24 +24,24 @@ import cats.implicits._
 ) {
 
   // assume the question is in the tree
-  def getParaphrases(
-    frame: VerbFrame,
-    question: ArgumentId[ClausalQuestion],
-    questionClusterTree: MergeTree[Set[ArgumentId[ClausalQuestion]]]
-  ): Set[(ArgStructure, ArgumentSlot)] = {
-    val structureCounts = questionClusterTree.unorderedFoldMap(qids =>
-      qids.unorderedFoldMap(qid =>
-        Map(qid.argument.template -> 1)
-      )
-    )
-    val total = structureCounts.values.sum
-    structureCounts.collect {
-      case (clausalQ, count) if (
-        frame.clauseTemplates.find(_.args == clausalQ._1).exists(_.probability >= this.minClauseProb) &&
-          (count.toDouble / total) >= this.minParaphrasingProb
-      ) => clausalQ
-    }.toSet
-  }
+  // def getParaphrases(
+  //   frame: VerbFrame,
+  //   question: ArgumentId[ClausalQuestion],
+  //   questionClusterTree: MergeTree[Set[ArgumentId[ClausalQuestion]]]
+  // ): Set[(ArgStructure, ArgumentSlot)] = {
+  //   val structureCounts = questionClusterTree.unorderedFoldMap(qids =>
+  //     qids.unorderedFoldMap(qid =>
+  //       Map(qid.argument.template -> 1)
+  //     )
+  //   )
+  //   val total = structureCounts.values.sum
+  //   structureCounts.collect {
+  //     case (clausalQ, count) if (
+  //       frame.clauseTemplates.find(_.args == clausalQ._1).exists(_.probability >= this.minClauseProb) &&
+  //         (count.toDouble / total) >= this.minParaphrasingProb
+  //     ) => clausalQ
+  //   }.toSet
+  // }
 
   // def getParaphrases(
   //   frame: VerbFrame,

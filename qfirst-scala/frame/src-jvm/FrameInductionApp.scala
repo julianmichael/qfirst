@@ -68,16 +68,16 @@ object FrameInductionApp extends CommandIOApp(
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]] = {
+  ): IO[FileCached[Map[VerbType, ArgumentClustering[Arg]]]] = {
     features.splitName >>= { splitName =>
       features.modelDir
         .map(_.resolve(model.toString))
         .flatTap(createDir)
         .map(modelDir =>
-          FileCached[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]](
+          FileCached[Map[VerbType, ArgumentClustering[Arg]]](
             s"Argument cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
-            read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[ArgumentId[Arg]]])](path)
+            read = path => FileUtil.readJsonLines[(VerbType, ArgumentClustering[Arg])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getArgumentClusters(features)
@@ -97,7 +97,8 @@ object FrameInductionApp extends CommandIOApp(
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-        val argTreesRefined = argTrees.asInstanceOf[Map[String, MergeTree[Set[ArgumentId[Arg]]]]]
+        val argTreesRefined = argTrees.asInstanceOf[Map[String, ArgumentClustering[Arg]]]
+          .mapVals(_.clusterTreeOpt.get)
         features.argRoleLabels.get >>= (argRoleLabels =>
           if(features.mode.shouldEvaluate) {
             Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
@@ -214,9 +215,8 @@ object FrameInductionApp extends CommandIOApp(
               Evaluation.evaluateArgumentClusters[String, Arg](
                 evalDir.resolve("sense-specific"),
                 s"$model (sense-specific roles)",
-                // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
                 verbClusterModelsRefined.flatMap { case (vt, model) =>
-                  model.argumentClusterTreeOpt.map(vt -> _)
+                  model.argumentClustering.clusterTreeOpt.map(vt -> _) // XXX
                 },
                 argRoleLabels,
                 tuningSpecs,
@@ -229,7 +229,7 @@ object FrameInductionApp extends CommandIOApp(
                   s"$model (sense-agnostic roles)",
                   // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
                   verbClusterModelsRefined.flatMap { case (vt, model) =>
-                    model.argumentClusterTreeOpt.map(vt -> _)
+                    model.argumentClustering.clusterTreeOpt.map(vt -> _) // XXX
                   },
                   argRoleLabels,
                   tuningSpecs,

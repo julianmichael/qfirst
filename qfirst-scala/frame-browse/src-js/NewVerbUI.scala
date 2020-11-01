@@ -213,7 +213,7 @@ class NewVerbUI[VerbType, Arg: Order](
   case class Props(
     verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
-    urlNavQuery: NavQuery,
+    // urlNavQuery: NavQuery,
     mode: RunMode
   )
 
@@ -610,7 +610,8 @@ class NewVerbUI[VerbType, Arg: Order](
 
   class ResolvedFrame private (
     val verbTree: MergeTree[Set[VerbId]],
-    val roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
+    val roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]],
+    val extraRoles: Map[String, Set[ArgumentId[Arg]]]
   ) {
     val sents = {
       val base = verbTree.unorderedFold
@@ -623,6 +624,12 @@ class NewVerbUI[VerbType, Arg: Order](
       val base = roleTree.unorderedFold
         .map(_.verbId.sentenceId).toVector
         .sorted(sentenceIdOrder.toOrdering)
+
+      base.headOption.fold(base)(base :+ _)
+    }
+    val extraRoleSents = extraRoles.mapVals { argIds =>
+      val base = argIds.map(_.verbId.sentenceId).toVector
+      .sorted(sentenceIdOrder.toOrdering)
 
       base.headOption.fold(base)(base :+ _)
     }
@@ -646,12 +653,24 @@ class NewVerbUI[VerbType, Arg: Order](
         .find(x => sentenceIdOrder.gteqv(x(1), id))
         .map(_(0)).orElse(xs.lastOption)
     }
+    def nextSentenceForNamedRole(roleName: String, id: String): Option[String] = {
+      val xs = extraRoleSents(roleName)
+      xs.find(x => sentenceIdOrder.gt(x, id))
+        .orElse(xs.headOption)
+    }
+    def prevSentenceForNamedRole(roleName: String, id: String): Option[String] = {
+      val xs = extraRoleSents(roleName)
+      xs.sliding(2)
+        .find(x => sentenceIdOrder.gteqv(x(1), id))
+        .map(_(0)).orElse(xs.lastOption)
+    }
   }
   object ResolvedFrame {
     def apply(
       verbTree: MergeTree[Set[VerbId]],
-      roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]]
-    ): ResolvedFrame = new ResolvedFrame(verbTree, roleTrees.sortBy(-_.size))
+      roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]],
+      extraRoles: Map[String, Set[ArgumentId[Arg]]]
+    ): ResolvedFrame = new ResolvedFrame(verbTree, roleTrees.sortBy(-_.size), extraRoles)
   }
 
   def framesetDisplay(
@@ -1337,14 +1356,14 @@ class NewVerbUI[VerbType, Arg: Order](
                             tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
                           }.toMap
                           // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
-                          val argTrees = model.argumentClusterTreeOpt
-                            .map(_.group(argIds => argIds.groupBy(argId => verbIndices(argId.verbId))))
-                            .getOrElse(Map())
+                          val argClusterings = model.argumentClustering.split(argId => verbIndices(argId.verbId))
                           val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
-                            val argTree = argTrees(i)
-                            val roleTrees = clusterSplittingSpec.value.argumentCriterion
-                              .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
-                            ResolvedFrame(verbTree, roleTrees)
+                            val argClustering = argClusterings(i)
+                            val roleTrees = argClustering.clusterTreeOpt.foldMap(roleTree =>
+                              clusterSplittingSpec.value.argumentCriterion
+                                .splitTree[Set[ArgumentId[Arg]]](roleTree, _.size.toDouble)
+                            )
+                            ResolvedFrame(verbTree, roleTrees, argClustering.extraRoles)
                           }
 
                           <.div(S.mainContainer)(

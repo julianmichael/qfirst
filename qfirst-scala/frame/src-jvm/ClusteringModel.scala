@@ -159,7 +159,7 @@ case class JointModel(
                     val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
                     argAlgorithm.finishAgglomerativeClustering(argTrees)._1
                   }
-                  verbType -> VerbClusterModel(verbType, verbTree, argTreeOpt.map(_.map(Set(_))))
+                  verbType -> VerbClusterModel(verbType, verbTree, ArgumentClustering(argTreeOpt.map(_.map(Set(_))), Map()))
                 }
               }
             }
@@ -174,7 +174,7 @@ sealed trait ArgumentModel extends ClusteringModel {
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]
+  ): IO[Map[VerbType, ArgumentClustering[Arg]]]
 }
 object ArgumentModel {
   def fromString(x: String): Option[ArgumentModel] =
@@ -329,7 +329,7 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
+  ): IO[Map[VerbType, ArgumentClustering[Arg]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       allVerbArgSets <- features.verbArgSets.get
@@ -366,7 +366,7 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
           }
         }
       }
-    } yield results.flatten.toMap
+    } yield results.flatten.toMap.mapVals(tree => ArgumentClustering(Some(tree), Map()))
   }
   override def toString = BaselineArgumentModel.toString(this)
 }
@@ -417,7 +417,7 @@ case class FullArgumentModel private (
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
+  ): IO[Map[VerbType, ArgumentClustering[Arg]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)
@@ -430,7 +430,7 @@ case class FullArgumentModel private (
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
               Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
-                case (argTree, _) => verbType -> argTree
+                case (argTree, _) => verbType -> ArgumentClustering(Some(argTree), Map())
               }
             }
           }

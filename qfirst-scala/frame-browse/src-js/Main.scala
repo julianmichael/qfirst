@@ -71,7 +71,7 @@ object Main {
       ).andThenK(OrWrapped.mapK(wrapCallback))
     )
 
-    val query = NavQuery.fromString(dom.window.location.pathname.tail)
+    // val query = NavQuery.fromString(dom.window.location.pathname.tail)
 
     val runMode = io.circe.parser.decode[RunMode](
       dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
@@ -82,7 +82,8 @@ object Main {
     UI.Component(
       UI.Props(
         verbFrameService, featureService,
-        query, runMode
+        // query,
+        runMode
       )
     ).renderIntoDOM(
       dom.document.getElementById(SharedConstants.mainDivElementId)

@@ -59,14 +59,16 @@ object Serve extends CommandIOApp(
     case m: VerbModel => FrameInductionApp.getVerbClusters(m, features).flatMap(_.read.map(_.get))
         .map(clusterings =>
           clusterings.map { case (verbType, verbTree) =>
-            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, None)
+            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, ArgumentClustering(None, Map()))
           }
         )
     case m: ArgumentModel => FrameInductionApp.getArgumentClusters(m, features).flatMap(_.read.map(_.get))
         .map(clusterings =>
-          clusterings.map { case (verbType, argTree) =>
-            val verbTree = MergeTree.Leaf(0.0, argTree.values.foldMap(_.map(_.verbId)).toSet)
-            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, Some(argTree))
+          clusterings.map { case (verbType, clustering) =>
+            val allArgIds = clustering.clusterTreeOpt.foldMap(_.unorderedFold) ++ clustering.extraRoles.unorderedFold
+            val allVerbIds = allArgIds.map(_.verbId)
+            val verbTree = MergeTree.Leaf(0.0, allVerbIds)
+            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, clustering)
           }
         )
   }
