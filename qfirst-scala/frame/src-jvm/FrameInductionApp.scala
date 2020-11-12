@@ -98,7 +98,6 @@ object FrameInductionApp extends CommandIOApp(
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         val argTreesRefined = argTrees.asInstanceOf[Map[String, Clustering.Argument[Arg]]]
-          .mapVals(_.clusterTreeOpt.get)
         features.argRoleLabels.get >>= (argRoleLabels =>
           if(features.mode.shouldEvaluate) {
             Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
@@ -160,7 +159,6 @@ object FrameInductionApp extends CommandIOApp(
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         features.verbSenseLabels.get >>= { verbSenseLabels =>
           val verbTreesRefined = verbTrees.asInstanceOf[Map[String, Clustering.Verb]]
-            .mapVals(_.clusterTreeOpt.get)
           if(features.mode.shouldEvaluate) {
             if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
               Log.infoBranch("Evaluating verb clustering")(
@@ -216,9 +214,7 @@ object FrameInductionApp extends CommandIOApp(
               Evaluation.evaluateArgumentClusters[String, Arg](
                 evalDir.resolve("sense-specific"),
                 s"$model (sense-specific roles)",
-                verbClusterModelsRefined.flatMap { case (vt, model) =>
-                  model.argumentClustering.clusterTreeOpt.map(vt -> _) // XXX
-                },
+                verbClusterModelsRefined.mapVals(_.argumentClustering),
                 argRoleLabels,
                 tuningSpecs,
                 useSenseSpecificRoles = true
@@ -228,10 +224,7 @@ object FrameInductionApp extends CommandIOApp(
                 Evaluation.evaluateArgumentClusters(
                   evalDir.resolve("sense-agnostic"),
                   s"$model (sense-agnostic roles)",
-                  // verbClusterModelsRefined.mapVals(_.argumentClusterTree.map(Set(_))),
-                  verbClusterModelsRefined.flatMap { case (vt, model) =>
-                    model.argumentClustering.clusterTreeOpt.map(vt -> _) // XXX
-                  },
+                  verbClusterModelsRefined.mapVals(_.argumentClustering),
                   argRoleLabels,
                   tuningSpecs,
                   useSenseSpecificRoles = false
@@ -244,7 +237,7 @@ object FrameInductionApp extends CommandIOApp(
                 Log.infoBranch("Evaluating verb clustering")(
                   Evaluation.evaluateClusters[String, VerbId, String](
                     evalDir, model.toString,
-                    verbClusterModelsRefined.mapVals(_.verbClustering.clusterTreeOpt.get), verbSenseLabels,
+                    verbClusterModelsRefined.mapVals(_.verbClustering), verbSenseLabels,
                     tuningSpecs
                   )
                 )
@@ -285,7 +278,7 @@ object FrameInductionApp extends CommandIOApp(
             // reading manually to avoid having to construct the model, allowing for comparison with old models
             // after changing code, etc.
             // argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
-            argTrees <- FileUtil.readJsonLines[(String, MergeTree[Set[ArgumentId[Arg]]])](
+            argTrees <- FileUtil.readJsonLines[(String, Clustering.Argument[Arg])](
               modelSubdir.resolve("model.jsonl.gz")
             ).infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap)
             evalModeSubdirs <- getSubdirs(modelSubdir)
@@ -335,7 +328,7 @@ object FrameInductionApp extends CommandIOApp(
             // reading manually to avoid having to construct the model, allowing for comparison with old models
             // after changing code, etc.
             // argTree <- getArgumentClusters(model, features).flatMap(_.read).flatMap(x => IO(x.get))
-            argTrees <- FileUtil.readJsonLines[(String, MergeTree[Set[VerbId]])](
+            argTrees <- FileUtil.readJsonLines[(String, Clustering.Verb)](
               modelSubdir.resolve("model.jsonl.gz")
             ).infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap)
             results <- getSubdirs(modelSubdir).flatMap((metricDirs: List[NIOPath]) =>

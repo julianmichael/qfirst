@@ -32,14 +32,15 @@ object Evaluation {
 
   def getAllClusteringConfs[A](
     goldLabelTree: MergeTree[Map[A, Int]],
+    extraClusters: Map[String, Map[A, Int]],
     metric: ClusterPRMetric
   ): NonEmptyList[ConfStatsPoint] = {
-    val goldClusterSizes = goldLabelTree.unorderedFold
+    val goldClusterSizes = goldLabelTree.unorderedFold |+| extraClusters.unorderedFold
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittingsStreamByMaxLossPerCount(_.unorderedFold).take(1000).map { clusters =>
         val losses = clusters.map(_.loss)
         val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
-        val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold))
+        val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold) ++ extraClusters.values)
         ConfStatsPoint(losses, clusterSizes, weightedPR)
       }.compile.toList
     ).get
@@ -47,34 +48,49 @@ object Evaluation {
 
   def getLeafClusteringConf[A](
     goldLabelTree: MergeTree[Map[A, Int]],
+    extraClusters: Map[String, Map[A, Int]],
     metric: ClusterPRMetric
   ): ConfStatsPoint = {
-    val goldClusterSizes = goldLabelTree.unorderedFold
+    val goldClusterSizes = goldLabelTree.unorderedFold |+| extraClusters.unorderedFold
     val clusters = goldLabelTree.valuesWithLosses
     val losses = clusters.map(_._1)
     val clusterSizes = clusters.map(_._2.unorderedFold)
-    val weightedPR = metric(goldClusterSizes, clusters.map(_._2))
+    val weightedPR = metric(goldClusterSizes, clusters.map(_._2) ++ extraClusters.values)
     ConfStatsPoint(losses, clusterSizes, weightedPR)
   }
 
   def getAllPRStats[VerbType, InstanceId, GoldLabel](
-    trees: Map[VerbType, MergeTree[Set[InstanceId]]],
+    clusterings: Map[VerbType, Clustering[InstanceId]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     metric: ClusterPRMetric,
     maxClustersOnly: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = trees.toList
-    .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, tree) =>
+  ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = clusterings.toList
+    .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, clustering) =>
       val getGoldLabelForVerb = getGoldLabel(verbType)
-      Log.trace(s"$verbType (${tree.size} leaves)") >> IO {
-        val goldCountTree = tree.map(
+      Log.trace(s"$verbType (${clustering.size} leaves + extras)") >> IO {
+        val extraClusterGoldCounts = clustering.extraClusters.mapVals(
           _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
         )
-        verbType -> {
-          // we only consider default clustering of gold-derived models
-          if(maxClustersOnly) NonEmptyList.of(getLeafClusteringConf(goldCountTree, metric))
-          else getAllClusteringConfs(goldCountTree, metric)
+        val confs = clustering.clusterTreeOpt match {
+          case None =>
+            val goldClusterSizes = extraClusterGoldCounts.unorderedFold
+            NonEmptyList.of(
+              ConfStatsPoint(
+                Vector(), Vector(), metric(goldClusterSizes, extraClusterGoldCounts.values.toVector)
+              )
+            )
+          case Some(tree) =>
+            val goldCountTree = tree.map(
+              _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
+            )
+            // we only consider default clustering of gold-derived models
+            if(maxClustersOnly) NonEmptyList.of(
+              getLeafClusteringConf(goldCountTree, extraClusterGoldCounts, metric)
+            )
+            else getAllClusteringConfs(goldCountTree, extraClusterGoldCounts, metric)
         }
+        verbType -> confs
       }
     }.map(_.toMap)
 
@@ -199,14 +215,14 @@ object Evaluation {
   def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
     parentDir: NIOPath,
     modelName: String,
-    argTrees: Map[VerbType, MergeTree[Set[InstanceId]]],
+    argClusterings: Map[VerbType, Clustering[InstanceId]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     tuningSpecs: NonEmptyList[SplitTuningSpec],
     metric: ClusterPRMetric)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ) = {
     Log.infoBranch(s"Calculating metrics (${metric.name})") {
-      getAllPRStats(argTrees, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
+      getAllPRStats(argClusterings, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
         for {
           resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
           _ <- Plotting.plotAllStatsVerbwise(
@@ -241,18 +257,18 @@ object Evaluation {
   def evaluateClusters[VerbType, InstanceId, GoldLabel](
     resultsDir: NIOPath,
     modelName: String,
-    trees: Map[VerbType, MergeTree[Set[InstanceId]]],
+    clusterings: Map[VerbType, Clustering[InstanceId]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = activeMetrics.traverse(metric =>
-    runClusteringEvalWithMetric(resultsDir, modelName, trees, getGoldLabel, tuningSpecs, metric)
+    runClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, tuningSpecs, metric)
   ).void
 
   def evaluateArgumentClusters[VerbType, Arg](
     resultsDir: NIOPath,
     modelName: String,
-    argTrees: Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]],
+    argClusterings: Map[VerbType, Clustering[ArgumentId[Arg]]],
     argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     tuningSpecs: NonEmptyList[SplitTuningSpec],
     useSenseSpecificRoles: Boolean)(
@@ -264,7 +280,7 @@ object Evaluation {
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
     }
 
-    evaluateClusters(resultsDir, modelName, argTrees, getLabel, tuningSpecs)
+    evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
   }
 
   // summarize
@@ -272,14 +288,14 @@ object Evaluation {
   def evaluateModels[VerbType, InstanceId, GoldLabel](
     resultsDir: NIOPath,
     metric: ClusterPRMetric,
-    models: Map[String, (Map[VerbType, MergeTree[Set[InstanceId]]], SplitTuningSpec)],
+    models: Map[String, (Map[VerbType, Clustering[InstanceId]], SplitTuningSpec)],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     includeOracle: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = {
     for {
-      tunedStatsByModel <- models.toList.infoBarTraverse("Getting tuned P/R curves for models") { case (model, (argTrees, tuningSpec)) =>
-        Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric, model.startsWith("gold"))
+      tunedStatsByModel <- models.toList.infoBarTraverse("Getting tuned P/R curves for models") { case (model, (argClusterings, tuningSpec)) =>
+        Log.info(model) >> getAllPRStats(argClusterings, getGoldLabel, metric, model.startsWith("gold"))
           .flatMap(tuningSpec.run(_))
           .map(model -> _)
       }.map(_.toMap)
@@ -303,8 +319,8 @@ object Evaluation {
       )
       _ <- IO.pure(!includeOracle).ifM(
         IO.unit, for {
-          oracleStatsByModel <- models.toList.infoBarTraverse("Getting oracle P/R curves for models") { case (model, (argTrees, _)) =>
-            Log.info(model) >> getAllPRStats(argTrees, getGoldLabel, metric, model.startsWith("gold"))
+          oracleStatsByModel <- models.toList.infoBarTraverse("Getting oracle P/R curves for models") { case (model, (argClusterings, _)) =>
+            Log.info(model) >> getAllPRStats(argClusterings, getGoldLabel, metric, model.startsWith("gold"))
               .flatMap(SplitTuningSpec(OracleCriterion).run(_))
               .map(model -> _)
           }.map(_.toMap)
@@ -334,7 +350,7 @@ object Evaluation {
   def evaluateArgumentModels[VerbType, Arg](
     resultsDir: NIOPath,
     metric: ClusterPRMetric,
-    models: Map[String, (Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]], SplitTuningSpec)],
+    models: Map[String, (Map[VerbType, Clustering.Argument[Arg]], SplitTuningSpec)],
     argRoleLabels: Map[VerbType, NonMergingMap[ArgumentId[Arg], PropBankRoleLabel]],
     useSenseSpecificRoles: Boolean,
     includeOracle: Boolean)(
@@ -351,7 +367,7 @@ object Evaluation {
   def evaluateVerbModels[VerbType](
     resultsDir: NIOPath,
     metric: ClusterPRMetric,
-    models: Map[String, (Map[VerbType, MergeTree[Set[VerbId]]], SplitTuningSpec)],
+    models: Map[String, (Map[VerbType, Clustering.Verb], SplitTuningSpec)],
     getVerbSenseLabel: VerbType => VerbId => String,
     includeOracle: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
