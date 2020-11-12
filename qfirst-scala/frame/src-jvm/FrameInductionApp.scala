@@ -68,16 +68,16 @@ object FrameInductionApp extends CommandIOApp(
   def getArgumentClusters[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     model: ArgumentModel, features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, ArgumentClustering[Arg]]]] = {
+  ): IO[FileCached[Map[VerbType, Clustering.Argument[Arg]]]] = {
     features.splitName >>= { splitName =>
       features.modelDir
         .map(_.resolve(model.toString))
         .flatTap(createDir)
         .map(modelDir =>
-          FileCached[Map[VerbType, ArgumentClustering[Arg]]](
+          FileCached[Map[VerbType, Clustering.Argument[Arg]]](
             s"Argument cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
-            read = path => FileUtil.readJsonLines[(VerbType, ArgumentClustering[Arg])](path)
+            read = path => FileUtil.readJsonLines[(VerbType, Clustering.Argument[Arg])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getArgumentClusters(features)
@@ -97,7 +97,7 @@ object FrameInductionApp extends CommandIOApp(
       splitName <- features.splitName
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
-        val argTreesRefined = argTrees.asInstanceOf[Map[String, ArgumentClustering[Arg]]]
+        val argTreesRefined = argTrees.asInstanceOf[Map[String, Clustering.Argument[Arg]]]
           .mapVals(_.clusterTreeOpt.get)
         features.argRoleLabels.get >>= (argRoleLabels =>
           if(features.mode.shouldEvaluate) {
@@ -129,16 +129,16 @@ object FrameInductionApp extends CommandIOApp(
   def getVerbClusters[VerbType: Encoder : Decoder, Arg](
     model: VerbModel, features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[FileCached[Map[VerbType, MergeTree[Set[VerbId]]]]] = {
+  ): IO[FileCached[Map[VerbType, Clustering.Verb]]] = {
     features.splitName >>= { splitName =>
       features.modelDir
         .map(_.resolve(model.toString))
         .flatTap(createDir)
         .map(modelDir =>
-          FileCached[Map[VerbType, MergeTree[Set[VerbId]]]](
+          FileCached[Map[VerbType, Clustering.Verb]](
             s"Verb cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
-            read = path => FileUtil.readJsonLines[(VerbType, MergeTree[Set[VerbId]])](path)
+            read = path => FileUtil.readJsonLines[(VerbType, Clustering.Verb)](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getVerbClusters(features)
@@ -159,7 +159,8 @@ object FrameInductionApp extends CommandIOApp(
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         features.verbSenseLabels.get >>= { verbSenseLabels =>
-          val verbTreesRefined = verbTrees.asInstanceOf[Map[String, MergeTree[Set[VerbId]]]]
+          val verbTreesRefined = verbTrees.asInstanceOf[Map[String, Clustering.Verb]]
+            .mapVals(_.clusterTreeOpt.get)
           if(features.mode.shouldEvaluate) {
             if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
               Log.infoBranch("Evaluating verb clustering")(
@@ -243,7 +244,7 @@ object FrameInductionApp extends CommandIOApp(
                 Log.infoBranch("Evaluating verb clustering")(
                   Evaluation.evaluateClusters[String, VerbId, String](
                     evalDir, model.toString,
-                    verbClusterModelsRefined.mapVals(_.verbClusterTree), verbSenseLabels,
+                    verbClusterModelsRefined.mapVals(_.verbClustering.clusterTreeOpt.get), verbSenseLabels,
                     tuningSpecs
                   )
                 )

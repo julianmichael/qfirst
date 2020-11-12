@@ -10,7 +10,7 @@ import cats.data.NonEmptyVector
 import cats.effect.IO
 import cats.implicits._
 
-object Clustering {
+object ClusteringParams {
 
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial

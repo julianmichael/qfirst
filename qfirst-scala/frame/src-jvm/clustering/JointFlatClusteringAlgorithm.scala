@@ -80,7 +80,7 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
     val (clusters, assignments, loss) = innerAlgorithm.runHardEM(
       initModel,
       innerIndices,
-      stoppingThreshold = qfirst.frame.Clustering.flatClusteringHardStoppingDelta,
+      stoppingThreshold = qfirst.frame.ClusteringParams.flatClusteringHardStoppingDelta,
       estimateClusterPrior = estimateClusterPrior
     )(EphemeralTreeLogger.noop[cats.effect.IO, String]).unsafeRunSync()
     // )(qfirst.frame.loggerUnsafe).unsafeRunSync()

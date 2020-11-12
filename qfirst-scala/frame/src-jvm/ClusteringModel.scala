@@ -151,7 +151,7 @@ case class JointModel(
           NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
+              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
                 IO { // wrapped this here to make sure logging works in the correct order inside
                   // if this is empty, that means there are no arguments at all.
                   // if this ever happens, I'll need to adjust my VerbClusterModel data type.
@@ -159,7 +159,7 @@ case class JointModel(
                     val argAlgorithm = agglomAlgorithm._2.innerAlgorithm
                     argAlgorithm.finishAgglomerativeClustering(argTrees)._1
                   }
-                  verbType -> VerbClusterModel(verbType, verbTree, ArgumentClustering(argTreeOpt.map(_.map(Set(_))), Map()))
+                  verbType -> VerbClusterModel(verbType, Clustering[VerbId](Some(verbTree)), Clustering[ArgumentId[Arg]](argTreeOpt.map(_.map(Set(_)))))
                 }
               }
             }
@@ -174,7 +174,7 @@ sealed trait ArgumentModel extends ClusteringModel {
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, ArgumentClustering[Arg]]]
+  ): IO[Map[VerbType, Clustering.Argument[Arg]]]
 }
 object ArgumentModel {
   def fromString(x: String): Option[ArgumentModel] =
@@ -329,7 +329,7 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, ArgumentClustering[Arg]]] = {
+  ): IO[Map[VerbType, Clustering.Argument[Arg]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       allVerbArgSets <- features.verbArgSets.get
@@ -366,7 +366,7 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
           }
         }
       }
-    } yield results.flatten.toMap.mapVals(tree => ArgumentClustering(Some(tree), Map()))
+    } yield results.flatten.toMap.mapVals(tree => Clustering(Some(tree), Map()))
   }
   override def toString = BaselineArgumentModel.toString(this)
 }
@@ -417,7 +417,7 @@ case class FullArgumentModel private (
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, ArgumentClustering[Arg]]] = {
+  ): IO[Map[VerbType, Clustering.Argument[Arg]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)
@@ -429,8 +429,8 @@ case class FullArgumentModel private (
           NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
-                case (argTree, _) => verbType -> ArgumentClustering(Some(argTree), Map())
+              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+                case (argTree, _) => verbType -> Clustering(Some(argTree))
               }
             }
           }
@@ -616,7 +616,7 @@ sealed trait VerbModel extends ClusteringModel {
   def getVerbClusters[VerbType, Arg](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[VerbId]]]]
+  ): IO[Map[VerbType, Clustering.Verb]]
 }
 object VerbModel {
   def fromString(x: String): Option[VerbModel] =
@@ -772,7 +772,7 @@ case class BaselineVerbModel(setting: String) extends VerbModel {
   def getVerbClusters[VerbType, Arg](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[VerbId]]]] = {
+  ): IO[Map[VerbType, Clustering.Verb]] = {
     for {
       _ <- Log.info("Initializing model features")
       allVerbs <- features.verbs.get
@@ -807,7 +807,7 @@ case class BaselineVerbModel(setting: String) extends VerbModel {
           }
         }
       }
-    } yield results.flatten.toMap
+    } yield results.flatten.toMap.mapVals(x => Clustering(Some(x)))
   }
   override def toString = BaselineVerbModel.toString(this)
 }
@@ -857,7 +857,7 @@ case class FullVerbModel private (
   def getVerbClusters[VerbType, Arg](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, MergeTree[Set[VerbId]]]] = {
+  ): IO[Map[VerbType, Clustering.Verb]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)
@@ -869,14 +869,14 @@ case class FullVerbModel private (
           NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              Clustering.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
                 case (verbTree, _) => verbType -> verbTree
               }
             }
           }
         }
       }
-    } yield results.flatten.toMap
+    } yield results.flatten.toMap.mapVals(x => Clustering(Some(x)))
   }
 }
 

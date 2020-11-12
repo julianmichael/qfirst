@@ -6,20 +6,22 @@ import io.circe.generic.JsonCodec
 
 @JsonCodec case class VerbClusterModel[VerbType, Arg](
   verbType: VerbType,
-  verbClusterTree: MergeTree[Set[VerbId]],
-  argumentClustering: ArgumentClustering[Arg]
+  verbClustering: Clustering.Verb,
+  argumentClustering: Clustering.Argument[Arg]
 ) {
-  val numVerbInstances = verbClusterTree.size
+  val numVerbInstances = verbClustering.size
 }
 object VerbClusterModel
 
-@JsonCodec case class ArgumentClustering[Arg](
-  clusterTreeOpt: Option[MergeTree[Set[ArgumentId[Arg]]]],
-  extraRoles: Map[String, Set[ArgumentId[Arg]]]
+@JsonCodec case class Clustering[Instance](
+  clusterTreeOpt: Option[MergeTree[Set[Instance]]],
+  extraClusters: Map[String, Set[Instance]] = Map.empty[String, Set[Instance]]
 ) {
-  def split[A](f: ArgumentId[Arg] => A): Map[A, ArgumentClustering[Arg]] = {
+  def size = extraClusters.unorderedFoldMap(_.size) + clusterTreeOpt.foldMap(_.size)
+
+  def split[A](f: Instance => A): Map[A, Clustering[Instance]] = {
     val treesOpt = clusterTreeOpt.map(_.group(_.groupBy(f)))
-    val extras = extraRoles
+    val extras = extraClusters
       .mapVals(_.groupBy(f)).toList
       .foldMap { case (label, groups) =>
         groups.mapVals(argSet => Map(label -> argSet))
@@ -27,8 +29,11 @@ object VerbClusterModel
     val keys = treesOpt.foldMap(_.keySet) ++ extras.keySet
 
     keys.iterator.map(key =>
-      key -> ArgumentClustering(treesOpt.flatMap(_.get(key)), extras.get(key).combineAll)
+      key -> Clustering(treesOpt.flatMap(_.get(key)), extras.get(key).combineAll)
     ).toMap
   }
 }
-object ArgumentClustering
+object Clustering {
+  type Argument[Arg] = Clustering[ArgumentId[Arg]]
+  type Verb = Clustering[VerbId]
+}
