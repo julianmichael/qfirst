@@ -1199,7 +1199,7 @@ class NewVerbUI[VerbType, Arg: Order](
               val rolesWithIndices = frame.roleTrees.zipWithIndex
               val getRoleIndex = verb.args.iterator.map { arg =>
                 val argId = ArgumentId(verbId, arg)
-                argId -> rolesWithIndices.find(_._1.exists(_.contains(argId))).map(_._2).get
+                argId -> rolesWithIndices.find(_._1.exists(_.contains(argId))).map(_._2)
               }.toMap
               <.div(S.verbEntryDisplay)(
                 <.div(
@@ -1248,7 +1248,7 @@ class NewVerbUI[VerbType, Arg: Order](
                     verb.args.toVector.sorted.flatMap(arg =>
                       List(
                         <.tr(S.argFirstRow)(
-                          <.td(argSigils(getRoleIndex(ArgumentId(verbId, arg)))),
+                          getRoleIndex(ArgumentId(verbId, arg)).whenDefined(roleIndex => <.td(argSigils(roleIndex))),
                           features.goldLabels.flatten.whenDefined(goldLabels =>
                             <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
                           ),
@@ -1359,10 +1359,10 @@ class NewVerbUI[VerbType, Arg: Order](
                           val argClusterings = model.argumentClustering.split(argId => verbIndices(argId.verbId))
                           val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
                             val argClustering = argClusterings(i)
-                            val roleTrees = argClustering.clusterTreeOpt.foldMap(roleTree =>
+                            val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
                               clusterSplittingSpec.value.argumentCriterion
-                                .splitTree[Set[ArgumentId[Arg]]](roleTree, _.size.toDouble)
-                            )
+                                .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                            }
                             ResolvedFrame(verbTree, roleTrees, argClustering.extraRoles)
                           }
 
