@@ -16,7 +16,12 @@ case class WeightedNumbers[N](values: Vector[(Double, N)])(implicit N: Numeric[N
   }
   def normalize = {
     val pcount = values.foldMap(_._1)
-    WeightedNumbers(values.map { case (w, n) => (w / pcount) -> n })
+    WeightedNumbers(
+      values.map { case (w, n) =>
+        val normedWeight = if(pcount == 0.0) 0.0 else w / pcount
+        normedWeight -> n
+      }
+    )
   }
 }
 object WeightedNumbers {
@@ -25,7 +30,7 @@ object WeightedNumbers {
     pseudocount: Double,
     weightedSum: Double,
   ) {
-    def weightedMean: Double = weightedSum / pseudocount
+    def weightedMean: Double = if(pseudocount == 0.0) 0.0 else weightedSum / pseudocount
     def getMetrics: MapTree[String, Metric] = MapTree.fork(
       "pseudocount" ->     MapTree.leaf[String](Metric.double(pseudocount)),
       "weighted sum" ->    MapTree.leaf[String](Metric.double(weightedSum)),

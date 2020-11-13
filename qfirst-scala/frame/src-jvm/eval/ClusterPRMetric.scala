@@ -22,7 +22,14 @@ object ClusterPRMetric {
   def purityCollocationScores[A](
       goldClusterSizes: Map[A, Int],
       clusters: Vector[Map[A, Int]]
-    ): WeightedPR = {
+  ): WeightedPR = {
+    val numItems = goldClusterSizes.unorderedFold
+    if(numItems == 0) {
+      WeightedPR(
+        WeightedNumbers(0.0, weight = 0.0),
+        WeightedNumbers(0.0, weight = 0.0)
+      )
+    } else {
       val purity = clusters.filter(_.nonEmpty).foldMap { counts =>
         val primaryLabelCount = counts.values.max
         val total = counts.values.sum
@@ -38,12 +45,12 @@ object ClusterPRMetric {
           excluded = numLabels - numInPrimaryCluster
         )
       }.proportion
-      val numItems = goldClusterSizes.unorderedFold
       WeightedPR(
         WeightedNumbers(purity, weight = numItems.toDouble),
         WeightedNumbers(collocation, weight = numItems.toDouble)
       )
     }
+  }
 
   val purityCollocation: ClusterPRMetric = new ClusterPRMetric {
     override def name: String = "pur-coll"
