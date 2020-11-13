@@ -642,6 +642,15 @@ class NewVerbUI[VerbType, Arg: Order](
       .map(_(0))
       .orElse(sents.lastOption)
 
+    def nextSentenceForRole(roleId: Either[Int, String], id: String): Option[String] = roleId match {
+      case Left(i) => nextSentenceForRole(i, id)
+      case Right(x) => nextSentenceForNamedRole(x, id)
+    }
+    def prevSentenceForRole(roleId: Either[Int, String], id: String): Option[String] = roleId match {
+      case Left(i) => prevSentenceForRole(i, id)
+      case Right(x) => prevSentenceForNamedRole(x, id)
+    }
+
     def nextSentenceForRole(roleIndex: Int, id: String): Option[String] = {
       val xs = roleSents(roleIndex)
       xs.find(x => sentenceIdOrder.gt(x, id))
@@ -683,9 +692,15 @@ class NewVerbUI[VerbType, Arg: Order](
     <.div(S.frameSpecDisplay, S.scrollPane) {
       frames.zipWithIndex.toVdomArray { case (frame, frameIndex) =>
         val verbTree = frame.verbTree
-        val roleTrees = frame.roleTrees
         val numInstances = verbTree.size.toInt
         val frameProb = numInstances.toDouble / numVerbInstances
+        val numberedRoles = frame.roleTrees.zipWithIndex.map { case (tree, index) =>
+          Left(index) -> tree.unorderedFold
+        }
+        val namedRoles = frame.extraRoles.toList.map { case (name, argIds) =>
+          Right(name) -> argIds
+        }
+        val allRoles = numberedRoles ++ namedRoles
         val isFrameChosen = false // TODO
         <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
           ^.key := "frame-" + frameIndex.toString,
@@ -709,28 +724,33 @@ class NewVerbUI[VerbType, Arg: Order](
             mlmDisplay(senseCounts)
           },
           <.div(S.clauseSetDisplay)(
-            roleTrees.zipWithIndex.toVdomArray { case (roleTree, roleIndex) =>
+            allRoles.toVdomArray { case (nameOrIndex, argIds) =>
               val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
-                roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+                argIds.unorderedFoldMap(dists)
               }
               val questionDistOpt = verbFeatures.questionDist.map { dists =>
-                roleTree.unorderedFoldMap(_.unorderedFoldMap(dists))
+                argIds.unorderedFoldMap(dists)
               }
-              val sigil = argSigils(roleIndex)
+              val sigil = nameOrIndex match {
+                case Left(i) => argSigils(i)
+                case Right(name) => <.span(
+                  S.argSigil,
+                  name
+                )
+              }
 
               <.div(S.roleDisplay)(
                 <.div(
-                  sigil, s": ${roleTree.size} instances.",
+                  sigil, s": ${argIds.size} instances.",
                   <.span(S.prevFrameInstanceText)(
-                    ^.onClick --> frame.prevSentenceForRole(roleIndex, curSentenceId.value).foldMap(curSentenceId.setState),
+                    ^.onClick --> frame.prevSentenceForRole(nameOrIndex, curSentenceId.value).foldMap(curSentenceId.setState),
                     " prev "),
                   <.span(S.prevFrameInstanceText)(
-                    ^.onClick --> frame.nextSentenceForRole(roleIndex, curSentenceId.value).foldMap(curSentenceId.setState),
+                    ^.onClick --> frame.nextSentenceForRole(nameOrIndex, curSentenceId.value).foldMap(curSentenceId.setState),
                     " next ")
                 ),
                 verbFeatures.goldLabels.flatten.whenDefined { goldLabels =>
-                  // TODO full role
-                  val counts = roleTree.unorderedFoldMap(_.unorderedFoldMap(argId => Map(goldLabels.argRoles(argId).role -> 1)))
+                  val counts = argIds.unorderedFoldMap(argId => Map(goldLabels.argRoles(argId).role -> 1))
                   goldLabelDistDisplay(counts)
                 },
                 mlmDistOpt.whenDefined { mlmDist =>
@@ -1197,9 +1217,10 @@ class NewVerbUI[VerbType, Arg: Order](
               val color = verbColorMap(verb.index)
               val frame = frames.find(_.verbTree.exists(_.contains(verbId))).get
               val rolesWithIndices = frame.roleTrees.zipWithIndex
-              val getRoleIndex = verb.args.iterator.map { arg =>
+              val getRoleId = verb.args.iterator.map { arg =>
                 val argId = ArgumentId(verbId, arg)
-                argId -> rolesWithIndices.find(_._1.exists(_.contains(argId))).map(_._2)
+                argId -> rolesWithIndices.find(_._1.exists(_.contains(argId))).map(p => Left(p._2))
+                  .orElse(frame.extraRoles.iterator.find(_._2.contains(argId)).map(p => Right(p._1)))
               }.toMap
               <.div(S.verbEntryDisplay)(
                 <.div(
@@ -1248,7 +1269,12 @@ class NewVerbUI[VerbType, Arg: Order](
                     verb.args.toVector.sorted.flatMap(arg =>
                       List(
                         <.tr(S.argFirstRow)(
-                          getRoleIndex(ArgumentId(verbId, arg)).whenDefined(roleIndex => <.td(argSigils(roleIndex))),
+                          getRoleId(ArgumentId(verbId, arg)).whenDefined(roleId =>
+                            roleId match {
+                              case Left(i) => <.td(argSigils(i))
+                              case Right(x) => <.td(<.span(S.argSigil, x))
+                            }
+                          ),
                           features.goldLabels.flatten.whenDefined(goldLabels =>
                             <.td(goldLabels.argRoles(ArgumentId(verbId, arg)).role)
                           ),
@@ -1350,8 +1376,9 @@ class NewVerbUI[VerbType, Arg: Order](
                       InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
                         ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
 
+                          // assume only verb tree. no extra roles. can fix later if necessary
                           val verbTrees = clusterSplittingSpec.value.verbCriterion
-                            .splitTree[Set[VerbId]](model.verbClusterTree, _.size.toDouble)
+                            .splitTree[Set[VerbId]](model.verbClustering.clusterTreeOpt.get, _.size.toDouble)
                           val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
                             tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
                           }.toMap
@@ -1363,7 +1390,7 @@ class NewVerbUI[VerbType, Arg: Order](
                               clusterSplittingSpec.value.argumentCriterion
                                 .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
                             }
-                            ResolvedFrame(verbTree, roleTrees, argClustering.extraRoles)
+                            ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
                           }
 
                           <.div(S.mainContainer)(

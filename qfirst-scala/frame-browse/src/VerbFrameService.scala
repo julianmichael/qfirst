@@ -52,7 +52,7 @@ object VerbFrameService {
       def apply[A](req: Request[VerbType, Arg] { type Out = A }): IO[A] = {
         // @SuppressWarnings(Array("all"))
         val res = req match {
-          case GetVerbs() => IO.pure(verbModels.mapVals(_.verbClusterTree.unorderedFoldMap(_.size))): IO[Map[VerbType, Int]]
+          case GetVerbs() => IO.pure(verbModels.mapVals(_.verbClustering.size.toInt)): IO[Map[VerbType, Int]]
           case GetModel(verb) => IO(verbModels(verb)): IO[VerbClusterModel[VerbType, Arg]]
         }
         res.asInstanceOf[IO[A]]

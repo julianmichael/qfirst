@@ -170,20 +170,116 @@ case class JointModel(
   }
 }
 
-sealed trait ArgumentModel extends ClusteringModel {
+case class SideClusteringModel(
+  modals: Boolean,
+  negation: Boolean,
+  adjuncts: Boolean
+){
+  def extractSideClusters[VerbType, Arg: Order](
+    features: Features[VerbType, Arg])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, Map[String, Set[ArgumentId[Arg]]]]] = for {
+    args <- features.args.get
+    sentences <- features.sentences.get.map(_.value)
+    headIndices <- features.argSemanticHeadIndices.get
+    syntacticFuncs <- features.argSyntacticFunctions.get
+    results <- args.toList.infoBarTraverse("Constructing side clusters") { case (verbType, args) =>
+      Log.trace(verbType.toString) >> IO {
+        val heads = headIndices(verbType)
+        val funcs = syntacticFuncs(verbType)
+        val getSideClusterLabel = (argId: ArgumentId[Arg]) => {
+          val modal = Option("MODAL")
+            .filter(_ => modals)
+            .filter { _ =>
+              val sentence = sentences(argId.verbId.sentenceId)
+              val token = sentence(heads(argId))
+              SideClusteringModel.modalTokens.contains(token.lowerCase)
+            }
+          val neg = Option("NEG")
+            .filter(_ => negation)
+            .filter { _ =>
+              val sentence = sentences(argId.verbId.sentenceId)
+              val token = sentence(heads(argId))
+              jjm.ling.en.Inflections.negationWords.contains(token.lowerCase)
+            }
+          val adjunct = Some(funcs(argId))
+            .filter(_ => adjuncts)
+            .filter(SideClusteringModel.adjunctFuncs.contains)
+
+          modal.orElse(neg).orElse(adjunct)
+        }
+        verbType -> args.groupBy(getSideClusterLabel).flatMap { case (keyOpt, v) => keyOpt.map(_ -> v) }
+      }
+    }
+    _ <- Log.info(s"${results.foldMap(_._2.unorderedFoldMap(_.size))} arguments extracted into side clusters.")
+  } yield results.toMap
+  override def toString = {
+    List(
+      if(modals) "m" else "",
+      if(negation) "n" else "",
+      if(adjuncts) "a" else ""
+    ).mkString
+  }
+}
+object SideClusteringModel {
+  val modalTokens = jjm.ling.en.Inflections.modalVerbs ++ jjm.ling.en.Inflections.willVerbs
+  val adjunctFuncs = Set("TMP", "MNR", "LOC", "DIR")
+  def fromString(x: String): Option[SideClusteringModel] = {
+    Some(
+      SideClusteringModel(
+        x.contains("m"),
+        x.contains("n"),
+        x.contains("a")
+      )
+    )
+  }
+}
+
+sealed abstract class ArgumentModel(val sideClusteringModelOpt: Option[SideClusteringModel]) extends ClusteringModel {
+
+  def clusterRemainingArguments[VerbType, Arg : Order](
+    features: Features[VerbType, Arg],
+    args: Map[VerbType, Set[ArgumentId[Arg]]])(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]]
+
   def getArgumentClusters[VerbType, Arg : Order](
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, Clustering.Argument[Arg]]]
+  ): IO[Map[VerbType, Clustering.Argument[Arg]]] = for {
+    allArgs <- features.args.get
+    extraRoles <- sideClusteringModelOpt.foldMap(_.extractSideClusters(features))
+    remainingArgs = allArgs.flatMap { case (vt, args) =>
+      val extraArgs = extraRoles.get(vt).foldMap(_.unorderedFold)
+      val remArgs = args.filterNot(extraArgs.contains)
+      if(remArgs.isEmpty) None else Some(vt -> remArgs)
+    }
+    trees <- clusterRemainingArguments(features, remainingArgs)
+  } yield allArgs.keys.iterator
+    .map(vt => vt -> Clustering(trees.get(vt), extraRoles.getOrElse(vt, Map())))
+    .toMap
 }
 object ArgumentModel {
   def fromString(x: String): Option[ArgumentModel] =
     ClusteringModel.fromString(x).collect {
       case model: ArgumentModel => model
     }
+
+  def fromStringWithSideModel[A](
+    x: String, make: String => Option[SideClusteringModel] => Option[A]
+  ): Option[A] = {
+    if(x.contains("->")) {
+      val substrings = x.split("->")
+      SideClusteringModel.fromString(substrings(0)).flatMap(sideModel =>
+        make(substrings(1))(Some(sideModel))
+      )
+    } else make(x)(None)
+  }
 }
 
-case class BaselineArgumentModel(setting: String) extends ArgumentModel {
+case class BaselineArgumentModel(
+  override val sideClusteringModelOpt: Option[SideClusteringModel], setting: String
+) extends ArgumentModel(sideClusteringModelOpt) {
 
   private def getBaselineLabelCounts[VerbType, Arg, A](
     args: Map[VerbType, Set[ArgumentId[Arg]]],
@@ -326,17 +422,18 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
     randomlyClusterWeighted(items.map(MergeTree.Leaf(0.0, _)))
   }
 
-  def getArgumentClusters[VerbType, Arg : Order](
-    features: Features[VerbType, Arg])(
+  def clusterRemainingArguments[VerbType, Arg : Order](
+    features: Features[VerbType, Arg],
+    args: Map[VerbType, Set[ArgumentId[Arg]]])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, Clustering.Argument[Arg]]] = {
+  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
+      baselineLabelsOpt <- getBaselineLabels(args, features)
+      baselineLabelCountsOpt <- baselineLabelsOpt.traverse(getBaselineLabelCounts(args, _))
+      // TODO only traverse over verb types?
       allVerbArgSets <- features.verbArgSets.get
-      allArgs <- features.args.get
-      baselineLabelsOpt <- getBaselineLabels(allArgs, features)
-      baselineLabelCountsOpt <- baselineLabelsOpt.traverse(getBaselineLabelCounts(allArgs, _))
-      results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
+      results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, _) =>
         Log.info(features.renderVerbType(verbType)) >> {
           (baselineLabelsOpt, baselineLabelCountsOpt).mapN { (baselineLabels, baselineLabelCounts) =>
             val baselineLabelsForVerb = baselineLabels(verbType)
@@ -344,9 +441,9 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
               .groupBy(baselineLabelsForVerb)
               .toVector.sortBy(p => baselineLabelCounts(p._1)).map(_._2)
             // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
-            NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+            NonEmptyVector.fromVector(args.get(verbType).foldMap(_.toVector)).traverse { verbArgs =>
               IO {
-                verbType -> getOrderedVerbSets(args.toVector.toSet)
+                verbType -> getOrderedVerbSets(verbArgs.toVector.toSet)
                   .map(MergeTree.Leaf(0.0, _))
                   .reduceLeft[MergeTree[Set[ArgumentId[Arg]]]](MergeTree.Merge(0.0, _, _))
               }
@@ -354,41 +451,48 @@ case class BaselineArgumentModel(setting: String) extends ArgumentModel {
           }.getOrElse {
             // random baseline
             if(setting == "random") {
-              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
-                IO(verbType -> randomClustering(args.map(Set(_))))
+              NonEmptyVector.fromVector(args.get(verbType).foldMap(_.toVector)).traverse { verbArgs =>
+                IO(verbType -> randomClustering(verbArgs.map(Set(_))))
               }
             } else {
               require(setting == "random_weighted")
-              NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
-                IO(verbType -> weightedRandomClustering(args.map(Set(_))))
+              NonEmptyVector.fromVector(args.get(verbType).foldMap(_.toVector)).traverse { verbArgs =>
+                IO(verbType -> weightedRandomClustering(verbArgs.map(Set(_))))
               }
             }
           }
         }
       }
-    } yield results.flatten.toMap.mapVals(tree => Clustering(Some(tree), Map()))
+    } yield results.flatten.toMap
   }
   override def toString = BaselineArgumentModel.toString(this)
 }
 object BaselineArgumentModel {
 
+  val validSettings = Set(
+    "syntf", "syntf+", "random", "random_linear", "random_weighted",
+    "gold_nosense", "gold_nosense+noise",
+    "gold_wsense", "gold_wsense+noise"
+  )
   // too lazy for proper parser combinators
   // TODO add better error reporting
-  def fromString(x: String): Option[BaselineArgumentModel] = x match {
-    case x @ (
-      "syntf" | "syntf+" | "random" | "random_linear" | "random_weighted"
-        | "gold_nosense" | "gold_nosense+noise"
-        | "gold_wsense" | "gold_wsense+noise") => Some(BaselineArgumentModel(x))
-    case _ => None
+  def fromString(x: String): Option[BaselineArgumentModel] = {
+    ArgumentModel.fromStringWithSideModel(
+      x, y => sideModelOpt =>
+      if(validSettings.contains(y)) Some(BaselineArgumentModel(sideModelOpt, y))
+      else None
+    )
   }
+
   def toString(model: BaselineArgumentModel): String = {
-    "arg/" + model.setting
+    val suffix = model.sideClusteringModelOpt.fold(model.setting)(x => s"$x->${model.setting}")
+    "arg/" + suffix
   }
 }
 
 case class FullArgumentModel private (
-  lossTerms: Map[FullArgumentModel.LossTerm, Double]
-) extends ArgumentModel {
+  override val sideClusteringModelOpt: Option[SideClusteringModel], lossTerms: Map[FullArgumentModel.LossTerm, Double]
+) extends ArgumentModel(sideClusteringModelOpt) {
 
   override def toString: String = FullArgumentModel.toString(this)
 
@@ -414,23 +518,24 @@ case class FullArgumentModel private (
     }
   }
 
-  def getArgumentClusters[VerbType, Arg : Order](
-    features: Features[VerbType, Arg])(
+  def clusterRemainingArguments[VerbType, Arg : Order](
+    features: Features[VerbType, Arg],
+    args: Map[VerbType, Set[ArgumentId[Arg]]])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, Clustering.Argument[Arg]]] = {
+  ): IO[Map[VerbType, MergeTree[Set[ArgumentId[Arg]]]]] = {
     for {
       _ <- Log.info("Initializing model features") // TODO maybe extend branching API to make this nice
       _ <- this.init(features)
+      // TODO only traverse over verb types?
       allVerbArgSets <- features.verbArgSets.get
-      allArgs <- features.args.get
       results <- allVerbArgSets.toList.infoBarTraverse("Clustering arguments") { case (verbType, verbs) =>
         Log.info(features.renderVerbType(verbType)) >> {
           // some of them are empty due present verbs with no args (that weren't filtered out). gotta skip those
-          NonEmptyVector.fromVector(allArgs(verbType).toVector).traverse { args =>
+          NonEmptyVector.fromVector(args.get(verbType).foldMap(_.toVector)).traverse { verbArgs =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
-                case (argTree, _) => verbType -> Clustering(Some(argTree))
+              ClusteringParams.runCombinedClustering(verbArgs, flatAlgorithm, agglomAlgorithm).map {
+                case (argTree, _) => verbType -> argTree
               }
             }
           }
@@ -442,13 +547,13 @@ case class FullArgumentModel private (
 
 object FullArgumentModel {
 
-  def apply(terms: (LossTerm, Double)*): FullArgumentModel = {
+  def apply(sideModelOpt: Option[SideClusteringModel], terms: (LossTerm, Double)*): FullArgumentModel = {
     val total = terms.map(_._2).sum
     val termMap = terms.map { case (term, weight) =>
       term -> (scala.math.round(weight / total * 100.0) / 100.0)
     }.toMap
     require(terms.size == termMap.size)
-    new FullArgumentModel(termMap)
+    new FullArgumentModel(sideModelOpt, termMap)
   }
 
   val termIndex = List[(LossTerm, String)](
@@ -464,24 +569,30 @@ object FullArgumentModel {
   // too lazy for proper parser combinators
   // TODO add better error reporting
   def fromString(x: String): Option[FullArgumentModel] = {
-    if(stringToTerm.contains(x)) Some(FullArgumentModel(stringToTerm(x) -> 1.0))
-    else scala.util.Try {
-      val termStrings = x.split("\\+").toList
-      val terms = termStrings.map { term =>
-        if(stringToTerm.contains(term)) (stringToTerm(term) -> 1.0)
-        else {
-          val components = term.split("\\*")
-          stringToTerm(components(0)) -> components(1).toDouble
-        }
+    ArgumentModel.fromStringWithSideModel(
+      x, y => sideModelOpt => {
+        if(stringToTerm.contains(y)) Some(FullArgumentModel(sideModelOpt, stringToTerm(y) -> 1.0))
+        else scala.util.Try {
+          val termStrings = y.split("\\+").toList
+          val terms = termStrings.map { term =>
+            if(stringToTerm.contains(term)) (stringToTerm(term) -> 1.0)
+            else {
+              val components = term.split("\\*")
+              stringToTerm(components(0)) -> components(1).toDouble
+            }
+          }
+          FullArgumentModel(sideModelOpt, terms: _*)
+        }.toOption
       }
-      FullArgumentModel(terms: _*)
-    }.toOption
+    )
   }
   def toString(model: FullArgumentModel): String = {
-    "arg/" + model.lossTerms.toList.map { case (term, weight) =>
+    val postSuffix = model.lossTerms.toList.map { case (term, weight) =>
       if(weight == 1.0) termToString(term)
       else f"${termToString(term)}%s*${weight}%.2f"
     }.sorted.mkString("+")
+    val suffix = model.sideClusteringModelOpt.fold(postSuffix)(x => s"$x->$postSuffix")
+    "arg/" + suffix
   }
 
   sealed trait LossTerm {

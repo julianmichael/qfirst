@@ -17,7 +17,7 @@ object VerbClusterModel
   clusterTreeOpt: Option[MergeTree[Set[Instance]]],
   extraClusters: Map[String, Set[Instance]] = Map.empty[String, Set[Instance]]
 ) {
-  def size = extraClusters.unorderedFoldMap(_.size) + clusterTreeOpt.foldMap(_.size)
+  def size = extraClusters.unorderedFoldMap(_.size) + clusterTreeOpt.foldMap(_.unorderedFoldMap(_.size))
 
   def split[A](f: Instance => A): Map[A, Clustering[Instance]] = {
     val treesOpt = clusterTreeOpt.map(_.group(_.groupBy(f)))
