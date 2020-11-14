@@ -1385,12 +1385,15 @@ class NewVerbUI[VerbType, Arg: Order](
                           // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
                           val argClusterings = model.argumentClustering.split(argId => verbIndices(argId.verbId))
                           val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
-                            val argClustering = argClusterings(i)
-                            val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
-                              clusterSplittingSpec.value.argumentCriterion
-                                .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                            argClusterings.get(i) match {
+                              case None => ResolvedFrame(verbTree, Vector(), Map())
+                              case Some(argClustering) =>
+                                val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
+                                  clusterSplittingSpec.value.argumentCriterion
+                                    .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                                }
+                                ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
                             }
-                            ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
                           }
 
                           <.div(S.mainContainer)(
