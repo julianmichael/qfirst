@@ -157,6 +157,7 @@ class NewVerbUI[VerbType, Arg: Order](
   // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
   val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
+  val IntOptLocal = new LocalState[Option[Int]]
   val VerbModelLocal = new LocalState[Option[VerbClusterModel[VerbType, Arg]]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
   val SentOptLocal = new LocalState[Option[Sentence]]
@@ -686,7 +687,8 @@ class NewVerbUI[VerbType, Arg: Order](
     verbFeatures: FeatureValues,
     inflectedForms: InflectedForms,
     frames: Vector[ResolvedFrame],
-    curSentenceId: StateSnapshot[String]
+    curSentenceId: StateSnapshot[String],
+    curHighlightedFrame: StateSnapshot[Option[Int]]
   ) = {
     val numVerbInstances = frames.foldMap(_.verbTree.size.toInt)
     <.div(S.frameSpecDisplay, S.scrollPane) {
@@ -702,16 +704,19 @@ class NewVerbUI[VerbType, Arg: Order](
         }
         val allRoles = numberedRoles ++ namedRoles
         val isFrameChosen = false // TODO
+        val isFrameHighlighted = curHighlightedFrame.value.exists(_ == frameIndex)
         <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
+          ^.onMouseMove --> (
+            if(isFrameHighlighted) Callback.empty
+            else curHighlightedFrame.setState(Some(frameIndex))
+          ),
+          ^.onMouseOut --> curHighlightedFrame.setState(None),
+          S.highlightedFrame.when(isFrameHighlighted),
           ^.key := "frame-" + frameIndex.toString,
           <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
             <.span(S.frameHeadingText)(
               f"Frame $frameIndex%s (${frameProb}%.3f)"
             ),
-            verbFeatures.goldLabels.flatten.whenDefined { goldLabels =>
-              val counts = verbTree.unorderedFoldMap(_.unorderedFoldMap(verbId => Map(goldLabels.verbSenses(verbId) -> 1)))
-              goldLabelDistDisplay(counts)
-            },
             <.span(S.prevFrameInstanceText)(
               ^.onClick --> frame.prevSentence(curSentenceId.value).foldMap(curSentenceId.setState),
               " prev "),
@@ -719,6 +724,10 @@ class NewVerbUI[VerbType, Arg: Order](
               ^.onClick --> frame.nextSentence(curSentenceId.value).foldMap(curSentenceId.setState),
               " next ")
           ),
+          verbFeatures.goldLabels.flatten.whenDefined { goldLabels =>
+            val counts = verbTree.unorderedFoldMap(_.unorderedFoldMap(verbId => Map(goldLabels.verbSenses(verbId) -> 1)))
+            goldLabelDistDisplay(counts)
+          },
           verbFeatures.verbMlmDist.whenDefined { dists =>
             val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
             mlmDisplay(senseCounts)
@@ -1080,7 +1089,8 @@ class NewVerbUI[VerbType, Arg: Order](
     inflectedForms: StateSnapshot[Option[InflectedForms]],
     verbFeatures: FeatureValues,
     frames: Vector[ResolvedFrame],
-    curSentenceId: StateSnapshot[String]
+    curSentenceId: StateSnapshot[String],
+    curHighlightedFrame: StateSnapshot[Option[Int]]
   ) = {
     // def isClauseProbabilityAcceptable(p: Double) = true || p >= 0.01 || paraphrasingFilter.value.minClauseProb <= p
 
@@ -1102,7 +1112,7 @@ class NewVerbUI[VerbType, Arg: Order](
         )
           // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
       ),
-      framesetDisplay(verbFeatures, inflectedForms.value.getOrElse(genericVerbForms), frames, curSentenceId)
+      framesetDisplay(verbFeatures, inflectedForms.value.getOrElse(genericVerbForms), frames, curSentenceId, curHighlightedFrame)
     )
   }
 
@@ -1148,7 +1158,8 @@ class NewVerbUI[VerbType, Arg: Order](
     sentence: SentenceInfo[VerbType, Arg],
     features: FeatureValues,
     inflectedForms: InflectedForms,
-    frames: Vector[ResolvedFrame]
+    frames: Vector[ResolvedFrame],
+    curHighlightedFrame: StateSnapshot[Option[Int]]
   ) = {
     val sortedVerbs = sentence.verbs.values.toList.sortBy(_.index)
     val (currentVerbs, otherVerbs) = sortedVerbs.partition(_.verbType == verb)
@@ -1215,7 +1226,9 @@ class NewVerbUI[VerbType, Arg: Order](
             currentVerbs.toVdomArray { verb =>
               val verbId = VerbId(sentence.sentenceId, verb.index)
               val color = verbColorMap(verb.index)
-              val frame = frames.find(_.verbTree.exists(_.contains(verbId))).get
+              val (frame, frameIndex) = frames.zipWithIndex
+                .find(_._1.verbTree.exists(_.contains(verbId))).get
+              val isFrameHighlighted = curHighlightedFrame.value.exists(_ == frameIndex)
               val rolesWithIndices = frame.roleTrees.zipWithIndex
               val getRoleId = verb.args.iterator.map { arg =>
                 val argId = ArgumentId(verbId, arg)
@@ -1223,6 +1236,12 @@ class NewVerbUI[VerbType, Arg: Order](
                   .orElse(frame.extraRoles.iterator.find(_._2.contains(argId)).map(p => Right(p._1)))
               }.toMap
               <.div(S.verbEntryDisplay)(
+                S.highlightedFrame.when(isFrameHighlighted),
+                ^.onMouseMove --> (
+                  if(isFrameHighlighted) Callback.empty
+                  else curHighlightedFrame.setState(Some(frameIndex))
+                ),
+                ^.onMouseOut --> curHighlightedFrame.setState(None),
                 <.div(
                   <.a(
                     ^.name := s"verb-${verb.index}",
@@ -1375,7 +1394,6 @@ class NewVerbUI[VerbType, Arg: Order](
                     case VerbModelFetch.Loaded(model) =>
                       InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
                         ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
-
                           // assume only verb tree. no extra roles. can fix later if necessary
                           val verbTrees = clusterSplittingSpec.value.verbCriterion
                             .splitTree[Set[VerbId]](model.verbClustering.clusterTreeOpt.get, _.size.toDouble)
@@ -1406,33 +1424,37 @@ class NewVerbUI[VerbType, Arg: Order](
                                 val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
                                 val initSentenceId = sentenceIds.head
                                 StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
-                                  <.div(S.dataContainer)(
-                                    frameContainer(
-                                      props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
-                                      formList, inflectedForms,
-                                      features, frames,
-                                      curSentenceId
-                                    ),
+                                  IntOptLocal.make(None) { curHighlightedFrame =>
                                     <.div(S.dataContainer)(
-                                      sentenceSelectionPane(
-                                        sentenceIds,
-                                        curSentenceId
+                                      frameContainer(
+                                        props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
+                                        formList, inflectedForms,
+                                        features, frames,
+                                        curSentenceId,
+                                        curHighlightedFrame
                                       ),
-                                      SentenceFetch.make(
-                                        request = curSentenceId.value,
-                                        sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
-                                        case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
-                                        case SentenceFetch.Loaded(sentenceInfo) =>
-                                          sentenceDisplayPane(
-                                            features.verbType,
-                                            sentenceInfo,
-                                            features,
-                                            inflectedForms.value.getOrElse(genericVerbForms),
-                                            frames
-                                          )
-                                      }
+                                      <.div(S.dataContainer)(
+                                        sentenceSelectionPane(
+                                          sentenceIds,
+                                          curSentenceId
+                                        ),
+                                        SentenceFetch.make(
+                                          request = curSentenceId.value,
+                                          sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
+                                          case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
+                                          case SentenceFetch.Loaded(sentenceInfo) =>
+                                            sentenceDisplayPane(
+                                              features.verbType,
+                                              sentenceInfo,
+                                              features,
+                                              inflectedForms.value.getOrElse(genericVerbForms),
+                                              frames,
+                                              curHighlightedFrame
+                                            )
+                                        }
+                                      )
                                     )
-                                  )
+                                  }
                                 }
                             }
                           )

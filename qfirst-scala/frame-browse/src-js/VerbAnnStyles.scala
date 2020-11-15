@@ -434,6 +434,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
     // backgroundColor(hoverHighlightColor)
   )
 
+  val highlightedFrame = style(
+    backgroundColor(hoverHighlightColor)
+  )
+
   val argFirstRow = style(
     addClassNames("pt-2")
   )
