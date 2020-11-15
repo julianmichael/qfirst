@@ -66,6 +66,7 @@ object Evaluation {
     maxClustersOnly: Boolean)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[Map[VerbType, NonEmptyList[ConfStatsPoint]]] = clusterings.toList
+    .filter(_._2.nonEmpty)
     .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, clustering) =>
       val getGoldLabelForVerb = getGoldLabel(verbType)
       Log.trace(s"$verbType (${clustering.size} leaves + extras)") >> IO {

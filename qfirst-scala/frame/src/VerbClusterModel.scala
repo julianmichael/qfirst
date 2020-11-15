@@ -19,6 +19,8 @@ object VerbClusterModel
 ) {
   def size = extraClusters.unorderedFoldMap(_.size) + clusterTreeOpt.foldMap(_.unorderedFoldMap(_.size))
 
+  def nonEmpty = clusterTreeOpt.exists(_.exists(_.nonEmpty)) || extraClusters.values.exists(_.nonEmpty)
+
   def split[A](f: Instance => A): Map[A, Clustering[Instance]] = {
     val treesOpt = clusterTreeOpt.map(_.group(_.groupBy(f)))
     val extras = extraClusters

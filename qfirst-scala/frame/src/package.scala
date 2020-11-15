@@ -55,6 +55,14 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
     }
   }
 
+  import cats.Monoid
+  import cats.Monad
+  import cats.Foldable
+  implicit class RichNested[M[_], F[_], A](val x: M[F[A]]) extends AnyVal {
+    def flatFoldMapM[B: Monoid](f: A => M[B])(implicit M: Monad[M], F: Foldable[F]): M[B] =
+      M.flatMap(x)(_.foldMapM(f))
+  }
+
   object Auxiliaries {
     final val doVerbs = Set("do", "does", "doing", "did", "done").map(_.lowerCase)
     final val beVerbs =
