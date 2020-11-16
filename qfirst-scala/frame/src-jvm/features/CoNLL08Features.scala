@@ -199,10 +199,65 @@ class CoNLL08Features(
   lazy val propbank3Sentences: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3Sentence]] = new Cell("PropBank 3 sentences", {
     val service = new propbank3.PropBank3FileSystemService(propbank3Path)
     import scala.concurrent.ExecutionContext.Implicits.global
-    service.streamSentences[IO]
+    service.streamSentencesFromProps[IO]
       .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
       .infoCompile("Reading PropBank sentences")(_.foldMonoid)
   })
+
+  lazy val propbank3SentencesCoNLLStyle: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3SentenceCoNLLStyle]] = new Cell("PropBank 3 sentences (CoNLL Style)", {
+    val service = new propbank3.PropBank3FileSystemService(propbank3Path)
+    import scala.concurrent.ExecutionContext.Implicits.global
+    service.streamSentencesFromCoNLLSkels[IO]
+      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
+      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
+  })
+
+  def relabelPAStructures(
+    ptbTree: SyntaxTree[ptb2.PTB2Token],
+    propBankSentence: propbank3.PropBank3SentenceCoNLLStyle,
+    conll08Sentence: CoNLL08Sentence
+  ): Map[Int, PredArgStructure[PropBankPredicate, Int]] = {
+    conll08Sentence.predicateArgumentStructures.map { pas =>
+      val predIndex = pas.predicateIndex
+      propBankSentence.predArgStructures.find(_.predicateIndex == predIndex) match {
+        case None =>
+          System.err.println("\nCan't find predicate!!")
+          System.err.println(propBankSentence.id)
+          System.err.println(Text.render(conll08Sentence.tokens))
+          System.err.println(
+            conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
+          )
+          System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+          System.err.println(pas)
+          System.err.println("-----")
+          System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+          predIndex -> pas // just use original
+        case Some(pbPas) =>
+          predIndex -> pas.copy(
+            predicate = pbPas.predicate,
+            arguments = pas.arguments.map { case (origLabel, argIndex) =>
+              val labelOpt = pbPas.arguments.find(_._2.contains(argIndex)).map(_._1)
+              labelOpt match {
+                case None =>
+                  System.err.println("\nCan't find argument!! Index: " + argIndex)
+                  System.err.println(propBankSentence.id)
+                  System.err.println(Text.render(conll08Sentence.tokens))
+                  System.err.println(
+                    conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
+                  )
+                  System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+                  System.err.println(pas)
+                  System.err.println("-----")
+                  System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+                  origLabel -> argIndex
+                case Some(label) =>
+                  label -> argIndex
+              }
+            }
+          )
+      }
+    }.toMap
+  }
 
   val filteredPropBank3Roles = Set(
     "LINK-SLC", "LINK-PRO", "LINK-PSV"
@@ -213,7 +268,7 @@ class CoNLL08Features(
   // but propbank3 seems to use the newer tokenization which splits them. so I have to undo that
   // to recover the propbank spans correctly and then redo it to convert them to conll 08.
   // XXX this doesn't work
-  def relabelPAStructures(
+  def relabelPAStructuresOld(
     ptbTree: SyntaxTree[ptb2.PTB2Token],
     propBankSentence: propbank3.PropBank3Sentence,
     conll08Sentence: CoNLL08Sentence
@@ -383,7 +438,7 @@ class CoNLL08Features(
         for {
           omittedPaths <- pb3OmittedFiles
           ptb2Sentences <- ptb2Sentences.get
-          propbank3Sentences <- propbank3Sentences.get
+          propbank3Sentences <- propbank3SentencesCoNLLStyle.get
           conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
         } yield (verbType: String) => (verbId: VerbId) => {
           val sentenceId = verbId.sentenceId

@@ -23,7 +23,7 @@ class PropBank3FileSystemService(location: Path) {
       .map(f => path.resolve(f.getName))
   }
 
-  def streamSentences[F[_]: Sync](
+  def streamSentencesFromProps[F[_]: Sync](
     implicit ec: ExecutionContext,
     cs: ContextShift[F]
   ): Stream[F, PropBank3Sentence] = {
@@ -35,13 +35,28 @@ class PropBank3FileSystemService(location: Path) {
           fs2.io.file.readAll[F](path, ec, 4096)
             .through(fs2.text.utf8Decode)
             .through(fs2.text.lines)
-            .through(PropBank3Parsing.streamPredArgStructuresFromLines[F])
+            .through(PropBank3Parsing.streamPredArgStructuresFromProps[F])
             .compile.toList.map(
               _.groupBy(_._1).toList.map { case (id, pairs) =>
                 PropBank3Sentence(id, pairs.map(_._2))
               }
             ).map(Stream.emits(_))
         ).flatten
+      )
+  }
+
+  def streamSentencesFromCoNLLSkels[F[_]: Sync](
+    implicit ec: ExecutionContext,
+    cs: ContextShift[F]
+  ): Stream[F, PropBank3SentenceCoNLLStyle] = {
+    Stream.fromIterator(listFiles(dataPath))
+      .flatMap(path => Stream.fromIterator(listFiles(path)))
+      .filter(_.getFileName.toString.endsWith(".gold_skel"))
+      .flatMap(path =>
+        fs2.io.file.readAll[F](path, ec, 4096)
+          .through(fs2.text.utf8Decode)
+          .through(fs2.text.lines)
+          .through(PropBank3Parsing.streamSentencesFromCoNLLSkels[F])
       )
   }
 }
