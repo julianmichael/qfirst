@@ -10,6 +10,15 @@ import qfirst.datasets.SyntaxTree
   def pathSuffix = f"$section%02d/$fileName%s"
   override def toString = pathSuffix
 }
+object PTB2FilePath {
+  def fromString(x: String) = {
+    val fields = x.split("/")
+    PTB2FilePath(
+      section = fields(1).toInt,
+      fileName = fields(2)
+    )
+  }
+}
 
 @JsonCodec case class PTB2SentenceId(filePath: PTB2FilePath, sentenceNum: Int) {
   override def toString = s"$filePath:$sentenceNum"

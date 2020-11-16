@@ -76,6 +76,26 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       }
     }.toCell(name)
 
+  def fileCacheVerbFeats[A: Encoder : Decoder](
+    name: String, log: Boolean = false)(
+    feats: VerbFeats[A]
+  ): CachedVerbFeats[A] = {
+    (verbs.data.zip(feats)).map { case (verbs, feats) =>
+      verbs.transform { case (verbType, verbs) =>
+        val featsForVerbType = feats(verbType)
+        NonMergingMap(
+          verbs.iterator.map { verbId =>
+            verbId -> featsForVerbType(verbId)
+          }.toMap
+        )
+      }
+    }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+      read = path => FileUtil.readJsonLines[(VerbType,List[(VerbId,A)])](path).compile.toList
+        .map(_.map { case (vt, verbs) => vt -> NonMergingMap(verbs.toMap) }.toMap),
+      write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, verbs) => vt -> verbs.value.toList }.toList)
+    )
+  }
+
   def cacheArgFeats[A](name: String, log: Boolean = false)(feats: ArgFeats[A]): CachedArgFeats[A] =
     if(log) {
       (args.data.zip(feats)).flatMap { case (args, feats) =>

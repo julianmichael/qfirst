@@ -10,6 +10,8 @@ import cats.implicits._
 
 import io.circe.generic.JsonCodec
 
+import monocle.macros._
+
 import jjm.ling.{HasIndex, ESpan}
 import jjm.implicits._
 
@@ -153,7 +155,7 @@ object SyntaxTree {
     // }
   }
 
-  case class Branch(
+  @Lenses case class Branch(
     tokenIndex: Int,
     constituentHeight: Int)
 
