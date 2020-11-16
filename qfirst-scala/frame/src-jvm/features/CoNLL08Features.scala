@@ -190,301 +190,16 @@ class CoNLL08Features(
       }
     ).toCell("CoNLL 2008 verb arg sets")
 
-  import qfirst.datasets.ptb2
-  import qfirst.datasets.propbank1
-  import qfirst.datasets.propbank3
-
-  val propbank3Path = Paths.get("data/propbank-release")
-
-  lazy val propbank3Sentences: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3Sentence]] = new Cell("PropBank 3 sentences", {
-    val service = new propbank3.PropBank3FileSystemService(propbank3Path)
-    import scala.concurrent.ExecutionContext.Implicits.global
-    service.streamSentencesFromProps[IO]
-      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
-      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
-  })
-
-  lazy val propbank3SentencesCoNLLStyle: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3SentenceCoNLLStyle]] = new Cell("PropBank 3 sentences (CoNLL Style)", {
-    val service = new propbank3.PropBank3FileSystemService(propbank3Path)
-    import scala.concurrent.ExecutionContext.Implicits.global
-    service.streamSentencesFromCoNLLSkels[IO]
-      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
-      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
-  })
-
-  def relabelPAStructures(
-    ptbTree: SyntaxTree[ptb2.PTB2Token],
-    propBankSentence: propbank3.PropBank3SentenceCoNLLStyle,
-    conll08Sentence: CoNLL08Sentence
-  ): Map[Int, PredArgStructure[PropBankPredicate, Int]] = {
-    conll08Sentence.predicateArgumentStructures.map { pas =>
-      val predIndex = pas.predicateIndex
-      propBankSentence.predArgStructures.find(_.predicateIndex == predIndex) match {
-        case None =>
-          System.err.println("\nCan't find predicate!!")
-          System.err.println(propBankSentence.id)
-          System.err.println(Text.render(conll08Sentence.tokens))
-          System.err.println(
-            conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
-          )
-          System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-          System.err.println(pas)
-          System.err.println("-----")
-          System.err.println(propBankSentence.predArgStructures.mkString("\n"))
-          predIndex -> pas // just use original
-        case Some(pbPas) =>
-          predIndex -> pas.copy(
-            predicate = pbPas.predicate,
-            arguments = pas.arguments.map { case (origLabel, argIndex) =>
-              val labelOpt = pbPas.arguments.find(_._2.contains(argIndex)).map(_._1)
-              labelOpt match {
-                case None =>
-                  System.err.println("\nCan't find argument!! Index: " + argIndex)
-                  System.err.println(propBankSentence.id)
-                  System.err.println(Text.render(conll08Sentence.tokens))
-                  System.err.println(
-                    conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
-                  )
-                  System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-                  System.err.println(pas)
-                  System.err.println("-----")
-                  System.err.println(propBankSentence.predArgStructures.mkString("\n"))
-                  origLabel -> argIndex
-                case Some(label) =>
-                  label -> argIndex
-              }
-            }
-          )
-      }
-    }.toMap
-  }
-
-  val filteredPropBank3Roles = Set(
-    "LINK-SLC", "LINK-PRO", "LINK-PSV"
-  )
-
-  // relabels the PASs from the conll '08 sentence to use the sense and role labels from propbank3.
-  // this is particularly annoying because the penn treebank indexes hyphenations as one word,
-  // but propbank3 seems to use the newer tokenization which splits them. so I have to undo that
-  // to recover the propbank spans correctly and then redo it to convert them to conll 08.
-  // XXX this doesn't work
-  def relabelPAStructuresOld(
-    ptbTree: SyntaxTree[ptb2.PTB2Token],
-    propBankSentence: propbank3.PropBank3Sentence,
-    conll08Sentence: CoNLL08Sentence
-  ): Map[Int, PredArgStructure[PropBankPredicate, Int]] = {
-
-    val emptyElementIndices = ptbTree.toList.filter(_.pos == "-NONE-").map(_.index)
-    // counts of added forms from splitting for each index in the unsplit case
-    val numExtraSplitFormsByIndex = conll08Sentence.paddingIndices.unorderedFoldMap { index =>
-      // subtract 1 for every padding index incl. or before this one.
-      val originalIndex = index - conll08Sentence.paddingIndices.count(_ <= index)
-      Map(originalIndex -> 1)
-    }
-    val numSplitFormsByIndex = (0 until (conll08Sentence.tokens.size - conll08Sentence.paddingIndices.size))
-      .map(i => numExtraSplitFormsByIndex.getOrElse(i, 0))
-      .toList // turn map into a list of extra split form counts
-
-    // add a 0 do a cumulative sum to know the total offset before a token position
-    val preTokenSplitFormOffsets = numSplitFormsByIndex.scanLeft(0)(_ + _)
-
-    val splitFormBinaryVec = (0 until conll08Sentence.tokens.size)
-      .map(i => if(conll08Sentence.paddingIndices.contains(i)) 1 else 0)
-      .toList
-    val reverseSplitFormOffsets = splitFormBinaryVec.scanLeft(0)(_ - _)
-
-    // get indices where empty elements appear according to propbank3.
-    // add the pre-token split form offsets from conll 08. but to calculate correctly,
-    // we need to shift the index of the empty element back by the number of empty elts preceding it,
-    // since these were not indexed in conll08.
-    val emptyElementIndicesWithSplitForms = emptyElementIndices
-      .sorted
-      .zipWithIndex
-      .map { case (i, num) => i + preTokenSplitFormOffsets(i - num) }
-
-    if(ptbTree.size == 23) {
-      System.err.println(propBankSentence.id)
-      System.err.println(Text.render(conll08Sentence.tokens))
-      System.err.println(
-        conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", "))
-      System.err.println(
-        ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-      System.err.println(emptyElementIndices)
-      System.err.println(conll08Sentence.paddingIndices)
-      System.err.println(preTokenSplitFormOffsets)
-      System.err.println(reverseSplitFormOffsets)
-      System.err.println(propBankSentence.predArgStructures.mkString("\n"))
-      // System.err.println(pas)
-      // System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
-      // System.err.println(args)
-    }
-
-    def reindexPropBank3ToConll08(pi: Int): Int = (pi: Id[Int])
-      .map(pi => pi - emptyElementIndicesWithSplitForms.count(_ < pi))
-      // .map(pi => pi + preTokenSplitFormOffsets(pi))
-
-    // collapse together multiple predicates at the same index.
-    // this is what was done in the conversion to conll format anyway.
-    val reindexedSpanSetsWithPredicateIndex = propBankSentence.predArgStructures.foldMap { pas =>
-
-      val predicateIndex = reindexPropBank3ToConll08(pas.predicateIndex)
-
-      // if(pas.predicate == PropBankPredicate("talk", "01")) {
-      //   System.err.println("\n-----")
-      //   System.err.println(pas.predicate)
-      //   System.err.println(pas.predicateIndex)
-      //   System.err.println(pas.arguments.mkString("\n"))
-      // }
-
-      NonMergingMap(
-        predicateIndex -> PredArgStructure(
-          predicateIndex = predicateIndex,
-          predicate = pas.predicate,
-          arguments = pas.arguments
-            .filterNot(p => filteredPropBank3Roles.contains(p._1))
-            .map { case (label, arg) =>
-              val branches = arg.allBranches
-              val spans = branches
-                .map(SyntaxTree.Branch.tokenIndex.modify(
-                       i => i + reverseSplitFormOffsets(reindexPropBank3ToConll08(i))
-                     ))
-                .map(branch => ptbTree.getSubtree(branch).toSpan)
-                .map { span =>
-                  // reindex to remove gaps
-                  // TODO test this to be sure it works..
-                  val newBegin = span.begin - emptyElementIndices.count(_ < span.begin)
-                  val newEnd = span.end - emptyElementIndices.count(_ < span.end)
-                  ESpan(newBegin, newEnd)
-                }
-                .map { span =>
-                  // reindex to account for split tokens in conll 08
-                  // TODO test this to be sure it works...
-                  val newBegin = span.begin + preTokenSplitFormOffsets(span.begin)
-                  val newEnd = span.end + preTokenSplitFormOffsets(span.end)
-                  ESpan(newBegin, newEnd)
-                }
-                .filter(s => s.end > s.begin) // remove empty elements
-                .toSet
-
-              label -> spans
-          }
-        )
-      )
-    }.value
-
-    conll08Sentence.predicateArgumentStructures.flatMap { pas =>
-      if(reindexedSpanSetsWithPredicateIndex.get(pas.predicateIndex).isEmpty) {
-        System.err.println("\nCan't find predicate!!")
-        System.err.println(propBankSentence.id)
-        System.err.println(Text.render(conll08Sentence.tokens))
-        System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-        System.err.println(pas)
-        System.err.println(reindexedSpanSetsWithPredicateIndex)
-        System.err.println(emptyElementIndices)
-        System.err.println(conll08Sentence.paddingIndices)
-        System.err.println(preTokenSplitFormOffsets)
-        System.err.println(reverseSplitFormOffsets)
-        System.err.println(propBankSentence.predArgStructures.mkString("\n"))
-        None
-      } else Some {
-        val matchedPAS = reindexedSpanSetsWithPredicateIndex(pas.predicateIndex)
-        val newArgs = pas.arguments.map { case (oldLabel, index) =>
-          val args = matchedPAS.arguments.filter(_._2.exists(_.contains(index)))
-          if(args.size == 0) {
-            System.err.println("\nNo arguments!!!!")
-            System.err.println(propBankSentence.id)
-            System.err.println(Text.render(conll08Sentence.tokens))
-            System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-            System.err.println(pas)
-            System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
-            System.err.println(args)
-            oldLabel -> index
-          } else {
-            if(args.size > 1) {
-              System.err.println("\nNon-unique arguments!!!!")
-              System.err.println(propBankSentence.id)
-              System.err.println(Text.render(conll08Sentence.tokens))
-              System.err.println(
-                conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", "))
-              System.err.println(
-                ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
-              System.err.println(emptyElementIndices)
-              System.err.println(conll08Sentence.paddingIndices)
-              System.err.println(preTokenSplitFormOffsets)
-              System.err.println(pas)
-              System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
-              System.err.println(args)
-            }
-            // require(args.size == 1)
-            args.minBy(_._2.filter(_.contains(index)).map(_.length).min)._1 -> index
-            // args.head._1 -> index
-          }
-        }
-        pas.predicateIndex -> pas.copy(arguments = newArgs)
-      }
-    }.toMap
-  }
-
-  val pb3OmittedFilesPath = Paths.get("data/pb3-missing-from-ontonotes.txt")
-
-  lazy val pb3OmittedFiles: IO[List[ptb2.PTB2FilePath]] =
-    FileUtil.readString(pb3OmittedFilesPath)
-      .map(_.split("\n").toList.map(ptb2.PTB2FilePath.fromString))
-    // fs2.io.file.readAll[IO](pb3OmittedFilesPath
-
-  lazy val propBank3PredArgStructures: CachedVerbFeats[PredArgStructure[PropBankPredicate, Int]] = {
-    fileCacheVerbFeats("propbank3-gold-pas", log = true)(
-      dataset.data.map { data =>
-        for {
-          omittedPaths <- pb3OmittedFiles
-          ptb2Sentences <- ptb2Sentences.get
-          propbank3Sentences <- propbank3SentencesCoNLLStyle.get
-          conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
-        } yield (verbType: String) => (verbId: VerbId) => {
-          val sentenceId = verbId.sentenceId
-          val verbIndex = verbId.verbIndex
-          val sentence = data(sentenceId)
-          val paddingIndices = sentence.paddingIndices
-
-          val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
-          if(omittedPaths.contains(ptbSid.filePath)) {
-            System.err.println(s"=== OMITTED: $ptbSid ===")
-            sentence.predicateArgumentStructures.find(_.predicateIndex == verbIndex).get
-          } else {
-            val ptbSentence = ptb2Sentences(ptbSid)
-            val pb3Sid = propbank3.PropBank3SentenceId.parse(
-              s"nw/wsj/${ptbSid.filePath.pathSuffix}".replaceAll("\\.mrg$", ".parse"),
-              ptbSid.sentenceNum
-            )
-            val pb3Sentence = propbank3Sentences.value.get(pb3Sid).get
-            val newPASs = relabelPAStructures(ptbSentence.syntaxTree, pb3Sentence, sentence)
-            if(!newPASs.contains(verbIndex)) {
-              System.err.println("\nMISSING!!!!!!")
-              System.err.println(ptbSid)
-              System.err.println(pb3Sid)
-              System.err.println(sentence.tokens.grouped(10).mkString("\n"))
-              System.err.println(newPASs)
-              System.err.println(verbIndex)
-              sentence.predicateArgumentStructures.find(_.predicateIndex == verbIndex).get
-            } else newPASs(verbIndex)
-          }
-        }
-      }.flatMap(x => x)
-    )
-  }
-
-  // TODO add a switch for propbank3
-
   override lazy val verbSenseLabels =
     cacheVerbFeats("CoNLL 2008 verb sense labels")(
-      mapVerbFeats(propBank3PredArgStructures.data) { pas =>
+      mapVerbFeats(predArgStructures.data) { pas =>
         val predicate = pas.predicate
         s"${predicate.lemma}.${predicate.sense}"
       }
     )
 
   override lazy val argRoleLabels: CachedArgFeats[PropBankRoleLabel] =
-    propBank3PredArgStructures.data.map(predArgStructures =>
+    predArgStructures.data.map(predArgStructures =>
       predArgStructures.mapVals { verbs =>
         verbs.value.toList.foldMap { case (verbId, pas) =>
           pas.arguments.foldMap { case (roleLabel, index) =>
@@ -640,7 +355,113 @@ class CoNLL08Features(
     )
   }
 
+  override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
+    origPropBankArgSpans
+      // |+| prepObjectExtendedSpans
+      // .map(_.map(_.map(spans => spans.mapVals(_ / spans.size))))
+      // |+| dependencyInferredArgSpans)
+
+    // cacheArgFeats("CoNLL 2008 arg spans extracted from CoNLL 2005")(
+    //   (dataset.data, conll05Sentences.data, argRoleLabels.data).mapN { (data, props, argRoleLabels) =>
+    //     for {
+    //       ptb2Sentences <- ptb2Sentences.get
+    //       propbank1Sentences <- propbank1Sentences.get
+    //       conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
+    //     } yield (verbType: String) => (argId: ArgumentId[Int]) => {
+    //       val sentenceId = argId.verbId.sentenceId
+    //       val verbIndex = argId.verbId.verbIndex
+    //       val argIndex = argId.argument
+    //       val sentence = data(sentenceId)
+    //       val paddingIndices = sentence.paddingIndices
+
+    //       val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
+    //       val ptbSent = ptb2Sentences(ptbSid)
+    //       val propbankSent = propbank1Sentences(ptbSid)
+
+    //       // val recalculatedPAStructures = 
+
+    //       System.err.println(sentenceId)
+    //       System.err.println(Text.render(sentence.tokens))
+    //       System.err.println(sentence.tokens.size)
+    //       System.err.println(verbIndex + s" (${sentence.tokens(verbIndex).token})")
+    //       System.err.println(argIndex + s"(${sentence.tokens(argIndex).token})")
+
+    //       props(sentenceId).predicateArgumentStructures.foreach(System.err.println)
+
+    //       val indexRemapping = (0 to sentence.tokens.size).foldLeft(List.empty[Int]) {
+    //         case (Nil, i) => i :: Nil
+    //         case (prev :: rest, i) =>
+    //           if(paddingIndices.contains(i)) prev :: prev :: rest
+    //           else (prev + 1) :: prev :: rest
+    //       }.reverse.toVector
+    //       val span = props(sentenceId)
+    //         .predicateArgumentStructures(indexRemapping(verbIndex))
+    //         .arguments.map { case (_, span) =>
+    //           val newBegin = indexRemapping(span.begin)
+    //           val newEnd = indexRemapping(span.end)
+    //           ESpan(newBegin, newEnd)
+    //         }.find(_.contains(argIndex)).get
+
+    //       // TODO fix printing code to verify sentence matching, span matching, and span index correction
+
+    //       System.err.println("\n" + sentenceId)
+    //       System.err.println(Text.render(sentence.tokens))
+    //       System.err.println(s"PREDICATE: ${sentence.tokens(verbIndex).token} ($verbIndex)")
+    //       val roleLabel = argRoleLabels(verbType)(argId).role
+    //       System.err.println(s"$roleLabel: ${sentence.tokens(argId.argument).token}")
+    //       System.err.println(Text.renderSpan(sentence.tokens, span))
+
+    //       // System.err.println(s"Other args: $otherArgsString")
+    //       // System.err.println(s"Contains another argument? " + (if(containsAnotherArg) "YES" else "NO"))
+    //       // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan))
+    //       // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan2))
+
+    //       Map(span -> 1.0)
+    //     }
+    //   }.flatMap(x => x)
+    // ).data
+
+    // cacheArgFeats("CoNLL 2008 arg spans borrowed from OntoNotes")(
+    //   dataset.data.zip(RunData.splits).flatMap { case (data, split) =>
+    //     (ontonotesAllData.get, ontonotesSentenceIndex.get).mapN { (ontonotes, ontonotesIndex) =>
+    //     // (ontonotesFeatures.rawDataset(split), ontonotesSentenceIndices(split)).mapN { (ontonotes, ontonotesIndex) =>
+    //       (verbType: String) => (argId: ArgumentId[Int]) => {
+    //         val argIndex = argId.argument
+    //         val sid = argId.verbId.sentenceId
+    //         val sentence = data(sid)
+    //         val matchedOntonotesPaths = sentence.tokens.foldMap(tok =>
+    //           ontonotesIndex.get(tok.token.lowerCase).combineAll
+    //         ).toVector.sortBy(-_._2).take(5)
+
+    //         val sentText = Text.render(sentence.tokens)
+    //         val topPath = matchedOntonotesPaths.head._1
+    //         val topSentText = Text.render(ontonotes(topPath).tokens)
+
+    //         if(topSentText == sentText) {
+    //           System.err.print(".")
+    //         } else {
+    //           System.err.println("\n==========")
+    //           System.err.println(sid)
+    //           System.err.println(Text.render(sentence.tokens))
+    //           matchedOntonotesPaths.foreach { case (path, count) =>
+    //             System.err.println(s"$count: $path")
+    //             val ontonotesSentence = ontonotes(path)
+    //             System.err.println(Text.render(ontonotesSentence.tokens))
+    //           }
+    //           System.err.println()
+    //         }
+
+
+    //         Map(ESpan(0, 1) -> 1.0) // XXX
+    //       }
+    //     }
+    //   }
+    // ).data
+
   import qfirst.datasets.conll05
+  import qfirst.datasets.ptb2
+  import qfirst.datasets.propbank1
+  import qfirst.datasets.propbank3
 
   val conll05Path = Paths.get("data/conll05st-release")
 
@@ -1080,106 +901,282 @@ class CoNLL08Features(
 
   // TODO: remove VerbType from VerbFeats and ArgFeats? Maybe?
 
-  override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
-    origPropBankArgSpans
-      // |+| prepObjectExtendedSpans
-      // .map(_.map(_.map(spans => spans.mapVals(_ / spans.size))))
-      // |+| dependencyInferredArgSpans)
+  val propbank3Path = Paths.get("data/propbank-release")
 
-    // cacheArgFeats("CoNLL 2008 arg spans extracted from CoNLL 2005")(
-    //   (dataset.data, conll05Sentences.data, argRoleLabels.data).mapN { (data, props, argRoleLabels) =>
-    //     for {
-    //       ptb2Sentences <- ptb2Sentences.get
-    //       propbank1Sentences <- propbank1Sentences.get
-    //       conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
-    //     } yield (verbType: String) => (argId: ArgumentId[Int]) => {
-    //       val sentenceId = argId.verbId.sentenceId
-    //       val verbIndex = argId.verbId.verbIndex
-    //       val argIndex = argId.argument
-    //       val sentence = data(sentenceId)
-    //       val paddingIndices = sentence.paddingIndices
+  lazy val propbank3Sentences: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3Sentence]] = new Cell("PropBank 3 sentences", {
+    val service = new propbank3.PropBank3FileSystemService(propbank3Path)
+    import scala.concurrent.ExecutionContext.Implicits.global
+    service.streamSentencesFromProps[IO]
+      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
+      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
+  })
 
-    //       val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
-    //       val ptbSent = ptb2Sentences(ptbSid)
-    //       val propbankSent = propbank1Sentences(ptbSid)
+  lazy val propbank3SentencesCoNLLStyle: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3SentenceCoNLLStyle]] = new Cell("PropBank 3 sentences (CoNLL Style)", {
+    val service = new propbank3.PropBank3FileSystemService(propbank3Path)
+    import scala.concurrent.ExecutionContext.Implicits.global
+    service.streamSentencesFromCoNLLSkels[IO]
+      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
+      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
+  })
 
-    //       // val recalculatedPAStructures = 
+  def relabelPAStructures(
+    ptbTree: SyntaxTree[ptb2.PTB2Token],
+    propBankSentence: propbank3.PropBank3SentenceCoNLLStyle,
+    conll08Sentence: CoNLL08Sentence
+  ): Map[Int, PredArgStructure[PropBankPredicate, Int]] = {
+    conll08Sentence.predicateArgumentStructures.map { pas =>
+      val predIndex = pas.predicateIndex
+      propBankSentence.predArgStructures.find(_.predicateIndex == predIndex) match {
+        case None =>
+          System.err.println("\nCan't find predicate!!")
+          System.err.println(propBankSentence.id)
+          System.err.println(Text.render(conll08Sentence.tokens))
+          System.err.println(
+            conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
+          )
+          System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+          System.err.println(pas)
+          System.err.println("-----")
+          System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+          predIndex -> pas // just use original
+        case Some(pbPas) =>
+          predIndex -> pas.copy(
+            predicate = pbPas.predicate,
+            arguments = pas.arguments.map { case (origLabel, argIndex) =>
+              val labelOpt = pbPas.arguments.find(_._2.contains(argIndex)).map(_._1)
+              labelOpt match {
+                case None =>
+                  System.err.println("\nCan't find argument!! Index: " + argIndex)
+                  System.err.println(propBankSentence.id)
+                  System.err.println(Text.render(conll08Sentence.tokens))
+                  System.err.println(
+                    conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", ")
+                  )
+                  System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+                  System.err.println(pas)
+                  System.err.println("-----")
+                  System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+                  origLabel -> argIndex
+                case Some(label) =>
+                  label -> argIndex
+              }
+            }
+          )
+      }
+    }.toMap
+  }
 
-    //       System.err.println(sentenceId)
-    //       System.err.println(Text.render(sentence.tokens))
-    //       System.err.println(sentence.tokens.size)
-    //       System.err.println(verbIndex + s" (${sentence.tokens(verbIndex).token})")
-    //       System.err.println(argIndex + s"(${sentence.tokens(argIndex).token})")
+  val filteredPropBank3Roles = Set(
+    "LINK-SLC", "LINK-PRO", "LINK-PSV"
+  )
 
-    //       props(sentenceId).predicateArgumentStructures.foreach(System.err.println)
+  // relabels the PASs from the conll '08 sentence to use the sense and role labels from propbank3.
+  // this is particularly annoying because the penn treebank indexes hyphenations as one word,
+  // but propbank3 seems to use the newer tokenization which splits them. so I have to undo that
+  // to recover the propbank spans correctly and then redo it to convert them to conll 08.
+  // XXX this doesn't work
+  def relabelPAStructuresOld(
+    ptbTree: SyntaxTree[ptb2.PTB2Token],
+    propBankSentence: propbank3.PropBank3Sentence,
+    conll08Sentence: CoNLL08Sentence
+  ): Map[Int, PredArgStructure[PropBankPredicate, Int]] = {
 
-    //       val indexRemapping = (0 to sentence.tokens.size).foldLeft(List.empty[Int]) {
-    //         case (Nil, i) => i :: Nil
-    //         case (prev :: rest, i) =>
-    //           if(paddingIndices.contains(i)) prev :: prev :: rest
-    //           else (prev + 1) :: prev :: rest
-    //       }.reverse.toVector
-    //       val span = props(sentenceId)
-    //         .predicateArgumentStructures(indexRemapping(verbIndex))
-    //         .arguments.map { case (_, span) =>
-    //           val newBegin = indexRemapping(span.begin)
-    //           val newEnd = indexRemapping(span.end)
-    //           ESpan(newBegin, newEnd)
-    //         }.find(_.contains(argIndex)).get
+    val emptyElementIndices = ptbTree.toList.filter(_.pos == "-NONE-").map(_.index)
+    // counts of added forms from splitting for each index in the unsplit case
+    val numExtraSplitFormsByIndex = conll08Sentence.paddingIndices.unorderedFoldMap { index =>
+      // subtract 1 for every padding index incl. or before this one.
+      val originalIndex = index - conll08Sentence.paddingIndices.count(_ <= index)
+      Map(originalIndex -> 1)
+    }
+    val numSplitFormsByIndex = (0 until (conll08Sentence.tokens.size - conll08Sentence.paddingIndices.size))
+      .map(i => numExtraSplitFormsByIndex.getOrElse(i, 0))
+      .toList // turn map into a list of extra split form counts
 
-    //       // TODO fix printing code to verify sentence matching, span matching, and span index correction
+    // add a 0 do a cumulative sum to know the total offset before a token position
+    val preTokenSplitFormOffsets = numSplitFormsByIndex.scanLeft(0)(_ + _)
 
-    //       System.err.println("\n" + sentenceId)
-    //       System.err.println(Text.render(sentence.tokens))
-    //       System.err.println(s"PREDICATE: ${sentence.tokens(verbIndex).token} ($verbIndex)")
-    //       val roleLabel = argRoleLabels(verbType)(argId).role
-    //       System.err.println(s"$roleLabel: ${sentence.tokens(argId.argument).token}")
-    //       System.err.println(Text.renderSpan(sentence.tokens, span))
+    val splitFormBinaryVec = (0 until conll08Sentence.tokens.size)
+      .map(i => if(conll08Sentence.paddingIndices.contains(i)) 1 else 0)
+      .toList
+    val reverseSplitFormOffsets = splitFormBinaryVec.scanLeft(0)(_ - _)
 
-    //       // System.err.println(s"Other args: $otherArgsString")
-    //       // System.err.println(s"Contains another argument? " + (if(containsAnotherArg) "YES" else "NO"))
-    //       // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan))
-    //       // System.err.println(Text.renderSpan(sentence.tokens, blockedSpan2))
+    // get indices where empty elements appear according to propbank3.
+    // add the pre-token split form offsets from conll 08. but to calculate correctly,
+    // we need to shift the index of the empty element back by the number of empty elts preceding it,
+    // since these were not indexed in conll08.
+    val emptyElementIndicesWithSplitForms = emptyElementIndices
+      .sorted
+      .zipWithIndex
+      .map { case (i, num) => i + preTokenSplitFormOffsets(i - num) }
 
-    //       Map(span -> 1.0)
-    //     }
-    //   }.flatMap(x => x)
-    // ).data
+    if(ptbTree.size == 23) {
+      System.err.println(propBankSentence.id)
+      System.err.println(Text.render(conll08Sentence.tokens))
+      System.err.println(
+        conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", "))
+      System.err.println(
+        ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+      System.err.println(emptyElementIndices)
+      System.err.println(conll08Sentence.paddingIndices)
+      System.err.println(preTokenSplitFormOffsets)
+      System.err.println(reverseSplitFormOffsets)
+      System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+      // System.err.println(pas)
+      // System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
+      // System.err.println(args)
+    }
 
-    // cacheArgFeats("CoNLL 2008 arg spans borrowed from OntoNotes")(
-    //   dataset.data.zip(RunData.splits).flatMap { case (data, split) =>
-    //     (ontonotesAllData.get, ontonotesSentenceIndex.get).mapN { (ontonotes, ontonotesIndex) =>
-    //     // (ontonotesFeatures.rawDataset(split), ontonotesSentenceIndices(split)).mapN { (ontonotes, ontonotesIndex) =>
-    //       (verbType: String) => (argId: ArgumentId[Int]) => {
-    //         val argIndex = argId.argument
-    //         val sid = argId.verbId.sentenceId
-    //         val sentence = data(sid)
-    //         val matchedOntonotesPaths = sentence.tokens.foldMap(tok =>
-    //           ontonotesIndex.get(tok.token.lowerCase).combineAll
-    //         ).toVector.sortBy(-_._2).take(5)
+    def reindexPropBank3ToConll08(pi: Int): Int = (pi: Id[Int])
+      .map(pi => pi - emptyElementIndicesWithSplitForms.count(_ < pi))
+      // .map(pi => pi + preTokenSplitFormOffsets(pi))
 
-    //         val sentText = Text.render(sentence.tokens)
-    //         val topPath = matchedOntonotesPaths.head._1
-    //         val topSentText = Text.render(ontonotes(topPath).tokens)
+    // collapse together multiple predicates at the same index.
+    // this is what was done in the conversion to conll format anyway.
+    val reindexedSpanSetsWithPredicateIndex = propBankSentence.predArgStructures.foldMap { pas =>
 
-    //         if(topSentText == sentText) {
-    //           System.err.print(".")
-    //         } else {
-    //           System.err.println("\n==========")
-    //           System.err.println(sid)
-    //           System.err.println(Text.render(sentence.tokens))
-    //           matchedOntonotesPaths.foreach { case (path, count) =>
-    //             System.err.println(s"$count: $path")
-    //             val ontonotesSentence = ontonotes(path)
-    //             System.err.println(Text.render(ontonotesSentence.tokens))
-    //           }
-    //           System.err.println()
-    //         }
+      val predicateIndex = reindexPropBank3ToConll08(pas.predicateIndex)
 
+      // if(pas.predicate == PropBankPredicate("talk", "01")) {
+      //   System.err.println("\n-----")
+      //   System.err.println(pas.predicate)
+      //   System.err.println(pas.predicateIndex)
+      //   System.err.println(pas.arguments.mkString("\n"))
+      // }
 
-    //         Map(ESpan(0, 1) -> 1.0) // XXX
-    //       }
-    //     }
-    //   }
-    // ).data
+      NonMergingMap(
+        predicateIndex -> PredArgStructure(
+          predicateIndex = predicateIndex,
+          predicate = pas.predicate,
+          arguments = pas.arguments
+            .filterNot(p => filteredPropBank3Roles.contains(p._1))
+            .map { case (label, arg) =>
+              val branches = arg.allBranches
+              val spans = branches
+                .map(SyntaxTree.Branch.tokenIndex.modify(
+                       i => i + reverseSplitFormOffsets(reindexPropBank3ToConll08(i))
+                     ))
+                .map(branch => ptbTree.getSubtree(branch).toSpan)
+                .map { span =>
+                  // reindex to remove gaps
+                  // TODO test this to be sure it works..
+                  val newBegin = span.begin - emptyElementIndices.count(_ < span.begin)
+                  val newEnd = span.end - emptyElementIndices.count(_ < span.end)
+                  ESpan(newBegin, newEnd)
+                }
+                .map { span =>
+                  // reindex to account for split tokens in conll 08
+                  // TODO test this to be sure it works...
+                  val newBegin = span.begin + preTokenSplitFormOffsets(span.begin)
+                  val newEnd = span.end + preTokenSplitFormOffsets(span.end)
+                  ESpan(newBegin, newEnd)
+                }
+                .filter(s => s.end > s.begin) // remove empty elements
+                .toSet
+
+              label -> spans
+          }
+        )
+      )
+    }.value
+
+    conll08Sentence.predicateArgumentStructures.flatMap { pas =>
+      if(reindexedSpanSetsWithPredicateIndex.get(pas.predicateIndex).isEmpty) {
+        System.err.println("\nCan't find predicate!!")
+        System.err.println(propBankSentence.id)
+        System.err.println(Text.render(conll08Sentence.tokens))
+        System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+        System.err.println(pas)
+        System.err.println(reindexedSpanSetsWithPredicateIndex)
+        System.err.println(emptyElementIndices)
+        System.err.println(conll08Sentence.paddingIndices)
+        System.err.println(preTokenSplitFormOffsets)
+        System.err.println(reverseSplitFormOffsets)
+        System.err.println(propBankSentence.predArgStructures.mkString("\n"))
+        None
+      } else Some {
+        val matchedPAS = reindexedSpanSetsWithPredicateIndex(pas.predicateIndex)
+        val newArgs = pas.arguments.map { case (oldLabel, index) =>
+          val args = matchedPAS.arguments.filter(_._2.exists(_.contains(index)))
+          if(args.size == 0) {
+            System.err.println("\nNo arguments!!!!")
+            System.err.println(propBankSentence.id)
+            System.err.println(Text.render(conll08Sentence.tokens))
+            System.err.println(ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+            System.err.println(pas)
+            System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
+            System.err.println(args)
+            oldLabel -> index
+          } else {
+            if(args.size > 1) {
+              System.err.println("\nNon-unique arguments!!!!")
+              System.err.println(propBankSentence.id)
+              System.err.println(Text.render(conll08Sentence.tokens))
+              System.err.println(
+                conll08Sentence.tokens.map(t => s"${t.token} (${t.index})").mkString(", "))
+              System.err.println(
+                ptbTree.toList.map(t => s"${t.token} (${t.index})").mkString(", "))
+              System.err.println(emptyElementIndices)
+              System.err.println(conll08Sentence.paddingIndices)
+              System.err.println(preTokenSplitFormOffsets)
+              System.err.println(pas)
+              System.err.println(reindexedSpanSetsWithPredicateIndex.toList.sortBy(_._1).mkString("\n"))
+              System.err.println(args)
+            }
+            // require(args.size == 1)
+            args.minBy(_._2.filter(_.contains(index)).map(_.length).min)._1 -> index
+            // args.head._1 -> index
+          }
+        }
+        pas.predicateIndex -> pas.copy(arguments = newArgs)
+      }
+    }.toMap
+  }
+
+  val pb3OmittedFilesPath = Paths.get("data/pb3-missing-from-ontonotes.txt")
+
+  lazy val pb3OmittedFiles: IO[List[ptb2.PTB2FilePath]] =
+    FileUtil.readString(pb3OmittedFilesPath)
+      .map(_.split("\n").toList.map(ptb2.PTB2FilePath.fromString))
+    // fs2.io.file.readAll[IO](pb3OmittedFilesPath
+
+  lazy val propBank3PredArgStructures: CachedVerbFeats[PredArgStructure[PropBankPredicate, Int]] = {
+    fileCacheVerbFeats("propbank3-gold-pas", log = true)(
+      dataset.data.map { data =>
+        for {
+          omittedPaths <- pb3OmittedFiles
+          ptb2Sentences <- ptb2Sentences.get
+          propbank3Sentences <- propbank3SentencesCoNLLStyle.get
+          conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
+        } yield (verbType: String) => (verbId: VerbId) => {
+          val sentenceId = verbId.sentenceId
+          val verbIndex = verbId.verbIndex
+          val sentence = data(sentenceId)
+          val paddingIndices = sentence.paddingIndices
+
+          val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
+          if(omittedPaths.contains(ptbSid.filePath)) {
+            System.err.println(s"=== OMITTED: $ptbSid ===")
+            sentence.predicateArgumentStructures.find(_.predicateIndex == verbIndex).get
+          } else {
+            val ptbSentence = ptb2Sentences(ptbSid)
+            val pb3Sid = propbank3.PropBank3SentenceId.parse(
+              s"nw/wsj/${ptbSid.filePath.pathSuffix}".replaceAll("\\.mrg$", ".parse"),
+              ptbSid.sentenceNum
+            )
+            val pb3Sentence = propbank3Sentences.value.get(pb3Sid).get
+            val newPASs = relabelPAStructures(ptbSentence.syntaxTree, pb3Sentence, sentence)
+            if(!newPASs.contains(verbIndex)) {
+              System.err.println("\nMISSING!!!!!!")
+              System.err.println(ptbSid)
+              System.err.println(pb3Sid)
+              System.err.println(sentence.tokens.grouped(10).mkString("\n"))
+              System.err.println(newPASs)
+              System.err.println(verbIndex)
+              sentence.predicateArgumentStructures.find(_.predicateIndex == verbIndex).get
+            } else newPASs(verbIndex)
+          }
+        }
+      }.flatMap(x => x)
+    )
+  }
 }
