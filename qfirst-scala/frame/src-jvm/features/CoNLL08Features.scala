@@ -355,6 +355,12 @@ class CoNLL08Features(
     )
   }
 
+  // TODO try both naive recovery of syntactic constituents, and
+  // smarter one that looks at embedding of constituents within each other
+  lazy val argConstituentTypeDists: CachedArgFeats[Map[String, Double]] = {
+    ptb2ArgConstituentTypes
+  }
+
   override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
     origPropBankArgSpans
       // |+| prepObjectExtendedSpans
@@ -575,6 +581,65 @@ class CoNLL08Features(
     )
   )
 
+  lazy val ptb2ArgConstituentTypes: CachedArgFeats[Map[String, Double]] = {
+    // TODO decide what to do about including the VerbType, for sense-agnostic and sense-specific ones to share file cache...
+    fileCacheArgFeats("ptb-constituent-types", log = true)(
+      dataset.data.map { data =>
+        for {
+          ptb2Sentences <- ptb2Sentences.get
+          propbank1Sentences <- propbank1Sentences.get
+          conllToPTB2SentenceAlignments <- conllToPTB2SentenceAlignments.get
+        } yield (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentenceId = argId.verbId.sentenceId
+          val verbIndex = argId.verbId.verbIndex
+          val argIndex = argId.argument
+          val sentence = data(sentenceId)
+
+          val ptbSid = conllToPTB2SentenceAlignments(sentenceId)
+          val ptbSentence = ptb2Sentences(ptbSid)
+          val ptbTree = ptbSentence.syntaxTree
+
+          def error = {
+            System.err.println(sentenceId)
+            System.err.println(ptbSid)
+            System.err.println(Text.render(sentence.tokens))
+            ???
+          }
+
+          propbank1Sentences.value.get(ptbSid).fold[Map[String, Double]](
+            error // Map.empty[String, Double]
+          ) { propBankSentence =>
+            val recalculatedPAStructures = reindexPAStructures(
+              ptbTree, propBankSentence, sentence
+            )
+
+            val pbArguments = recalculatedPAStructures
+              .find(_.predicateIndex == verbIndex)
+              .foldMap(_.arguments) // no spans for cases where predicate was not matched
+              .filter(_._2._2.exists(_.contains(argIndex))) // take spans for _any_ args that match, incl. the case when none do. in practice I think it's one or none
+              .foldMap(_._2._1)
+
+            import propbank1.PropBankArgument.TracedNonterminal
+            val constituentTypes: List[String] = pbArguments.toList
+              .flatMap(_.getTopConstituents(ptbTree)).map {
+                case SyntaxTree.Leaf(word) => word.pos
+                case SyntaxTree.Node(TracedNonterminal(label, _), _) => label
+                case SyntaxTree.Node(label, _) => label
+              }
+
+            // TODO postprocess. perhaps remove -SBJ, etc.
+
+            val prob = 1.0 / constituentTypes.size
+
+            constituentTypes.foldMap(x => Map(x -> prob))
+          }
+        }
+      }.flatMap(x => x)
+    )
+  }
+
+  import propbank1.PropBankArgument
+
   val propbank1Path = Paths.get("data/propbank_1")
 
   lazy val propbank1Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, propbank1.PropBank1Sentence]] = new Cell("PropBank 1 sentences", {
@@ -589,7 +654,7 @@ class CoNLL08Features(
     ptbTree: SyntaxTree[ptb2.PTB2Token],
     propBankSentence: propbank1.PropBank1Sentence,
     conll08Sentence: CoNLL08Sentence
-  ): List[PredArgStructure[PropBankPredicate, Set[ESpan]]] = {
+  ): List[PredArgStructure[PropBankPredicate, (Set[PropBankArgument], Set[ESpan])]] = {
 
     val emptyElementIndices = ptbTree.toList.filter(_.pos == "-NONE-").map(_.index)
     // counts of added forms from splitting for each index in the unsplit case
@@ -616,27 +681,25 @@ class CoNLL08Features(
       val predicateIndex = reindexPredicate(pas.predicateIndex)
 
       Map(
-        predicateIndex -> pas.arguments
-          .map(_._2.allBranches)
-          .map { branches =>
-            branches
-              .map(branch => ptbTree.getSubtree(branch).toSpan)
-              .map { span =>
-                // reindex to remove gaps
-                // TODO test this to be sure it works..
-                val newBegin = span.begin - emptyElementIndices.count(_ < span.begin)
-                val newEnd = span.end - emptyElementIndices.count(_ < span.end)
-                ESpan(newBegin, newEnd)
-              }
-              .map { span =>
-                // reindex to account for split tokens in conll 08
-                // TODO test this to be sure it works...
-                val newBegin = span.begin + preTokenSplitFormOffsets(span.begin)
-                val newEnd = span.end + preTokenSplitFormOffsets(span.end)
-                ESpan(newBegin, newEnd)
-              }
-              .filter(s => s.end > s.begin) // remove empty elements
-              .toSet
+        predicateIndex -> pas.arguments.map { case (_, arg) =>
+          arg -> arg.allBranches
+            .map(branch => ptbTree.getSubtree(branch).toSpan)
+            .map { span =>
+              // reindex to remove gaps
+              // TODO test this to be sure it works..
+              val newBegin = span.begin - emptyElementIndices.count(_ < span.begin)
+              val newEnd = span.end - emptyElementIndices.count(_ < span.end)
+              ESpan(newBegin, newEnd)
+            }
+            .map { span =>
+              // reindex to account for split tokens in conll 08
+              // TODO test this to be sure it works...
+              val newBegin = span.begin + preTokenSplitFormOffsets(span.begin)
+              val newEnd = span.end + preTokenSplitFormOffsets(span.end)
+              ESpan(newBegin, newEnd)
+            }
+            .filter(s => s.end > s.begin) // remove empty elements
+            .toSet
           }.toSet
       )
     }
@@ -652,14 +715,14 @@ class CoNLL08Features(
       } else Some {
         val matchedArgs = reindexedSpanSetsWithPredicateIndex(pas.predicateIndex)
         val newArgs = pas.arguments.map { case (label, index) =>
-          val thisPredicateSpanSets = matchedArgs.filter(_.exists(_.contains(index)))
+          val thisPredicateSpanSets = matchedArgs.filter(_._2.exists(_.contains(index)))
           var hadToSwitchPredicates = false
           val spanSets = {
             if(thisPredicateSpanSets.isEmpty) {
               System.err.println("Missing argument for predicate!!")
               hadToSwitchPredicates = true
               reindexedSpanSetsWithPredicateIndex.values
-                .flatMap(_.find(_.exists(_.contains(index))))
+                .flatMap(_.find(_._2.exists(_.contains(index))))
             } else thisPredicateSpanSets
           }
           // val spanSets: Set[Set[ESpan]] = if(trialSpanSets.isEmpty) {
@@ -667,7 +730,7 @@ class CoNLL08Features(
           //     _.exists(_.contains(index))
           //   ).getOrElse(Set.empty[Set[ESpan]])
           // } else trialSpanSets
-          val renderedNewSpanSets = spanSets.map(ss => ss.toList.sorted.map(Text.renderSpan(conll08Sentence.tokens, _)).mkString(" / "))
+          val renderedNewSpanSets = spanSets.map(ss => ss._2.toList.sorted.map(Text.renderSpan(conll08Sentence.tokens, _)).mkString(" / "))
           val pbPas = propBankSentence.predArgStructures
             .filter(pbPas => reindexPredicate(pbPas.predicateIndex) == pas.predicateIndex)
           val renderedOrigSpanSets = pbPas.flatMap(_.arguments).map(
@@ -736,12 +799,12 @@ class CoNLL08Features(
             System.err.println(spanSets)
             System.err.println(
               spanSets.map(spanSet =>
-                spanSet.map(Text.renderSpan(conll08Sentence.tokens, _)).mkString(" / ")
+                spanSet._2.map(Text.renderSpan(conll08Sentence.tokens, _)).mkString(" / ")
               ).mkString("\n==========\n")
             )
             System.err.println("\n==========\n")
           }
-          label -> spanSets.toList.combineAll
+          label -> (spanSets.map(_._1).toSet -> spanSets.toList.foldMap(_._2))
         }
         pas.copy(arguments = newArgs)
       }
@@ -778,13 +841,13 @@ class CoNLL08Features(
           propbank1Sentences.value.get(ptbSid).fold(Map.empty[ESpan, Double]) { propBankSentence =>
             val recalculatedPAStructures = reindexPAStructures(
               ptbSentence.syntaxTree, propBankSentence, sentence
-            ): List[PredArgStructure[PropBankPredicate, Set[ESpan]]]
+            )//: List[PredArgStructure[PropBankPredicate, Set[ESpan]]]
 
             val spans = recalculatedPAStructures
               .find(_.predicateIndex == verbIndex)
-              .fold(List.empty[(String, Set[ESpan])])(_.arguments) // no spans for cases where predicate was not matched
-              .filter(_._2.exists(_.contains(argIndex))) // take spans for _any_ args that match, incl. the case when none do. in practice I think it's one or none
-              .foldMap(_._2)
+              .foldMap(_.arguments) // no spans for cases where predicate was not matched
+              .filter(_._2._2.exists(_.contains(argIndex))) // take spans for _any_ args that match, incl. the case when none do. in practice I think it's one or none
+              .foldMap(_._2._2)
 
             spans.map(_ -> 1.0).toMap
           }

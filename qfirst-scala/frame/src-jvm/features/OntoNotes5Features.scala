@@ -141,6 +141,8 @@ class OntoNotes5Features(
 
   override def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
 
+  def argConstituentTypeDists: CachedArgFeats[Map[String, Double]] = ???
+
   override def argRoleLabels: CachedArgFeats[PropBankRoleLabel] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
       verbs.value.toList.foldMap { case (verbId, (framesetId, arguments)) =>

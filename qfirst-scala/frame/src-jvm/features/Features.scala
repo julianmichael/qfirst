@@ -303,6 +303,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argSyntacticFunctionsConverted: CachedArgFeats[String]
 
+  def argConstituentTypeDists: CachedArgFeats[Map[String, Double]]
+
   // directories
 
   protected val rootDir: Path
