@@ -173,7 +173,8 @@ case class JointModel(
 case class SideClusteringModel(
   modals: Boolean,
   negation: Boolean,
-  adjuncts: Boolean
+  adjuncts: Boolean,
+  discourse: Boolean
 ){
   def extractSideClusters[VerbType, Arg: Order](
     features: Features[VerbType, Arg])(
@@ -183,22 +184,23 @@ case class SideClusteringModel(
     sentences <- features.sentences.get.map(_.value)
     headIndices <- features.argSemanticHeadIndices.get
     syntacticFuncs <- features.argSyntacticFunctions.get
+    argSpans <- features.argSpans.get
     results <- args.toList.infoBarTraverse("Constructing side clusters") { case (verbType, args) =>
       Log.trace(verbType.toString) >> IO {
         val heads = headIndices(verbType)
         val funcs = syntacticFuncs(verbType)
+        val spans = argSpans(verbType)
         val getSideClusterLabel = (argId: ArgumentId[Arg]) => {
+          val sentence = sentences(argId.verbId.sentenceId)
           val modal = Option("MODAL")
             .filter(_ => modals)
             .filter { _ =>
-              val sentence = sentences(argId.verbId.sentenceId)
               val token = sentence(heads(argId))
               SideClusteringModel.modalTokens.contains(token.lowerCase)
             }
           val neg = Option("NEG")
             .filter(_ => negation)
             .filter { _ =>
-              val sentence = sentences(argId.verbId.sentenceId)
               val token = sentence(heads(argId))
               jjm.ling.en.Inflections.negationWords.contains(token.lowerCase)
             }
@@ -206,7 +208,16 @@ case class SideClusteringModel(
             .filter(_ => adjuncts)
             .filter(SideClusteringModel.adjunctFuncs.contains)
 
-          modal.orElse(neg).orElse(adjunct)
+          val disc = Some("DIS")
+            .filter(_ => discourse)
+            .filter { _ =>
+              spans(argId).toVector.maximaBy(_._2)
+                .map(_._1)
+                .map(span => jjm.ling.Text.renderSpan(sentence, span).lowerCase)
+                .exists(SideClusteringModel.discourseExpressions.contains)
+            }
+
+          modal.orElse(neg).orElse(adjunct).orElse(disc)
         }
         verbType -> args.groupBy(getSideClusterLabel).flatMap { case (keyOpt, v) => keyOpt.map(_ -> v) }
       }
@@ -217,19 +228,39 @@ case class SideClusteringModel(
     List(
       if(modals) "m" else "",
       if(negation) "n" else "",
-      if(adjuncts) "a" else ""
+      if(adjuncts) "a" else "",
+      if(discourse) "d" else ""
     ).mkString
   }
 }
 object SideClusteringModel {
   val modalTokens = jjm.ling.en.Inflections.modalVerbs ++ jjm.ling.en.Inflections.willVerbs
   val adjunctFuncs = Set("TMP", "MNR", "LOC", "DIR")
+  val discourseExpressions = Set(
+    "and", "but", "or", "though", "also", "hence", "however", // "then", "next" // questionable
+    "furthermore", "moreover", "thus", "so", // "further" /// questionable
+    "either", "nonetheless", "regardless", // "well" // questionable
+    "rather", "ironically", "indeed", "just", "even", "only", // "say" // questionable
+    "exactly", "certainly", "frankly", "similarly", "thereby", "therefore",
+    "instead", "still",
+    "specifically", "particularly", "in particular",
+    // "meanwhile", "meantime", "in the meantime",
+    "in turn", "as well", "and so",
+    "as a result", "after all",
+    "in addition", "in contrast", "in other words",
+    "for example", "for instance",
+    "rather than",
+    "for one thing", "for one",
+    "in this case", "in that case", "in any case",
+    "in any event", "in fact", "of course", "in particular"
+  ).map(_.lowerCase)
   def fromString(x: String): Option[SideClusteringModel] = {
     Some(
       SideClusteringModel(
         x.contains("m"),
         x.contains("n"),
-        x.contains("a")
+        x.contains("a"),
+        x.contains("d")
       )
     )
   }
