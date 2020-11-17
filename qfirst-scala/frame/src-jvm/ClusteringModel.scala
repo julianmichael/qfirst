@@ -591,6 +591,7 @@ object FullArgumentModel {
     NoOp -> "noop",
     QuestionEntropy -> "qent",
     SyntacticFunction -> "syntf",
+    ConstituentType -> "ctype",
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )
@@ -641,31 +642,47 @@ object FullArgumentModel {
     ]
   }
 
-  case object QuestionEntropy extends LossTerm {
+  abstract class DistributionEntropy[A] extends LossTerm {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.CachedArgFeats[Map[A, Double]]
+
     type FlatParam = DenseMultinomial
     type AgglomParam = MinEntropyClusteringSparse.ClusterMixture
 
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.argQuestionDists.get.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = getDists(features).get.as(())
 
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
-      questionDists <- features.argQuestionDists.get.map(_.apply(verbType))
-      questionVocab = Vocab.make(questionDists.value.values.toList.foldMap(_.keySet))
+      dists <- getDists(features).get.map(_.apply(verbType))
+      vocab = Vocab.make(dists.value.values.toList.foldMap(_.keySet))
       // tfidf = TFIDF.makeTransform(
       //   headProbabilityMass = 0.99,
       //   priorSmoothingLambda = 1000.0,
       //   priorTruncationHead = .99
       // )(questionDists.value)
-      indexedInstances = questionDists.value.map { case (argId, questionDist) =>
-        // val dist = tfidf(questionDist)
-        val dist = questionDist
-        argId -> dist.map { case (q, p) => questionVocab.getIndex(q) -> p }
+      indexedInstances = dists.value.map { case (argId, _dist) =>
+        // val dist = tfidf(_dist)
+        val dist = _dist
+        argId -> dist.map { case (q, p) => vocab.getIndex(q) -> p }
       }
     } yield (
-      new DirichletMAPClusteringSparse(indexedInstances, questionVocab.size, 0.01),
-      new MinEntropyClusteringSparse(indexedInstances, questionVocab.size)
+      new DirichletMAPClusteringSparse(indexedInstances, vocab.size, 0.01),
+      new MinEntropyClusteringSparse(indexedInstances, vocab.size)
     )
+  }
+
+  case object QuestionEntropy extends DistributionEntropy[QuestionTemplate] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.CachedArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDists
+  }
+
+  case object ConstituentType extends DistributionEntropy[String] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.CachedArgFeats[Map[String, Double]] = features.argConstituentTypeDists
   }
 
   case object SyntacticFunction extends LossTerm {
@@ -679,7 +696,6 @@ object FullArgumentModel {
     ) = for {
       argSyntacticFunctions <- features.argSyntacticFunctionsConverted.get.map(_.apply(verbType))
       syntFuncVocab = Vocab.make(argSyntacticFunctions.value.values.toSet)
-      // TODO add tf-idf transform?
       indexedInstances = argSyntacticFunctions.value.map { case (argId, syntFunc) =>
         argId -> Map(syntFuncVocab.getIndex(syntFunc) -> 1.0)
       }
