@@ -347,7 +347,7 @@ object FrameInductionApp extends CommandIOApp(
         out <- features.outDir
         split <- features.splitName
         parentResultsDir = out.resolve(s"eval/$split/$goldVerbSenseLabel")
-        _ <- allArgModelSpecs.toList.traverse { case (evalMode, metricSpecs) =>
+        _ <- {
           val resultsDir = parentResultsDir.resolve("verb")
           allVerbModelSpecs.toList.infoBarTraverse(s"Recording stats (verb)") { case (metric, modelSpecs) =>
             val metricDir = resultsDir.resolve(metric.name)
