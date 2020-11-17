@@ -591,7 +591,7 @@ object FullArgumentModel {
     NoOp -> "noop",
     QuestionEntropy -> "qent",
     SyntacticFunction -> "syntf",
-    ConstituentType -> "ctype",
+    ConstituentType -> "syntc",
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )

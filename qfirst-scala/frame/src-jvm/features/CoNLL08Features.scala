@@ -621,11 +621,7 @@ class CoNLL08Features(
 
             import propbank1.PropBankArgument.TracedNonterminal
             val constituentTypes: List[String] = pbArguments.toList
-              .flatMap(_.getTopConstituents(ptbTree)).map {
-                case SyntaxTree.Leaf(word) => word.pos
-                case SyntaxTree.Node(TracedNonterminal(label, _), _) => label
-                case SyntaxTree.Node(label, _) => label
-              }
+              .flatMap(_.getTopConstituentLabels(ptbTree))
 
             // TODO postprocess. perhaps remove -SBJ, etc.
 

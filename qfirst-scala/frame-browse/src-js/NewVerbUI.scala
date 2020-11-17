@@ -282,13 +282,14 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Boolean,
     argIndex: Boolean,
     argSpans: Boolean,
+    argConstituentTypes: Boolean,
     argMlmDist: Option[String],
     verbMlmDist: Option[String],
     goldLabels: Boolean
   )
   object FeatureOptions {
     val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, None, None, false)
+    def init = FeatureOptions(false, false, false, false, None, None, false)
   }
 
   @Lenses case class FeatureValues(
@@ -296,6 +297,7 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     argIndex: Option[Map[ArgumentId[Arg], Int]],
     argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
+    argConstituentTypes: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
     verbMlmDist: Option[Map[VerbId, Map[String, Float]]],
     goldLabels: Option[Option[GoldVerbInfo[Arg]]]
@@ -304,7 +306,7 @@ class NewVerbUI[VerbType, Arg: Order](
     val questionPrior = questionDist.map(_.unorderedFold)
   }
   object FeatureValues {
-    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None)
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None)
   }
 
   val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
@@ -374,6 +376,13 @@ class NewVerbUI[VerbType, Arg: Order](
             opts => (FeatureValues.argSpans, opts.argSpans),
             (b: Boolean) => Option(
               FeatureReq.ArgSpans[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.argConstituentTypes, opts.argConstituentTypes),
+            (b: Boolean) => Option(
+              FeatureReq.ArgConstituentTypes[VerbType, Arg](state.features.verbType)
             ).filter(_ => b)
           ) >>
           pullFeature(
@@ -513,6 +522,7 @@ class NewVerbUI[VerbType, Arg: Order](
         View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
         View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
         View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
+        View.checkboxToggle("Arg ctypes", verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)),
         <.span(S.labeledDropdown)(
           <.span(S.labeledDropdownLabel)("Arg MLM:"),
           OptionalStringSelect(
@@ -588,12 +598,13 @@ class NewVerbUI[VerbType, Arg: Order](
     )
   }
 
-  def mlmDisplay(
-    counts: Map[String, Float],
-    numToShow: Int = 20
-  ) = {
-    val total = counts.values.sum
-    val dist = counts.mapVals(_ / total)
+  def distributionDisplay[N](
+    counts: Map[String, N],
+    numToShow: Int = 20)(
+    implicit N: Numeric[N]
+  )= {
+    val total = N.toDouble(counts.values.sum)
+    val dist = counts.mapVals(v => N.toDouble(v) / total)
     val topItems = dist.toVector.sortBy(-_._2).take(numToShow)
 
     <.div(S.mlmItemsBlock)(
@@ -730,10 +741,13 @@ class NewVerbUI[VerbType, Arg: Order](
           },
           verbFeatures.verbMlmDist.whenDefined { dists =>
             val senseCounts = verbTree.unorderedFoldMap(_.unorderedFoldMap(dists))
-            mlmDisplay(senseCounts)
+            distributionDisplay(senseCounts)
           },
           <.div(S.clauseSetDisplay)(
             allRoles.toVdomArray { case (nameOrIndex, argIds) =>
+              val ctypeDistOpt = verbFeatures.argConstituentTypes.map { dists =>
+                argIds.unorderedFoldMap(dists)
+              }
               val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
@@ -762,9 +776,8 @@ class NewVerbUI[VerbType, Arg: Order](
                   val counts = argIds.unorderedFoldMap(argId => Map(goldLabels.argRoles(argId).role -> 1))
                   goldLabelDistDisplay(counts)
                 },
-                mlmDistOpt.whenDefined { mlmDist =>
-                  mlmDisplay(mlmDist)
-                },
+                ctypeDistOpt.whenDefined(distributionDisplay(_)),
+                mlmDistOpt.whenDefined(distributionDisplay(_)),
                 questionDistOpt.whenDefined { questionDist =>
                   questionDistributionTable(inflectedForms, questionDist)
                 }
@@ -1281,7 +1294,7 @@ class NewVerbUI[VerbType, Arg: Order](
                   }
                 ),
                 features.verbMlmDist.whenDefined { dists =>
-                  mlmDisplay(dists(verbId))
+                  distributionDisplay(dists(verbId))
                 },
                 <.table(S.verbQAsTable)( // arg table
                   <.tbody(S.verbQAsTableBody)(
@@ -1313,8 +1326,16 @@ class NewVerbUI[VerbType, Arg: Order](
                         <.tr(
                           <.td(
                             ^.colSpan := 5,
+                            features.argConstituentTypes.whenDefined { dists =>
+                              distributionDisplay(dists(ArgumentId(verbId, arg)))
+                            }
+                          )
+                        ),
+                        <.tr(
+                          <.td(
+                            ^.colSpan := 5,
                             features.argMlmDist.whenDefined { dists =>
-                              mlmDisplay(dists(ArgumentId(verbId, arg)))
+                              distributionDisplay(dists(ArgumentId(verbId, arg)))
                             }
                           )
                         ),

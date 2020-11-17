@@ -70,6 +70,19 @@ import jjm.implicits._
       children.toList.flatMap(_.getSubtreeAux(branch, this :: ancestors)).headOption
   }
 
+  def getHighestUnaryBranch(p: Word => Boolean): Option[SyntaxTree[Word]] =
+    getHighestUnaryBranchAux(p, None)
+  def getHighestUnaryBranchAux(
+    p: Word => Boolean, topAncestor: Option[SyntaxTree[Word]]
+  ): Option[SyntaxTree[Word]] = this match {
+    case Leaf(token) => if(p(token)) topAncestor.orElse(Some(Leaf(token))) else None
+    case Node(_, children) =>
+      // if >1 child, we're no longer valid top of branch.
+      // if <= 1 child, our top ancestor remains valid. if there is none, we're it.
+      val ancestor = if(children.size > 1) None else topAncestor.orElse(Some(this))
+      children.toList.flatMap(_.getHighestUnaryBranchAux(p, ancestor)).headOption
+  }
+
   // levels: non-empty list of unexplored siblings. includes `this` as head of first one.
   // @annotation.tailrec
   // final def getSubtreeAux(
