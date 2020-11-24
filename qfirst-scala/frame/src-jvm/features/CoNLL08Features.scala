@@ -355,10 +355,12 @@ class CoNLL08Features(
     )
   }
 
-  // TODO try both naive recovery of syntactic constituents, and
-  // smarter one that looks at embedding of constituents within each other
   lazy val argConstituentTypeDists: CachedArgFeats[Map[String, Double]] = {
     ptb2ArgConstituentTypes
+  }
+
+  lazy val argConstituentTypeDistsConverted: CachedArgFeats[Map[String, Double]] = {
+    ptb2ArgConstituentTypesConverted
   }
 
   override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
@@ -631,6 +633,32 @@ class CoNLL08Features(
           }
         }
       }.flatMap(x => x)
+    )
+  }
+
+  private[this] def stripNonterminalInfo(symbol: String) = symbol.takeWhile(_ != '-')
+  private[this] def convertNonterminal(curSymbol: String, pos: String) = (curSymbol, pos) match {
+    case (x, "TO") => x + "[to]"
+    case (x, "VB") => x + "[b]"
+    case (x, "VBZ" | "VBD" | "VBP") => x + "[dcl]"
+    case (x, "VBN") => x + "[pt]"
+    case (x, "VBG") => x + "[ng]"
+    case (x, _) => x
+  }
+
+  lazy val ptb2ArgConstituentTypesConverted: CachedArgFeats[Map[String, Double]] = {
+    cacheArgFeats("converted PTB constituent types")(
+      (dataset.data, ptb2ArgConstituentTypes.data).mapN { (data, constituentTypes) =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentenceId = argId.verbId.sentenceId
+          val sentence = data(sentenceId)
+          val headPos = sentence.tokens(argId.argument).pos
+          constituentTypes(verbType)(argId).toList.foldMap { case (symbol, prob) =>
+            val newSymb = convertNonterminal(stripNonterminalInfo(symbol), headPos)
+            Map(newSymb -> prob)
+          }
+        }
+      }
     )
   }
 

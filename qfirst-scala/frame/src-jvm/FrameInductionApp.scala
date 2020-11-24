@@ -317,7 +317,7 @@ object FrameInductionApp extends CommandIOApp(
     verbModelSpecs <- readAllModelSpecs(features.mode.isTest, modelDir.resolve("verb"))
     jointModelSpecs <- readAllModelSpecs(features.mode.isTest, modelDir.resolve("joint"))
     allArgModelSpecs = argModelSpecs |+| (jointModelSpecs - "verb")
-    allVerbModelSpecs = verbModelSpecs("verb") |+| jointModelSpecs("verb")
+    allVerbModelSpecs = verbModelSpecs.get("verb").combineAll |+| jointModelSpecs.get("verb").combineAll
     goldVerbSenseLabel = (if(features.assumeGoldVerbSense) "by-sense" else "by-lemma")
     _ <- {
       for {

@@ -282,14 +282,15 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Boolean,
     argIndex: Boolean,
     argSpans: Boolean,
-    argConstituentTypes: Boolean,
+    argConstituentTypes: Option[String],
     argMlmDist: Option[String],
     verbMlmDist: Option[String],
     goldLabels: Boolean
   )
   object FeatureOptions {
+    val constituentTypes = Set("ptb", "stripped")
     val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, false, None, None, false)
+    def init = FeatureOptions(false, false, false, None, None, None, false)
   }
 
   @Lenses case class FeatureValues(
@@ -381,9 +382,9 @@ class NewVerbUI[VerbType, Arg: Order](
           pullFeature(
             featureService,
             opts => (FeatureValues.argConstituentTypes, opts.argConstituentTypes),
-            (b: Boolean) => Option(
-              FeatureReq.ArgConstituentTypes[VerbType, Arg](state.features.verbType)
-            ).filter(_ => b)
+            (label: Option[String]) => label.map(l =>
+              FeatureReq.ArgConstituentTypes[VerbType, Arg](state.features.verbType, l)
+            )
           ) >>
           pullFeature(
             featureService,
@@ -522,7 +523,13 @@ class NewVerbUI[VerbType, Arg: Order](
         View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
         View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
         View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
-        View.checkboxToggle("Arg ctypes", verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)),
+        <.span(S.labeledDropdown)(
+          <.span(S.labeledDropdownLabel)("Arg ctypes:"),
+          OptionalStringSelect(
+            FeatureOptions.constituentTypes,
+            verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)
+          )
+        ),
         <.span(S.labeledDropdown)(
           <.span(S.labeledDropdownLabel)("Arg MLM:"),
           OptionalStringSelect(

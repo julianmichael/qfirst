@@ -215,4 +215,6 @@ class GoldQasrlFeatures(
   def argSyntacticFunctionsConverted: CachedArgFeats[String] = ???
 
   def argConstituentTypeDists: CachedArgFeats[Map[String, Double]] = ???
+
+  def argConstituentTypeDistsConverted: CachedArgFeats[Map[String, Double]] = ???
 }

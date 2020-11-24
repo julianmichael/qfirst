@@ -37,7 +37,12 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.ArgSpans(vt) => features.argSpans.get
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
-      case FeatureReq.ArgConstituentTypes(vt) => features.argConstituentTypeDists.get
+      case FeatureReq.ArgConstituentTypes(vt, label) =>
+        val res = 
+          if(label == "ptb") features.argConstituentTypeDists.get
+          else if(label == "stripped") features.argConstituentTypeDistsConverted.get
+          else IO.raiseError(new IllegalArgumentException("Constituent type type must be `ptb` or `stripped`"))
+        res
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
       case FeatureReq.VerbMLMDist(vt, label) => features

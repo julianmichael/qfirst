@@ -56,7 +56,7 @@ object FeatureReq {
   case class ArgSpans[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Map[ESpan, Double]]
   }
-  case class ArgConstituentTypes[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
+  case class ArgConstituentTypes[VerbType, Arg](verbType: VerbType, label: String) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Map[String, Double]]
   }
   case class ArgIndices[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
@@ -88,7 +88,7 @@ object FeatureReq {
       case ArgSpans(_) => implicitly[Encoder[List[(ArgumentId[Arg], List[(ESpan, Double)])]]]
           .contramap[Map[ArgumentId[Arg], Map[ESpan, Double]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
-      case ArgConstituentTypes(_) => implicitly[Encoder[List[(ArgumentId[Arg], List[(String, Double)])]]]
+      case ArgConstituentTypes(_, _) => implicitly[Encoder[List[(ArgumentId[Arg], List[(String, Double)])]]]
           .contramap[Map[ArgumentId[Arg], Map[String, Double]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
       case ArgIndices(_) => implicitly[Encoder[List[(ArgumentId[Arg], Int)]]]
@@ -119,7 +119,7 @@ object FeatureReq {
       case ArgSpans(_) => implicitly[Decoder[List[(ArgumentId[Arg], List[(ESpan, Double)])]]]
           .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
           .asInstanceOf[Decoder[req.Out]]
-      case ArgConstituentTypes(_) => implicitly[Decoder[List[(ArgumentId[Arg], List[(String, Double)])]]]
+      case ArgConstituentTypes(_, _) => implicitly[Decoder[List[(ArgumentId[Arg], List[(String, Double)])]]]
           .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
           .asInstanceOf[Decoder[req.Out]]
       case ArgIndices(_) => implicitly[Decoder[List[(ArgumentId[Arg], Int)]]]

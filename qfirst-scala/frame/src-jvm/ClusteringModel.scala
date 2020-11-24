@@ -592,6 +592,7 @@ object FullArgumentModel {
     QuestionEntropy -> "qent",
     SyntacticFunction -> "syntf",
     ConstituentType -> "syntc",
+    ConstituentTypeConverted -> "syntc2",
   ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )
@@ -683,6 +684,12 @@ object FullArgumentModel {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
     ): features.CachedArgFeats[Map[String, Double]] = features.argConstituentTypeDists
+  }
+
+  case object ConstituentTypeConverted extends DistributionEntropy[String] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.CachedArgFeats[Map[String, Double]] = features.argConstituentTypeDistsConverted
   }
 
   case object SyntacticFunction extends LossTerm {
