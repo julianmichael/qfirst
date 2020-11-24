@@ -637,6 +637,7 @@ class CoNLL08Features(
   }
 
   private[this] def stripNonterminalInfo(symbol: String) = symbol.takeWhile(_ != '-')
+  // this is not currently used. doesn't seem to help
   private[this] def convertNonterminal(curSymbol: String, pos: String) = (curSymbol, pos) match {
     case (x, "TO") => x + "[to]"
     case (x, "VB") => x + "[b]"
@@ -654,7 +655,8 @@ class CoNLL08Features(
           val sentence = data(sentenceId)
           val headPos = sentence.tokens(argId.argument).pos
           constituentTypes(verbType)(argId).toList.foldMap { case (symbol, prob) =>
-            val newSymb = convertNonterminal(stripNonterminalInfo(symbol), headPos)
+            // val newSymb = convertNonterminal(stripNonterminalInfo(symbol), headPos)
+            val newSymb = stripNonterminalInfo(symbol)
             Map(newSymb -> prob)
           }
         }
