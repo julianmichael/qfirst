@@ -6,10 +6,10 @@ import $ivy.`com.lihaoyi::mill-contrib-bloop:$MILL_VERSION`
 
 import ammonite.ops._
 
-val thisScalaVersion = "2.12.8"
-val thisScalaJSVersion = "0.6.27"
+val thisScalaVersion = "2.12.12"
+val thisScalaJSVersion = "0.6.33"
 
-val macroParadiseVersion = "2.1.0"
+val macroParadiseVersion = "2.1.1"
 val kindProjectorVersion = "0.9.4"
 val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
