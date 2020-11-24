@@ -657,6 +657,15 @@ object FullArgumentModel {
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
       dists <- getDists(features).get.map(_.apply(verbType))
+      // priorEntropy = {
+      //   val totalCounts = dists.value.unorderedFold
+      //   val total = totalCounts.unorderedFold
+      //   val res = totalCounts.values.iterator.filter(_ > 0).map { count =>
+      //     val prob = count / total
+      //     scala.math.log(prob) * prob
+      //   }.sum * -1.0
+      //   if(res == 0.0) 1.0 else res
+      // }
       vocab = Vocab.make(dists.value.values.toList.foldMap(_.keySet))
       // tfidf = TFIDF.makeTransform(
       //   headProbabilityMass = 0.99,
@@ -666,6 +675,7 @@ object FullArgumentModel {
       indexedInstances = dists.value.map { case (argId, _dist) =>
         // val dist = tfidf(_dist)
         val dist = _dist
+        // argId -> dist.map { case (q, p) => vocab.getIndex(q) -> (p / priorEntropy) }
         argId -> dist.map { case (q, p) => vocab.getIndex(q) -> p }
       }
     } yield (
