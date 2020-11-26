@@ -90,6 +90,10 @@ abstract class PropBankFeatures[Arg](
     _.resolve(if(assumeGoldVerbSense) "by-sense" else "by-lemma")
   ).flatTap(createDir)
 
+  override def modelTuningDir = super.modelTuningDir.map(
+    _.resolve(if(assumeGoldVerbSense) "by-sense" else "by-lemma")
+  ).flatTap(createDir)
+
   def verbSenseLabels: CachedVerbFeats[String]
 
   def argRoleLabels: CachedArgFeats[PropBankRoleLabel]

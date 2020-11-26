@@ -11,6 +11,8 @@ import cats.effect.IO
 
   // run mode details / data choices etc. are defined here
 
+  def tuningDataSplit: DataSplit = DataSplit.Dev
+
   def dataSplit: DataSplit = {
     if(isSanity) DataSplit.Dev
     else DataSplit.Train

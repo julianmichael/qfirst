@@ -315,9 +315,10 @@ object FrameInductionApp extends CommandIOApp(
     jointModels <- readAllModels[String, VerbClusterModel[String, Arg]](modelDir.resolve("joint"))
     allArgModels = argModels |+| NonMergingMap(jointModels.value.mapVals(_.mapVals(_.argumentClustering)))
     allVerbModels = verbModels |+| NonMergingMap(jointModels.value.mapVals(_.mapVals(_.verbClustering)))
-    argModelSpecs <- readAllModelSpecs(features.mode.isTest, modelDir.resolve("arg"))
-    verbModelSpecs <- readAllModelSpecs(features.mode.isTest, modelDir.resolve("verb"))
-    jointModelSpecs <- readAllModelSpecs(features.mode.isTest, modelDir.resolve("joint"))
+    modelTuningDir <- features.modelTuningDir
+    argModelSpecs <- readAllModelSpecs(features.mode.isTest, modelTuningDir.resolve("arg"))
+    verbModelSpecs <- readAllModelSpecs(features.mode.isTest, modelTuningDir.resolve("verb"))
+    jointModelSpecs <- readAllModelSpecs(features.mode.isTest, modelTuningDir.resolve("joint"))
     allArgModelSpecs = argModelSpecs |+| (jointModelSpecs - "verb")
     allVerbModelSpecs = verbModelSpecs.get("verb").combineAll |+| jointModelSpecs.get("verb").combineAll
     goldVerbSenseLabel = (if(features.assumeGoldVerbSense) "by-sense" else "by-lemma")
@@ -351,14 +352,16 @@ object FrameInductionApp extends CommandIOApp(
         parentResultsDir = out.resolve(s"eval/$split/$goldVerbSenseLabel")
         _ <- {
           val resultsDir = parentResultsDir.resolve("verb")
-          allVerbModelSpecs.toList.infoBarTraverse(s"Recording stats (verb)") { case (metric, modelSpecs) =>
-            val metricDir = resultsDir.resolve(metric.name)
-            Log.info(s"Metric: $metric") >> createDir(metricDir) >> Evaluation.evaluateVerbModels(
-              metricDir, metric,
-              allVerbModels.value.zipValues(modelSpecs.value),
-              verbSenseLabels,
-              includeOracle = !features.mode.isTest
-            )
+          if(allVerbModels.value.isEmpty) IO.unit else {
+            allVerbModelSpecs.toList.infoBarTraverse(s"Recording stats (verb)") { case (metric, modelSpecs) =>
+              val metricDir = resultsDir.resolve(metric.name)
+              Log.info(s"Metric: $metric") >> createDir(metricDir) >> Evaluation.evaluateVerbModels(
+                metricDir, metric,
+                allVerbModels.value.zipValues(modelSpecs.value),
+                verbSenseLabels,
+                includeOracle = !features.mode.isTest
+              )
+            }
           }
         }
       } yield ()

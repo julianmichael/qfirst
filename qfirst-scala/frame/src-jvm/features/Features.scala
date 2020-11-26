@@ -183,6 +183,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def splitName = RunData.strings.get
 
+  def tuningSplitName = RunData.strings.apply(mode.tuningDataSplit)
+
   // indices of important info
 
   def verbInflectedFormLists: IO[VerbType => List[InflectedForms]]
@@ -323,6 +325,10 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // for use by frame induction etc.
   def modelDir = splitName.map(split => rootDir.resolve(s"models/$split")).flatTap(createDir)
+
+  def modelTuningDir = tuningSplitName.map(split =>
+    rootDir.resolve(s"models/$split")
+  ).flatTap(createDir)
 
   // for inputs to feature computation
   protected def inputDir = rootDir.resolve("input")

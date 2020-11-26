@@ -5,6 +5,7 @@ import qfirst.frame.clustering.AgglomerativeClusteringAlgorithm
 import qfirst.frame.clustering.AgglomerativeSetClustering
 
 import freelog.EphemeralTreeLogger
+import freelog.implicits._
 
 import cats.data.NonEmptyVector
 import cats.effect.IO
@@ -29,7 +30,8 @@ object ClusteringParams {
     Multinomial(DenseVector.ones[Double](counts.size))
   }
   // hard EM hyperparams
-  val flatClusteringHardStoppingDelta = 1e-9
+  val numEMTrials = 10
+  val flatClusteringHardStoppingDelta = 1e-5
   val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
     // smoothes with dirichlet, then inverts the odds.
     // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
@@ -52,8 +54,9 @@ object ClusteringParams {
     } else { // we need a flat pre-clustering step
       val indicesVec = indices.toVector
       for {
-        _ <- Log.info(s"Pre-clustering ${indices.size} items.")
-        allEMTrials <- (1 to 3).toList.traverse(i =>
+        allEMTrials <- (1 to numEMTrials).toList.infoBarTraverse(
+          s"Pre-clustering ${indices.size} items."
+        )(i =>
           Log.traceBranch(s"Flat clustering trial $i")(
             for {
               initModel <- Log.traceBranch("Initializing clusters") {
