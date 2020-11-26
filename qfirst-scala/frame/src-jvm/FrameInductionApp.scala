@@ -100,25 +100,26 @@ object FrameInductionApp extends CommandIOApp(
         val argTreesRefined = argTrees.asInstanceOf[Map[String, Clustering.Argument[Arg]]]
         features.argRoleLabels.get >>= (argRoleLabels =>
           if(features.mode.shouldEvaluate) {
-            Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-              Evaluation.evaluateArgumentClusters(
-                evalDir.resolve("sense-specific"),
-                s"$model (sense-specific roles)",
-                argTreesRefined, argRoleLabels,
-                tuningSpecs,
-                useSenseSpecificRoles = true
-              )
-            ) >> IO.pure(features.assumeGoldVerbSense).ifM(
-              IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                Evaluation.evaluateArgumentClusters(
-                  evalDir.resolve("sense-agnostic"),
-                  s"$model (sense-agnostic roles)",
-                  argTreesRefined, argRoleLabels,
-                  tuningSpecs,
-                  useSenseSpecificRoles = false
+            // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+            //   Evaluation.evaluateArgumentClusters(
+            //     evalDir.resolve("sense-specific"),
+            //     s"$model (sense-specific roles)",
+            //     argTreesRefined, argRoleLabels,
+            //     tuningSpecs,
+            //     useSenseSpecificRoles = true
+            //   )
+            // ) >>
+              IO.pure(features.assumeGoldVerbSense).ifM(
+                IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                  Evaluation.evaluateArgumentClusters(
+                    evalDir.resolve("sense-agnostic"),
+                    s"$model (sense-agnostic roles)",
+                    argTreesRefined, argRoleLabels,
+                    tuningSpecs,
+                    useSenseSpecificRoles = false
+                  )
                 )
               )
-            )
           } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
         )
       }
@@ -210,27 +211,28 @@ object FrameInductionApp extends CommandIOApp(
         val verbClusterModelsRefined = verbClusterModels.asInstanceOf[Map[String, VerbClusterModel[String, Arg]]]
         if(!features.mode.shouldEvaluate) Log.info(s"Skipping evaluation for run mode ${features.mode}") else {
           features.argRoleLabels.get.flatMap((argRoleLabels: Map[String,NonMergingMap[ArgumentId[Arg],PropBankRoleLabel]]) =>
-            Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-              Evaluation.evaluateArgumentClusters[String, Arg](
-                evalDir.resolve("sense-specific"),
-                s"$model (sense-specific roles)",
-                verbClusterModelsRefined.mapVals(_.argumentClustering),
-                argRoleLabels,
-                tuningSpecs,
-                useSenseSpecificRoles = true
-              )
-            ) >> IO.pure(features.assumeGoldVerbSense).ifM(
-              IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                Evaluation.evaluateArgumentClusters(
-                  evalDir.resolve("sense-agnostic"),
-                  s"$model (sense-agnostic roles)",
-                  verbClusterModelsRefined.mapVals(_.argumentClustering),
-                  argRoleLabels,
-                  tuningSpecs,
-                  useSenseSpecificRoles = false
+            // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+            //   Evaluation.evaluateArgumentClusters[String, Arg](
+            //     evalDir.resolve("sense-specific"),
+            //     s"$model (sense-specific roles)",
+            //     verbClusterModelsRefined.mapVals(_.argumentClustering),
+            //     argRoleLabels,
+            //     tuningSpecs,
+            //     useSenseSpecificRoles = true
+            //   )
+            // ) >>
+              IO.pure(features.assumeGoldVerbSense).ifM(
+                IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                  Evaluation.evaluateArgumentClusters(
+                    evalDir.resolve("sense-agnostic"),
+                    s"$model (sense-agnostic roles)",
+                    verbClusterModelsRefined.mapVals(_.argumentClustering),
+                    argRoleLabels,
+                    tuningSpecs,
+                    useSenseSpecificRoles = false
+                  )
                 )
               )
-            )
           ) >> (
             if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
               features.verbSenseLabels.get >>= { (verbSenseLabels: String => VerbId => String) =>
