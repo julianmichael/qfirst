@@ -8,6 +8,7 @@ import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
 
+import jjm.LowerCaseString
 import jjm.ling.ESpan
 import jjm.ling.Text
 import jjm.ling.en.InflectedForms
@@ -637,6 +638,7 @@ class CoNLL08Features(
   }
 
   private[this] def stripNonterminalInfo(symbol: String) = symbol.takeWhile(_ != '-')
+
   // this is not currently used. doesn't seem to help
   private[this] def convertNonterminal(curSymbol: String, pos: String) = (curSymbol, pos) match {
     case (x, "TO") => x + "[to]"
@@ -647,6 +649,8 @@ class CoNLL08Features(
     case (x, _) => x
   }
 
+  // could just map over the non-coverted ones with stripNonterminalInfo
+  // since convertNonterminal is no longer used
   lazy val ptb2ArgConstituentTypesConverted: CachedArgFeats[Map[String, Double]] = {
     cacheArgFeats("converted PTB constituent types")(
       (dataset.data, ptb2ArgConstituentTypes.data).mapN { (data, constituentTypes) =>
@@ -659,6 +663,19 @@ class CoNLL08Features(
             val newSymb = stripNonterminalInfo(symbol)
             Map(newSymb -> prob)
           }
+        }
+      }
+    )
+  }
+
+  override lazy val argPrepositions: CachedArgFeats[Option[LowerCaseString]] = {
+    cacheArgFeats("prepositions")(
+      dataset.data.map { data =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val sentenceId = argId.verbId.sentenceId
+          val sentence = data(sentenceId)
+          val token = sentence.tokens(argId.argument)
+          if(token.pos == "IN") Some(token.token.lowerCase) else None
         }
       }
     )

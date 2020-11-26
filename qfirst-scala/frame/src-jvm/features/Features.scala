@@ -15,6 +15,7 @@ import qasrl.labeling.SlotBasedLabel
 import qasrl.bank.Data
 import qasrl.bank.FullData
 
+import jjm.LowerCaseString
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
@@ -306,6 +307,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def argConstituentTypeDists: CachedArgFeats[Map[String, Double]]
 
   def argConstituentTypeDistsConverted: CachedArgFeats[Map[String, Double]]
+
+  def argPrepositions: CachedArgFeats[Option[LowerCaseString]] = ???
 
   // directories
 
