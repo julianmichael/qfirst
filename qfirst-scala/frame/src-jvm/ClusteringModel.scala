@@ -707,10 +707,7 @@ object FullArgumentModel {
   case object Preposition extends DistributionEntropy[String] {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
-    ): features.ArgFeats[Map[String, Double]] =
-      features.mapArgFeats(features.argPrepositions.data)(
-        prep => Map(prep.fold("<none>")(_.toString) -> 1.0)
-      )
+    ): features.ArgFeats[Map[String, Double]] = features.argPrepositionDists
   }
 
   case object SyntacticFunction extends DistributionEntropy[String] {

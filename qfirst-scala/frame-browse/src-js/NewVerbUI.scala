@@ -282,6 +282,7 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Boolean,
     argIndex: Boolean,
     argSpans: Boolean,
+    argPrepositions: Boolean,
     argConstituentTypes: Option[String],
     argMlmDist: Option[String],
     verbMlmDist: Option[String],
@@ -290,7 +291,7 @@ class NewVerbUI[VerbType, Arg: Order](
   object FeatureOptions {
     val constituentTypes = Set("ptb", "stripped")
     val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, None, None, None, false)
+    def init = FeatureOptions(false, false, false, false, None, None, None, false)
   }
 
   @Lenses case class FeatureValues(
@@ -298,6 +299,7 @@ class NewVerbUI[VerbType, Arg: Order](
     questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     argIndex: Option[Map[ArgumentId[Arg], Int]],
     argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
+    argPrepositions: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argConstituentTypes: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
     verbMlmDist: Option[Map[VerbId, Map[String, Float]]],
@@ -307,7 +309,7 @@ class NewVerbUI[VerbType, Arg: Order](
     val questionPrior = questionDist.map(_.unorderedFold)
   }
   object FeatureValues {
-    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None)
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None)
   }
 
   val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
@@ -377,6 +379,13 @@ class NewVerbUI[VerbType, Arg: Order](
             opts => (FeatureValues.argSpans, opts.argSpans),
             (b: Boolean) => Option(
               FeatureReq.ArgSpans[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.argPrepositions, opts.argPrepositions),
+            (b: Boolean) => Option(
+              FeatureReq.ArgPrepositions[VerbType, Arg](state.features.verbType)
             ).filter(_ => b)
           ) >>
           pullFeature(
@@ -523,6 +532,7 @@ class NewVerbUI[VerbType, Arg: Order](
         View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
         View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
         View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
+        View.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
         <.span(S.labeledDropdown)(
           <.span(S.labeledDropdownLabel)("Arg ctypes:"),
           OptionalStringSelect(
@@ -755,6 +765,9 @@ class NewVerbUI[VerbType, Arg: Order](
               val ctypeDistOpt = verbFeatures.argConstituentTypes.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
+              val prepDistOpt = verbFeatures.argPrepositions.map { dists =>
+                argIds.unorderedFoldMap(dists)
+              }
               val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
@@ -785,6 +798,7 @@ class NewVerbUI[VerbType, Arg: Order](
                 },
                 ctypeDistOpt.whenDefined(distributionDisplay(_)),
                 mlmDistOpt.whenDefined(distributionDisplay(_)),
+                prepDistOpt.whenDefined(distributionDisplay(_)),
                 questionDistOpt.whenDefined { questionDist =>
                   questionDistributionTable(inflectedForms, questionDist)
                 }

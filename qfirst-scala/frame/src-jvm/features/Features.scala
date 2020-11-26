@@ -310,6 +310,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argPrepositions: CachedArgFeats[Option[LowerCaseString]] = ???
 
+  def argPrepositionDists: ArgFeats[Map[String, Double]] = 
+    mapArgFeats(argPrepositions.data)(
+      prep => Map(prep.fold("<none>")(_.toString) -> 1.0)
+    )
+
   // directories
 
   protected val rootDir: Path
