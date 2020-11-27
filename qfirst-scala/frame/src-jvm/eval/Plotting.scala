@@ -14,6 +14,8 @@ import jjm.implicits._
 import qfirst.metrics.Functions
 
 import qfirst.frame.logLevel
+import com.cibo.evilplot.plot.renderers.PlotElementRenderer
+import com.cibo.evilplot.plot.aesthetics.Colors
 
 object Plotting {
 
@@ -23,8 +25,8 @@ object Plotting {
   import com.cibo.evilplot.numeric._
   import com.cibo.evilplot.plot._
   import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
-  import com.cibo.evilplot.plot.renderers.PointRenderer
-  import com.cibo.evilplot.plot.renderers.PathRenderer
+  import com.cibo.evilplot.plot.aesthetics.Theme
+  import com.cibo.evilplot.plot.renderers._
 
   def plotAllStatsVerbwise[VerbType](
     modelName: String,
@@ -292,6 +294,29 @@ object Plotting {
       .yLabel(precisionAxisLabel)
       .xbounds(0.0, 1.0).ybounds(0.0, 1.0)
       .xAxis().yAxis()
+      .frame().rightLegend()
+
+    plot.render().write(new java.io.File(path.toString))
+  }
+
+  import qfirst.frame.util.Duad
+  import cats.Order
+  import cats.Show
+
+  def plotNPMI[A : Order : Show](
+    stats: Map[Duad[A], Double],
+    title: String,
+    path: NIOPath
+  ): IO[Unit] = IO {
+    val axis = stats.keySet.flatMap(p => Set(p.min, p.max)).toVector.sorted
+    val data = axis.map(x =>
+      axis.map(y => stats(Duad(x, y)))
+    )
+    val colors = ScaledColorBar.apply(List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0)
+    val plot = Heatmap2(data, colors)
+      .title(title)
+      .xAxis(axis.map(_.show))
+      .yAxis(axis.map(_.show))
       .frame().rightLegend()
 
     plot.render().write(new java.io.File(path.toString))

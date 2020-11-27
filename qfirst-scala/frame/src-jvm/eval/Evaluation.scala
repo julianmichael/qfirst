@@ -17,6 +17,7 @@ import freelog.implicits._
 
 import cats.Monoid
 import cats.Order
+import cats.Show
 import cats.data.NonEmptyList
 import cats.implicits._
 
@@ -29,6 +30,41 @@ import java.nio.file.{Path => NIOPath}
 import scala.annotation.tailrec
 
 object Evaluation {
+
+  // With or without replacement? currently implemented with replacement
+  // i think this is right because pmi with self should never be negative.
+  // w/o replacement would mean neg self-pmi possible with fine-grained clusters.
+  def calculateNPMIs[A: Order](
+    predictedClusters: Vector[Map[A, Int]]
+  ): Map[Duad[A], Double] = {
+    import scala.math.{pow, log}
+    val labels = predictedClusters.foldMap(_.keySet)
+    val total = predictedClusters.foldMap(_.unorderedFold)
+    val totalPairs = predictedClusters.foldMap(counts => pow(counts.unorderedFold, 2))
+    val marginals = predictedClusters.combineAll
+    val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
+
+    pairs.iterator.map { pair =>
+      val cooccurrences = predictedClusters.foldMap { goldCounts =>
+        val leftCounts = goldCounts.getOrElse(pair.min, 0)
+        val rightCounts = goldCounts.getOrElse(pair.max, 0)
+        leftCounts * rightCounts
+      }
+      val cooccurrencesUnderIndependence = marginals(pair.min) * marginals(pair.max)
+      val pnmi = if(cooccurrences == 0) {
+        if(cooccurrencesUnderIndependence == 0) {
+          assert(false) // should never happen
+          0.0
+        } else -1.0
+      } else {
+        val logJointProb = log(cooccurrences.toDouble / totalPairs)
+        val probUnderIndependence = cooccurrencesUnderIndependence.toDouble / (total * total)
+        val pmi = logJointProb - log(probUnderIndependence)
+        pmi / (-logJointProb)
+      }
+      pair -> pnmi
+    }.toMap
+  }
 
   def getAllClusteringConfs[A](
     goldLabelTree: MergeTree[Map[A, Int]],
@@ -161,9 +197,9 @@ object Evaluation {
     recallAxisLabel: String,
     resultsDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  ): IO[Unit] = {
+  ): IO[(SplitTuningCriterion, Double)] = {
     def outerLogger = Log
-    freelog.loggers.TimingDelayedLogger.file[Unit](resultsDir.resolve("results.txt")) { fileLogger =>
+    freelog.loggers.TimingDelayedLogger.file(resultsDir.resolve("results.txt")) { fileLogger =>
       implicit val Log = outerLogger |+| fileLogger // shadow the outer one, removing implicit ambiguity
       for {
         _ <- Log.info {
@@ -209,11 +245,11 @@ object Evaluation {
           yAxisLabel = "Score",
           path = resultsDir.resolve("by-freq-stats.png")
         )
-      } yield ()
+      } yield bestCriterion -> bestThreshold
     }
   }
 
-  def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel](
+  def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel : Order : Show](
     parentDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[InstanceId]],
@@ -231,11 +267,27 @@ object Evaluation {
             metric.precisionName, metric.recallName,
             name => resultsDir.resolve(s"by-verb-$name.png")
           )
-          _ <- runClusterTuning(
+          (bestCriterion, bestThreshold) <- runClusterTuning(
             modelName, allStats,
             tuningSpecs,
             metric.precisionName, metric.recallName,
             resultsDir
+          )
+          allLabeledClusters = argClusterings.toList.foldMap { case (verbType, clustering) =>
+            val goldLabel = getGoldLabel(verbType)
+            val clusters = clustering.clusterTreeOpt.foldMap(tree =>
+              bestCriterion
+                .splitTree(tree, (x: Set[InstanceId]) => x.size, bestThreshold)
+                .map(_.unorderedFold)
+            ) ++ clustering.extraClusters.values
+             clusters.map(_.unorderedFoldMap(id => Map(goldLabel(id) -> 1)))
+          }
+          npmis = calculateNPMIs(allLabeledClusters)
+          _ <- IO(System.err.println(npmis.filter(_._2 != -1.0).mkString("\n")))
+          _ <- Plotting.plotNPMI[GoldLabel](
+            npmis,
+            f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
+            resultsDir.resolve("best-pnmi.png")
           )
         } yield ()
       )
@@ -255,7 +307,7 @@ object Evaluation {
     )
   }
 
-  def evaluateClusters[VerbType, InstanceId, GoldLabel](
+  def evaluateClusters[VerbType, InstanceId, GoldLabel : Order : Show](
     resultsDir: NIOPath,
     modelName: String,
     clusterings: Map[VerbType, Clustering[InstanceId]],
@@ -275,13 +327,14 @@ object Evaluation {
     useSenseSpecificRoles: Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ): IO[Unit] = {
-    val getLabel = if(useSenseSpecificRoles) {
-      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId),
+    if(useSenseSpecificRoles) {
+      val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
+      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
     } else {
-      (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role,
+      val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
+      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
     }
 
-    evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
   }
 
   // summarize

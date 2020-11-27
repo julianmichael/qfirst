@@ -11,9 +11,11 @@ import freelog.implicits._
 import qfirst.metrics.Chosen
 import qfirst.metrics.Numbers
 
+import qfirst.frame.MergeTree
 import qfirst.frame.logLevel
 import qfirst.frame.progressSpec
 import qfirst.frame.getMetricsString
+import qfirst.frame.ClusterSplittingCriterion
 
 case class SplitTuningSpec(
   criterion: SplitTuningCriterion,
@@ -52,10 +54,17 @@ object SplitTuningSpec {
   }
 }
 
+// runTuning and splitTree should match up.
 trait SplitTuningCriterion {
   def name: String
   def defaultThresholds: List[Double]
   def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint
+
+  def splitTree[A](
+    tree: MergeTree[A],
+    count: A => Double,
+    threshold: Double
+  ): Vector[MergeTree[A]] = ???
 
   def runTuning[VerbType](
     allStats: Map[VerbType, NonEmptyList[ConfStatsPoint]],
@@ -127,6 +136,14 @@ object NumClustersCriterion extends SplitTuningCriterion {
     val qualified = choicesSorted.toList.dropWhile(_.numClusters < threshold)
     qualified.headOption.getOrElse(choicesSorted.last)
   }
+
+  override def splitTree[A](
+    tree: MergeTree[A],
+    count: A => Double,
+    threshold: Double
+  ): Vector[MergeTree[A]] = {
+    ClusterSplittingCriterion.Number(threshold.toInt).splitTree(tree, count)
+  }
 }
 
 object OracleCriterion extends SplitTuningCriterion {
@@ -156,6 +173,14 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
   def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
     val getLoss = getTotalLoss(threshold)
     choices.minimum(Order.by(getLoss))
+  }
+
+  override def splitTree[A](
+    tree: MergeTree[A],
+    count: A => Double,
+    threshold: Double
+  ): Vector[MergeTree[A]] = {
+    ClusterSplittingCriterion.Entropy(threshold.toInt).splitTree(tree, count)
   }
 }
 

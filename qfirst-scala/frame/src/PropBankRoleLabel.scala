@@ -26,4 +26,11 @@ object PropBankRoleLabel {
     !roleLabelIsIrrelevant(roleLabel) &&
       !Auxiliaries.auxiliaryVerbs.contains(pred.lemma.lowerCase) &&
       !argSpan.contains(predIndex)
+
+  import cats.Order
+  import cats.Show
+  import cats.implicits._
+
+  implicit val propBankRoleLabelShow = Show.fromToString[PropBankRoleLabel]
+  implicit val propBankRoleLabelOrder = Order.by[PropBankRoleLabel, String](_.toString)
 }
