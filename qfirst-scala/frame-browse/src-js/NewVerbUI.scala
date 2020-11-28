@@ -1444,8 +1444,6 @@ class NewVerbUI[VerbType, Arg: Order](
       val npmis = EvalUtils.calculateNPMIs(goldCounts)
       val plot = Plotting.plotNPMI(npmis, "Normalized PMIs")
 
-      // System.out.println(npmis.mkString("\n"))
-
       // val plotSize = 800.0
       // val extent = Extent(plotSize, plotSize)
       // val ctx = new SVGRenderContext
@@ -1475,8 +1473,6 @@ class NewVerbUI[VerbType, Arg: Order](
         val ogCtx = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
         val ctx = CanvasRenderContext(ogCtx)
         val deviceRatio = dom.window.devicePixelRatio // js.Dynamic.global.window.dv
-          println(canvas.width)
-          println(canvas.height)
         canvas.width = 1600
         canvas.height = 1200
         canvas.style.width = (canvas.width / deviceRatio) + "px"

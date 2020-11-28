@@ -1,5 +1,6 @@
 package qfirst.frame.eval
 
+import qfirst.frame._
 import qfirst.frame.util.Duad
 
 import cats.Order
@@ -15,9 +16,13 @@ object EvalUtils {
   ): Map[Duad[A], Double] = {
     import scala.math.{pow, log}
     val labels = predictedClusters.foldMap(_.keySet)
-    val total = predictedClusters.foldMap(_.unorderedFold)
-    val totalPairs = predictedClusters.foldMap(counts => pow(counts.unorderedFold, 2))
-    val marginals = predictedClusters.combineAll
+    val clusterSizes = predictedClusters.map(_.unorderedFold)
+    val total = clusterSizes.combineAll
+    val totalPairs = clusterSizes.foldMap(pow(_, 2))
+    val marginals = predictedClusters.foldMap { counts =>
+      val size = counts.unorderedFold
+      counts.mapVals(_ * size)
+    }
     val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
 
     pairs.iterator.map { pair =>
@@ -26,16 +31,17 @@ object EvalUtils {
         val rightCounts = goldCounts.getOrElse(pair.max, 0)
         leftCounts * rightCounts
       }
-      val cooccurrencesUnderIndependence = marginals(pair.min) * marginals(pair.max)
+      val independentCooccurrenceProb = {
+        marginals(pair.min) * marginals(pair.max) / (totalPairs * totalPairs)
+      }
       val pnmi = if(cooccurrences == 0) {
-        if(cooccurrencesUnderIndependence == 0) {
+        if(independentCooccurrenceProb == 0.0) {
           assert(false) // should never happen
           0.0
         } else -1.0
       } else {
         val logJointProb = log(cooccurrences.toDouble / totalPairs)
-        val probUnderIndependence = cooccurrencesUnderIndependence.toDouble / (total * total)
-        val pmi = logJointProb - log(probUnderIndependence)
+        val pmi = logJointProb - log(independentCooccurrenceProb)
         pmi / (-logJointProb)
       }
       pair -> pnmi
