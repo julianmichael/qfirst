@@ -195,9 +195,16 @@ case class SideClusteringModel(
           val modal = Option("MODAL")
             .filter(_ => modals)
             .filter { _ =>
-              val token = sentence(heads(argId))
-              SideClusteringModel.modalTokens.contains(token.lowerCase)
+              spans(argId).toVector.maximaBy(_._2)
+                .map(_._1)
+                .map(span => jjm.ling.Text.renderSpan(sentence, span).lowerCase)
+                .exists(SideClusteringModel.modals.contains)
             }
+            // .filter { _ =>
+            //   val token = sentence(heads(argId))
+            //   SideClusteringModel.modalTokens.contains(token.lowerCase)
+            // }
+
           val neg = Option("NEG")
             .filter(_ => negation)
             .filter { _ =>
@@ -234,7 +241,9 @@ case class SideClusteringModel(
   }
 }
 object SideClusteringModel {
-  val modalTokens = jjm.ling.en.Inflections.modalVerbs ++ jjm.ling.en.Inflections.willVerbs
+  val modals = jjm.ling.en.Inflections.modalVerbs ++
+    jjm.ling.en.Inflections.willVerbs ++
+    Set("won't", "can't").map(_.lowerCase)
   val adjunctFuncs = Set("TMP", "MNR", "LOC", "DIR")
   val discourseExpressions = Set(
     "and", "but", "or", "though", "also", "hence", "however", // "then", "next" // questionable
