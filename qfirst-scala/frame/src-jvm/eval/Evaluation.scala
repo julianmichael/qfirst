@@ -31,40 +31,7 @@ import scala.annotation.tailrec
 
 object Evaluation {
 
-  // With or without replacement? currently implemented with replacement
-  // i think this is right because pmi with self should never be negative.
-  // w/o replacement would mean neg self-pmi possible with fine-grained clusters.
-  def calculateNPMIs[A: Order](
-    predictedClusters: Vector[Map[A, Int]]
-  ): Map[Duad[A], Double] = {
-    import scala.math.{pow, log}
-    val labels = predictedClusters.foldMap(_.keySet)
-    val total = predictedClusters.foldMap(_.unorderedFold)
-    val totalPairs = predictedClusters.foldMap(counts => pow(counts.unorderedFold, 2))
-    val marginals = predictedClusters.combineAll
-    val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
-
-    pairs.iterator.map { pair =>
-      val cooccurrences = predictedClusters.foldMap { goldCounts =>
-        val leftCounts = goldCounts.getOrElse(pair.min, 0)
-        val rightCounts = goldCounts.getOrElse(pair.max, 0)
-        leftCounts * rightCounts
-      }
-      val cooccurrencesUnderIndependence = marginals(pair.min) * marginals(pair.max)
-      val pnmi = if(cooccurrences == 0) {
-        if(cooccurrencesUnderIndependence == 0) {
-          assert(false) // should never happen
-          0.0
-        } else -1.0
-      } else {
-        val logJointProb = log(cooccurrences.toDouble / totalPairs)
-        val probUnderIndependence = cooccurrencesUnderIndependence.toDouble / (total * total)
-        val pmi = logJointProb - log(probUnderIndependence)
-        pmi / (-logJointProb)
-      }
-      pair -> pnmi
-    }.toMap
-  }
+  import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
 
   def getAllClusteringConfs[A](
     goldLabelTree: MergeTree[Map[A, Int]],
@@ -144,11 +111,11 @@ object Evaluation {
         .traverse { case (numItems, statSets) =>
           tuningSpec.run(statSets.toMap)(EphemeralTreeLogger.noop).map(points =>
             points.map { case (threshold, pr) =>
-              Plotting.WeirdLinePoint(scala.math.log(numItems.toDouble), threshold, pr.f1, (numItems * statSets.size) / 25.0)
+              PlottingJVM.WeirdLinePoint(scala.math.log(numItems.toDouble), threshold, pr.f1, (numItems * statSets.size) / 25.0)
             }
           )
         }
-      _ <- Plotting.plotWeirdLines(
+      _ <- PlottingJVM.plotWeirdLines(
         dataPoints,
         title = s"Scores ($name) by number of instances and thresholds",
         xAxisLabel = "Log num instances",
@@ -176,10 +143,10 @@ object Evaluation {
       ).data.head._1
       CalibrationPoint(threshold, tuningSpec.criterion.selectPoint(threshold)(choices))
     }
-    Plotting.plotWeightedScatter(
+    PlottingJVM.plotWeightedScatter(
       dataPoints.foldMap(p =>
         Map(
-          "max F1" -> List(Plotting.WeightedScatterPoint(p.stats.numItems, p.threshold, p.stats.numItems)),
+          "max F1" -> List(PlottingJVM.WeightedScatterPoint(p.stats.numItems, p.threshold, p.stats.numItems)),
         )
       ),
       title = s"Best threshold ($name) by number of instances",
@@ -218,7 +185,7 @@ object Evaluation {
         _ <- {
           IO.unit
         }
-        _ <- Plotting.plotPrecisionRecallCurves(
+        _ <- PlottingJVM.plotPrecisionRecallCurves(
           tuningResults,
           modelName, precisionAxisLabel, recallAxisLabel,
           resultsDir.resolve("tuning-strategies.png")
@@ -231,13 +198,13 @@ object Evaluation {
         bestSettingString = bestCriterion.name + "=" + bestThreshold
         _ <- FileUtil.writeString(resultsDir.resolve("best-setting.txt"))(bestSettingString)
         _ <- FileUtil.writeString(resultsDir.resolve("best-result.txt"))(getMetricsString(bestStats))
-        _ <- Plotting.plotWeightedScatter(
+        _ <- PlottingJVM.plotWeightedScatter(
           allStats.values.toList.foldMap { stats =>
             val res = bestCriterion.selectPoint(bestThreshold)(stats)
             Map(
-              "precision" -> List(Plotting.WeightedScatterPoint(res.numItems, res.precision, res.numItems)),
-              "recall" -> List(Plotting.WeightedScatterPoint(res.numItems, res.recall, res.numItems)),
-              "f1" -> List(Plotting.WeightedScatterPoint(res.numItems, res.f1, res.numItems))
+              "precision" -> List(PlottingJVM.WeightedScatterPoint(res.numItems, res.precision, res.numItems)),
+              "recall" -> List(PlottingJVM.WeightedScatterPoint(res.numItems, res.recall, res.numItems)),
+              "f1" -> List(PlottingJVM.WeightedScatterPoint(res.numItems, res.f1, res.numItems))
             )
           },
           title = s"Tuned stats ($bestSettingString) by verb frequency",
@@ -262,7 +229,7 @@ object Evaluation {
       getAllPRStats(argClusterings, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
         for {
           resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
-          _ <- Plotting.plotAllStatsVerbwise(
+          _ <- PlottingJVM.plotAllStatsVerbwise(
             modelName, allStats,
             metric.precisionName, metric.recallName,
             name => resultsDir.resolve(s"by-verb-$name.png")
@@ -282,12 +249,13 @@ object Evaluation {
             ) ++ clustering.extraClusters.values
              clusters.map(_.unorderedFoldMap(id => Map(goldLabel(id) -> 1)))
           }
-          npmis = calculateNPMIs(allLabeledClusters)
+          npmis = EvalUtils.calculateNPMIs(allLabeledClusters)
           _ <- IO(System.err.println(npmis.filter(_._2 != -1.0).mkString("\n")))
-          _ <- Plotting.plotNPMI[GoldLabel](
-            npmis,
-            f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
-            resultsDir.resolve("best-pnmi.png")
+          _ <- IO(
+            Plotting.plotNPMI[GoldLabel](
+              npmis,
+              f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
+            ).render().write(new java.io.File(resultsDir.resolve("best-pnmi.png").toString))
           )
         } yield ()
       )
@@ -354,7 +322,7 @@ object Evaluation {
           .map(model -> _)
       }.map(_.toMap)
       _ <- Log.infoBranch(s"Plotting best tuned P/R curves") {
-        Plotting.plotPrecisionRecallCurves(
+        PlottingJVM.plotPrecisionRecallCurves(
           tunedStatsByModel,
           "Best tuned performance", metric.precisionName, metric.recallName,
           resultsDir.resolve("best.png")
@@ -379,7 +347,7 @@ object Evaluation {
               .map(model -> _)
           }.map(_.toMap)
           _ <- Log.infoBranch(s"Plotting oracle P/R curves") {
-            Plotting.plotPrecisionRecallCurves(
+            PlottingJVM.plotPrecisionRecallCurves(
               oracleStatsByModel,
               "Oracle tuned performance", metric.precisionName, metric.recallName,
               resultsDir.resolve("oracle.png")

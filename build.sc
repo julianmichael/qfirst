@@ -290,6 +290,14 @@ object qfirst extends Module {
   object frame extends Module {
     object js extends JsModule {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js, datasets.js)
+
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
+
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.cibo::evilplot::$evilplotVersion"
+      )
     }
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, datasets.jvm)
