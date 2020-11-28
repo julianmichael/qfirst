@@ -317,6 +317,10 @@ object qfirst extends Module {
   object `frame-ann` extends Module {
     object js extends FullJsModule {
       def moduleDeps = Seq(frame.js, `clause-ext`.js)
+
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
     }
     object jvm extends FullJvmModule with ScalatexModule {
 
@@ -343,6 +347,10 @@ object qfirst extends Module {
   object `frame-browse` extends Module {
     object js extends FullJsModule {
       def moduleDeps = Seq(frame.js)
+
+      override def repositories = super.repositories ++ Seq(
+        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
+      )
     }
     object jvm extends FullJvmModule with ScalatexModule {
 

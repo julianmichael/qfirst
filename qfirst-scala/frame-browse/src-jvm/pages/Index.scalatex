@@ -49,6 +49,10 @@
       value := io.circe.Printer.noSpaces.pretty(config.mode.asJson),
       id := SharedConstants.devFlagElementId
     )
+    @canvas(
+      display := "none",
+      id := "measureBuffer"
+    )
     @config.bootstrapScripts
     @script(src := "/" + config.jsDepsPath)
     @script(src := "/" + config.jsPath)

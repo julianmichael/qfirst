@@ -4,6 +4,8 @@ import qfirst.clause.ArgStructure
 import qfirst.clause.ClauseResolution
 import qfirst.frame._
 import qfirst.frame.math._
+import qfirst.frame.eval.{EvalUtils, Plotting}
+
 import qfirst.model.eval.filterGoldNonDense
 import qfirst.model.eval.filterOrigAnnotationRound
 
@@ -59,6 +61,10 @@ import io.circe._
 
 import scala.concurrent.Future
 import scalacss.internal.Literal.Typed.initial
+
+import com.cibo.evilplot.geometry.CanvasRenderContext
+import com.cibo.evilplot.geometry.Drawable
+import com.cibo.evilplot.geometry.Extent
 
 trait VerbTypeRendering[VerbType] {
   def fromString(x: String): VerbType
@@ -170,6 +176,8 @@ class NewVerbUI[VerbType, Arg: Order](
   val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
   val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
   val DoubleLocal = new LocalState[Double]
+
+  val CanvasRef = new Reference[dom.html.Canvas]
 
   val colspan = VdomAttr("colspan")
   val textFocusingRef = Ref[html.Element]
@@ -512,7 +520,8 @@ class NewVerbUI[VerbType, Arg: Order](
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     sortedVerbCounts: List[(VerbType, Int)],
     verb: StateSnapshot[VerbType],
-    verbFeatures: StateSnapshot[FeatureOptions]
+    verbFeatures: StateSnapshot[FeatureOptions],
+    showNPMIs: StateSnapshot[Boolean]
   ) = {
     <.div(S.headerContainer)(
       <.select(S.verbDropdown)(
@@ -555,6 +564,7 @@ class NewVerbUI[VerbType, Arg: Order](
           )
         ),
         View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
+        View.checkboxToggle("NPMIs", showNPMIs),
       )
     )
   }
@@ -1416,6 +1426,103 @@ class NewVerbUI[VerbType, Arg: Order](
 
   class Backend(scope: BackendScope[Props, State]) {
 
+    val npmiChartRef = Ref[dom.html.Canvas]
+
+    def npmiChart(
+      features: FeatureValues,
+      frames: Vector[ResolvedFrame],
+    ) = features.goldLabels.flatten.whenDefined { goldLabels =>
+      val clusters = frames.flatMap { frame =>
+        frame.roleTrees.map(_.unorderedFold) ++ frame.extraRoles.values
+      }
+      val goldCounts = clusters.map(instances =>
+        instances.unorderedFoldMap(id =>
+          Map(goldLabels.argRoles(id).role -> 1)
+        )
+      )
+
+      val npmis = EvalUtils.calculateNPMIs(goldCounts)
+      val plot = Plotting.plotNPMI(npmis, "Normalized PMIs")
+
+      // System.out.println(npmis.mkString("\n"))
+
+      // val plotSize = 800.0
+      // val extent = Extent(plotSize, plotSize)
+      // val ctx = new SVGRenderContext
+      // plot.render(extent).draw(ctx)
+      // val plotSVG = ctx.getSVG(svgSize, svgSize)
+
+      // plotSVG
+
+      import com.cibo.evilplot.plot.aesthetics.DefaultTheme
+      import com.cibo.evilplot.plot.aesthetics.Fonts
+      implicit val theme = DefaultTheme.defaultTheme.copy(
+        fonts = Fonts(
+          titleSize = 88,
+          labelSize = 80,
+          annotationSize = 40,
+          tickLabelSize = 96,
+          legendLabelSize = 56,
+          facetLabelSize = 56,
+          fontFace = "sans-serif"
+        ),
+        elements = DefaultTheme.DefaultElements.copy(
+          categoricalXAxisLabelOrientation = 1.0
+        )
+      )
+
+      val mountCb = npmiChartRef.foreach { canvas =>
+        val ogCtx = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+        val ctx = CanvasRenderContext(ogCtx)
+        val deviceRatio = dom.window.devicePixelRatio // js.Dynamic.global.window.dv
+          println(canvas.width)
+          println(canvas.height)
+        canvas.width = 1600
+        canvas.height = 1200
+        canvas.style.width = (canvas.width / deviceRatio) + "px"
+        canvas.style.height = (canvas.height / deviceRatio) + "px"
+        // ogCtx.scale(deviceRatio, deviceRatio)
+        val extent = Extent(canvas.width, canvas.height)
+        plot.render(extent).draw(ctx)
+      }
+
+      val cb = npmiChartRef.foreach { canvas =>
+        val ogCtx = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+        val ctx = CanvasRenderContext(ogCtx)
+        ctx.canvas.clearRect(0, 0, canvas.width, canvas.height)
+        val extent = Extent(canvas.width, canvas.height)
+        plot.render(extent).draw(ctx)
+      }
+      cb.runNow
+
+      Mounting.make(mountCb)(
+        <.canvas().withRef(npmiChartRef)
+      )
+
+      // CanvasRef.make(
+      //   <.canvas(
+      //     ^.width := "400px",
+      //     ^.height := "400px"
+      //   )
+      // ) { (canvasTag, canvasOpt) =>
+      //   val cb = Callback {
+      //     ()
+      //     // canvasOpt
+      //     //   .map(_.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D])
+      //     //   .map(CanvasRenderContext(_))
+      //     //   .foreach(ctx => Callback(plot.render().draw(ctx)))
+      //   }
+
+      //   <.div(canvasTag)
+
+      //   // <.div(
+      //   //   Mounting.make(cb)(
+      //   //     <.div(canvasTag)
+      //   //   )
+      //   // )
+      // }
+    }
+
     def render(props: Props, state: State) = {
       VerbsFetch.make(request = (), sendRequest = _ => props.verbService.getVerbs) {
         case VerbsFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
@@ -1456,50 +1563,54 @@ class NewVerbUI[VerbType, Arg: Order](
                             }
                           }
 
-                          <.div(S.mainContainer)(
-                            headerContainer(props.featureService, sortedVerbCounts, verb, options),
-                            SentencesFetch.make(
-                              request = features.verbType,
-                              sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {
-                              case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
-                              case SentencesFetch.Loaded(_sentenceIds) =>
-                                val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
-                                val initSentenceId = sentenceIds.head
-                                StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
-                                  IntOptLocal.make(None) { curHighlightedFrame =>
-                                    <.div(S.dataContainer)(
-                                      frameContainer(
-                                        props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
-                                        formList, inflectedForms,
-                                        features, frames,
-                                        curSentenceId,
-                                        curHighlightedFrame
-                                      ),
+                          BoolLocal.make(false) { showNPMIs =>
+                            <.div(S.mainContainer)(
+                              headerContainer(props.featureService, sortedVerbCounts, verb, options, showNPMIs),
+                              SentencesFetch.make(
+                                request = features.verbType,
+                                sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {
+                                case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
+                                case SentencesFetch.Loaded(_sentenceIds) =>
+                                  val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
+                                  val initSentenceId = sentenceIds.head
+                                  StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
+                                    IntOptLocal.make(None) { curHighlightedFrame =>
                                       <.div(S.dataContainer)(
-                                        sentenceSelectionPane(
-                                          sentenceIds,
-                                          curSentenceId
+                                        frameContainer(
+                                          props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
+                                          formList, inflectedForms,
+                                          features, frames,
+                                          curSentenceId,
+                                          curHighlightedFrame
                                         ),
-                                        SentenceFetch.make(
-                                          request = curSentenceId.value,
-                                          sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
-                                          case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
-                                          case SentenceFetch.Loaded(sentenceInfo) =>
-                                            sentenceDisplayPane(
-                                              features.verbType,
-                                              sentenceInfo,
-                                              features,
-                                              inflectedForms.value.getOrElse(genericVerbForms),
-                                              frames,
-                                              curHighlightedFrame
-                                            )
-                                        }
+                                        if(showNPMIs.value) <.div(S.dataContainer)(
+                                          npmiChart(features, frames)
+                                        ) else <.div(S.dataContainer)(
+                                          sentenceSelectionPane(
+                                            sentenceIds,
+                                            curSentenceId
+                                          ),
+                                          SentenceFetch.make(
+                                            request = curSentenceId.value,
+                                            sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
+                                            case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
+                                            case SentenceFetch.Loaded(sentenceInfo) =>
+                                              sentenceDisplayPane(
+                                                features.verbType,
+                                                sentenceInfo,
+                                                features,
+                                                inflectedForms.value.getOrElse(genericVerbForms),
+                                                frames,
+                                                curHighlightedFrame
+                                              )
+                                          }
+                                        )
                                       )
-                                    )
+                                    }
                                   }
-                                }
-                            }
-                          )
+                              }
+                            )
+                          }
                         }
                       }
                   }
