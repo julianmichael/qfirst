@@ -366,7 +366,13 @@ class CoNLL08Features(
 
   override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] =
     origPropBankArgSpans
-      // |+| prepObjectExtendedSpans
+    // cacheArgFeats("arg spans")(
+    //   (origPropBankArgSpans.data, prepObjectExtendedSpans.data).mapN { (origSpans, prepSpans) =>
+    //     (verbType: String) => (argId: ArgumentId[Int]) => {
+    //       origSpans(verbType)(argId) |+| prepSpans(verbType)(argId)
+    //     }
+    //   }
+    // )
       // .map(_.map(_.map(spans => spans.mapVals(_ / spans.size))))
       // |+| dependencyInferredArgSpans)
 
@@ -892,7 +898,7 @@ class CoNLL08Features(
               .filter(_._2._2.exists(_.contains(argIndex))) // take spans for _any_ args that match, incl. the case when none do. in practice I think it's one or none
               .foldMap(_._2._2)
 
-            spans.map(_ -> 1.0).toMap
+            spans.map(_ -> (1.0 / spans.size)).toMap
           }
         }
       }.flatMap(x => x)
@@ -901,21 +907,23 @@ class CoNLL08Features(
 
   val validPrepPOS = Set("IN", "TO", "RB")
 
-  val prepObjectExtendedSpans: ArgFeats[Map[ESpan, Double]] = {
-    dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
-      (verbType: String) => (argId: ArgumentId[Int]) => {
-        val pbSpans = getPBSpans(verbType)(argId)
-        val sentence = data.value(argId.verbId.sentenceId)
-        pbSpans.flatMap { case (span, prob) =>
-          if(validPrepPOS.contains(sentence.tokens(span.begin).pos) && span.length > 1) {
-            Some(ESpan(span.begin + 1, span.end) -> prob)
-          } else None
+  val prepObjectExtendedSpans: CachedArgFeats[Map[ESpan, Double]] = {
+    cacheArgFeats("prep spans")(
+      dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val pbSpans = getPBSpans(verbType)(argId)
+          val sentence = data.value(argId.verbId.sentenceId)
+          pbSpans.flatMap { case (span, prob) =>
+            if(validPrepPOS.contains(sentence.tokens(span.begin).pos) && span.length > 1) {
+              Some(ESpan(span.begin + 1, span.end) -> prob)
+            } else None
+          }
         }
       }
-    }
+    )
   }
 
-  lazy val dependencyInferredArgSpans: ArgFeats[Map[ESpan, Double]] = {
+  lazy val dependencyInferredArgSpans: CachedArgFeats[Map[ESpan, Double]] = {
     cacheArgFeats("CoNLL 2008 inferred arg spans", log = true)(
       dataset.data.zip(argRoleLabels.data).zip(argSemanticHeadIndices.data).map { case ((data, roleLabels), semanticHeads) =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
@@ -1002,7 +1010,7 @@ class CoNLL08Features(
           Map(span -> 0.5) |+| Map(headSpan -> 0.25)
         }
       }
-    ).data
+    )
   }
 
   // TODO: remove VerbType from VerbFeats and ArgFeats? Maybe?
