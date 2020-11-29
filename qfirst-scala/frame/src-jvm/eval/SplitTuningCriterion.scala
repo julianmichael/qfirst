@@ -180,7 +180,7 @@ object TotalEntropyCriterion extends SplitTuningCriterion {
     count: A => Double,
     threshold: Double
   ): Vector[MergeTree[A]] = {
-    ClusterSplittingCriterion.Entropy(threshold.toInt).splitTree(tree, count)
+    ClusterSplittingCriterion.Entropy(threshold).splitTree(tree, count)
   }
 }
 

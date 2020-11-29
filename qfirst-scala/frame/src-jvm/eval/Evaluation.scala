@@ -240,17 +240,16 @@ object Evaluation {
             metric.precisionName, metric.recallName,
             resultsDir
           )
-          allLabeledClusters = argClusterings.toList.foldMap { case (verbType, clustering) =>
-            val goldLabel = getGoldLabel(verbType)
+          allLabeledClusters = argClusterings.toVector.map { case (verbType, clustering) =>
+            val goldLabelFn = getGoldLabel(verbType)
             val clusters = clustering.clusterTreeOpt.foldMap(tree =>
               bestCriterion
                 .splitTree(tree, (x: Set[InstanceId]) => x.size, bestThreshold)
                 .map(_.unorderedFold)
             ) ++ clustering.extraClusters.values
-             clusters.map(_.unorderedFoldMap(id => Map(goldLabel(id) -> 1)))
+            clusters.map(_.unorderedFoldMap(id => Map(goldLabelFn(id) -> 1)))
           }
-          npmis = EvalUtils.calculateNPMIs(allLabeledClusters)
-          _ <- IO(System.err.println(npmis.filter(_._2 != -1.0).mkString("\n")))
+          npmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters)
           _ <- IO(
             Plotting.plotNPMI[GoldLabel](
               npmis,
