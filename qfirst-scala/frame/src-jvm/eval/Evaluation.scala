@@ -249,10 +249,14 @@ object Evaluation {
             ) ++ clustering.extraClusters.values
             clusters.map(_.unorderedFoldMap(id => Map(goldLabelFn(id) -> 1)))
           }
+          goldLabelCounts = allLabeledClusters.foldMap(_.unorderedFold)
+          minGoldLabelCount = 5
           npmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters)
-          _ <- IO(
+          _ <- IO (
             Plotting.plotNPMI[GoldLabel](
-              npmis,
+              npmis.filter { case (Duad(l, r), _) =>
+                goldLabelCounts(l) > minGoldLabelCount && goldLabelCounts(r) > minGoldLabelCount
+              },
               f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
             ).render().write(new java.io.File(resultsDir.resolve("best-pnmi.png").toString))
           )
@@ -299,7 +303,9 @@ object Evaluation {
       evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
     } else {
       val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
-      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
+      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)(
+        EvalUtils.conll08RoleOrder, implicitly[Show[String]], Log, timer
+      )
     }
 
   }

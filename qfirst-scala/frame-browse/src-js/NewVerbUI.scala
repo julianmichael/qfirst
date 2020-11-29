@@ -1441,8 +1441,10 @@ class NewVerbUI[VerbType, Arg: Order](
         )
       )
 
-      val npmis = EvalUtils.calculateNPMIs(goldCounts)
-      val plot = Plotting.plotNPMI(npmis, "Normalized PMIs")
+      val npmis = EvalUtils.calculateNPMIs(goldCounts)(EvalUtils.conll08RoleOrder)
+      val plot = Plotting.plotNPMI(npmis, "Normalized PMIs")(
+        EvalUtils.conll08RoleOrder, implicitly[cats.Show[String]]
+      )
 
       // val plotSize = 800.0
       // val extent = Extent(plotSize, plotSize)

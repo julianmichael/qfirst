@@ -8,6 +8,21 @@ import cats.implicits._
 
 object EvalUtils {
 
+  val conll08RoleIndices = List(
+    "A0", "A1", "A2", "A3", "A4",
+    "AM-LOC", "AM-MNR",
+    "AM-ADV",
+    "AM-PNC",
+    "AM-CAU",
+    "AM-TMP",
+    "AM-DIS",
+    "AM-DIR", "AM-EXT",
+    "AM-MOD", "AM-NEG",
+    "AM-PRD",
+    "A5", "AA",
+  ).zipWithIndex.toMap
+  val conll08RoleOrder = Order.by[String, Int](conll08RoleIndices.apply)
+
   // With or without replacement? currently implemented with replacement
   // i think this is right because pmi with self should never be negative.
   // w/o replacement would mean neg self-pmi possible with fine-grained clusters.
