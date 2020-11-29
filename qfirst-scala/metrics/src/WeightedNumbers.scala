@@ -39,8 +39,12 @@ object WeightedNumbers {
   }
 
   implicit def weightedNumbersMonoid[A: Numeric]: Monoid[WeightedNumbers[A]] = {
-    import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    new Monoid[WeightedNumbers[A]] {
+      override def empty: WeightedNumbers[A] = WeightedNumbers[A](Vector())
+      override def combine(x: WeightedNumbers[A], y: WeightedNumbers[A]): WeightedNumbers[A] = {
+        WeightedNumbers(x.values ++ y.values)
+      }
+    }
   }
   implicit def weightedNumbersHasMetrics[A] = new HasMetrics[WeightedNumbers[A]] {
     def getMetrics(nums: WeightedNumbers[A]) = nums.stats.getMetrics
