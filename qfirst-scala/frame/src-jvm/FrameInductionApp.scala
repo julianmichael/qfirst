@@ -368,6 +368,38 @@ object FrameInductionApp extends CommandIOApp(
     }
   } yield ()
 
+  def runAnalyze[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    split <- features.splitName
+    outDir <- features.outDir.map(_.resolve(s"analysis/$split")).flatTap(createDir)
+    argRoleLabels <- features.argRoleLabels.get
+    questionDists <- features.argQuestionDists.get
+    args <- features.args.get
+    roleQuestionDists <- args.toList.infoBarFoldMapM("Aggregating question distributions") {
+      case (verbType, argIds) =>
+        IO {
+          val roleLabels = argRoleLabels(verbType)
+          val questions = questionDists(verbType)
+          argIds.unorderedFoldMap(argId =>
+            Map(roleLabels(argId).role -> questions(argId))
+          )
+        }
+    }
+    _ <- FileUtil.writeString(outDir.resolve("questions.txt"))(
+      roleQuestionDists.toList.map { case (role, qdist) =>
+        val total = qdist.unorderedFold
+        s"$role:\n" + qdist.toList
+          .sortBy(-_._2)
+          .map(p => p.copy(_2 = p._2 / total))
+          .takeWhile(_._2 > 0.005)
+          .map { case (qt, prob) => f"${qt.toTemplateString}%-60s$prob%.3f" }
+          .mkString("\n")
+      }.mkString("\n==========\n")
+    )
+  } yield ()
+
   def getFeatures(
     setting: DataSetting, mode: RunMode)(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -502,8 +534,32 @@ object FrameInductionApp extends CommandIOApp(
     }
   )
 
+  val analyze = Opts.subcommand(
+    name = "analyze",
+    help = "Analyze features which are agnostic to the models.")(
+    (dataO, modeO).mapN { (data, mode) =>
+      withLogger { logger =>
+        implicit val Log = logger
+        for {
+          _ <- Log.info(s"Mode: $mode")
+          _ <- Log.info(s"Data: $data")
+          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+          _ <- data match {
+            case d @ DataSetting.Qasrl =>
+              IO.raiseError(new IllegalArgumentException("Cannot run analysis on QA-SRL."))
+            case d @ DataSetting.Ontonotes5(_) =>
+              runAnalyze(getFeatures(d, mode).getIfPropBank.get)
+            case d @ DataSetting.CoNLL08(_) =>
+              runAnalyze(getFeatures(d, mode).getIfPropBank.get)
+          }
+        } yield ExitCode.Success
+      }
+    }
+  )
+
   def main: Opts[IO[ExitCode]] =
     setup
       .orElse(run)
       .orElse(summarize)
+      .orElse(analyze)
 }
