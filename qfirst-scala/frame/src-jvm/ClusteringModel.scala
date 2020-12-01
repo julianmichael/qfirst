@@ -669,7 +669,7 @@ object FullArgumentModel {
       dists <- getDists(features).get.map(_.apply(verbType))
       args <- features.args.get.map(_.apply(verbType))
       // priorEntropy = {
-      //   val totalCounts = dists.value.unorderedFold
+      //   val totalCounts = args.unorderedFoldMap(dists)
       //   val total = totalCounts.unorderedFold
       //   val res = totalCounts.values.iterator.filter(_ > 0).map { count =>
       //     val prob = count / total
@@ -682,9 +682,9 @@ object FullArgumentModel {
       //   headProbabilityMass = 0.99,
       //   priorSmoothingLambda = 1000.0,
       //   priorTruncationHead = .99
-      // )(questionDists.value)
+      // )(args.toList.map(dists))
       indexedInstances = args.iterator.map { argId =>
-        // val dist = tfidf(dists(argId)
+        // val dist = tfidf(dists(argId))
         val dist = dists(argId)
         // argId -> dist.map { case (q, p) => vocab.getIndex(q) -> (p / priorEntropy) }
         argId -> dist.map { case (q, p) => vocab.getIndex(q) -> p }
