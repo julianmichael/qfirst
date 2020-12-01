@@ -21,7 +21,10 @@ object EvalUtils {
     "AM-PRD",
     "A5", "AA",
   ).zipWithIndex.toMap
-  val conll08RoleOrder = Order.by[String, Int](conll08RoleIndices.apply)
+  val conll08RoleOrder = Order.whenEqual(
+    Order.by[String, Int](x => conll08RoleIndices.getOrElse(x, 100)),
+    Order[String]
+  )
 
   // With or without replacement? currently implemented with replacement
   // i think this is right because pmi with self should never be negative.
