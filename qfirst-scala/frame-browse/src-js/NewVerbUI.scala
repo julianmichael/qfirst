@@ -4,7 +4,7 @@ import qfirst.clause.ArgStructure
 import qfirst.clause.ClauseResolution
 import qfirst.frame._
 import qfirst.frame.math._
-import qfirst.frame.eval.{EvalUtils, Plotting}
+import qfirst.frame.eval._
 
 import qfirst.model.eval.filterGoldNonDense
 import qfirst.model.eval.filterOrigAnnotationRound
@@ -521,7 +521,7 @@ class NewVerbUI[VerbType, Arg: Order](
     sortedVerbCounts: List[(VerbType, Int)],
     verb: StateSnapshot[VerbType],
     verbFeatures: StateSnapshot[FeatureOptions],
-    showNPMIs: StateSnapshot[Boolean]
+    showMetrics: StateSnapshot[Boolean]
   ) = {
     <.div(S.headerContainer)(
       <.select(S.verbDropdown)(
@@ -564,7 +564,7 @@ class NewVerbUI[VerbType, Arg: Order](
           )
         ),
         View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
-        View.checkboxToggle("NPMIs", showNPMIs),
+        View.checkboxToggle("Metrics", showMetrics),
       )
     )
   }
@@ -1446,6 +1446,55 @@ class NewVerbUI[VerbType, Arg: Order](
         EvalUtils.conll08RoleOrder, implicitly[cats.Show[String]]
       )
 
+      val bCubedByLabel = ClusterPRMetric.b3PerInstanceByLabel(
+        goldCounts.combineAll, goldCounts
+      )
+
+      def prfCells(prf: WeightedPR, total: Double) = {
+        val (p, r, f1) = prf.prf
+        val pc = prf.pseudocount
+        val err = (1.0 - f1) * (pc / total)
+        List(
+          <.td(S.numDataCell, S.cellProp((p * 20).toInt), S.cellRightBorder)(f"$p%.2f"),
+          <.td(S.numDataCell, S.cellProp((r * 20).toInt), S.cellRightBorder)(f"$r%.2f"),
+          <.td(S.numDataCell, S.cellProp((f1 * 20).toInt))(f"$f1%.2f"),
+          <.td(S.numDataCell)(pc.toInt),
+          <.td(S.numDataCell, S.errColor(scala.math.min(20.0, err * 40).toInt))(f"$err%.2f")
+        )
+      }
+
+
+      def prfTable(
+        metricName: String,
+        metricByLabel: Map[String, WeightedPR]
+      ) = {
+        val total = metricByLabel.unorderedFoldMap(_.pseudocount)
+        <.table(S.metricsTable)(
+          <.thead(
+            <.tr(S.rowBottomBorder)(
+              <.td(),
+              <.td(S.tableCell)("Prec."),
+              <.td(S.tableCell)("Rec."),
+              <.td(S.tableCell)("F1"),
+              <.td(S.tableCell)("Count"),
+              <.td(S.tableCell)("Error contribution")
+            )
+          ),
+          <.tbody(
+            <.tr(S.rowBottomBorder)(<.td(S.tableLeftHeader)("All"))(
+              prfCells(metricByLabel.values.toList.combineAll, total): _*
+            ),
+            metricByLabel.toList.sortBy(-_._2.pseudocount).toVdomArray { case (label, prf) =>
+              <.tr(<.td(S.tableLeftHeader)(label))(prfCells(prf, total): _*)
+            }
+          )
+        )
+      }
+
+      val bCubedTable = <.div(
+        prfTable("B3 P/R/F1", bCubedByLabel)
+      )
+
       // val plotSize = 800.0
       // val extent = Extent(plotSize, plotSize)
       // val ctx = new SVGRenderContext
@@ -1493,8 +1542,11 @@ class NewVerbUI[VerbType, Arg: Order](
       }
       cb.runNow
 
-      Mounting.make(mountCb)(
-        <.canvas().withRef(npmiChartRef)
+      <.div(
+        Mounting.make(mountCb)(
+          <.canvas().withRef(npmiChartRef)
+        ),
+        bCubedTable,
       )
 
       // CanvasRef.make(
@@ -1561,9 +1613,9 @@ class NewVerbUI[VerbType, Arg: Order](
                             }
                           }
 
-                          BoolLocal.make(false) { showNPMIs =>
+                          BoolLocal.make(false) { showMetrics =>
                             <.div(S.mainContainer)(
-                              headerContainer(props.featureService, sortedVerbCounts, verb, options, showNPMIs),
+                              headerContainer(props.featureService, sortedVerbCounts, verb, options, showMetrics),
                               SentencesFetch.make(
                                 request = features.verbType,
                                 sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {
@@ -1581,7 +1633,7 @@ class NewVerbUI[VerbType, Arg: Order](
                                           curSentenceId,
                                           curHighlightedFrame
                                         ),
-                                        if(showNPMIs.value) <.div(S.dataContainer)(
+                                        if(showMetrics.value) <.div(S.dataContainer)(
                                           npmiChart(features, frames)
                                         ) else <.div(S.dataContainer)(
                                           sentenceSelectionPane(

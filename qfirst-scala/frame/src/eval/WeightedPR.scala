@@ -15,13 +15,28 @@ case class WeightedPR(
   def precision = precisions.stats.weightedMean
   def recall = recalls.stats.weightedMean
   def f1 = Functions.harmonicMean(precision, recall)
+  def prf = {
+    val p = precision
+    val r = recall
+    val f1 = Functions.harmonicMean(p, r)
+    (p, r, f1)
+  }
   def fMeasure(beta: Double) = Functions.weightedHarmonicMean(beta, precision, recall)
   def normalize = WeightedPR(precisions.normalize, recalls.normalize)
 }
 object WeightedPR {
   implicit val weightedPRMonoid: Monoid[WeightedPR] = {
-    import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    new Monoid[WeightedPR] {
+      def empty: WeightedPR = WeightedPR(WeightedNumbers(Vector()), WeightedNumbers(Vector()))
+      def combine(x: WeightedPR, y: WeightedPR): WeightedPR = WeightedPR(
+        Monoid[WeightedNumbers[Double]].combine(
+          x.precisions, y.precisions
+        ),
+        Monoid[WeightedNumbers[Double]].combine(
+          x.recalls, y.recalls
+        )
+      )
+    }
   }
   implicit val weightedPRHasMetrics = new HasMetrics[WeightedPR] {
     def getMetrics(pr: WeightedPR) = MapTree.fromPairs(

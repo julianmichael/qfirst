@@ -874,4 +874,45 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val intArrowFieldInput = style(
     width(3 em)
   )
+
+  val metricsTable = style(
+    addClassNames("p-2"),
+    fontSize(16 px)
+  )
+
+  val rowBottomBorder = style(
+    borderBottom.solid,
+    borderWidth(1 px)
+  )
+
+  val tableCell = style(
+    addClassNames("p-2")
+  )
+
+  val numDataCell = style(
+    tableCell,
+    addClassNames("pl-3")
+  )
+
+  val cellProp = styleF.int(0 to 20)(i =>
+    styleS(
+      backgroundColor(rgba(255, 0, 0, 1.0 - (i.toDouble / 20)))
+    )
+  )
+
+  val errColor = styleF.int(0 to 20)(i =>
+    styleS(
+      backgroundColor(rgba(255, 0, 0, i.toDouble / 20))
+    )
+  )
+
+  val cellRightBorder = style(
+    borderRight.solid,
+    borderWidth(1 px)
+  )
+
+  val tableLeftHeader = style(
+    tableCell,
+    addClassNames("pr-3")
+  )
 }
