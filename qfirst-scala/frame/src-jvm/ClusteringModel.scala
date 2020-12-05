@@ -598,6 +598,7 @@ object FullArgumentModel {
   val termIndex = List[(LossTerm, String)](
     NoOp -> "noop",
     QuestionEntropy -> "qent",
+    MaxPriorEntropy -> "pent",
     SyntacticFunction -> "syntf",
     ConstituentType -> "syntc",
     ConstituentTypeConverted -> "syntc2",
@@ -743,6 +744,25 @@ object FullArgumentModel {
     } yield (
       new DirichletMAPClusteringSparse(indexedInstances, 1, 0.01),
       new MinEntropyClusteringSparse(indexedInstances, 1)
+    )
+  }
+
+  case object MaxPriorEntropy extends LossTerm {
+    type FlatParam = DenseMultinomial
+    type AgglomParam = Int
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.args.get.as(())
+
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      args <- features.args.get.map(_.apply(verbType))
+      indexedInstances = args.iterator.map { argId =>
+        argId -> Map(0 -> 1.0)
+      }.toMap
+    } yield (
+      new DirichletMAPClusteringSparse(indexedInstances, 1, 0.01),
+      new MaxPriorEntropyClustering[ArgumentId[Arg]](args.size)
     )
   }
 

@@ -103,7 +103,9 @@ trait FlatClusteringAlgorithm {
       val newCenterIndex = if(infiniteLossIndexIndices.nonEmpty) {
         indices(infiniteLossIndexIndices(rand.nextInt(infiniteLossIndexIndices.size)))
       } else {
-        val newCenterProbs = Multinomial(curMinLosses)
+        val newCenterProbs = if(sum(curMinLosses) == 0.0) {
+          Multinomial(DenseVector.ones[Double](curMinLosses.size))
+        } else Multinomial(curMinLosses)
         var newIndex = indices(newCenterProbs.draw)
         // XXX I expect this to produce an infinite loop when we have too few instances... is that right? why doesn't this happen already?
         while(chosenInstances.contains(newIndex)) {
