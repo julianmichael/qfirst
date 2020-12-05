@@ -35,7 +35,7 @@ val fastparseVersion = "0.4.4"
 val macmemoVersion = "0.4"
 
 // jvm webby libs
-val scalatagsVersion = "0.6.7"
+val scalatagsVersion = "0.8.2"
 
 // jvm libs
 val ammoniteOpsVersion = "1.1.2"
@@ -309,7 +309,8 @@ object qfirst extends Module {
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.scalanlp::breeze:$breezeVersion",
         ivy"org.scalanlp::breeze-natives:$breezeVersion",
-        ivy"com.cibo::evilplot-repl:$evilplotVersion"
+        ivy"com.cibo::evilplot-repl:$evilplotVersion",
+        ivy"com.lihaoyi::scalatags:$scalatagsVersion"
       )
     }
   }

@@ -216,7 +216,7 @@ object Evaluation {
     }
   }
 
-  def runClusteringEvalWithMetric[VerbType, InstanceId, GoldLabel : Order : Show](
+  def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show](
     parentDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[InstanceId]],
@@ -240,18 +240,20 @@ object Evaluation {
             metric.precisionName, metric.recallName,
             resultsDir
           )
-          allLabeledClusters = argClusterings.toVector.map { case (verbType, clustering) =>
-            val goldLabelFn = getGoldLabel(verbType)
-            val clusters = clustering.clusterTreeOpt.foldMap(tree =>
+          allClusters = argClusterings.mapVals { clustering =>
+            clustering.clusterTreeOpt.foldMap(tree =>
               bestCriterion
                 .splitTree(tree, (x: Set[InstanceId]) => x.size, bestThreshold)
                 .map(_.unorderedFold)
             ) ++ clustering.extraClusters.values
-            clusters.map(_.unorderedFoldMap(id => Map(goldLabelFn(id) -> 1)))
           }
-          goldLabelCounts = allLabeledClusters.foldMap(_.unorderedFold)
+          allLabeledClusters = allClusters.map { case (verbType, clusters) =>
+            val goldLabelFn = getGoldLabel(verbType)
+            verbType -> clusters.map(_.unorderedFoldMap(id => Map(goldLabelFn(id) -> 1)))
+          }
+          goldLabelCounts = allLabeledClusters.unorderedFoldMap(_.unorderedFold)
           minGoldLabelCount = 5
-          npmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters)
+          npmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters.values.toVector)
           _ <- IO (
             Plotting.plotNPMI[GoldLabel](
               npmis.filter { case (Duad(l, r), _) =>
@@ -260,6 +262,22 @@ object Evaluation {
               f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
             ).render().write(new java.io.File(resultsDir.resolve("best-pnmi.png").toString))
           )
+          _ <- IO {
+            val b3instanceByVerbAndLabel = allLabeledClusters.mapVals { clusters =>
+              val localGoldLabelCounts = clusters.unorderedFold
+              ClusterPRMetric.b3PerInstanceByLabel(localGoldLabelCounts, clusters)
+            }
+            val b3instanceByVerb = b3instanceByVerbAndLabel.mapVals(_.values.toList.combineAll)
+            val b3instanceByLabel = b3instanceByVerbAndLabel.values.toList.combineAll
+            FileUtil.writeString(
+              resultsDir.resolve("best-b3-by-verb.html"))(
+              Html.prfTableHtml(b3instanceByVerb).render
+            ) >>
+              FileUtil.writeString(
+                resultsDir.resolve("best-b3-by-label.html"))(
+                Html.prfTableHtml(b3instanceByLabel).render
+              )
+          }.flatten
         } yield ()
       )
     }
@@ -278,18 +296,18 @@ object Evaluation {
     )
   }
 
-  def evaluateClusters[VerbType, InstanceId, GoldLabel : Order : Show](
+  def evaluateClusters[VerbType : Show, InstanceId, GoldLabel : Order : Show](
     resultsDir: NIOPath,
     modelName: String,
     clusterings: Map[VerbType, Clustering[InstanceId]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
-  ): IO[Unit] = activeMetrics.traverse(metric =>
+  ) = activeMetrics.traverse(metric =>
     runClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, tuningSpecs, metric)
   ).void
 
-  def evaluateArgumentClusters[VerbType, Arg](
+  def evaluateArgumentClusters[VerbType : Show, Arg](
     resultsDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[ArgumentId[Arg]]],
@@ -300,14 +318,13 @@ object Evaluation {
   ): IO[Unit] = {
     if(useSenseSpecificRoles) {
       val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
-      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)
+      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs).void
     } else {
       val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
       evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)(
-        EvalUtils.conll08RoleOrder, implicitly[Show[String]], Log, timer
+        implicitly[Show[VerbType]], EvalUtils.conll08RoleOrder, implicitly[Show[String]], Log, timer
       )
     }
-
   }
 
   // summarize
