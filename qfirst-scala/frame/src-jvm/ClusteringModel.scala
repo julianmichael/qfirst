@@ -195,36 +195,35 @@ case class SideClusteringModel(
           val modal = Option("MODAL")
             .filter(_ => modals)
             .filter { _ =>
-              spans(argId).toVector.maximaBy(_._2)
-                .map(_._1)
-                .map(span => jjm.ling.Text.renderSpan(sentence, span).lowerCase)
-                .exists(SideClusteringModel.modals.contains)
+              val theseSpans = spans(argId)
+              theseSpans.size == 1 && SideClusteringModel.modals.contains(
+                jjm.ling.Text.renderSpan(sentence, theseSpans.head._1).lowerCase
+              )
             }
-            // .filter { _ =>
-            //   val token = sentence(heads(argId))
-            //   SideClusteringModel.modalTokens.contains(token.lowerCase)
-            // }
 
           val neg = Option("NEG")
             .filter(_ => negation)
             .filter { _ =>
-              val token = sentence(heads(argId))
-              jjm.ling.en.Inflections.negationWords.contains(token.lowerCase)
+              val theseSpans = spans(argId)
+              theseSpans.size == 1 && jjm.ling.en.Inflections.negationWords.contains(
+                jjm.ling.Text.renderSpan(sentence, theseSpans.head._1).lowerCase
+              )
             }
-          val adjunct = Some(funcs(argId))
-            .filter(_ => adjuncts)
-            .filter(SideClusteringModel.adjunctFuncs.contains)
 
           val disc = Some("DIS")
             .filter(_ => discourse)
             .filter { _ =>
-              spans(argId).toVector.maximaBy(_._2)
-                .map(_._1)
-                .map(span => jjm.ling.Text.renderSpan(sentence, span).lowerCase)
-                .exists(SideClusteringModel.discourseExpressions.contains)
+              val theseSpans = spans(argId)
+              theseSpans.size == 1 && SideClusteringModel.discourseExpressions.contains(
+                jjm.ling.Text.renderSpan(sentence, theseSpans.head._1).lowerCase
+              )
             }
 
-          modal.orElse(neg).orElse(adjunct).orElse(disc)
+          val adjunct = Some(funcs(argId))
+            .filter(_ => adjuncts)
+            .filter(SideClusteringModel.adjunctFuncs.contains)
+
+          modal.orElse(neg).orElse(disc).orElse(adjunct)
         }
         verbType -> args.groupBy(getSideClusterLabel).flatMap { case (keyOpt, v) => keyOpt.map(_ -> v) }
       }
