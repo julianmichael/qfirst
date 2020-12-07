@@ -120,10 +120,19 @@ trait AgglomerativeClusteringAlgorithm {
     case None => mergeLossFallback(left, leftParam, right, rightParam)
   }
 
-  // more efficient implementation! possibly MUCH more efficient for good distance functions
-  // easily adaptable into an n^2 logn algorithm for single and complete linkage.
-  // Also potentially more efficient than the version below, by using a splay tree.
   def runPartialAgglomerativeClustering(
+    initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)],
+    stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean)(
+    implicit Log: EphemeralTreeLogger[cats.effect.IO, String]
+  ): NonEmptyVector[(MergeTree[Index], ClusterParam)] = {
+    runPartialAgglomerativeClustering_ManyQueues(initTrees, stoppingCondition)
+  }
+
+  // more efficient implementation! possibly MUCH more efficient for good distance functions
+  // Also potentially more efficient than the version below, by using a splay tree.
+  // BUT: requires monotonicity property on the loss function. This apparently doesn't hold
+  // for a bunch of the ones I care about! Lame!!!!
+  def runPartialAgglomerativeClustering_Pruned(
     initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)],
     stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean)(
     implicit Log: EphemeralTreeLogger[cats.effect.IO, String]
@@ -415,8 +424,8 @@ trait AgglomerativeClusteringAlgorithm {
     NonEmptyVector.fromVector(currentTrees.values.toVector).get
   }
 
-  // less efficient, traditional n^3 implementation.
-  def runPartialAgglomerativeClustering_N3(
+  // less efficient queue-based implementation.
+  def runPartialAgglomerativeClustering_ManyQueues(
     initTrees: NonEmptyVector[(MergeTree[Index], ClusterParam)],
     stoppingCondition: (Map[Int, (MergeTree[Index], ClusterParam)], Int, Int, Double) => Boolean
   ): NonEmptyVector[(MergeTree[Index], ClusterParam)] = {
@@ -554,4 +563,105 @@ trait AgglomerativeClusteringAlgorithm {
       }
     ).map(_._1)
   }
+
+
+
+  // standalone implementation for paper; wip
+  def runAgglomerativeClusteringStandalone(
+    inputs: NonEmptyVector[Index],
+    delta: (MergeTree[Index], MergeTree[Index]) => Double
+  ): NonEmptyVector[MergeTree[Index]] = {
+    case class MergeCandidate(i: Int, j: Int, delta: Double)
+    object MergeCandidate {
+      implicit val mergeCandidateOrdering = Ordering.by[MergeCandidate, Double](_.delta)
+      implicit val mergeCandidateOrder = Order.by[MergeCandidate, Double](_.delta)
+    }
+
+    val initTrees = inputs.map { index =>
+      (MergeTree.Leaf(0.0, index): MergeTree[Index])
+    }
+    val indices = initTrees.toVector.indices
+    val initNumTrees = initTrees.size.toInt
+
+    // Variables for algorithm:
+
+    // Clusters so far: full dendrograms/hierarchical cluster trees
+    var currentTrees: Map[Int, MergeTree[Index]] =
+      initTrees.zipWithIndex.map(_.swap).toVector.toMap
+
+    // queue of candidate merges in priority order
+    val mergeQueue = {
+      val initMerges = currentTrees.toList.tails.flatMap {
+        case Nil => Nil
+        case (leftIndex, left) :: rights =>
+          rights.iterator.map { case (rightIndex, right) =>
+            MergeCandidate(leftIndex, rightIndex, delta(left, right))
+          }
+      }.toVector.sorted
+      SplayTreeQueue.fromSortedVector(initMerges)
+    }
+
+    // counter for number of stale merge candidates remaining for each pair.
+    // CAVEAT: a value of 0 means there IS an ACTIVE merge candidate in the queue,
+    // at least for active pairs of values.
+    val staleCounts = Array.ofDim[Int](initNumTrees, initNumTrees)
+
+    // union-find structure to identify cluster representatives
+    val clusterSets = TarjanUnionFind.empty[Int]
+    indices.foreach(clusterSets.add)
+
+    while(currentTrees.size > 1) {
+      mergeQueue.popMin().get._1 match {
+        case MergeCandidate(origI, origJ, _) =>
+          // get cluster representatives for merge candidates
+          val i = clusterSets.find(origI).get
+          val j = clusterSets.find(origJ).get
+          staleCounts(i)(j) match {
+            case 0 => // execute a merge
+
+              // new representative index for the resulting cluster: will be one of i or j
+              val newRep = clusterSets.union(i, j).get
+
+              // the representative index that we're losing: will be the other one
+              val oldRep = if(newRep == i) j else i
+              // is no longer active: we don't need to update stale counts
+
+              // get trees to be merged
+              val leftTree = currentTrees(i)
+              val rightTree = currentTrees(j)
+              // remove i and j from current trees
+              currentTrees --= List(i, j)
+
+              // update stale counts for the new cluster and all other remaining clusters
+              currentTrees.keySet.foreach { k =>
+                // number now stale in queue is what's recorded in the matrix,
+                // UNLESS it was 0, which meant there was 1 *active* in the queue,
+                // which means there is now 1 newly stale in the queue.
+                val newStaleCounts = math.max(1, staleCounts(k)(i)) + math.max(1, staleCounts(k)(j))
+                staleCounts(newRep)(k) = newStaleCounts
+                staleCounts(k)(newRep) = newStaleCounts
+              }
+              // perform the actual merge
+              val newTree = MergeTree.Merge(0.0, leftTree, rightTree)
+              // update the current set of trees
+              currentTrees += (newRep -> newTree)
+            case 1 => // insert a new merge into the queue
+              staleCounts(i)(j) -= 1
+              staleCounts(j)(i) -= 1
+              // now there are no stale precursor merges left, so this merge can happen
+              val left = currentTrees(i)
+              val right = currentTrees(j)
+              val candidate = MergeCandidate(i, j, delta(left, right))
+              // insert it into the queue
+              mergeQueue.insert(candidate)
+            case _ => // skip
+              staleCounts(i)(j) -= 1
+              staleCounts(j)(i) -= 1
+          }
+      }
+    }
+    // guaranteed to have at least 1 elt from clustering process
+    NonEmptyVector.fromVector(currentTrees.values.toVector).get
+  }
+
 }
