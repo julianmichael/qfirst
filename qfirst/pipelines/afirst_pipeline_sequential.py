@@ -9,7 +9,10 @@ import_submodules("qfirst")
 from typing import List, Iterator, Optional, Set
 
 import torch, os, json, tarfile, argparse, uuid, shutil
+import gzip
 import sys
+
+from tqdm import tqdm
 
 from overrides import overrides
 
@@ -70,7 +73,7 @@ class AFirstPipelineSequential():
                             for s in aj["spans"]:
                                 spans.append(Span(s[0], s[1] - 1))
             if "argumentSpans" in verb:
-                for s in aj["argumentSpans"]:
+                for s in verb["argumentSpans"]:
                     spans.append(Span(s[0], s[1] - 1))
             verb_spans.append(set(spans))
         return verb_spans
@@ -82,50 +85,50 @@ class AFirstPipelineSequential():
         span_to_question_verb_instances = list(self._span_to_question_model_dataset_reader.sentence_json_to_instances(inputs, verbs_only = True))
         verb_spans = self._get_verb_spans_for_sentence(inputs)
         # get spans and ensure same order
-        span_outputs = self._span_model.forward_on_instances(span_verb_instances)
         verb_dicts = []
-        for (verb_instance, span_output, ref_spans) in zip(span_to_question_verb_instances, span_outputs, verb_spans):
-            beam = []
-            scored_spans = [
-                (s, p)
-                for s, p in span_output["spans"]
-                if p >= self._span_minimum_threshold or s in ref_spans # always include reference spans
-            ]
-            span_fields = [SpanField(span.start(), span.end(), verb_instance["text"]) for span, _ in scored_spans]
-            if len(span_fields) > 0:
-                verb_instance.index_fields(self._span_to_question_model.vocab)
-                verb_instance.add_field("answer_spans", ListField(span_fields), self._span_to_question_model.vocab)
-                qgen_input_tensors = move_to_device(
-                    Batch([verb_instance]).as_tensor_dict(),
-                    self._span_to_question_model._get_prediction_device())
-                question_beams = self._span_to_question_model.beam_decode(
-                    text = qgen_input_tensors["text"],
-                    predicate_indicator = qgen_input_tensors["predicate_indicator"],
-                    predicate_index = qgen_input_tensors["predicate_index"],
-                    answer_spans = qgen_input_tensors["answer_spans"],
-                    max_beam_size = self._question_beam_size,
-                    min_beam_probability = self._question_minimum_threshold)
-                for (span, span_prob), (_, slot_values, question_probs) in zip(scored_spans, question_beams):
-                    scored_questions = []
-                    for i in range(len(question_probs)):
-                        question_slots = {
-                            slot_name: slot_values[slot_name][i]
-                            for slot_name in self._span_to_question_model.get_slot_names()
-                        }
-                        scored_questions.append({
-                            "questionSlots": question_slots,
-                            "questionProb": question_probs[i]
+        if len(span_verb_instances) > 0:
+            span_outputs = self._span_model.forward_on_instances(span_verb_instances)
+            for (verb_instance, span_output, ref_spans) in zip(span_to_question_verb_instances, span_outputs, verb_spans):
+                beam = []
+                scored_spans = [
+                    (s, p)
+                    for s, p in span_output["spans"]
+                    if p >= self._span_minimum_threshold or s in ref_spans # always include reference spans
+                ]
+                span_fields = [SpanField(span.start(), span.end(), verb_instance["text"]) for span, _ in scored_spans]
+                if len(span_fields) > 0:
+                    verb_instance.index_fields(self._span_to_question_model.vocab)
+                    verb_instance.add_field("answer_spans", ListField(span_fields), self._span_to_question_model.vocab)
+                    qgen_input_tensors = move_to_device(
+                        Batch([verb_instance]).as_tensor_dict(),
+                        self._span_to_question_model._get_prediction_device())
+                    question_beams = self._span_to_question_model.beam_decode(
+                        text = qgen_input_tensors["text"],
+                        predicate_indicator = qgen_input_tensors["predicate_indicator"],
+                        predicate_index = qgen_input_tensors["predicate_index"],
+                        answer_spans = qgen_input_tensors["answer_spans"],
+                        max_beam_size = self._question_beam_size,
+                        min_beam_probability = self._question_minimum_threshold)
+                    for (span, span_prob), (_, slot_values, question_probs) in zip(scored_spans, question_beams):
+                        scored_questions = []
+                        for i in range(len(question_probs)):
+                            question_slots = {
+                                slot_name: slot_values[slot_name][i]
+                                for slot_name in self._span_to_question_model.get_slot_names()
+                            }
+                            scored_questions.append({
+                                "questionSlots": question_slots,
+                                "questionProb": question_probs[i]
+                            })
+                        beam.append({
+                            "span": [span.start(), span.end() + 1],
+                            "spanProb": span_prob,
+                            "questions": scored_questions
                         })
-                    beam.append({
-                        "span": [span.start(), span.end() + 1],
-                        "spanProb": span_prob,
-                        "questions": scored_questions
-                    })
-            verb_dicts.append({
-                "verbIndex": verb_instance["metadata"]["verb_index"],
-                "verbInflectedForms": verb_instance["metadata"]["verb_inflected_forms"],
-                "beam": beam
-            })
+                verb_dicts.append({
+                    "verbIndex": verb_instance["metadata"]["verb_index"],
+                    "beam": beam
+                })
         return {
             "sentenceId": inputs["sentenceId"],
             "sentenceTokens": inputs["sentenceTokens"],
@@ -140,9 +143,21 @@ def main(span_model_path: str,
          span_min_prob: float,
          question_min_prob: float,
          question_beam_size: int) -> None:
+
     check_for_gpu(cuda_device)
-    span_model_archive = load_archive_from_folder(span_model_path, cuda_device = cuda_device, weights_file = os.path.join(span_model_path, "best.th"))
-    span_to_question_model_archive = load_archive_from_folder(span_to_question_model_path, cuda_device = cuda_device, weights_file = os.path.join(span_to_question_model_path, "best.th"))
+
+    span_model_archive = load_archive_from_folder(
+        span_model_path,
+        cuda_device = cuda_device,
+        overrides = '{ "model": { "span_selector": {"span_decoding_threshold": 0.00} } }',
+        weights_file = os.path.join(span_model_path, "best.th"))
+
+    # override span detection threshold to be low enough so we can reasonably approximate bad spans
+    # as having probability 0.
+    span_to_question_model_archive = load_archive_from_folder(
+        span_to_question_model_path,
+        cuda_device = cuda_device,
+        weights_file = os.path.join(span_to_question_model_path, "best.th"))
 
     span_model_dataset_reader_params = span_model_archive.config["dataset_reader"].duplicate()
     span_model_dataset_reader_params["qasrl_filter"]["allow_all"] = True
@@ -159,13 +174,20 @@ def main(span_model_path: str,
         question_minimum_threshold = question_min_prob,
         question_beam_size = question_beam_size)
     if output_file is None:
-        for line in read_lines(cached_path(input_file)):
+        for line in tqdm(read_lines(cached_path(input_file))):
             input_json = json.loads(line)
             output_json = pipeline.predict(input_json)
             print(json.dumps(output_json))
+    elif output_file.endswith('.gz'):
+        with gzip.open(output_file, 'wt') as f:
+            for line in tqdm(read_lines(cached_path(input_file))):
+                input_json = json.loads(line)
+                output_json = pipeline.predict(input_json)
+                f.write(json.dumps(output_json))
+                f.write('\n')
     else:
         with open(output_file, 'w', encoding = 'utf8') as out:
-            for line in read_lines(cached_path(input_file)):
+            for line in tqdm(read_lines(cached_path(input_file))):
                 input_json = json.loads(line)
                 output_json = pipeline.predict(input_json)
                 print(json.dumps(output_json), file = out)

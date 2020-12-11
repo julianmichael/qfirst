@@ -25,22 +25,22 @@ class QasrlFilter(Registrable):
             verb_entries = [v for _, v in sentence_json["verbEntries"].items()]
             verb_entries = sorted(verb_entries, key = lambda v: v["verbIndex"])
             for verb_entry in verb_entries:
-                verb_index = verb_entry["verbIndex"]
-                def is_valid(question_label):
-                    if self._allow_all:
-                        return True
-                    answers = question_label["answerJudgments"]
-                    valid_answers = [a for a in answers if a["isValid"]]
-                    is_source_valid = self._question_sources is None or any([l.startswith(source) for source in self._question_sources for l in question_label["questionSources"]])
-                    return (len(answers) >= self._min_answers) and (len(valid_answers) >= self._min_valid_answers) and is_source_valid
-                question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
-
                 verb_dict = {
-                    "verb_index": verb_entry["verbIndex"],
-                    "verb_inflected_forms": verb_entry["verbInflectedForms"],
-                    "question_labels": question_labels
+                    "verb_index": verb_entry["verbIndex"]
                 }
+
+                if "questionLabels" in verb_entry:
+                    def is_valid(question_label):
+                        if self._allow_all:
+                            return True
+                        answers = question_label["answerJudgments"]
+                        valid_answers = [a for a in answers if a["isValid"]]
+                        is_source_valid = self._question_sources is None or any([l.startswith(source) for source in self._question_sources for l in question_label["questionSources"]])
+                        return (len(answers) >= self._min_answers) and (len(valid_answers) >= self._min_valid_answers) and is_source_valid
+                    question_labels = [l for q, l in verb_entry["questionLabels"].items() if is_valid(l)]
+                    verb_dict["question_labels"] = question_labels
+
                 if "verbInflectedForms" in verb_entry:
-                    verb_dict["verbInflectedForms"] = verb_entry["verbInflectedForms"]
+                    verb_dict["verb_inflected_forms"] = verb_entry["verbInflectedForms"]
 
                 yield {**base_dict, **verb_dict}
