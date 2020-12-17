@@ -373,12 +373,34 @@ class CoNLL08Features(
 
   override lazy val fullArgSpanSets: CachedArgFeats[Set[ESpan]] =
     cacheArgFeats("arg spans extended")(
-      (origPropBankArgSpans.data, spansWithoutLeadingPrep.data).mapN { (orig, modified) =>
-        (verbType: String) => (argId: ArgumentId[Int]) => {
-          orig(verbType)(argId).keySet |+| modified(verbType)(argId).keySet
+      (origPropBankArgSpans.data, argSpansWithoutLeadingPrep.data, argLeadingPreps.data).mapN {
+        (orig, modified, preps) => (verbType: String) => (argId: ArgumentId[Int]) => {
+          orig(verbType)(argId).keySet |+|
+            modified(verbType)(argId).keySet |+|
+            preps(verbType)(argId).keySet.map(i => ESpan(i, i + 1))
         }
       }
     )
+
+  override lazy val argSpansForMLM: CachedArgFeats[Map[ESpan, Double]] = {
+    argSpansWithoutLeadingPrep
+    // cacheArgFeats("arg spans for MLM")(
+    //   (dataset.data, origPropBankArgSpans.data).mapN { (data, getPBSpans) =>
+    //     (verbType: String) => (argId: ArgumentId[Int]) => {
+    //       val pbSpans = getPBSpans(verbType)(argId)
+    //       val sentence = data.value(argId.verbId.sentenceId)
+    //       pbSpans.toList.flatMap { case (span, prob) =>
+    //         val moddedSpan = sentence.tokens(span.begin).pos match {
+    //           case "IN" | "RB" => None
+    //           case "TO" => None
+    //           case _ => Some(span)
+    //         }
+    //         moddedSpan.map(_ -> prob)
+    //       }.toMap
+    //     }
+    //   }
+    // )
+  }
 
   import qfirst.datasets.conll05
   import qfirst.datasets.ptb2
@@ -804,7 +826,8 @@ class CoNLL08Features(
 
   val validPrepPOS = Set("IN", "TO", "RB")
 
-  val spansWithoutLeadingPrep: CachedArgFeats[Map[ESpan, Double]] = {
+  // TODO: possibly handle more complex cases like "long before Sony entered the children's market"
+  val argSpansWithoutLeadingPrep: CachedArgFeats[Map[ESpan, Double]] = {
     cacheArgFeats("spans without leading prep")(
       dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
@@ -814,6 +837,22 @@ class CoNLL08Features(
             if(validPrepPOS.contains(sentence.tokens(span.begin).pos) && span.length > 1) {
               Map(ESpan(span.begin + 1, span.end) -> prob)
             } else Map(span -> prob)
+          }
+        }
+      }
+    )
+  }
+
+  override lazy val argLeadingPreps: CachedArgFeats[Map[Int, Double]] = {
+    cacheArgFeats("arg leading preps")(
+      dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          val pbSpans = getPBSpans(verbType)(argId)
+          val sentence = data.value(argId.verbId.sentenceId)
+          pbSpans.toList.foldMap { case (span, prob) =>
+            if(validPrepPOS.contains(sentence.tokens(span.begin).pos)) {
+              Map(span.begin -> prob)
+            } else Map()
           }
         }
       }

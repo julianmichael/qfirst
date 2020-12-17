@@ -603,9 +603,10 @@ object FullArgumentModel {
     ConstituentType -> "syntc",
     ConstituentTypeConverted -> "syntc2",
     Preposition -> "prep",
-  ) ++ List("masked", "symm_both", "symm_left", "symm_right").flatMap(mode =>
+  ) ++ List("masked", "repeated", "symm_both", "symm_left", "symm_right").flatMap(mode =>
     List(
       HeadMLMEntropy(mode) -> s"head_mlm_$mode",
+      PrepMLMEntropy(mode) -> s"prep_mlm_$mode",
       SpanMLMEntropy(mode) -> s"span_mlm_$mode"
     )
   )
@@ -823,6 +824,14 @@ object FullArgumentModel {
       features: Features[VerbType, Arg]
     ): features.ArgFeats[DenseVector[Float]] = {
       features.getArgHeadMLMFeatures(mode)
+    }
+  }
+
+  case class PrepMLMEntropy(mode: String) extends DenseDistributionEntropy {
+    override def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[DenseVector[Float]] = {
+      features.getArgPrepMLMFeatures(mode)
     }
   }
 
@@ -1117,7 +1126,7 @@ object FullVerbModel {
   val termIndex = List[(LossTerm, String)](
     // QuestionEntropy -> "qent"
     NoOp -> "noop"
-  ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
+  ) ++ List("masked", "repeated", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
   )
   val termToString = termIndex.toMap

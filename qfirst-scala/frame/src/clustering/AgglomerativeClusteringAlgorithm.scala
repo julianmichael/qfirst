@@ -531,7 +531,8 @@ trait AgglomerativeClusteringAlgorithm {
     leftParam: ClusterParam,
     right: MergeTree[Index],
     rightParam: ClusterParam) = {
-    if(!(loss >= (left.loss + right.loss - 1e-8))) {
+    // need the tolerance here because of Float precision issues
+    if(!(loss >= (left.loss + right.loss - 1e-4))) {
       System.err.println("WARNING: clusters seem to be incorrectly merged")
       System.err.println(left)
       System.err.println(leftParam)

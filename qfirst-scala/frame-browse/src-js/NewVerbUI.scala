@@ -298,7 +298,7 @@ class NewVerbUI[VerbType, Arg: Order](
   )
   object FeatureOptions {
     val constituentTypes = Set("ptb", "stripped")
-    val mlmTypes = Set("masked", "symm_left", "symm_right", "symm_both")
+    val mlmTypes = Set("masked", "repeated", "symm_left", "symm_right", "symm_both")
     def init = FeatureOptions(false, false, false, false, None, None, None, false)
   }
 

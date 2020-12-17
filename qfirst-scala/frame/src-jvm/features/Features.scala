@@ -248,6 +248,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       mapArgFeats(argSpans.data)(_.keySet)
     )
 
+  def argSpansForMLM: CachedArgFeats[Map[ESpan, Double]] = argSpans
+
   lazy val globalQuestionPrior = argQuestionDists.data.map { qFeats =>
     val pcounts = qFeats.values.toList.foldMap(
       _.value.values.toList.combineAll
@@ -322,6 +324,16 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       prep => Map(prep.fold("<none>")(_.toString) -> 1.0)
     )
 
+  def argLeadingPreps: CachedArgFeats[Map[Int, Double]] = {
+    cacheArgFeats("arg leading preps")(
+      RunData.splits.map { _ =>
+        (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
+          Map[Int, Double]()
+        }
+      }
+    )
+  }
+
   // directories
 
   protected val rootDir: Path
@@ -343,7 +355,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   // features and setup code constructed from the other provided features
 
-  val mlmSettings = List("masked", "symm_left", "symm_right", "symm_both")
+  val mlmSettings = List("masked", "repeated", "symm_left", "symm_right", "symm_both")
   def mlmFeatureDir = inputDir.resolve("mlm")
   def makeMLMFeatures[A](f: (String, Path) => A): Map[String, A] = {
     mlmSettings.map(_ -> "").toMap.transform { case (setting, _) =>
@@ -481,18 +493,61 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }
   }
 
-  def getArgSpanMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
-    argMLMVectors(featureMode).data.zip(argSpans.data).map { case (mlmFeats, getArgSpans) =>
+  val placeholderVec = {
+    val x = DenseVector.fill[Float](mlmFeatureDim, 1e-8f)
+    x(mlmFeatureDim - 1) = (1.0f - ((mlmFeatureDim - 1) * 1e-8f))
+    x
+  }
+
+  def getArgPrepMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
+    argMLMVectors(featureMode).data.zip(argLeadingPreps.data).map { case (mlmFeats, getArgPreps) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        val spans = getArgSpans(verbType)(argId)
-        spans.toList.map { case (span, prob) =>
-          mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span) *:* prob.toFloat
-        }.reduce(_ + _)
+        // HACK: just use the last index as a placeholder for "non-prep"
+        val prepIndices = getArgPreps(verbType)(argId)
+        val nonPrepProb = 1.0 - prepIndices.unorderedFold
+        val res = placeholderVec *:* nonPrepProb.toFloat
+        prepIndices.toList.foreach { case (index, prob) =>
+          val span = ESpan(index, index + 1)
+          val vec = mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span)
+          res += (vec *:* prob.toFloat)
+        }
+        res
       }
     }
   }
 
-  // TODO maybe bring this back later
+  def getArgSpanMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
+    argMLMVectors(featureMode).data.zip(argSpansForMLM.data).map { case (mlmFeats, getArgSpans) =>
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
+        val spans = getArgSpans(verbType)(argId)
+        val res = DenseVector.zeros[Float](mlmFeatureDim)
+        spans.toList.foreach { case (span, prob) =>
+          val vec = mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span)
+          res += (vec *:* prob.toFloat)
+        }
+        res
+      }
+    }
+  }
+
+  lazy val postprocessedArgPrepMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
+    mlmSettings.map(setting =>
+      setting -> new Cell(
+        s"Postprocessed arg prep MLM features ($setting)",
+        argMLMVocab(setting).get.map(_.value).map { vocabs =>
+          cacheArgFeats("Postprocessed arg prep MLM features")(
+            mapArgFeatsWithType(getArgPrepMLMFeatures(setting)) { verbType => vec =>
+              val vocab = vocabs(getVerbLemma(verbType))
+              vec.toScalaVector.zipWithIndex.map { case (prob, i) =>
+                vocab(i) -> prob
+              }.toMap
+            }
+          )
+        }
+      )
+    ).toMap
+  }
+
   lazy val postprocessedArgSpanMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
       setting -> new Cell(
