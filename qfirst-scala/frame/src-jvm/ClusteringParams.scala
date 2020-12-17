@@ -16,8 +16,8 @@ object ClusteringParams {
   import breeze.linalg.DenseVector
   import breeze.stats.distributions.Multinomial
 
-  val flatClusteringThreshold = 300
-  val numFlatClusters = 200
+  val flatClusteringThreshold = 100
+  val numFlatClusters = 100
 
   // soft EM hyperparams
   val flatClusteringSoftStoppingDelta = 1e-8
@@ -30,11 +30,13 @@ object ClusteringParams {
     Multinomial(DenseVector.ones[Double](counts.size))
   }
   // hard EM hyperparams
-  val numEMTrials = 10
+  val numEMTrials = 5
   val flatClusteringHardStoppingDelta = 1e-5
   val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
     // smoothes with dirichlet, then inverts the odds.
     // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
+    import qfirst.frame.clustering._
+    // dirichletPosteriorFromSparseNew(counts, numClusters, 100)
 
     // always assume uniform prior --- seems to work just as well if not better
     Multinomial(DenseVector.ones[Double](numClusters))

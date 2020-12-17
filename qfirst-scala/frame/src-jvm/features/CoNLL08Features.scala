@@ -364,7 +364,21 @@ class CoNLL08Features(
     ptb2ArgConstituentTypesConverted
   }
 
-  override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] = origPropBankArgSpans
+  override lazy val argSpans: CachedArgFeats[Map[ESpan, Double]] = {
+    origPropBankArgSpans
+  }
+
+  // TODO: decide what (potentially different) arrangement of spans to use for MLM features.
+  // spansWithoutLeadingPrep
+
+  override lazy val fullArgSpanSets: CachedArgFeats[Set[ESpan]] =
+    cacheArgFeats("arg spans extended")(
+      (origPropBankArgSpans.data, spansWithoutLeadingPrep.data).mapN { (orig, modified) =>
+        (verbType: String) => (argId: ArgumentId[Int]) => {
+          orig(verbType)(argId).keySet |+| modified(verbType)(argId).keySet
+        }
+      }
+    )
 
   import qfirst.datasets.conll05
   import qfirst.datasets.ptb2
@@ -790,16 +804,16 @@ class CoNLL08Features(
 
   val validPrepPOS = Set("IN", "TO", "RB")
 
-  val prepObjectExtendedSpans: CachedArgFeats[Map[ESpan, Double]] = {
-    cacheArgFeats("prep spans")(
+  val spansWithoutLeadingPrep: CachedArgFeats[Map[ESpan, Double]] = {
+    cacheArgFeats("spans without leading prep")(
       dataset.data.zip(origPropBankArgSpans.data).map { case (data, getPBSpans) =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
           val pbSpans = getPBSpans(verbType)(argId)
           val sentence = data.value(argId.verbId.sentenceId)
-          pbSpans.flatMap { case (span, prob) =>
+          pbSpans.toList.foldMap { case (span, prob) =>
             if(validPrepPOS.contains(sentence.tokens(span.begin).pos) && span.length > 1) {
-              Some(ESpan(span.begin + 1, span.end) -> prob)
-            } else None
+              Map(ESpan(span.begin + 1, span.end) -> prob)
+            } else Map(span -> prob)
           }
         }
       }

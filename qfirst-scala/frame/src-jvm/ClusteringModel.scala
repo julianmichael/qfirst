@@ -603,8 +603,11 @@ object FullArgumentModel {
     ConstituentType -> "syntc",
     ConstituentTypeConverted -> "syntc2",
     Preposition -> "prep",
-  ) ++ List("masked", "symm_both", "symm_left", "symm_right").map(mode =>
-    MLMEntropy(mode) -> s"mlm_$mode",
+  ) ++ List("masked", "symm_both", "symm_left", "symm_right").flatMap(mode =>
+    List(
+      HeadMLMEntropy(mode) -> s"head_mlm_$mode",
+      SpanMLMEntropy(mode) -> s"span_mlm_$mode"
+    )
   )
   val termToString = termIndex.toMap
   val stringToTerm = termIndex.map(_.swap).toMap
@@ -790,16 +793,20 @@ object FullArgumentModel {
 
   import breeze.linalg.DenseVector
 
-  case class MLMEntropy(mode: String) extends LossTerm {
+  abstract class DenseDistributionEntropy extends LossTerm {
     type FlatParam = DenseVector[Float]
     type AgglomParam = MinEntropyClusteringDense.ClusterMixture
 
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.getArgMLMFeatures(mode).get.as(())
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[DenseVector[Float]]
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = getDists(features).get.as(())
 
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
-      argMLMFeatures <- features.getArgMLMFeatures(mode).get.map(_.apply(verbType))
+      argMLMFeatures <- getDists(features).get.map(_.apply(verbType))
       // tfidf = TFIDF.makeTransform(
       //   headProbabilityMass = 0.99,
       //   priorSmoothingLambda = 1000.0,
@@ -809,6 +816,22 @@ object FullArgumentModel {
       new DirichletMAPClusteringDense(argMLMFeatures, features.mlmFeatureDim, 0.01f),
       new MinEntropyClusteringDense(argMLMFeatures, features.mlmFeatureDim)
     )
+  }
+
+  case class HeadMLMEntropy(mode: String) extends DenseDistributionEntropy {
+    override def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[DenseVector[Float]] = {
+      features.getArgHeadMLMFeatures(mode)
+    }
+  }
+
+  case class SpanMLMEntropy(mode: String) extends DenseDistributionEntropy {
+    override def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[DenseVector[Float]] = {
+      features.getArgSpanMLMFeatures(mode)
+    }
   }
 }
 

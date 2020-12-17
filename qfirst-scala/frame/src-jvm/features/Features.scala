@@ -243,6 +243,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argSpans: CachedArgFeats[Map[ESpan, Double]]
 
+  def fullArgSpanSets: CachedArgFeats[Set[ESpan]] =
+    cacheArgFeats("Full arg span sets")(
+      mapArgFeats(argSpans.data)(_.keySet)
+    )
+
   lazy val globalQuestionPrior = argQuestionDists.data.map { qFeats =>
     val pcounts = qFeats.values.toList.foldMap(
       _.value.values.toList.combineAll
@@ -350,7 +355,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   @JsonCodec case class MLMFeatureId(
     sentenceId: String,
     verbLemma: String,
-    index: Int)
+    span: ESpan)
 
   private lazy val mlmVocabs: Map[String, Map[String, Cell[NonMergingMap[String, Vector[String]]]]] = {
     List("arg", "verb").map(label =>
@@ -367,8 +372,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   import breeze.linalg.DenseVector
 
   val mlmFeatureDim = 1024
-  // type -> mode -> verb lemma -> sentence id -> index -> vector
-  private lazy val mlmVectors: Map[String, Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[Int, DenseVector[Float]]]]]]] = {
+  // type -> mode -> verb lemma -> sentence id -> span -> vector
+  private lazy val mlmVectors: Map[String, Map[String, RunDataCell[Map[String, Map[String, NonMergingMap[ESpan, DenseVector[Float]]]]]]] = {
     List("arg", "verb").map(label =>
       label -> makeMLMFeatures { case (setting, path) =>
         // TODO sentences is temporary
@@ -427,7 +432,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             finalVecs = vecs // normedVecs
             _ <- Log.info("Not using normalized vectors.") // remove "not" if using.
           } yield ids.zip(finalVecs).foldMap { case (mlmFeatureId, vec) =>
-              Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.index -> vec)))
+              Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.span -> vec)))
           }
         }.toCell(s"$label MLM Vectors")
       }
@@ -443,7 +448,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def getVerbMLMFeatures(mode: String): VerbFeats[DenseVector[Float]] =
     verbMLMVectors(mode).data.map { mlmFeats =>
       (verbType: VerbType) => (verbId: VerbId) => {
-        mlmFeats(getVerbLemma(verbType))(verbId.sentenceId).value(verbId.verbIndex)
+        val span = ESpan(verbId.verbIndex, verbId.verbIndex + 1)
+        mlmFeats(getVerbLemma(verbType))(verbId.sentenceId).value(span)
       }
     }
 
@@ -465,21 +471,35 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     ).toMap
   }
 
-  def getArgMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
+  def getArgHeadMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
     argMLMVectors(featureMode).data.zip(argSemanticHeadIndices.data).map { case (mlmFeats, getArgIndex) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(getArgIndex(verbType)(argId))
+        val index = getArgIndex(verbType)(argId)
+        val span = ESpan(index, index + 1)
+        mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span)
       }
     }
   }
 
-  lazy val postprocessedArgMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
+  def getArgSpanMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
+    argMLMVectors(featureMode).data.zip(argSpans.data).map { case (mlmFeats, getArgSpans) =>
+      (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
+        val spans = getArgSpans(verbType)(argId)
+        spans.toList.map { case (span, prob) =>
+          mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span) *:* prob.toFloat
+        }.reduce(_ + _)
+      }
+    }
+  }
+
+  // TODO maybe bring this back later
+  lazy val postprocessedArgSpanMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
       setting -> new Cell(
         s"Postprocessed arg MLM features ($setting)",
         argMLMVocab(setting).get.map(_.value).map { vocabs =>
           cacheArgFeats("Postprocessed arg MLM features")(
-            mapArgFeatsWithType(getArgMLMFeatures(setting)) { verbType => vec =>
+            mapArgFeatsWithType(getArgSpanMLMFeatures(setting)) { verbType => vec =>
               val vocab = vocabs(getVerbLemma(verbType))
               vec.toScalaVector.zipWithIndex.map { case (prob, i) =>
                 vocab(i) -> prob
@@ -511,29 +531,56 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   @JsonCodec case class MLMFeatureGenInput(
     sentenceId: String,
     sentenceTokens: Vector[String],
-    verbs: Map[String, Set[Int]],
-    argsByVerb: Map[String, Set[Int]]
+    verbs: Map[String, VerbMLMInput]
   )
 
+  @JsonCodec case class VerbMLMInput(
+    verbIndices: Set[Int],
+    argSpans: Set[ESpan]
+  )
+  object VerbMLMInput {
+    import cats.kernel.CommutativeMonoid
+    implicit val verbMlmInputCommutativeMonoid = new CommutativeMonoid[VerbMLMInput] {
+      override def empty: VerbMLMInput = VerbMLMInput(Set(), Set())
+      override def combine(x: VerbMLMInput, y: VerbMLMInput): VerbMLMInput = {
+        VerbMLMInput(
+          x.verbIndices ++ y.verbIndices,
+          x.argSpans ++ y.argSpans,
+        )
+      }
+    }
+  }
+
   lazy val mlmFeatureGenInputs = {
-    (verbs.data, args.data, sentences.data, verbIdToType.data, widen(argSemanticHeadIndices.data)).mapN {
-      (verbs, args, sentences, verbIdToType, argSemanticHeadIndices) =>
-        val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
-        val argsBySentenceId = args.values.reduce(_ union _).groupBy(_.verbId.sentenceId)
-        val sentenceIds = verbsBySentenceId.keySet union argsBySentenceId.keySet
-        Stream.emits[IO, String](sentenceIds.toList).map { sid =>
-          MLMFeatureGenInput(
-            sentenceId = sid,
-            sentenceTokens = sentences(sid),
-            verbs = verbsBySentenceId(sid).unorderedFoldMap { verbId =>
-              Map(getVerbLemma(verbIdToType(verbId)) -> Set(verbId.verbIndex))
-            },
-            argsByVerb = argsBySentenceId.get(sid).combineAll.unorderedFoldMap { argId =>
-              val verbType = verbIdToType(argId.verbId)
-              Map(getVerbLemma(verbType) -> Set(argSemanticHeadIndices(verbType)(argId)))
+    (verbs.data, args.data, sentences.data,
+     verbIdToType.data, widen(argSemanticHeadIndices.data),
+     fullArgSpanSets.data,
+     verbArgSets.data
+    ).mapN { (verbs, args, sentences, verbIdToType, argSemanticHeadIndices, argSpans, verbArgSets) =>
+      val verbsBySentenceId = verbs.values.reduce(_ union _).groupBy(_.sentenceId)
+      // val argsBySentenceId = args.values.reduce(_ union _).groupBy(_.verbId.sentenceId)
+      val sentenceIds = verbsBySentenceId.keySet // union argsBySentenceId.keySet
+      Stream.emits[IO, String](sentenceIds.toList).map { sid =>
+        MLMFeatureGenInput(
+          sentenceId = sid,
+          sentenceTokens = sentences(sid),
+          verbs = verbsBySentenceId(sid).unorderedFoldMap { verbId =>
+            val verbType = verbIdToType(verbId)
+            val args = verbArgSets(verbType)(verbId).map(ArgumentId(verbId, _))
+            def getHeadSpan(argId: ArgumentId[Arg]) = {
+              val index = argSemanticHeadIndices(verbType)(argId)
+              ESpan(index, index + 1)
             }
-          )
-        }
+            val mlmInput = VerbMLMInput(
+              verbIndices = Set(verbId.verbIndex),
+              argSpans = args.unorderedFoldMap(argId =>
+                argSpans(verbType)(argId) + getHeadSpan(argId)
+              )
+            )
+            Map(getVerbLemma(verbType) -> mlmInput)
+          }
+        )
+      }
     }
   }
 
@@ -562,21 +609,22 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     argumentSpans: Set[ESpan]
   )
 
-  def qgInputs: RunData[Stream[IO, PropBankQGInput]] = sentences.data.zip(verbArgSets.data).zip(argSpans.data).map { case ((sents, allVerbs), allSpans) =>
-    Stream.emits[IO, (String, List[(VerbType, (VerbId, Set[Arg]))])](
-      allVerbs.toList.flatMap(p => p._2.toList.map(p._1 -> _)).groupBy(_._2._1.sentenceId).toList
-    ).map { case (sid, verbs) =>
-        val verbInputs =  verbs.groupBy(_._2._1).map { case (verbId, verbInstances) =>
-          val spans = verbInstances.foldMap(t =>
-            t._2._2.unorderedFoldMap(arg =>
-              allSpans(t._1)(ArgumentId(verbId, arg)).keySet
+  def qgInputs: RunData[Stream[IO, PropBankQGInput]] =
+    (sentences.data, verbArgSets.data, fullArgSpanSets.data).mapN { case (sents, allVerbs, allSpans) =>
+      Stream.emits[IO, (String, List[(VerbType, (VerbId, Set[Arg]))])](
+        allVerbs.toList.flatMap(p => p._2.toList.map(p._1 -> _)).groupBy(_._2._1.sentenceId).toList
+      ).map { case (sid, verbs) =>
+          val verbInputs =  verbs.groupBy(_._2._1).map { case (verbId, verbInstances) =>
+            val spans = verbInstances.foldMap(t =>
+              t._2._2.unorderedFoldMap(arg =>
+                allSpans(t._1)(ArgumentId(verbId, arg))
+              )
             )
-          )
-          verbId.verbIndex -> PropBankQGVerbInput(verbId.verbIndex, spans)
-        }
-        PropBankQGInput(sid, sents.value(sid), verbInputs)
+            verbId.verbIndex -> PropBankQGVerbInput(verbId.verbIndex, spans)
+          }
+          PropBankQGInput(sid, sents.value(sid), verbInputs)
+      }
     }
-  }
 
   def getQGInputOutPath(split: String) = outDir
     .map(_.resolve(s"qg-inputs")).flatTap(createDir)
@@ -594,52 +642,4 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }.all.void
 
   def setup = writeMLMInputs >> writeQGInputs
-
-  // TODO: probably get rid of this
-  lazy val liveDir = IO.pure(rootDir.resolve("live")).flatTap(createDir)
-
-  // TODO refactor into RunData framework. is this done?
-  // actually TODO: delete!
-  lazy val evaluationItemsPath = (liveDir, splitName).mapN((dir, split) => dir.resolve(s"eval-sample-$split.jsonl"))
-  lazy val evaluationItems = {
-      new Cell(
-        "Evaluation items",
-        evaluationItemsPath >>= (evalItemsPath =>
-          FileCached.get[Vector[(VerbType, String, Int)]](
-            "Evaluation Items")(
-            path = evalItemsPath,
-            read = path => FileUtil.readJsonLines[(VerbType, String, Int)](path).compile.toVector,
-            write = (path, items) => FileUtil.writeJsonLines(path)(items))(
-            Log.infoBranch(s"Creating new sample for evaluation at $evalItemsPath")(
-              verbs.get.map { verbMap =>
-                (new scala.util.Random(86735932569L)).shuffle(
-                  verbMap.iterator
-                    .flatMap { case (vt, vids) => vids.map(vid => (vt, vid.sentenceId, vid.verbIndex)) }
-                    .toVector
-                ).take(1000).toVector
-              }
-            )
-          )
-        )
-    )
-  }
-
-  lazy val paraphraseGoldPath = liveDir.map(_.resolve("gold-paraphrases.json"))
-
-  def readGoldParaphrases = {
-    paraphraseGoldPath >>= (ppGoldPath =>
-      IO(Files.exists(ppGoldPath)).ifM(
-        FileUtil.readJson[ParaphraseAnnotations](ppGoldPath),
-        Log.warn(s"No gold paraphrase annotations found at $ppGoldPath. Initializing to empty annotations.") >>
-          IO.pure(Map.empty[String, Map[Int, VerbParaphraseLabels]]),
-        )
-    )
-  }
-  def saveGoldParaphrases(data: ParaphraseAnnotations) = {
-    paraphraseGoldPath >>= (ppGoldPath =>
-      Log.infoBranch(s"Saving gold paraphrases to $ppGoldPath")(
-        FileUtil.writeJson(ppGoldPath, io.circe.Printer.noSpaces)(data)
-      )
-    )
-  }
 }
