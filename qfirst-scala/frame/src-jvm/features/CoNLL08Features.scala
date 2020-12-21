@@ -308,7 +308,7 @@ class CoNLL08Features(
     )
   }
 
-  override val argSemanticHeadIndices: CachedArgFeats[Int] = {
+  override val argSemanticHeadIndices: CachedArgFeats[Set[Int]] = {
     cacheArgFeats("Argument semantic head indices")(
       dataset.data.map { data =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
@@ -343,7 +343,7 @@ class CoNLL08Features(
           // }
 
           // XXX currently collected MLM distributions are for index i, not argIndex. need to update
-          Option(dependencies.indexOf("PMOD" -> argIndex))
+          val head = Option(dependencies.indexOf("PMOD" -> argIndex))
             .filter(_ >= 0)
             .filter(i => validPrepPOS.contains(sentence.tokens(argIndex).pos))
             .orElse(
@@ -351,6 +351,8 @@ class CoNLL08Features(
                 .filter(_ >= 0)
                 .filter(i => validToPOS.contains(sentence.tokens(argIndex).pos))
             ).getOrElse(argIndex)
+
+          Set(head)
         }
       }
     )
@@ -940,10 +942,10 @@ class CoNLL08Features(
             System.err.println(jjm.ling.Text.renderSpan(sentence.tokens, blockedSpan2))
           }
 
-          val semHead = semanticHeads(verbType)(argId)
-          val headSpan = ESpan(semHead, semHead + 1)
+          val semHeads = semanticHeads(verbType)(argId)
+          val headSpans = semHeads.map(semHead => ESpan(semHead, semHead + 1))
 
-          Map(span -> 0.5) |+| Map(headSpan -> 0.25)
+          Map(span -> 0.5) |+| headSpans.unorderedFoldMap(headSpan => Map(headSpan -> (0.25 / headSpans.size)))
         }
       }
     )

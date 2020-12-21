@@ -260,7 +260,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices.data).flatMap {
-      case ((((split, vidToType), allSpans), allVerbs), headIndices) =>
+      case ((((split, vidToType), allSpans), allVerbs), argHeadIndices) =>
         val qgPath = inputDir.resolve(s"qg/$split.jsonl.gz")
         FileUtil.readJsonLines[QGen.SentencePrediction](qgPath)
           .map { case QGen.SentencePrediction(sid, _, verbs) =>
@@ -269,11 +269,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
               val verbType = vidToType.value(verbId)
               val argSet = allVerbs(verbType)(verbId)
               val argIds = argSet.map(ArgumentId(verbId, _))
-              val allHeadIndices = argIds.map(headIndices(verbType))
+              // val allHeadIndices = argIds.unorderedFoldMap(argHeadIndices(verbType))
               Map(
                 verbType -> NonMergingMap(
                   argIds.map { argId =>
-                    val headIndex = headIndices(verbType)(argId)
+                    // val headIndices = argHeadIndices(verbType)(argId)
                     val priorArgSpans = allSpans(verbType)(argId)
 
                     // use head-based span finding to include everything predicted by the model above the threshold
@@ -305,9 +305,8 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     }.toCell("Question distributions for arguments")
   }
 
-
   // new style arg features
-  def argSemanticHeadIndices: CachedArgFeats[Int]
+  def argSemanticHeadIndices: CachedArgFeats[Set[Int]]
 
   def argSyntacticFunctions: CachedArgFeats[String]
 
@@ -319,7 +318,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   def argPrepositions: CachedArgFeats[Option[LowerCaseString]] = ???
 
-  def argPrepositionDists: ArgFeats[Map[String, Double]] = 
+  def argPrepositionDists: ArgFeats[Map[String, Double]] =
     mapArgFeats(argPrepositions.data)(
       prep => Map(prep.fold("<none>")(_.toString) -> 1.0)
     )
@@ -484,11 +483,13 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   }
 
   def getArgHeadMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
-    argMLMVectors(featureMode).data.zip(argSemanticHeadIndices.data).map { case (mlmFeats, getArgIndex) =>
+    argMLMVectors(featureMode).data.zip(argSemanticHeadIndices.data).map { case (mlmFeats, getArgIndices) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        val index = getArgIndex(verbType)(argId)
-        val span = ESpan(index, index + 1)
-        mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span)
+        val indices = getArgIndices(verbType)(argId)
+        indices.map { index =>
+          val span = ESpan(index, index + 1)
+          mlmFeats(getVerbLemma(verbType))(argId.verbId.sentenceId).value(span)
+        }.reduce(_ + _)
       }
     }
   }
@@ -622,14 +623,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
           verbs = verbsBySentenceId(sid).unorderedFoldMap { verbId =>
             val verbType = verbIdToType(verbId)
             val args = verbArgSets(verbType)(verbId).map(ArgumentId(verbId, _))
-            def getHeadSpan(argId: ArgumentId[Arg]) = {
-              val index = argSemanticHeadIndices(verbType)(argId)
-              ESpan(index, index + 1)
+            def getHeadSpans(argId: ArgumentId[Arg]) = {
+              val indices = argSemanticHeadIndices(verbType)(argId)
+              indices.map(index => ESpan(index, index + 1))
             }
             val mlmInput = VerbMLMInput(
               verbIndices = Set(verbId.verbIndex),
               argSpans = args.unorderedFoldMap(argId =>
-                argSpans(verbType)(argId) + getHeadSpan(argId)
+                argSpans(verbType)(argId) ++ getHeadSpans(argId)
               )
             )
             Map(getVerbLemma(verbType) -> mlmInput)

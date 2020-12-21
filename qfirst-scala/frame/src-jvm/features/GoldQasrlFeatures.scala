@@ -204,9 +204,11 @@ class GoldQasrlFeatures(
     }
   ).toCell("PropBank span to role label mapping")
 
-  override val argSemanticHeadIndices: CachedArgFeats[Int] = {
+  override lazy val argSemanticHeadIndices: CachedArgFeats[Set[Int]] = {
     cacheArgFeats("Argument semantic head indices")(
-      RunData.strings.map(_ => ???)
+      RunData.strings.map(_ =>
+        (verbType: InflectedForms) => (argId: ArgumentId[ClausalQuestion]) => Set.empty[Int]
+      )
     )
   }
 

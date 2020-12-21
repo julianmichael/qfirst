@@ -135,7 +135,7 @@ class OntoNotes5Features(
     }
   ).toCell("PropBank span to role label mapping")
 
-  override def argSemanticHeadIndices: CachedArgFeats[Int] = ???
+  override def argSemanticHeadIndices: CachedArgFeats[Set[Int]] = ???
 
   override def argSyntacticFunctions: CachedArgFeats[String] = ???
 
