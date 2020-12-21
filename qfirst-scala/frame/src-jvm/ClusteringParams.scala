@@ -83,9 +83,12 @@ object ClusteringParams {
           case (_, is) => is.map(i => indicesVec(i._2)).toSet
         }
         setClusteringAlg = new AgglomerativeSetClustering(agglomAlgorithm)
-      } yield setClusteringAlg.runFullAgglomerativeClustering(
-        NonEmptyVector.fromVector(hardEMClusters).get
-      )
+      } yield {
+        val (tree, param) = setClusteringAlg.runFullAgglomerativeClustering(
+          NonEmptyVector.fromVector(hardEMClusters).get
+        )
+        tree.withMaxDepth(50) -> param
+      }
     }
   }
 }

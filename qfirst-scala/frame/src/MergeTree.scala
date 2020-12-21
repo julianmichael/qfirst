@@ -100,6 +100,23 @@ import scala.annotation.tailrec
     case _ => false
   }
 
+  def withMaxDepth(maxDepth: Int)(implicit M: CommutativeMonoid[A]) = hylo[
+    (Int, MergeTree[A]), (Int, A), MergeTree[A]](
+    destruct = {
+      case (curDepth, tree) =>
+        if(curDepth >= maxDepth) {
+          Left(tree.loss -> (curDepth -> tree.unorderedFold))
+        } else project(tree) match {
+          case Left((loss, b)) => Left(loss -> (curDepth -> b))
+          case Right((loss, l, r)) => Right((loss, (curDepth + 1) -> l, (curDepth + 1) -> r))
+        }
+    },
+    construct = makeAlgebra(
+      leaf = { case (loss, (depth, value)) => Leaf(loss, value) },
+      merge = { case (loss, left, right) => Merge(loss, left, right) }
+    )
+  )(0 -> this)
+
   // def extractPureTrees[B](index: A => B): Map[B, Vector[MergeTree[A]]] = {
   //   extractPureTreesAux(index).left.map { case (idx, tree) => idx -> Vector(tree) }.toMap.merge
   // }
