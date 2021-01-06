@@ -32,8 +32,8 @@ import qfirst.clause._
 import qfirst.metrics._
 import qfirst.metrics.HasMetrics.ops._
 
-object Convert extends CommandIOApp(
-  name = "mill -i qfirst.clause-align.jvm.run",
+object ConvertCSV extends CommandIOApp(
+  name = "mill -i qfirst.clause-align.jvm.runMain qfirst.clause.align.ConvertCSV",
   header = "Runs clause resolution on CSV inputs and reports results.") {
 
   def main: Opts[IO[ExitCode]] = {
@@ -106,141 +106,31 @@ object Convert extends CommandIOApp(
     "inv_neg_would_clause"
   )
 
-
   case class VerbInfo(
     sentenceId: String,
+    sentenceTokens: Vector[String],
     verbIndex: Int,
     verbInflectedForms: InflectedForms,
-    sentenceTokens: Vector[String],
     originalLines: List[Map[String, String]]
   ) {
     val questions = SlotBasedLabel.getVerbTenseAbstractedSlotsForQuestion(
       sentenceTokens, verbInflectedForms, originalLines.map(_.apply("question"))
     ).map(_.getOrElse((println(this): Id[Unit]) >> ???))
 
-    val resolvedQAPairs = ClauseResolution.getResolvedFramePairs(
-      verbInflectedForms, questions
-    ).zip(originalLines.map(_.apply("answer")))
-
-    val resolvedQAPairsByFrame = resolvedQAPairs.groupBy(_._1._1)
-
-    val resolvedQAPairsByStructure = resolvedQAPairs.groupBy(
-      p => ArgStructure(p._1._1.args, p._1._1.isPassive).forgetAnimacy
-    )
-
-    val resolvedQAPairsByObj2lessStructure = resolvedQAPairs.groupBy(
-      p => ArgStructure(p._1._1.args remove Obj2, p._1._1.isPassive).forgetAnimacy
-    )
-
-    val intransitive = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false)),
-      isPassive = false
-    )
-    val transitive = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false))
-        .put(Obj, Noun(false)),
-      isPassive = false
-    )
-    val passive = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false)),
-      isPassive = true
-    )
-    val transitiveWhere = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false))
-        .put(Obj, Noun(false))
-        .put(Obj2, Locative),
-      isPassive = false
-    )
-    val intransitiveWhere = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false))
-        .put(Obj2, Locative),
-      isPassive = false
-    )
-    val passiveWhere = ArgStructure(
-      DependentMap.empty[ArgumentSlot.Aux, Id]
-        .put(Subj, Noun(false))
-        .put(Obj2, Locative),
-      isPassive = true
-    )
-
-    type ClausalQ = (ArgStructure, ArgumentSlot)
-    type ClausalQPair = (ClausalQ, ClausalQ)
-
-    val structuralMappingPairs = Vector[ClausalQPair](
-      (transitive -> Subj) -> (transitiveWhere -> Subj),
-      (transitive -> Obj) -> (transitiveWhere -> Obj),
-      (intransitive -> Subj) -> (intransitiveWhere -> Subj),
-      (intransitive -> Obj) -> (intransitiveWhere -> Obj),
-      (transitive -> Obj) -> (passive -> Subj),
-      (transitiveWhere -> Obj) -> (passiveWhere -> Subj),
-      (transitiveWhere -> Obj2) -> (transitive -> Adv("where".lowerCase))
-    )
-
-    val structuralMapping = structuralMappingPairs
-      .foldMap(p =>
-        Map(
-          p._1 -> Vector(p._2),
-          p._2 -> Vector(p._1),
-        )
-      )
-
     val recapitalize = (s: String) => {
       if(s.isEmpty) s
       else if(
         s.tail.headOption.exists(_.isUpper) ||
           (s.dropWhile(_ != ' ').nonEmpty &&
-             s.dropWhile(_ != ' ').tail.headOption.exists(_.isUpper))) s
+              s.dropWhile(_ != ' ').tail.headOption.exists(_.isUpper))) s
       else s.updated(0, s.charAt(0).toLower)
     }
 
-    def removeObj2(structure: ArgStructure): ArgStructure = {
-      ArgStructure.args.modify(_ remove Obj2)(structure)
-    }
+    val resolvedQAPairs = ClauseResolution
+      .getResolvedFramePairs(verbInflectedForms, questions)
+      .zip(originalLines.map(f => f("answer").split("~!~").toList.map(recapitalize)))
 
-    def getAlignedAnswers(clausalQ: (ArgStructure, ArgumentSlot)): Option[List[(ArgumentSlot, String)]] = {
-      val queries = clausalQ +: structuralMapping.get(clausalQ).foldK
-      queries.map(q =>
-        resolvedQAPairsByStructure.get(q._1).flatMap(
-          _.find(_._1._2 == q._2).map(_._2).map(
-            _.split("~!~").toList.map(recapitalize).map(clausalQ._2 -> _)
-          )
-        )
-      ).foldK.orElse {
-        if(clausalQ._2 != Subj) None else {
-          val obj2lessCQ = removeObj2(clausalQ._1) -> clausalQ._2
-          val obj2lessQueries = obj2lessCQ +: structuralMapping.get(obj2lessCQ).foldK.filter(_._2 == Subj)
-          obj2lessQueries.map(q =>
-            resolvedQAPairsByObj2lessStructure.get(q._1).flatMap(
-              _.find(_._1._2 == q._2).map(_._2).map(
-                _.split("~!~").toList.map(recapitalize).map(Subj -> _)
-              )
-            )
-          ).foldK
-        }
-      }
-      //   .orElse {
-      //   if(clausalQ._2 != Obj2) None else {
-      //     clausalQ._1.args.get(Obj2).get match {
-      //       case Prep(prep, _) if !prep.endsWith("do".lowerCase) && !prep.endsWith("doing".lowerCase) =>
-      //         val obj2lessTemplate = removeObj2(clausalQ._1)
-      //         resolvedQAPairsByObj2lessStructure.get(obj2lessTemplate).map(
-      //           _.collect { case ((_, Adv(_)), answers) =>
-      //             answers.split("~!~").toList
-      //               .filter(_.startsWith(prep))
-      //               .filter(_.length > prep.length)
-      //               .map(_.substring(prep.length + 1))
-      //           }.flatten.map(Obj2 -> _)
-      //         ).filter(_.nonEmpty)
-      //       case _ => None
-      //     }
-      //   }
-      // }
-    }
+    val aligner = QuestionAligner(resolvedQAPairs)
 
     val newLines = (originalLines, resolvedQAPairs).zipped.map {
       case (fields, ((frame, slot), answer)) =>
@@ -251,7 +141,7 @@ object Convert extends CommandIOApp(
         )
         val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
         val argMappings = clauseTemplate.args.keys.toList.flatMap { (slot: ArgumentSlot) =>
-          getAlignedAnswers(clauseTemplate -> slot)
+          aligner.getAlignedAnswers(clauseTemplate -> slot).map(_.map(slot -> _))
         }.sequence.map(_.toMap)
 
         val tenseLens = Frame2.tense
@@ -310,29 +200,6 @@ object Convert extends CommandIOApp(
           ("inv_neg_would_clause" -> invNegWouldClause)
     }
 
-    val metrics = {
-      "placeholder coverage (same clause (no tense), by clause (no tense))" ->>
-        resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
-          val (covered, uncovered) = frame.args.keySet
-            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
-          Proportion.Stats(covered.size, uncovered.size)
-        } ::
-      "placeholder coverage (same clause (no tense))" ->>
-        resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
-          val total = questions.size
-          val (covered, uncovered) = frame.args.keySet
-            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
-          Proportion.Stats(covered.size * total, uncovered.size * total)
-        } ::
-      "uncovered placeholders (same clause (no tense))" ->>
-        resolvedQAPairsByStructure.toList.foldMap { case (frame, questions) =>
-          val total = questions.size
-          val (covered, uncovered) = frame.args.keySet
-            .partition(slot => getAlignedAnswers(frame -> slot).nonEmpty)
-          FewClassCount(uncovered.toVector.map(unc => (frame -> unc).toString))
-        } ::
-      HNil
-    }
   }
 
   def runForFile(qasrlData: Dataset, inPath: NIOPath, outPath: NIOPath) = for {
@@ -343,16 +210,16 @@ object Convert extends CommandIOApp(
           val sentence = qasrlData.sentences(sid)
           VerbInfo(
             sid,
+            sentence.sentenceTokens,
             verbIndex.toInt,
             sentence.verbEntries(verbIndex.toInt).verbInflectedForms,
-            sentence.sentenceTokens,
             chunk.toList)
         }.compile.toList.map(_ -> headers)
     )
     _ <- writeCSV(outPath, headers ++ newHeaders)(
       Stream.emits(verbs.flatMap(_.newLines))
     )
-  } yield verbs.foldMap(_.metrics)
+  } yield verbs.foldMap(_.aligner.metrics)
 
   def run(inPath: NIOPath, outPath: NIOPath): IO[ExitCode] = for {
     qasrlData <- IO(Data.readFromQasrlBank(qasrlBankPath).get).map(_.all)

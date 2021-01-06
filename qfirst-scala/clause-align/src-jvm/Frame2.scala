@@ -106,6 +106,7 @@ import io.circe.generic.JsonCodec
             val verbMod = nf match {
               case Tense2.NonFinite.Bare => pass
               case Tense2.NonFinite.To => push("to")
+              case Tense2.NonFinite.Gerund => ??? // won't happen; handled above
             }
             verbMod >> (if (isNegated) push("not") else pass)
         }
