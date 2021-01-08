@@ -36,6 +36,13 @@ case class QuestionAligner[A](qaPairs: List[((Frame, ArgumentSlot), A)]) {
       .put(Subj, Noun(false)),
     isPassive = true
   )
+  val passiveBy = ArgStructure(
+    DependentMap.empty[ArgumentSlot.Aux, Id]
+      .put(Subj, Noun(false))
+      .put(Obj2, Prep("by".lowerCase, Some(Noun(false)))),
+    isPassive = true
+  )
+
   val transitiveWhere = ArgStructure(
     DependentMap.empty[ArgumentSlot.Aux, Id]
       .put(Subj, Noun(false))
@@ -65,6 +72,8 @@ case class QuestionAligner[A](qaPairs: List[((Frame, ArgumentSlot), A)]) {
     (intransitive -> Subj) -> (intransitiveWhere -> Subj),
     (intransitive -> Obj) -> (intransitiveWhere -> Obj),
     (transitive -> Obj) -> (passive -> Subj),
+    (transitive -> Obj) -> (passiveBy -> Subj),
+    (transitive -> Subj) -> (passiveBy -> Obj2),
     (transitiveWhere -> Obj) -> (passiveWhere -> Subj),
     (transitiveWhere -> Obj2) -> (transitive -> Adv("where".lowerCase))
   )

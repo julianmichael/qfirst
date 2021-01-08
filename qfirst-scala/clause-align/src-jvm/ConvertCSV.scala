@@ -126,14 +126,17 @@ object ConvertCSV extends CommandIOApp(
       else s.updated(0, s.charAt(0).toLower)
     }
 
-    val resolvedQAPairs = ClauseResolution
+    val resolvedFramePairs = ClauseResolution
       .getResolvedFramePairs(verbInflectedForms, questions)
-      .zip(originalLines.map(f => f("answer").split("~!~").toList.map(recapitalize)))
+
+    val resolvedQAPairs = resolvedFramePairs.zip(
+      originalLines.map(f => f("answer").split("~!~").toList.map(recapitalize))
+    )
 
     val aligner = QuestionAligner(resolvedQAPairs)
 
-    val newLines = (originalLines, resolvedQAPairs).zipped.map {
-      case (fields, ((frame, slot), answer)) =>
+    val newLines = (originalLines, resolvedFramePairs).zipped.map {
+      case (fields, (frame, slot)) =>
         val frame2 = Frame2.fromFrame(frame)
         val templatedFrame = frame.copy(
           tense = PresentTense, isPerfect = false,
@@ -146,11 +149,6 @@ object ConvertCSV extends CommandIOApp(
 
         val tenseLens = Frame2.tense
         val negLens = Frame2.isNegated
-
-        // val argMappings = resolvedQAPairsByStructure(clauseTemplate)
-        //   .map { case ((_, slot), answer) =>
-        //     answer.split("~!~").toList.map(slot -> _)
-        //   }.sequence.map(_.toMap)
 
         def renderFrameStrings(getString: Map[ArgumentSlot, String] => String) =
           argMappings.map(getString).toSet.mkString("~!~")

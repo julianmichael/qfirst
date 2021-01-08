@@ -209,7 +209,9 @@ object qfirst extends Module {
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(clause.jvm, metrics.jvm)
       override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
+        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion",
+        ivy"org.julianmichael::qasrl-bank::0.3.0-SNAPSHOT",
+        ivy"org.julianmichael::qasrl-bank-service::0.3.0-SNAPSHOT",
       )
     }
   }
