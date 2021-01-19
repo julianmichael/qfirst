@@ -293,13 +293,14 @@ class NewVerbUI[VerbType, Arg: Order](
     argPrepositions: Boolean,
     argConstituentTypes: Option[String],
     argMlmDist: Option[String],
+    argPrepMlmDist: Option[String],
     verbMlmDist: Option[String],
     goldLabels: Boolean
   )
   object FeatureOptions {
     val constituentTypes = Set("ptb", "stripped")
     val mlmTypes = Set("masked", "repeated", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, false, None, None, None, false)
+    def init = FeatureOptions(false, false, false, false, None, None, None, None, false)
   }
 
   @Lenses case class FeatureValues(
@@ -310,6 +311,7 @@ class NewVerbUI[VerbType, Arg: Order](
     argPrepositions: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argConstituentTypes: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
+    argPrepMlmDist: Option[Map[ArgumentId[Arg], Map[String, Float]]],
     verbMlmDist: Option[Map[VerbId, Map[String, Float]]],
     goldLabels: Option[Option[GoldVerbInfo[Arg]]]
   ) {
@@ -317,7 +319,7 @@ class NewVerbUI[VerbType, Arg: Order](
     val questionPrior = questionDist.map(_.unorderedFold)
   }
   object FeatureValues {
-    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None)
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None, None)
   }
 
   val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
@@ -408,6 +410,13 @@ class NewVerbUI[VerbType, Arg: Order](
             opts => (FeatureValues.argMlmDist, opts.argMlmDist),
             (label: Option[String]) => label.map(l =>
               FeatureReq.ArgMLMDist[VerbType, Arg](state.features.verbType, l)
+            )
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.argPrepMlmDist, opts.argPrepMlmDist),
+            (label: Option[String]) => label.map(l =>
+              FeatureReq.ArgPrepMLMDist[VerbType, Arg](state.features.verbType, l)
             )
           ) >>
           pullFeature(
@@ -554,6 +563,13 @@ class NewVerbUI[VerbType, Arg: Order](
           OptionalStringSelect(
             FeatureOptions.mlmTypes,
             verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
+          )
+        ),
+        <.span(S.labeledDropdown)(
+          <.span(S.labeledDropdownLabel)("Arg Prep MLM:"),
+          OptionalStringSelect(
+            FeatureOptions.mlmTypes,
+            verbFeatures.zoomStateL(FeatureOptions.argPrepMlmDist)
           )
         ),
         <.span(S.labeledDropdown)(
@@ -781,6 +797,9 @@ class NewVerbUI[VerbType, Arg: Order](
               val mlmDistOpt = verbFeatures.argMlmDist.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
+              val prepMlmDistOpt = verbFeatures.argPrepMlmDist.map { dists =>
+                argIds.unorderedFoldMap(dists)
+              }
               val questionDistOpt = verbFeatures.questionDist.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
@@ -809,6 +828,7 @@ class NewVerbUI[VerbType, Arg: Order](
                 ctypeDistOpt.whenDefined(distributionDisplay(_)),
                 mlmDistOpt.whenDefined(distributionDisplay(_)),
                 prepDistOpt.whenDefined(distributionDisplay(_)),
+                prepMlmDistOpt.whenDefined(distributionDisplay(_)),
                 questionDistOpt.whenDefined { questionDist =>
                   questionDistributionTable(inflectedForms, questionDist)
                 }
@@ -1366,6 +1386,14 @@ class NewVerbUI[VerbType, Arg: Order](
                           <.td(
                             ^.colSpan := 5,
                             features.argMlmDist.whenDefined { dists =>
+                              distributionDisplay(dists(ArgumentId(verbId, arg)))
+                            }
+                          )
+                        ),
+                        <.tr(
+                          <.td(
+                            ^.colSpan := 5,
+                            features.argPrepMlmDist.whenDefined { dists =>
                               distributionDisplay(dists(ArgumentId(verbId, arg)))
                             }
                           )

@@ -503,7 +503,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   def getArgPrepMLMFeatures(featureMode: String): ArgFeats[DenseVector[Float]] = {
     argMLMVectors(featureMode).data.zip(argLeadingPreps.data).map { case (mlmFeats, getArgPreps) =>
       (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
-        // HACK: just use the last index as a placeholder for "non-prep"
+        // use the first index as a placeholder for non-prepositional arguments
         val prepIndices = getArgPreps(verbType)(argId)
         val nonPrepProb = 1.0 - prepIndices.unorderedFold
         val res = placeholderVec *:* nonPrepProb.toFloat

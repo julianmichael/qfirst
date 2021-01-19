@@ -612,7 +612,7 @@ class CoNLL08Features(
           val sentenceId = argId.verbId.sentenceId
           val sentence = data(sentenceId)
           val token = sentence.tokens(argId.argument)
-          if(token.pos == "IN") Some(token.token.lowerCase) else None
+          if(token.pos == "IN" || token.pos == "TO") Some(token.token.lowerCase) else None
         }
       }
     )

@@ -68,6 +68,9 @@ object FeatureReq {
   case class ArgMLMDist[VerbType, Arg](verbType: VerbType, label: String) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Map[String, Float]]
   }
+  case class ArgPrepMLMDist[VerbType, Arg](verbType: VerbType, label: String) extends FeatureReq[VerbType, Arg] {
+    type Out = Map[ArgumentId[Arg], Map[String, Float]]
+  }
   case class VerbMLMDist[VerbType, Arg](verbType: VerbType, label: String) extends FeatureReq[VerbType, Arg] {
     type Out = Map[VerbId, Map[String, Float]]
   }
@@ -103,6 +106,9 @@ object FeatureReq {
       case ArgMLMDist(_, _) => implicitly[Encoder[List[(ArgumentId[Arg], List[(String, Float)])]]]
           .contramap[Map[ArgumentId[Arg], Map[String, Float]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
+      case ArgPrepMLMDist(_, _) => implicitly[Encoder[List[(ArgumentId[Arg], List[(String, Float)])]]]
+          .contramap[Map[ArgumentId[Arg], Map[String, Float]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
+          .asInstanceOf[Encoder[req.Out]]
       case VerbMLMDist(_, _) => implicitly[Encoder[List[(VerbId, List[(String, Float)])]]]
           .contramap[Map[VerbId, Map[String, Float]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
@@ -135,6 +141,9 @@ object FeatureReq {
           .map(_.toMap)
           .asInstanceOf[Decoder[req.Out]]
       case ArgMLMDist(_, _) => implicitly[Decoder[List[(ArgumentId[Arg], List[(String, Float)])]]]
+          .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
+          .asInstanceOf[Decoder[req.Out]]
+      case ArgPrepMLMDist(_, _) => implicitly[Decoder[List[(ArgumentId[Arg], List[(String, Float)])]]]
           .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
           .asInstanceOf[Decoder[req.Out]]
       case VerbMLMDist(_, _) => implicitly[Decoder[List[(VerbId, List[(String, Float)])]]]

@@ -54,6 +54,11 @@ trait FeatureServiceCompanionPlatformExtensions {
           .flatMap(_.get)
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.ArgPrepMLMDist(vt, label) => features
+          .postprocessedArgPrepMLMFeatures(label).get
+          .flatMap(_.get)
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
       case FeatureReq.ArgMLMDist(vt, label) => features
           .postprocessedArgSpanMLMFeatures(label).get
           .flatMap(_.get)
