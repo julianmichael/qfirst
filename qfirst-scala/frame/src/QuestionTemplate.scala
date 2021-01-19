@@ -52,6 +52,87 @@ case class QuestionTemplate(
 }
 
 object QuestionTemplate {
+  def normalizeToActive(template: QuestionTemplate) = {
+    if(!template.isPassive) template else {
+      // what is something given something on? --> what gave something something? // drop on-phrase
+      //   what hasSubj isPassive <prep> -> !hasSubj !isPassive obj obj2
+      // what is something given something by? --> what gave something something?
+      //   what hasSubj isPassive by  -> !hasSubj !isPassive obj obj2
+      // what is something punched by? --> what punched something?
+      //   what hasSubj isPassive by  -> !hasSubj !isPassive obj
+      // what is something punched on? --> what did something punch something on?
+      //   what hasSubj isPassive <prep>  -> hasSubj !isPassive obj <prep>
+
+      // what is given something?              --> what did something give something?
+      //   what !hasSubj isPassive obj -> hasSubj !isPassive obj
+      // what is punched?              --> what did something punch?
+      //   what !hasSubj isPassive -> hasSubj !isPassive
+      // what is punched by something? --> what did something punch?
+      //   what !hasSubj isPassive by something -> hasSubj !isPassive <>
+      // what is punched on something? --> what did something punch on something?
+      //   what !hasSubj isPassive <prep> something -> hasSubj !isPassive <prep> something
+      // what is looked at?            --> what did something look at?
+      //   what !hasSubj isPassive <prep>  -> hasSubj !isPassive <prep>
+
+      val askingBy = template.prep == "by".lowerCase && template.obj2.isEmpty
+      val hasByPlaceholder = template.prep == "by".lowerCase &&
+        template.obj2 == Some("something".lowerCase)
+
+      if(template.wh == "what".lowerCase) {
+        if(template.hasSubj) {
+          template.copy(
+            hasSubj = !askingBy,
+            isPassive = false,
+            prep = template.prep.filter(_ => !askingBy),
+            obj2 = Some("something".lowerCase)
+              .filter(_ => template.hasObj)
+              .orElse(template.obj2)
+          )
+        } else {
+          template.copy(
+            hasSubj = true,
+            isPassive = false,
+            prep = template.prep.filter(_ => !hasByPlaceholder),
+            obj2 = template.obj2.filter(_ => !hasByPlaceholder)
+          )
+        }
+      } else {
+        if(template.hasSubj) {
+          template.copy(
+            isPassive = false,
+            hasObj = true,
+            prep = template.prep.filter(_ => !template.hasObj && !hasByPlaceholder),
+            obj2 = Some("something".lowerCase)
+              .filter(_ => template.hasObj)
+              .orElse(template.obj2)
+              .filter(_ => !hasByPlaceholder)
+          )
+        } else {
+          template.copy(
+            hasSubj = true,
+            isPassive = false
+          )
+        }
+      }
+
+
+      // where is something given something?   --> where did something give something something?
+      //   wh-hasSubj isPassive obj -> !isPassive obj obj2
+      // where is something given something by something?   --> where did something give something something?
+      //   wh-hasSubj isPassive obj by something -> !isPassive obj obj2
+      // where is something punched?   --> where did something punch something?
+      //   wh-hasSubj isPassive  -> !isPassive obj
+      // where is something punched by something? --> where did something punch something?
+      //   wh-hasSubj isPassive by something  -> !isPassive obj
+      // where is something punched on something? --> where did something punch something on something?
+      //   wh-hasSubj isPassive <prep> something  -> !isPassive obj <prep> something
+      // where is something punched by? --> where did something punch something by?
+      //   wh-hasSubj isPassive by  -> !isPassive obj by
+      // where is looked at?            --> where does something look at?
+      //   XXX
+    }
+  }
+
   // extremely unnecessary amounts of computation here, lol
   def fromClausalQuestion(clausalQ: ClausalQuestion) = {
     fromQuestionSlots(

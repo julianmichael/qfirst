@@ -258,6 +258,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     pcounts.mapVals(_ / total)
   }.toCell("Global question prior")
 
+  lazy val argQuestionDistsActive: CachedArgFeats[Map[QuestionTemplate, Double]] = {
+    cacheArgFeats("active/passive normalized question dists")(
+      mapArgFeats(argQuestionDists.data)(dist =>
+        dist.toList.foldMap { case (qt, prob) => Map(QuestionTemplate.normalizeToActive(qt) -> prob) }
+      )
+    )
+  }
+
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices.data).flatMap {
       case ((((split, vidToType), allSpans), allVerbs), argHeadIndices) =>

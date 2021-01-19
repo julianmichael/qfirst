@@ -598,6 +598,7 @@ object FullArgumentModel {
   val termIndex = List[(LossTerm, String)](
     NoOp -> "noop",
     QuestionEntropy -> "qent",
+    QuestionEntropyActive -> "qent_active",
     MaxPriorEntropy -> "pent",
     SyntacticFunction -> "syntf",
     ConstituentType -> "syntc",
@@ -703,6 +704,13 @@ object FullArgumentModel {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
     ): features.ArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDists.data
+  }
+
+  // with added passive->active alternation rules
+  case object QuestionEntropyActive extends DistributionEntropy[QuestionTemplate] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDistsActive.data
   }
 
   case object ConstituentType extends DistributionEntropy[String] {
