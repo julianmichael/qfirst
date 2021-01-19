@@ -599,6 +599,7 @@ object FullArgumentModel {
     NoOp -> "noop",
     QuestionEntropy -> "qent",
     QuestionEntropyActive -> "qent_active",
+    QuestionEntropyNormalizedAdverbials -> "qent_nadv",
     MaxPriorEntropy -> "pent",
     SyntacticFunction -> "syntf",
     ConstituentType -> "syntc",
@@ -711,6 +712,13 @@ object FullArgumentModel {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
     ): features.ArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDistsActive.data
+  }
+
+  // normalize out adverbials
+  case object QuestionEntropyNormalizedAdverbials extends DistributionEntropy[QuestionTemplate] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDistsNormalizedAdverbials.data
   }
 
   case object ConstituentType extends DistributionEntropy[String] {

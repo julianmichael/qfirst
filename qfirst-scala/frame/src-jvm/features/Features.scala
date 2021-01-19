@@ -266,6 +266,14 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     )
   }
 
+  lazy val argQuestionDistsNormalizedAdverbials: CachedArgFeats[Map[QuestionTemplate, Double]] = {
+    cacheArgFeats("adverbial normalized question dists")(
+      mapArgFeats(argQuestionDists.data)(dist =>
+        dist.toList.foldMap { case (qt, prob) => Map(QuestionTemplate.normalizeAdverbials(qt) -> prob) }
+      )
+    )
+  }
+
   lazy val argQuestionDists: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     RunData.strings.zip(verbIdToType.data).zip(argSpans.data).zip(verbArgSets.data).zip(argSemanticHeadIndices.data).flatMap {
       case ((((split, vidToType), allSpans), allVerbs), argHeadIndices) =>

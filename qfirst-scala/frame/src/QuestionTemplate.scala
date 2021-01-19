@@ -52,6 +52,12 @@ case class QuestionTemplate(
 }
 
 object QuestionTemplate {
+  def normalizeAdverbials(template: QuestionTemplate) = {
+    if(template.wh == "what".lowerCase) template else {
+      QuestionTemplate(template.wh, true, false, false, None, None)
+    }
+  }
+
   def normalizeToActive(template: QuestionTemplate) = {
     if(!template.isPassive) template else {
       // what is something given something on? --> what gave something something? // drop on-phrase
