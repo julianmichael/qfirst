@@ -280,6 +280,23 @@ object MergeTree {
     }.takeWhile(_.nonEmpty)
   }
 
+  def clusterSplittingsStreamByMaxLossDelta[A](tree: MergeTree[A]): fs2.Stream[cats.Id, Vector[MergeTree[A]]] = {
+    def getDelta(t: MergeTree[A]) = t match {
+      case Leaf(_, _) => 0.0
+      case Merge(loss, left, right) => loss - left.loss - right.loss
+    }
+    // def getSize(t: MergeTree[A]) = t.unorderedFoldMap(count)
+    fs2.Stream.iterate(Vector(tree)) { trees =>
+      trees.filter(_.isMerge).map(getDelta).maximumOption.foldMap { maxDelta =>
+        trees.flatMap(t =>
+          MergeTree.merge.getOption(t)
+            .filter(_ => getDelta(t) >= maxDelta)
+            .fold(Vector(t))(m => Vector(m.left, m.right))
+        )
+      }
+    }.takeWhile(_.nonEmpty)
+  }
+
   def splitNext[A](tree: MergeTree[MergeTree[A]]): Option[MergeTree[MergeTree[A]]] = {
     tree.values.flatMap(_.deltaOpt).maximumOption.map(maxDelta =>
       tree.flatMap(innerTree =>
