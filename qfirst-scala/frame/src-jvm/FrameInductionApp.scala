@@ -368,12 +368,11 @@ object FrameInductionApp extends CommandIOApp(
     }
   } yield ()
 
-  def runAnalyze[Arg: Encoder : Decoder : Order](
-    features: PropBankFeatures[Arg])(
+  def reportRoleQuestionDists[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
-    split <- features.splitName
-    outDir <- features.outDir.map(_.resolve(s"analysis/$split")).flatTap(createDir)
     argRoleLabels <- features.argRoleLabels.get
     questionDists <- features.argQuestionDists.get
     args <- features.args.get
@@ -398,6 +397,40 @@ object FrameInductionApp extends CommandIOApp(
           .mkString("\n")
       }.mkString("\n==========\n")
     )
+  } yield ()
+
+  def reportRuleLexica[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    lexicaDir <- IO(outDir.resolve("lexica")).flatTap(createDir)
+    _ <- {
+      def writeLexicon(name: String, lexicon: Set[LowerCaseString], italicize: Boolean) = {
+        FileUtil.writeString(lexicaDir.resolve(s"$name.txt"))(
+          s"${lexicon.size} items.\n" +
+            lexicon.toList.sorted.map(x => if(italicize) s"\\textit{$x}" else x.toString).mkString(", ")
+        )
+      }
+      List(
+        "negation" -> SideClusteringModel.negationWords,
+        "modals" -> SideClusteringModel.modals,
+        "discourse" -> SideClusteringModel.discourseExpressions
+      ).traverse { case (name, vocab) =>
+          writeLexicon(name, vocab, false) >> writeLexicon(s"$name-it", vocab, true)
+      }
+    }
+  } yield ()
+
+  def runAnalyze[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg],
+    shouldDo: String => Boolean)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    split <- features.splitName
+    outDir <- features.outDir.map(_.resolve(s"analysis/$split")).flatTap(createDir)
+    _ <- IO(shouldDo("questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
+    _ <- IO(shouldDo("ruleLexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
   } yield ()
 
   def getFeatures(
@@ -534,10 +567,15 @@ object FrameInductionApp extends CommandIOApp(
     }
   )
 
+  val analysisChoicesO = Opts.option[String](
+    "do", help = "Choose which analyses to do."
+  ).map(_.split(",").toSet).orNone
+    .map(setOpt => (x: String) => setOpt.forall(_.contains(x)))
+
   val analyze = Opts.subcommand(
     name = "analyze",
     help = "Analyze features which are agnostic to the models.")(
-    (dataO, modeO).mapN { (data, mode) =>
+    (dataO, modeO, analysisChoicesO).mapN { (data, mode, analysisChoices) =>
       withLogger { logger =>
         implicit val Log = logger
         for {
@@ -548,9 +586,9 @@ object FrameInductionApp extends CommandIOApp(
             case d @ DataSetting.Qasrl =>
               IO.raiseError(new IllegalArgumentException("Cannot run analysis on QA-SRL."))
             case d @ DataSetting.Ontonotes5(_) =>
-              runAnalyze(getFeatures(d, mode).getIfPropBank.get)
+              runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
             case d @ DataSetting.CoNLL08(_) =>
-              runAnalyze(getFeatures(d, mode).getIfPropBank.get)
+              runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
           }
         } yield ExitCode.Success
       }
