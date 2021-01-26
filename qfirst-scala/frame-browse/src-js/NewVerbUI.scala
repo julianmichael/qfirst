@@ -546,6 +546,19 @@ class NewVerbUI[VerbType, Arg: Order](
           )
         }
       ),
+      <.select(S.verbDropdown)(
+        ^.value := VerbType.toString(verb.value),
+        ^.onChange ==> ((e: ReactEventFromInput) =>
+          verb.setState(VerbType.fromString(e.target.value))
+        ),
+        sortedVerbCounts.toVdomArray { case (verb, count) =>
+          <.option(
+            ^.key := VerbType.toString(verb),
+            ^.value := VerbType.toString(verb),
+            f"${VerbType.toString(verb)} ($count)"
+          )
+        }
+      ),
       <.div(S.featureOptions)(
         View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
         View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
