@@ -3,6 +3,8 @@ package qfirst.metrics
 import cats.Monoid
 import cats.implicits._
 
+// Uses included/excluded to avoid duplicating the included ones.
+// not 100% sure if this was the best move.
 case class Proportion[A](
   included: Vector[A] = Vector(),
   excluded: Vector[A] = Vector()) {
@@ -11,6 +13,9 @@ case class Proportion[A](
 object Proportion {
   def included[A](as: A*) = Proportion(included = as.toVector)
   def excluded[A](as: A*) = Proportion(excluded = as.toVector)
+
+  // TODO: change this to use total instead of excluded. doesn't really make sense
+  // to use excluded in the stats class.
   case class Stats(
     included: Int = 0,
     excluded: Int = 0

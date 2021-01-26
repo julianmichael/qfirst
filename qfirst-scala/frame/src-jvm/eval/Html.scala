@@ -2,6 +2,7 @@ package qfirst.frame.eval
 
 import qfirst.metrics._
 // import qfirst.metrics.HasMetrics.ops._
+// import qfirst.metrics.Functions
 
 import cats.Show
 import cats.implicits._
@@ -12,20 +13,48 @@ object Html {
 
   def prfTableHtml[A : Show](stats: Map[A, WeightedPR]) = {
 
-    def prfCells(prf: WeightedPR, total: Double, totalError: Double) = {
+    // val f1SmoothingCount = 1.0
+
+    def calculateSmoothedF1(target: WeightedPR, mean: WeightedPR, smoothing: Double) = {
+      val smoothedP = (
+        WeightedNumbers(target.precision, target.pseudocount) |+|
+          WeightedNumbers(mean.precision, smoothing)
+      ).stats.weightedMean
+      val smoothedR = (
+        WeightedNumbers(target.recall, target.pseudocount) |+|
+          WeightedNumbers(mean.recall, smoothing)
+      ).stats.weightedMean
+      Functions.harmonicMean(smoothedP, smoothedR)
+    }
+
+    def prfCells(prf: WeightedPR, all: WeightedPR) = {
+      val total = all.pseudocount
+      val totalError = 1.0 - all.f1
+
       val (p, r, f1) = prf.prf
-      val pc = prf.pseudocount
-      val err = 1.0 - f1
-      val werr = err * (pc / total)
-      val pctErr = werr / totalError
+      val pcount = prf.pseudocount
+      val smoothedF1_1 = calculateSmoothedF1(prf, all, 1.0)
+      val smoothedF1_5 = calculateSmoothedF1(prf, all, 5.0)
+      val smoothedF1_10 = calculateSmoothedF1(prf, all, 10.0)
+      val smoothedF1_25 = calculateSmoothedF1(prf, all, 25.0)
+
+      val percent = pcount / total
+      val error = 1.0 - f1
+      val weightedError = error * percent
+      val percentError = weightedError / totalError
       List(
         td(f"$p%.2f"),
         td(f"$r%.2f"),
         td(f"$f1%.2f"),
-        td(pc.toInt),
-        td(f"$err%.4f"),
-        td(f"$werr%.4f"),
-        td(f"$pctErr%.4f")
+        td(pcount.toInt),
+        td(f"$percent%.4f"),
+        td(f"$error%.4f"),
+        td(f"$weightedError%.4f"),
+        td(f"$percentError%.4f"),
+        td(f"$smoothedF1_1%.2f"),
+        td(f"$smoothedF1_5%.2f"),
+        td(f"$smoothedF1_10%.2f"),
+        td(f"$smoothedF1_25%.2f")
       )
     }
 
@@ -34,9 +63,7 @@ object Html {
       metricName: String,
       metricByLabel: Map[A, WeightedPR]
     ) = {
-      val total = metricByLabel.unorderedFoldMap(_.pseudocount)
       val all = metricByLabel.values.toList.combineAll
-      val totalError = 1.0 - all.f1
       table(
         `class` := "pure-table sortable",
         thead(
@@ -46,17 +73,21 @@ object Html {
             td("Rec."),
             td("F1"),
             td("Count"),
+            td("Percent"),
             td("Error"),
             td("Weighted Error"),
             td("Pct Error"),
+            td("Smoothed F1(1)"),
+            td("Smoothed F1(5)"),
+            td("Smoothed F1(10)"),
+            td("Smoothed F1(25)"),
           )
         ),
         tbody(
-          tr(td("All"))(
-            prfCells(all, total, totalError): _*
-          ))(
+          tr(td("All"))(prfCells(all, all): _*)
+        )(
           metricByLabel.toList.sortBy(-_._2.pseudocount).map { case (label, prf) =>
-            tr(td(label.show))(prfCells(prf, total, totalError): _*)
+            tr(td(label.show))(prfCells(prf, all): _*)
           }: _*
         )
       )
