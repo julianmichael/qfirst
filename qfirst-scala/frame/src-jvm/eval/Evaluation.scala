@@ -229,6 +229,14 @@ object Evaluation {
       getAllPRStats(argClusterings, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
         for {
           resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
+          _ <- Log.info(
+            "Max precision info: " + getMetricsString(
+              allStats.values.toList.foldMap(x => Numbers(x.map(_.precision).maximum))
+            )
+              // + "\n" + allStats
+              // .mapVals(_.map(_.precision).maximum).toList
+              // .filter(_._2 < 0.90).sortBy(_._2).map(_._1).mkString(", ")
+          )
           _ <- PlottingJVM.plotAllStatsVerbwise(
             modelName, allStats,
             metric.precisionName, metric.recallName,
@@ -260,7 +268,7 @@ object Evaluation {
                 goldLabelCounts(l) > minGoldLabelCount && goldLabelCounts(r) > minGoldLabelCount
               },
               f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
-            ).render().write(new java.io.File(resultsDir.resolve("best-pnmi.png").toString))
+            ).render().write(new java.io.File(resultsDir.resolve("best-npmi.png").toString))
           )
           _ <- IO {
             val b3instanceByVerbAndLabel = allLabeledClusters.mapVals { clusters =>
