@@ -240,27 +240,40 @@ case class SideClusteringModel(
   }
 }
 object SideClusteringModel {
+  val negationWords = jjm.ling.en.Inflections.negationWords ++
+    Set("never", "no longer").map(_.lowerCase)
   val modals = jjm.ling.en.Inflections.modalVerbs ++
     jjm.ling.en.Inflections.willVerbs ++
-    Set("won't", "can't").map(_.lowerCase)
+    Set("won't", "can't").map(_.lowerCase) ++
+    Set("have", "going", "used", "gonna", "gon", "'ve", "able").map(_.lowerCase) // "phrasal modals"
   val adjunctFuncs = Set("TMP", "MNR", "LOC", "DIR")
   val discourseExpressions = Set(
-    "and", "but", "or", "though", "also", "hence", "however", // "then", "next" // questionable
+    // standard examples from guidelines
+    "also", "however", "too", "as well",
+    "but", "and", "as we've seen before", "instead",
+    "on the other hand", "for instance",
+    // others
+    "or", "though", // "then", "next" // questionable
+    "hence",
     "furthermore", "moreover", "thus", "so", // "further" /// questionable
     "either", "nonetheless", "regardless", // "well" // questionable
-    "rather", "ironically", "indeed", "just", "even", "only", // "say" // questionable
-    "exactly", "certainly", "frankly", "similarly", "thereby", "therefore",
-    "instead", "still",
+    "rather", "ironically", "indeed", // "just", "even", "only", "say" // questionable
+    "certainly", "frankly", "similarly", "thereby", "therefore",
+    // "exactly",
+    // "still",
     "specifically", "particularly", "in particular",
     // "meanwhile", "meantime", "in the meantime",
-    "in turn", "as well", "and so",
+    "in turn", "and so",
     "as a result", "after all",
     "in addition", "in contrast", "in other words",
-    "for example", "for instance",
-    "rather than",
+    "for example",
+    // "rather than",
     "for one thing", "for one",
     "in this case", "in that case", "in any case",
-    "in any event", "in fact", "of course", "in particular"
+    "in any event", "in fact", "of course",
+    // interjections
+    "oh my god", "ah", "damn", // from guidelines
+    "uh", "um", "gosh", "oh my gosh", "oh gosh",
   ).map(_.lowerCase)
   def fromString(x: String): Option[SideClusteringModel] = {
     Some(
