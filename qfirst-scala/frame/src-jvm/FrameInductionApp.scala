@@ -368,60 +368,6 @@ object FrameInductionApp extends CommandIOApp(
     }
   } yield ()
 
-  def reportRoleQuestionDists[Arg: Encoder : Decoder : Order](
-    features: PropBankFeatures[Arg],
-    outDir: NIOPath)(
-    implicit Log: SequentialEphemeralTreeLogger[IO, String]
-  ): IO[Unit] = for {
-    argRoleLabels <- features.argRoleLabels.get
-    questionDists <- features.argQuestionDists.get
-    args <- features.args.get
-    roleQuestionDists <- args.toList.infoBarFoldMapM("Aggregating question distributions") {
-      case (verbType, argIds) =>
-        IO {
-          val roleLabels = argRoleLabels(verbType)
-          val questions = questionDists(verbType)
-          argIds.unorderedFoldMap(argId =>
-            Map(roleLabels(argId).role -> questions(argId))
-          )
-        }
-    }
-    _ <- FileUtil.writeString(outDir.resolve("questions.txt"))(
-      roleQuestionDists.toList.map { case (role, qdist) =>
-        val total = qdist.unorderedFold
-        s"$role:\n" + qdist.toList
-          .sortBy(-_._2)
-          .map(p => p.copy(_2 = p._2 / total))
-          .takeWhile(_._2 > 0.005)
-          .map { case (qt, prob) => f"${qt.toTemplateString}%-60s$prob%.3f" }
-          .mkString("\n")
-      }.mkString("\n==========\n")
-    )
-  } yield ()
-
-  def reportRuleLexica[Arg: Encoder : Decoder : Order](
-    features: PropBankFeatures[Arg],
-    outDir: NIOPath)(
-    implicit Log: SequentialEphemeralTreeLogger[IO, String]
-  ): IO[Unit] = for {
-    lexicaDir <- IO(outDir.resolve("lexica")).flatTap(createDir)
-    _ <- {
-      def writeLexicon(name: String, lexicon: Set[LowerCaseString], italicize: Boolean) = {
-        FileUtil.writeString(lexicaDir.resolve(s"$name.txt"))(
-          s"${lexicon.size} items.\n" +
-            lexicon.toList.sorted.map(x => if(italicize) s"\\textit{$x}" else x.toString).mkString(", ")
-        )
-      }
-      List(
-        "negation" -> SideClusteringModel.negationWords,
-        "modals" -> SideClusteringModel.modals,
-        "discourse" -> SideClusteringModel.discourseExpressions
-      ).traverse { case (name, vocab) =>
-          writeLexicon(name, vocab, false) >> writeLexicon(s"$name-it", vocab, true)
-      }
-    }
-  } yield ()
-
   def runAnalyze[Arg: Encoder : Decoder : Order](
     features: PropBankFeatures[Arg],
     shouldDo: String => Boolean)(
@@ -429,8 +375,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[Unit] = for {
     split <- features.splitName
     outDir <- features.outDir.map(_.resolve(s"analysis/$split")).flatTap(createDir)
-    _ <- IO(shouldDo("questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
-    _ <- IO(shouldDo("ruleLexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
+    _ <- Analysis(features, outDir).run(shouldDo)
   } yield ()
 
   def getFeatures(
