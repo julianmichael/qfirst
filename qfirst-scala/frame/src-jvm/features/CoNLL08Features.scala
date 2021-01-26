@@ -69,30 +69,30 @@ class CoNLL08Features(
   }
 
   // unused
-  def keepOnlyCommonPredicates(sentence: CoNLL08Sentence, lemmasToKeep: Set[String]) = {
-    sentence.copy(
-      predicateArgumentStructures = sentence.predicateArgumentStructures
-        .filter { pas =>
-          lemmasToKeep.contains(pas.predicate.lemma)
-        }
-    )
-  }
+  // def keepOnlyCommonPredicates(sentence: CoNLL08Sentence, lemmasToKeep: Set[String]) = {
+  //   sentence.copy(
+  //     predicateArgumentStructures = sentence.predicateArgumentStructures
+  //       .filter { pas =>
+  //         lemmasToKeep.contains(pas.predicate.lemma)
+  //       }
+  //   )
+  // }
 
   // unused
-  def keepOnlyCommonPredicatesInDataset(ds: NonMergingMap[String, CoNLL08Sentence]) = {
-    val predLemmaCounts = ds.value.unorderedFoldMap(_.predicateArgumentStructures.map(_.predicate.lemma).counts)
-    val lemmasToKeep = predLemmaCounts.filter(_._2 > 20).keySet
-    NonMergingMap(ds.value.map { case (sid, sent) => sid -> keepOnlyCommonPredicates(sent, lemmasToKeep) })
-  }
+  // def keepOnlyCommonPredicatesInDataset(ds: NonMergingMap[String, CoNLL08Sentence]) = {
+  //   val predLemmaCounts = ds.value.unorderedFoldMap(_.predicateArgumentStructures.map(_.predicate.lemma).counts)
+  //   val lemmasToKeep = predLemmaCounts.filter(_._2 > 20).keySet
+  //   NonMergingMap(ds.value.map { case (sid, sent) => sid -> keepOnlyCommonPredicates(sent, lemmasToKeep) })
+  // }
 
-  def dropIrrelevantRoles(sentence: CoNLL08Sentence) = {
-    CoNLL08Sentence.predicateArgumentStructures
-      .composeTraversal(Optics.each)
-      .composeLens(PredArgStructure.arguments)
-      .modify(
-        _.filterNot(arg => PropBankRoleLabel.roleLabelIsIrrelevant(arg._1))
-      )(sentence)
-  }
+  // def dropIrrelevantRoles(sentence: CoNLL08Sentence) = {
+  //   CoNLL08Sentence.predicateArgumentStructures
+  //     .composeTraversal(Optics.each)
+  //     .composeLens(PredArgStructure.arguments)
+  //     .modify(
+  //       _.filterNot(arg => PropBankRoleLabel.roleLabelIsIrrelevant(arg._1))
+  //     )(sentence)
+  // }
 
   def dropCorefAndResumptiveRoles(sentence: CoNLL08Sentence) = {
     import jjm.ling.en.PTBPosTags
