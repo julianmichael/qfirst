@@ -77,9 +77,9 @@ case class Analysis[Arg: Encoder : Decoder : Order](
       argRoleLabels <- features.argRoleLabels.get
       questionDists <- features.argQuestionDists.get
       flatQuestionDists <- Log.infoBranch("Flattening question distributions") {
-        IO(questionDists.toList.foldMap(_._2.value.values.toVector))
+        IO(questionDists.toList.flatMap { case (verb, argQs) => argQs.value.values.toVector.map(verb -> _) })
       }
-      marginals <- flatQuestionDists.infoBarFoldMapM("Computing question marginals")(IO.pure)
+      marginals <- flatQuestionDists.toVector.infoBarFoldMapM("Computing question marginals")(_._2.pure[IO])
       totalQuestionCount = marginals.unorderedFold
       marginalsPath = outDir.resolve("question-marginals.txt")
       _ <- Log.infoBranch(s"Writing question marginals to $marginalsPath") {
@@ -99,18 +99,22 @@ case class Analysis[Arg: Encoder : Decoder : Order](
                       .stripMargin.replace("\n", " "))
       npmis <- Log.infoBranch("Calculating question NPMIs") {
         EvalUtils.calculateNPMIsLoggingEfficient(
-          flatQuestionDists.map(
-            counts => counts.filter(p => acceptableQuestions.contains(p._1))
-          )
+          flatQuestionDists.map { case (verb, counts) =>
+            verb -> counts.filter(p => acceptableQuestions.contains(p._1))
+          }.toVector
         )
       }
       outPath = outDir.resolve("question-npmi.txt")
       _ <- Log.infoBranch(s"Writing question NPMIs to $outPath") {
         FileUtil.writeString(outPath)(
-          npmis.toVector.sortBy(-_._2).toList.filter(
+          npmis.toVector.sortBy(-_._2.npmi).toList.filter(
             p => List(p._1.min, p._1.max).exists(q => marginals(q) > reasonablePairOneSidedFrequencyCutoff)
-          ).filter(_._2 > -0.0).map { case (Duad(q1, q2), npmi) =>
-              f"${q1.toQuestionString}%-45s ${q2.toQuestionString}%-45s $npmi%.6f ${marginals(q1)}%.6f ${marginals(q2)}%.6f"
+          ).filter(_._2.npmi > 0.0).map { case (Duad(q1, q2), EvalUtils.NPMIResult(pmi, npmi, sources)) =>
+              val topSources = sources.toVector.sortBy(-_._2).take(10)
+              val topSourcesString = topSources.map { case (source, prob) =>
+                f"$source (${scala.math.log(prob) / scala.math.log(2)}%.2f)"
+              }.mkString(", ")
+              f"${q1.toQuestionString}%-45s ${q2.toQuestionString}%-45s $npmi%.6f ${marginals(q1)}%.6f ${marginals(q2)}%.6f $topSourcesString"
           }.mkString("\n")
         )
       }

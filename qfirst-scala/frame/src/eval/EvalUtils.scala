@@ -26,13 +26,31 @@ object EvalUtils {
     Order[String]
   )
 
-  // derp, made it more efficient...maybe? Think so
-  def calculateNPMIsLoggingEfficient[A: Order, N: Numeric](
-    groupings: Vector[Map[A, N]])(
-    implicit Log: freelog.SequentialEphemeralTreeLogger[cats.effect.IO, String]
-  ): cats.effect.IO[Map[Duad[A], Double]] = {
+  // TODO: enhance into more general cooccurrence utility?
+  // first step: take weighted groups to make the pmi/npmi calculation more straightforward.
+  // second step: maybe put together into a general cooccurrence utility.
+
+  // sourceDistribution is a probability distribution over sources where the pair appears.
+  case class NPMIResult[A](
+    pmi: Double,
+    npmi: Double,
+    sourceDistribution: Map[A, Double]
+  )
+  object NPMIResult {
+    def never[A] = NPMIResult[A](
+      pmi = Double.NegativeInfinity,
+      npmi = -1.0,
+      sourceDistribution = Map()
+    )
+  }
+
+  def calculateNPMIsLoggingEfficient[Source, A: Order, N: Numeric](
+    groupings: Vector[(Source, Map[A, N])])(
+    implicit N: Numeric[N],
+    Log: freelog.SequentialEphemeralTreeLogger[cats.effect.IO, String]
+  ): cats.effect.IO[Map[Duad[A], NPMIResult[Source]]] = {
     import freelog.implicits._
-    val groups = groupings.map(_.mapVals(implicitly[Numeric[N]].toDouble))
+    val groups = groupings.map(_._2.mapVals(N.toDouble))
     import scala.math.{pow, log}
     val labels = groups.foldMap(_.keySet)
     val groupSizes = groups.map(_.unorderedFold)
@@ -47,37 +65,36 @@ object EvalUtils {
     val marginalProbs = groups.combineAll.mapVals(_ / total)
 
     // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
-    groups.infoBarFoldMapM("Computing joint probabilities") { goldCounts =>
+    groupings.infoBarFoldMapM("Computing joint probabilities") { case (source, _goldCounts) =>
+      val goldCounts = _goldCounts.mapVals(N.toDouble)
       cats.effect.IO {
         val groupTotal = goldCounts.unorderedFold
         goldCounts.toList.foldMap { case (left, leftCount) =>
-          // val leftProb = leftCount / total
+          val leftProb = leftCount / total
           goldCounts.filter(_._1 > left).map { case (right, rightCount) =>
             val rightProb = rightCount / groupTotal
-            Duad(left, right) -> (leftCount * rightProb)
+            Duad(left, right) -> Map(source -> (leftProb * rightProb))
           }
-        }.mapVals(_ / total)
+        }
       }
-    }.flatMap { jointProbs =>
+    }.flatMap { jointProbsWithSources =>
       Log.info(s"${pairs.size} pairs to compute.") >>
       pairs.toList.infoBarTraverse("Computing NPMIs") { pair =>
         cats.effect.IO {
           // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
-          val prob = jointProbs.getOrElse(pair, 0.0)
+          val sources = jointProbsWithSources.getOrElse(pair, Map())
+          val jointProb = sources.unorderedFold
           val independentProb = {
-            marginalProbs(pair.min) * marginalProbs(pair.max)// / (totalPairs * totalPairs)
+            marginalProbs(pair.min) * marginalProbs(pair.max)
           }
-          val npmi = if(prob == 0.0) {
-            if(independentProb == 0.0) {
-              assert(false) // should never happen
-              0.0
-            } else -1.0
-          } else {
-            val logJointProb = log(prob)
+          val result = if(jointProb == 0.0) NPMIResult.never[Source] else {
+            assert(independentProb != 0.0)
+            val logJointProb = log(jointProb)
             val pmi = logJointProb - log(independentProb)
-            pmi / (-logJointProb)
+            val npmi = pmi / (-logJointProb)
+            NPMIResult(pmi = pmi, npmi = npmi, sourceDistribution = sources)
           }
-          pair -> npmi
+          pair -> result
         }
       }.map(_.toMap)
     }
