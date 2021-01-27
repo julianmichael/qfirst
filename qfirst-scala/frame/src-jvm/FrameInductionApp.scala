@@ -421,18 +421,23 @@ object FrameInductionApp extends CommandIOApp(
   ).map(SplitTuningSpec(_))
 
   val tuningO = Opts.options[String](
-    "tune", help = "tuning spec, e.g., num-clusters=23"
-  ).mapValidated(
-    _.traverse(arg =>
-      SplitTuningSpec.fromString(arg).map(Validated.valid).getOrElse(
-        Validated.invalidNel(s"Invalid tuning spec $arg. (todo: better error reporting)")
-      )
-    )
-  ).orNone.map(_.getOrElse(defaultTuningSpecs))
+    "tune", help = "tuning spec, e.g., num-clusters=23")
+    .mapValidated(
+      _.traverse(arg =>
+        SplitTuningSpec.fromString(arg).map(Validated.valid).getOrElse(
+          Validated.invalidNel(s"Invalid tuning spec $arg. (todo: better error reporting)")
+        )
+      ))
+    .orNone.map(_.getOrElse(defaultTuningSpecs))
 
   val recomputeO = Opts.flag(
     "recompute", help = "recompute clustering model even if it is cached."
   ).orFalse
+
+  val analysisChoicesO = Opts.option[String](
+    "do", help = "Choose which analyses to do.")
+    .map(_.split(",").toSet).orNone
+    .map(setOpt => (x: String) => setOpt.forall(_.contains(x)))
 
   def withLogger[A](run: SequentialEphemeralTreeLogger[IO, String] => IO[A]): IO[A] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.debounced() >>= { Log =>
@@ -511,11 +516,6 @@ object FrameInductionApp extends CommandIOApp(
       }
     }
   )
-
-  val analysisChoicesO = Opts.option[String](
-    "do", help = "Choose which analyses to do."
-  ).map(_.split(",").toSet).orNone
-    .map(setOpt => (x: String) => setOpt.forall(_.contains(x)))
 
   val analyze = Opts.subcommand(
     name = "analyze",
