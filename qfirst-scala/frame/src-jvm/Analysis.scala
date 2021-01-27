@@ -18,6 +18,7 @@ import jjm.io.FileUtil
 import jjm.implicits._
 
 import qfirst.frame.features.PropBankFeatures
+import qfirst.frame.util.Duad
 
 case class Analysis[Arg: Encoder : Decoder : Order](
   features: PropBankFeatures[Arg],
@@ -28,7 +29,7 @@ case class Analysis[Arg: Encoder : Decoder : Order](
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     _ <- IO(shouldDo("role-questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
-    // _ <- IO(shouldDo("question-npmi")).ifM(reportQuestionNPMI(features, outDir), IO.unit)
+    _ <- IO(shouldDo("question-npmi")).ifM(reportQuestionPairNPMIs(features, outDir), IO.unit)
     _ <- IO(shouldDo("rule-lexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
   } yield ()
 
@@ -62,6 +63,31 @@ case class Analysis[Arg: Encoder : Decoder : Order](
       }.mkString("\n==========\n")
     )
   } yield ()
+
+  def reportQuestionPairNPMIs(
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = Log.infoBranch("Reporting question pair NPMIs") {
+    for {
+      argRoleLabels <- features.argRoleLabels.get
+      questionDists <- features.argQuestionDists.get
+      flatQuestionDists <- Log.infoBranch("Flattening question distributions") {
+        IO(questionDists.toList.foldMap(_._2.value.values.toVector))
+      }
+      npmis <- Log.infoBranch("Calculating question NPMIs") {
+        IO(eval.EvalUtils.calculateNPMIs(flatQuestionDists))
+      }
+      outPath = outDir.resolve("question-npmi.txt")
+      _ <- Log.infoBranch(s"Writing question NPMIs to $outPath") {
+        FileUtil.writeString(outPath)(
+          npmis.toVector.sortBy(-_._2).toList.map { case (Duad(q1, q2), npmi) =>
+            f"${q1.toTemplateString}%-50s ${q2.toTemplateString}%-50s $npmi%.6f"
+          }.mkString("\n")
+        )
+      }
+    } yield ()
+  }
 
   def reportRuleLexica(
     features: PropBankFeatures[Arg],

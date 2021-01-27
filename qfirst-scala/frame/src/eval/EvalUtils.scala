@@ -26,9 +26,6 @@ object EvalUtils {
     Order[String]
   )
 
-  // With or without replacement? currently implemented with replacement
-  // i think this is right because pmi with self should never be negative.
-  // w/o replacement would mean neg self-pmi possible with fine-grained clusters.
   def calculateNPMIs[A: Order, N: Numeric](
     groupings: Vector[Map[A, N]]
   ): Map[Duad[A], Double] = {

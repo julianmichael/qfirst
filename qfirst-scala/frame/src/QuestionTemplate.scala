@@ -11,6 +11,7 @@ import cats.implicits._
 
 import io.circe.Json
 import qasrl.Prep
+import cats.kernel.Order
 
 case class QuestionTemplate(
   wh: LowerCaseString,
@@ -160,6 +161,8 @@ object QuestionTemplate {
     prep = slots.prep,
     obj2 = slots.obj2.map(_.toString.replaceAll("someone", "something").lowerCase)
   )
+
+  implicit val questionTemplateOrder = Order.by[QuestionTemplate, String](_.toTemplateString)
 
   import io.circe.{Encoder, Decoder}
 
