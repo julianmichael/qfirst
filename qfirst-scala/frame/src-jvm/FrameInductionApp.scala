@@ -459,12 +459,14 @@ object FrameInductionApp extends CommandIOApp(
     dataO.orNone.map { dataSettingOpt =>
       withLogger { logger =>
         implicit val Log = logger
-        for {
-          _ <- Log.info(s"Mode: setup")
-          dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
-          _ <- Log.info(s"Data: " + dataSettings.mkString(", "))
-          _ <- dataSettings.traverse(d => getFeatures(d, RunMode.Sanity).setup)
-        } yield ExitCode.Success
+        Log.infoBranch("Setup") {
+          for {
+            _ <- Log.info(s"Mode: setup")
+            dataSettings = dataSettingOpt.fold(DataSetting.all)(List(_))
+            _ <- Log.info(s"Data: " + dataSettings.mkString(", "))
+            _ <- dataSettings.traverse(d => getFeatures(d, RunMode.Sanity).setup)
+          } yield ExitCode.Success
+        }
       }
     }
   )
@@ -475,21 +477,23 @@ object FrameInductionApp extends CommandIOApp(
     (dataO, modeO, modelO, tuningO, recomputeO).mapN { (data, mode, model, tuning, recompute) =>
       withLogger { logger =>
         implicit val Log = logger
-        for {
-          _ <- Log.info(s"Mode: $mode")
-          _ <- Log.info(s"Data: $data")
-          _ <- Log.info(s"Model: $model")
-          _ <- IO(shouldRecomputeModel = recompute)
-          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
-          _ <- data match {
-            case d @ DataSetting.Qasrl =>
-              runModeling(model, getFeatures(d, mode), tuning)
-            case d @ DataSetting.Ontonotes5(_) =>
-              runModeling(model, getFeatures(d, mode), tuning)
-            case d @ DataSetting.CoNLL08(_) =>
-              runModeling(model, getFeatures(d, mode), tuning)
-          }
-        } yield ExitCode.Success
+        Log.infoBranch("Run") {
+          for {
+            _ <- Log.info(s"Mode: $mode")
+            _ <- Log.info(s"Data: $data")
+            _ <- Log.info(s"Model: $model")
+            _ <- IO(shouldRecomputeModel = recompute)
+            // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+            _ <- data match {
+              case d @ DataSetting.Qasrl =>
+                runModeling(model, getFeatures(d, mode), tuning)
+              case d @ DataSetting.Ontonotes5(_) =>
+                runModeling(model, getFeatures(d, mode), tuning)
+              case d @ DataSetting.CoNLL08(_) =>
+                runModeling(model, getFeatures(d, mode), tuning)
+            }
+          } yield ExitCode.Success
+        }
       }
     }
   )
@@ -500,19 +504,21 @@ object FrameInductionApp extends CommandIOApp(
     (dataO, modeO).mapN { (data, mode) =>
       withLogger { logger =>
         implicit val Log = logger
-        for {
-          _ <- Log.info(s"Mode: $mode")
-          _ <- Log.info(s"Data: $data")
-          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
-          _ <- data match {
-            case d @ DataSetting.Qasrl =>
-              IO.raiseError(new IllegalArgumentException("Cannot evaluate on QA-SRL."))
-            case d @ DataSetting.Ontonotes5(_) =>
-              runSummarize(getFeatures(d, mode).getIfPropBank.get)
-            case d @ DataSetting.CoNLL08(_) =>
-              runSummarize(getFeatures(d, mode).getIfPropBank.get)
-          }
-        } yield ExitCode.Success
+        Log.infoBranch("Summarize") {
+          for {
+            _ <- Log.info(s"Mode: $mode")
+            _ <- Log.info(s"Data: $data")
+            // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+            _ <- data match {
+              case d @ DataSetting.Qasrl =>
+                IO.raiseError(new IllegalArgumentException("Cannot evaluate on QA-SRL."))
+              case d @ DataSetting.Ontonotes5(_) =>
+                runSummarize(getFeatures(d, mode).getIfPropBank.get)
+              case d @ DataSetting.CoNLL08(_) =>
+                runSummarize(getFeatures(d, mode).getIfPropBank.get)
+            }
+          } yield ExitCode.Success
+        }
       }
     }
   )
@@ -523,19 +529,21 @@ object FrameInductionApp extends CommandIOApp(
     (dataO, modeO, analysisChoicesO).mapN { (data, mode, analysisChoices) =>
       withLogger { logger =>
         implicit val Log = logger
-        for {
-          _ <- Log.info(s"Mode: $mode")
-          _ <- Log.info(s"Data: $data")
-          // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
-          _ <- data match {
-            case d @ DataSetting.Qasrl =>
-              IO.raiseError(new IllegalArgumentException("Cannot run analysis on QA-SRL."))
-            case d @ DataSetting.Ontonotes5(_) =>
-              runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
-            case d @ DataSetting.CoNLL08(_) =>
-              runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
-          }
-        } yield ExitCode.Success
+        Log.infoBranch("Analyze") {
+          for {
+            _ <- Log.info(s"Mode: $mode")
+            _ <- Log.info(s"Data: $data")
+            // need to explicitly match here to make sure typeclass instances for VerbType/Arg are available
+            _ <- data match {
+              case d @ DataSetting.Qasrl =>
+                IO.raiseError(new IllegalArgumentException("Cannot run analysis on QA-SRL."))
+              case d @ DataSetting.Ontonotes5(_) =>
+                runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
+              case d @ DataSetting.CoNLL08(_) =>
+                runAnalyze(getFeatures(d, mode).getIfPropBank.get, analysisChoices)
+            }
+          } yield ExitCode.Success
+        }
       }
     }
   )
