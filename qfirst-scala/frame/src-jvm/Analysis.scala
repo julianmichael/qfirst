@@ -20,6 +20,7 @@ import jjm.implicits._
 import qfirst.frame.features.PropBankFeatures
 import qfirst.frame.util.Duad
 import qfirst.frame.eval.EvalUtils
+import freelog.EphemeralTreeLogger
 
 case class Analysis[Arg: Encoder : Decoder : Order](
   features: PropBankFeatures[Arg],
@@ -30,7 +31,7 @@ case class Analysis[Arg: Encoder : Decoder : Order](
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     _ <- IO(shouldDo("role-questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
-    _ <- IO(shouldDo("question-npmi")).ifM(reportQuestionPairNPMIs(features, outDir), IO.unit)
+    _ <- IO(shouldDo("question-relatedness")).ifM(reportQuestionPairRelatedness(features, outDir), IO.unit)
     _ <- IO(shouldDo("rule-lexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
   } yield ()
 
@@ -68,7 +69,30 @@ case class Analysis[Arg: Encoder : Decoder : Order](
   val reasonableQuestionFrequencyCutoff = 5.0
   val reasonablePairOneSidedFrequencyCutoff = 15.0
 
-  def reportQuestionPairNPMIs(
+  def writeMaxStatQuestions(
+    npmis: Vector[(Duad[QuestionTemplate],EvalUtils.NPMIResult[String])],
+    outDir: NIOPath, label: String, stat: EvalUtils.NPMIResult[String] => Double)(
+    implicit Log: EphemeralTreeLogger[IO, String]
+  ) = {
+    val path = outDir.resolve(s"question-$label.txt")
+    Log.infoBranch(s"Writing question ${label}s to $path") {
+      FileUtil.writeString(path)(
+        npmis
+          .filter(p => stat(p._2) > 0.0)
+          .sortBy(p => -stat(p._2))
+          .map { case (Duad(q1, q2), result) =>
+            val topSources = result.sourceDistribution.toVector.sortBy(-_._2).take(10)
+            val topSourcesString = topSources.map { case (source, prob) =>
+              // f"$source (${scala.math.log(prob) / scala.math.log(2)}%.2f)"
+              source
+            }.mkString(", ")
+            f"${q1.toQuestionString}%-45s ${q2.toQuestionString}%-45s ${stat(result)}%.6f $topSourcesString"
+          }.mkString("\n")
+      )
+    }
+  }
+
+  def reportQuestionPairRelatedness(
     features: PropBankFeatures[Arg],
     outDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
@@ -97,27 +121,20 @@ case class Analysis[Arg: Encoder : Decoder : Order](
       _ <- Log.info(s"""|${acceptableQuestions.size} "what" questions
                         |of frequency > $reasonableQuestionFrequencyCutoff."""
                       .stripMargin.replace("\n", " "))
-      npmis <- Log.infoBranch("Calculating question NPMIs") {
+      unfilteredNpmis <- Log.infoBranch("Calculating question NPMIs") {
         EvalUtils.calculateNPMIsLoggingEfficient(
           flatQuestionDists.map { case (verb, counts) =>
             verb -> counts.filter(p => acceptableQuestions.contains(p._1))
           }.toVector
         )
       }
-      outPath = outDir.resolve("question-npmi.txt")
-      _ <- Log.infoBranch(s"Writing question NPMIs to $outPath") {
-        FileUtil.writeString(outPath)(
-          npmis.toVector.sortBy(-_._2.npmi).toList.filter(
-            p => List(p._1.min, p._1.max).exists(q => marginals(q) > reasonablePairOneSidedFrequencyCutoff)
-          ).filter(_._2.npmi > 0.0).map { case (Duad(q1, q2), EvalUtils.NPMIResult(pmi, npmi, sources)) =>
-              val topSources = sources.toVector.sortBy(-_._2).take(10)
-              val topSourcesString = topSources.map { case (source, prob) =>
-                f"$source (${scala.math.log(prob) / scala.math.log(2)}%.2f)"
-              }.mkString(", ")
-              f"${q1.toQuestionString}%-45s ${q2.toQuestionString}%-45s $npmi%.6f ${marginals(q1)}%.6f ${marginals(q2)}%.6f $topSourcesString"
-          }.mkString("\n")
-        )
-      }
+      npmis = unfilteredNpmis.toVector.filter(
+        p => List(p._1.min, p._1.max).exists(q => marginals(q) > reasonablePairOneSidedFrequencyCutoff)
+      )
+      _ <- writeMaxStatQuestions(npmis, outDir, "npmi", _.npmi)
+      _ <- writeMaxStatQuestions(npmis, outDir, "pmi", _.pmi)
+      _ <- writeMaxStatQuestions(npmis, outDir, "covariance", _.covariance)
+      _ <- writeMaxStatQuestions(npmis, outDir, "correlation", _.correlation)
     } yield ()
   }
 

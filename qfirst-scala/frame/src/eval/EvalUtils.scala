@@ -34,12 +34,16 @@ object EvalUtils {
   case class NPMIResult[A](
     pmi: Double,
     npmi: Double,
+    covariance: Double,
+    correlation: Double,
     sourceDistribution: Map[A, Double]
   )
   object NPMIResult {
-    def never[A] = NPMIResult[A](
+    private[EvalUtils] def never[A](covariance: Double, correlation: Double) = NPMIResult[A](
       pmi = Double.NegativeInfinity,
       npmi = -1.0,
+      covariance = covariance,
+      correlation = correlation,
       sourceDistribution = Map()
     )
   }
@@ -51,7 +55,7 @@ object EvalUtils {
   ): cats.effect.IO[Map[Duad[A], NPMIResult[Source]]] = {
     import freelog.implicits._
     val groups = groupings.map(_._2.mapVals(N.toDouble))
-    import scala.math.{pow, log}
+    import scala.math.{pow, log, sqrt}
     val labels = groups.foldMap(_.keySet)
     val groupSizes = groups.map(_.unorderedFold)
     val total = groupSizes.combineAll
@@ -71,13 +75,17 @@ object EvalUtils {
         val groupTotal = goldCounts.unorderedFold
         goldCounts.toList.foldMap { case (left, leftCount) =>
           val leftProb = leftCount / total
-          goldCounts.filter(_._1 > left).map { case (right, rightCount) =>
+          goldCounts.filter(_._1 >= left).map { case (right, rightCount) =>
             val rightProb = rightCount / groupTotal
             Duad(left, right) -> Map(source -> (leftProb * rightProb))
           }
         }
       }
     }.flatMap { jointProbsWithSources =>
+      val variances = marginalProbs.map { case (a, marginal) =>
+        val selfJointProb = jointProbsWithSources(Duad(a, a)).unorderedFold
+        a -> sqrt(selfJointProb - pow(marginal, 2))
+      }
       Log.info(s"${pairs.size} pairs to compute.") >>
       pairs.toList.infoBarTraverse("Computing NPMIs") { pair =>
         cats.effect.IO {
@@ -87,12 +95,19 @@ object EvalUtils {
           val independentProb = {
             marginalProbs(pair.min) * marginalProbs(pair.max)
           }
-          val result = if(jointProb == 0.0) NPMIResult.never[Source] else {
+          val covariance = jointProb - independentProb
+          val correlation = covariance / (variances(pair.min) * variances(pair.max))
+          val result = if(jointProb == 0.0) NPMIResult.never[Source](covariance, correlation) else {
             assert(independentProb != 0.0)
             val logJointProb = log(jointProb)
             val pmi = logJointProb - log(independentProb)
             val npmi = pmi / (-logJointProb)
-            NPMIResult(pmi = pmi, npmi = npmi, sourceDistribution = sources)
+            NPMIResult(
+              pmi = pmi,
+              npmi = npmi,
+              covariance = covariance,
+              correlation = correlation,
+              sourceDistribution = sources)
           }
           pair -> result
         }
