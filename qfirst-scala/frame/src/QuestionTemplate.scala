@@ -21,6 +21,7 @@ case class QuestionTemplate(
   prep: Option[LowerCaseString],
   obj2: Option[LowerCaseString]
 ) {
+
   def toTemplateString = List(
     Some(wh),
     Option("something".lowerCase).filter(_ => hasSubj),
@@ -49,6 +50,16 @@ case class QuestionTemplate(
     obj = if(hasObj) Some("something".lowerCase) else None,
     prep = prep,
     obj2 = obj2
+  )
+
+  def toQuestionString = toSlots.renderQuestionString(
+    InflectedForms(
+      stem = "verb".lowerCase,
+      presentSingular3rd = "verbs".lowerCase,
+      past = "verbed".lowerCase,
+      pastParticiple = "verbed".lowerCase,
+      presentParticiple = "verbing".lowerCase
+    ).apply
   )
 }
 
@@ -162,7 +173,7 @@ object QuestionTemplate {
     obj2 = slots.obj2.map(_.toString.replaceAll("someone", "something").lowerCase)
   )
 
-  implicit val questionTemplateOrder = Order.by[QuestionTemplate, String](_.toTemplateString)
+  implicit val questionTemplateOrder = Order.by[QuestionTemplate, String](_.toQuestionString)
 
   import io.circe.{Encoder, Decoder}
 

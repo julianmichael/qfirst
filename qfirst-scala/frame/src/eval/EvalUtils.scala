@@ -26,6 +26,63 @@ object EvalUtils {
     Order[String]
   )
 
+  // derp, made it more efficient...maybe? Think so
+  def calculateNPMIsLoggingEfficient[A: Order, N: Numeric](
+    groupings: Vector[Map[A, N]])(
+    implicit Log: freelog.SequentialEphemeralTreeLogger[cats.effect.IO, String]
+  ): cats.effect.IO[Map[Duad[A], Double]] = {
+    import freelog.implicits._
+    val groups = groupings.map(_.mapVals(implicitly[Numeric[N]].toDouble))
+    import scala.math.{pow, log}
+    val labels = groups.foldMap(_.keySet)
+    val groupSizes = groups.map(_.unorderedFold)
+    val total = groupSizes.combineAll
+    val totalPairs = groupSizes.foldMap(pow(_, 2))
+    val marginals = groups.foldMap { counts =>
+      val size = counts.unorderedFold
+      counts.mapVals(_ * size)
+    }
+    val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
+
+    val marginalProbs = groups.combineAll.mapVals(_ / total)
+
+    // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
+    groups.infoBarFoldMapM("Computing joint probabilities") { goldCounts =>
+      cats.effect.IO {
+        val groupTotal = goldCounts.unorderedFold
+        goldCounts.toList.foldMap { case (left, leftCount) =>
+          // val leftProb = leftCount / total
+          goldCounts.filter(_._1 > left).map { case (right, rightCount) =>
+            val rightProb = rightCount / groupTotal
+            Duad(left, right) -> (leftCount * rightProb)
+          }
+        }.mapVals(_ / total)
+      }
+    }.flatMap { jointProbs =>
+      Log.info(s"${pairs.size} pairs to compute.") >>
+      pairs.toList.infoBarTraverse("Computing NPMIs") { pair =>
+        cats.effect.IO {
+          // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
+          val prob = jointProbs.getOrElse(pair, 0.0)
+          val independentProb = {
+            marginalProbs(pair.min) * marginalProbs(pair.max)// / (totalPairs * totalPairs)
+          }
+          val npmi = if(prob == 0.0) {
+            if(independentProb == 0.0) {
+              assert(false) // should never happen
+              0.0
+            } else -1.0
+          } else {
+            val logJointProb = log(prob)
+            val pmi = logJointProb - log(independentProb)
+            pmi / (-logJointProb)
+          }
+          pair -> npmi
+        }
+      }.map(_.toMap)
+    }
+  }
+
   def calculateNPMIs[A: Order, N: Numeric](
     groupings: Vector[Map[A, N]]
   ): Map[Duad[A], Double] = {
