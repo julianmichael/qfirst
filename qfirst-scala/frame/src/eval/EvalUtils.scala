@@ -31,6 +31,7 @@ object EvalUtils {
   // second step: maybe put together into a general cooccurrence utility.
 
   // sourceDistribution is a probability distribution over sources where the pair appears.
+  // TODO: change this to compute sample covariance correctly (with n-1 denom)
   case class NPMIResult[A](
     pmi: Double,
     npmi: Double,
@@ -82,7 +83,7 @@ object EvalUtils {
         }
       }
     }.flatMap { jointProbsWithSources =>
-      val variances = marginalProbs.map { case (a, marginal) =>
+      val stdevs = marginalProbs.map { case (a, marginal) =>
         val selfJointProb = jointProbsWithSources(Duad(a, a)).unorderedFold
         a -> sqrt(selfJointProb - pow(marginal, 2))
       }
@@ -96,7 +97,7 @@ object EvalUtils {
             marginalProbs(pair.min) * marginalProbs(pair.max)
           }
           val covariance = jointProb - independentProb
-          val correlation = covariance / (variances(pair.min) * variances(pair.max))
+          val correlation = covariance / (stdevs(pair.min) * stdevs(pair.max))
           val result = if(jointProb == 0.0) NPMIResult.never[Source](covariance, correlation) else {
             assert(independentProb != 0.0)
             val logJointProb = log(jointProb)
