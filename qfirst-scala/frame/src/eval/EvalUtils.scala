@@ -29,33 +29,34 @@ object EvalUtils {
   // With or without replacement? currently implemented with replacement
   // i think this is right because pmi with self should never be negative.
   // w/o replacement would mean neg self-pmi possible with fine-grained clusters.
-  def calculateNPMIs[A: Order](
-    predictedClusters: Vector[Map[A, Int]]
+  def calculateNPMIs[A: Order, N: Numeric](
+    groupings: Vector[Map[A, N]]
   ): Map[Duad[A], Double] = {
+    val groups = groupings.map(_.mapVals(implicitly[Numeric[N]].toDouble))
     import scala.math.{pow, log}
-    val labels = predictedClusters.foldMap(_.keySet)
-    val clusterSizes = predictedClusters.map(_.unorderedFold)
-    val total = clusterSizes.combineAll
-    val totalPairs = clusterSizes.foldMap(pow(_, 2))
-    val marginals = predictedClusters.foldMap { counts =>
+    val labels = groups.foldMap(_.keySet)
+    val groupSizes = groups.map(_.unorderedFold)
+    val total = groupSizes.combineAll
+    val totalPairs = groupSizes.foldMap(pow(_, 2))
+    val marginals = groups.foldMap { counts =>
       val size = counts.unorderedFold
       counts.mapVals(_ * size)
     }
     val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
 
-    val marginalProbs = predictedClusters.combineAll.mapVals(_.toDouble / total)
+    val marginalProbs = groups.combineAll.mapVals(_ / total)
 
     pairs.iterator.map { pair =>
       // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
-      val prob = predictedClusters.foldMap { goldCounts =>
-        val leftCounts = goldCounts.getOrElse(pair.min, 0)
-        val rightCounts = goldCounts.getOrElse(pair.max, 0)
+      val prob = groups.foldMap { goldCounts =>
+        val leftCounts = goldCounts.getOrElse(pair.min, 0.0)
+        val rightCounts = goldCounts.getOrElse(pair.max, 0.0)
         (leftCounts * rightCounts).toDouble / goldCounts.unorderedFold
       } / total
       val independentProb = {
         marginalProbs(pair.min) * marginalProbs(pair.max)// / (totalPairs * totalPairs)
       }
-      val pnmi = if(prob == 0.0) {
+      val npmi = if(prob == 0.0) {
         if(independentProb == 0.0) {
           assert(false) // should never happen
           0.0
@@ -65,7 +66,7 @@ object EvalUtils {
         val pmi = logJointProb - log(independentProb)
         pmi / (-logJointProb)
       }
-      pair -> pnmi
+      pair -> npmi
     }.toMap
   }
 
@@ -105,54 +106,12 @@ object EvalUtils {
       } / total
 
       import scala.math.{pow, log}
-      val pnmi = if(jointProb == 0.0) -1.0 else {
+      val npmi = if(jointProb == 0.0) -1.0 else {
         val logJointProb = log(jointProb)
         val pmi = logJointProb - log(independentProb)
         pmi / -logJointProb
       }
-      pair -> pnmi
-    }.toMap
-  }
-
-  // doesn't seem to work? may need to fix something with the marginals
-  def calculateNPMIsWithoutReplacement[A: Order](
-    predictedClusters: Vector[Map[A, Int]]
-  ): Map[Duad[A], Double] = {
-    import scala.math.{pow, log}
-    val labels = predictedClusters.foldMap(_.keySet)
-    val clusterSizes = predictedClusters.map(_.unorderedFold)
-    val total = clusterSizes.combineAll
-    val totalPairs = clusterSizes.foldMap(count => count * (count - 1))
-    val marginals = predictedClusters.foldMap { counts =>
-      val size = counts.unorderedFold
-      counts.mapVals(_ * (size - 1))
-    }
-    // val adjustedMarginals = predictedClusters.foldMap { counts =>
-    //   val size = counts.unorderedFold
-    //   counts.mapVals((_ - 1) * (size - 1))
-    // }
-    val pairs = for(x <- labels; y <- labels) yield Duad(x, y)
-
-    pairs.iterator.map { pair =>
-      val cooccurrences = predictedClusters.foldMap { goldCounts =>
-        val leftCounts = goldCounts.getOrElse(pair.min, 0)
-        val rightCounts = goldCounts.getOrElse(pair.max, 0)
-        if(pair.min == pair.max) {
-          leftCounts * (rightCounts - 1)
-        } else leftCounts * rightCounts
-      }
-      val independentCooccurrenceProb = {
-        marginals(pair.min) * marginals(pair.max) / (totalPairs * totalPairs)
-      }
-      val pnmi = if(cooccurrences == 0) {
-        if(independentCooccurrenceProb == 0.0) 0.0
-        else -1.0
-      } else {
-        val logJointProb = log(cooccurrences.toDouble / totalPairs)
-        val pmi = logJointProb - log(independentCooccurrenceProb)
-        pmi / (-logJointProb)
-      }
-      pair -> pnmi
+      pair -> npmi
     }.toMap
   }
 }
