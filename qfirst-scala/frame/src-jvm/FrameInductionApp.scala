@@ -98,30 +98,33 @@ object FrameInductionApp extends CommandIOApp(
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         val argTreesRefined = argTrees.asInstanceOf[Map[String, Clustering.Argument[Arg]]]
-        features.argRoleLabels.get >>= (argRoleLabels =>
-          if(features.mode.shouldEvaluate) {
-            // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-            //   Evaluation.evaluateArgumentClusters(
-            //     evalDir.resolve("sense-specific"),
-            //     s"$model (sense-specific roles)",
-            //     argTreesRefined, argRoleLabels,
-            //     tuningSpecs,
-            //     useSenseSpecificRoles = true
-            //   )
-            // ) >>
-              IO.pure(features.assumeGoldVerbSense).ifM(
-                IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                  Evaluation.evaluateArgumentClusters(
-                    evalDir.resolve("sense-agnostic"),
-                    s"$model (sense-agnostic roles)",
-                    argTreesRefined, argRoleLabels,
-                    tuningSpecs,
-                    useSenseSpecificRoles = false
+        features.argQuestionDists.get.flatMap { questionDists =>
+          features.argRoleLabels.get.flatMap { argRoleLabels =>
+            if(features.mode.shouldEvaluate) {
+              // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+              //   Evaluation.evaluateArgumentClusters(
+              //     evalDir.resolve("sense-specific"),
+              //     s"$model (sense-specific roles)",
+              //     argTreesRefined, argRoleLabels,
+              //     tuningSpecs,
+              //     useSenseSpecificRoles = true
+              //   )
+              // ) >>
+                IO.pure(features.assumeGoldVerbSense).ifM(
+                  IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                    Evaluation.evaluateArgumentClusters(
+                      questionDists,
+                      evalDir.resolve("sense-agnostic"),
+                      s"$model (sense-agnostic roles)",
+                      argTreesRefined, argRoleLabels,
+                      tuningSpecs,
+                      useSenseSpecificRoles = false
+                    )
                   )
                 )
-              )
-          } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
-        )
+            } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
+          }
+        }
       }
     } yield ()
   }
@@ -164,7 +167,7 @@ object FrameInductionApp extends CommandIOApp(
             if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
               Log.infoBranch("Evaluating verb clustering")(
                 Evaluation.evaluateClusters(
-                  evalDir.resolve("verb"), model.toString,
+                  None, evalDir.resolve("verb"), model.toString,
                   verbTreesRefined, verbSenseLabels,
                   tuningSpecs
                 )
@@ -209,36 +212,43 @@ object FrameInductionApp extends CommandIOApp(
       evalDir <- features.modelDir.map(_.resolve(model.toString)).flatTap(createDir)
       _ <- features.getIfPropBank.fold(IO.unit) { features => // shadow with more specific type
         val verbClusterModelsRefined = verbClusterModels.asInstanceOf[Map[String, VerbClusterModel[String, Arg]]]
-        if(!features.mode.shouldEvaluate) Log.info(s"Skipping evaluation for run mode ${features.mode}") else {
-          features.argRoleLabels.get.flatMap((argRoleLabels: Map[String,NonMergingMap[ArgumentId[Arg],PropBankRoleLabel]]) =>
-            // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-            //   Evaluation.evaluateArgumentClusters[String, Arg](
-            //     evalDir.resolve("sense-specific"),
-            //     s"$model (sense-specific roles)",
-            //     verbClusterModelsRefined.mapVals(_.argumentClustering),
-            //     argRoleLabels,
-            //     tuningSpecs,
-            //     useSenseSpecificRoles = true
-            //   )
-            // ) >>
-              IO.pure(features.assumeGoldVerbSense).ifM(
-                IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                  Evaluation.evaluateArgumentClusters(
-                    evalDir.resolve("sense-agnostic"),
-                    s"$model (sense-agnostic roles)",
-                    verbClusterModelsRefined.mapVals(_.argumentClustering),
-                    argRoleLabels,
-                    tuningSpecs,
-                    useSenseSpecificRoles = false
+        if(!features.mode.shouldEvaluate) Log.info(s"Skipping evaluation for run mode ${features.mode}")
+        else {
+          features.argQuestionDists.get.flatMap { questionDists =>
+            features.argRoleLabels.get.flatMap { argRoleLabels =>
+              // : Map[String,NonMergingMap[ArgumentId[Arg],PropBankRoleLabel]]
+              // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+              //   Evaluation.evaluateArgumentClusters[String, Arg](
+              //     evalDir.resolve("sense-specific"),
+              //     s"$model (sense-specific roles)",
+              //     verbClusterModelsRefined.mapVals(_.argumentClustering),
+              //     argRoleLabels,
+              //     tuningSpecs,
+              //     useSenseSpecificRoles = true
+              //   )
+              // ) >>
+                IO.pure(features.assumeGoldVerbSense).ifM(
+                  IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                    Evaluation.evaluateArgumentClusters(
+                      questionDists,
+                      evalDir.resolve("sense-agnostic"),
+                      s"$model (sense-agnostic roles)",
+                      verbClusterModelsRefined.mapVals(_.argumentClustering),
+                      argRoleLabels,
+                      tuningSpecs,
+                      useSenseSpecificRoles = false
+                    )
                   )
                 )
-              )
-          ) >> (
-            if(features.assumeGoldVerbSense) Log.info(s"Skipping verb sense evaluation since gold senses are assumed") else {
+            }
+          } >> (
+            if(features.assumeGoldVerbSense) {
+              Log.info(s"Skipping verb sense evaluation since gold senses are assumed")
+            } else {
               features.verbSenseLabels.get >>= { (verbSenseLabels: String => VerbId => String) =>
                 Log.infoBranch("Evaluating verb clustering")(
-                  Evaluation.evaluateClusters[String, VerbId, String](
-                    evalDir.resolve("verb"), model.toString,
+                  Evaluation.evaluateClusters(
+                    None, evalDir.resolve("verb"), model.toString,
                     verbClusterModelsRefined.mapVals(_.verbClustering), verbSenseLabels,
                     tuningSpecs
                   )

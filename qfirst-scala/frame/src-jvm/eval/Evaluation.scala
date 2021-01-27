@@ -216,7 +216,8 @@ object Evaluation {
     }
   }
 
-  def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show](
+  def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show, Item](
+    itemDists: Option[Map[VerbType, NonMergingMap[InstanceId, Map[Item, Double]]]],
     parentDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[InstanceId]],
@@ -248,23 +249,26 @@ object Evaluation {
             metric.precisionName, metric.recallName,
             resultsDir
           )
-          allClusters = argClusterings.mapVals { clustering =>
+          allClusterings = argClusterings.mapVals { clustering =>
             clustering.clusterTreeOpt.foldMap(tree =>
               bestCriterion
                 .splitTree(tree, (x: Set[InstanceId]) => x.size, bestThreshold)
                 .map(_.unorderedFold)
-            ) ++ clustering.extraClusters.values
+            ) -> clustering.extraClusters.values.toVector
           }
+          // TODO bring in question distributions.
+          learnedClusterings = allClusterings.mapVals(_._1)
+          allClusters = allClusterings.mapVals { case (c, extra) => c ++ extra }
           allLabeledClusters = allClusters.map { case (verbType, clusters) =>
             val goldLabelFn = getGoldLabel(verbType)
             verbType -> clusters.map(_.unorderedFoldMap(id => Map(goldLabelFn(id) -> 1)))
           }
           goldLabelCounts = allLabeledClusters.unorderedFoldMap(_.unorderedFold)
           minGoldLabelCount = 5
-          npmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters.values.toVector)
+          goldNpmis = EvalUtils.calculateAggregateNPMIs(allLabeledClusters.values.toVector)
           _ <- IO (
             Plotting.plotNPMI[GoldLabel](
-              npmis.filter { case (Duad(l, r), _) =>
+              goldNpmis.filter { case (Duad(l, r), _) =>
                 goldLabelCounts(l) > minGoldLabelCount && goldLabelCounts(r) > minGoldLabelCount
               },
               f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
@@ -304,7 +308,8 @@ object Evaluation {
     )
   }
 
-  def evaluateClusters[VerbType : Show, InstanceId, GoldLabel : Order : Show](
+  def evaluateClusters[VerbType : Show, InstanceId, GoldLabel : Order : Show, Item](
+    itemDists: Option[Map[VerbType, NonMergingMap[InstanceId, Map[Item, Double]]]],
     resultsDir: NIOPath,
     modelName: String,
     clusterings: Map[VerbType, Clustering[InstanceId]],
@@ -312,10 +317,11 @@ object Evaluation {
     tuningSpecs: NonEmptyList[SplitTuningSpec])(
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ) = activeMetrics.traverse(metric =>
-    runClusteringEvalWithMetric(resultsDir, modelName, clusterings, getGoldLabel, tuningSpecs, metric)
+    runClusteringEvalWithMetric(itemDists, resultsDir, modelName, clusterings, getGoldLabel, tuningSpecs, metric)
   ).void
 
   def evaluateArgumentClusters[VerbType : Show, Arg](
+    questionDists: Map[VerbType, NonMergingMap[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     resultsDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[ArgumentId[Arg]]],
@@ -326,10 +332,10 @@ object Evaluation {
   ): IO[Unit] = {
     if(useSenseSpecificRoles) {
       val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId)
-      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs).void
+      evaluateClusters(Some(questionDists), resultsDir, modelName, argClusterings, getLabel, tuningSpecs).void
     } else {
       val getLabel = (verbType: VerbType) => (argId: ArgumentId[Arg]) => argRoleLabels(verbType).value(argId).role
-      evaluateClusters(resultsDir, modelName, argClusterings, getLabel, tuningSpecs)(
+      evaluateClusters(Some(questionDists), resultsDir, modelName, argClusterings, getLabel, tuningSpecs)(
         implicitly[Show[VerbType]], EvalUtils.conll08RoleOrder, implicitly[Show[String]], Log, timer
       )
     }
