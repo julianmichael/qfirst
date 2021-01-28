@@ -257,16 +257,16 @@ object Evaluation {
             ) -> clustering.extraClusters.values.toVector
           }
           learnedClusterings = allClusterings.mapVals(_._1)
-          _ <- itemDistsOpt.traverse { itemDists =>
-            IO {
-              val allClusters = learnedClusterings.toVector.flatMap { case (verb, clusters) =>
-                clusters.map(verb -> _)
-              }
-              val allDists = itemDists.values.toList.combineAll
-              val allClusterDists = allClusters.mapSecond(_.unorderedFoldMap(allDists))
-              Analysis.reportQuestionPairRelatedness(allClusterDists, resultsDir)
-            }.flatten
-          }
+          // _ <- itemDistsOpt.traverse { itemDists =>
+          //   IO {
+          //     val allClusters = learnedClusterings.toVector.flatMap { case (verb, clusters) =>
+          //       clusters.map(verb -> _)
+          //     }
+          //     val allDists = itemDists.values.toList.combineAll
+          //     val allClusterDists = allClusters.mapSecond(_.unorderedFoldMap(allDists))
+          //     Analysis.reportQuestionPairRelatedness(allClusterDists, resultsDir)
+          //   }.flatten
+          // }
           allClusters = allClusterings.mapVals { case (c, extra) => c ++ extra }
           allLabeledClusters = allClusters.map { case (verbType, clusters) =>
             val goldLabelFn = getGoldLabel(verbType)
