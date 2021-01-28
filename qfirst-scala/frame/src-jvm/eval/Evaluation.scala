@@ -216,6 +216,17 @@ object Evaluation {
     }
   }
 
+  val argGoldLabels = (0 to 5).map(i => s"A$i").toSet
+  val modGoldLabels = Set("TMP", "ADV", "MNR", "LOC", "PNC", "CAU", "DIR").map(x => s"AM-$x")
+  val lexGoldLabels = Set("NEG", "MOD", "DIS").map(x => s"AM-$x")
+  def getGoldLabelGroup[GoldLabel: Show](label: GoldLabel) = {
+    val x = label.show
+    if(argGoldLabels.contains(x)) "Arg"
+    else if(modGoldLabels.contains(x)) "Mod"
+    else if(lexGoldLabels.contains(x)) "Lex"
+    else "Other"
+  }
+
   def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show](
     itemDistsOpt: Option[Map[VerbType, NonMergingMap[InstanceId, Map[QuestionTemplate, Double]]]],
     parentDir: NIOPath,
@@ -290,6 +301,9 @@ object Evaluation {
             }
             val b3instanceByVerb = b3instanceByVerbAndLabel.mapVals(_.values.toList.combineAll)
             val b3instanceByLabel = b3instanceByVerbAndLabel.values.toList.combineAll
+            val b3instanceByLabelGroup = b3instanceByVerbAndLabel.values.toList.foldMap(
+              _.toList.foldMap { case (label, pr) => Map(getGoldLabelGroup(label) -> pr) }
+            )
             FileUtil.writeString(
               resultsDir.resolve("best-b3-by-verb.html"))(
               Html.prfTableHtml(b3instanceByVerb).render
@@ -297,6 +311,10 @@ object Evaluation {
               FileUtil.writeString(
                 resultsDir.resolve("best-b3-by-label.html"))(
                 Html.prfTableHtml(b3instanceByLabel).render
+              ) >>
+              FileUtil.writeString(
+                resultsDir.resolve("best-b3-by-label-group.html"))(
+                Html.prfTableHtml(b3instanceByLabelGroup).render
               )
           }.flatten
         } yield ()
