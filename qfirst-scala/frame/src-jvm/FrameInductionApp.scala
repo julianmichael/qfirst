@@ -385,7 +385,7 @@ object FrameInductionApp extends CommandIOApp(
   ): IO[Unit] = for {
     split <- features.splitName
     outDir <- features.outDir.map(_.resolve(s"analysis/$split")).flatTap(createDir)
-    _ <- Analysis(features, outDir).run(shouldDo)
+    _ <- Analysis.run(features, outDir, shouldDo)
   } yield ()
 
   def getFeatures(

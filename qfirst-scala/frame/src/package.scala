@@ -22,6 +22,7 @@ import freelog.LogLevel
 import freelog.ProgressSpec
 
 import scala.collection.immutable.SortedSet
+import _root_.cats.Functor
 
 package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
@@ -45,6 +46,13 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
 
   implicit class RichAny[A](val x: A) extends AnyVal {
     def <->(y: A)(implicit o: Order[A]): Duad[A] = Duad(x, y)
+  }
+
+  implicit class RichPair[F[_], A, B](val x: F[(A, B)]) extends AnyVal {
+    def mapFirst[C](f: A => C)(implicit F: Functor[F]): F[(C, B)] =
+      x.map { case (a, b) => f(a) -> b }
+    def mapSecond[C](f: B => C)(implicit F: Functor[F]): F[(A, C)] =
+      x.map { case (a, b) => a -> f(b) }
   }
 
   implicit class RichMap[A, B](val x: Map[A, B]) extends AnyVal {

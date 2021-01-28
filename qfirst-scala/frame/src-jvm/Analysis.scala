@@ -22,21 +22,22 @@ import qfirst.frame.util.Duad
 import qfirst.frame.eval.EvalUtils
 import freelog.EphemeralTreeLogger
 import qfirst.metrics.WeightedNumbers
+import cats.Show
 
-case class Analysis[Arg: Encoder : Decoder : Order](
-  features: PropBankFeatures[Arg],
-  outDir: NIOPath
-) {
+object Analysis {
 
-  def run(shouldDo: String => Boolean)(
+  def run[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath,
+    shouldDo: String => Boolean)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     _ <- IO(shouldDo("role-questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
-    _ <- IO(shouldDo("question-relatedness")).ifM(reportQuestionPairRelatedness(features, outDir), IO.unit)
+    _ <- IO(shouldDo("question-relatedness")).ifM(reportQuestionPairRelatednessFull(features, outDir), IO.unit)
     _ <- IO(shouldDo("rule-lexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
   } yield ()
 
-  def reportRoleQuestionDists(
+  def reportRoleQuestionDists[Arg](
     features: PropBankFeatures[Arg],
     outDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
@@ -93,7 +94,52 @@ case class Analysis[Arg: Encoder : Decoder : Order](
     }
   }
 
-  def reportQuestionPairRelatedness(
+  def reportQuestionPairRelatedness[Source: Show](
+    flatQuestionDists: Vector[(Source, Map[QuestionTemplate, Double])],
+    outDir: NIOPath)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    marginals <- flatQuestionDists.toVector.infoBarFoldMapM("Computing question marginals")(_._2.pure[IO])
+    totalQuestionCount = marginals.unorderedFold
+    marginalsPath = outDir.resolve("question-marginals.txt")
+    _ <- Log.infoBranch(s"Writing question marginals to $marginalsPath") {
+      FileUtil.writeString(marginalsPath)(
+        marginals.toVector.sortBy(-_._2).map { case (q, c) =>
+          f"${q.toQuestionString}%-50s $c%9.1f ${c/totalQuestionCount}%.10f"
+        }.mkString("\n")
+      )
+    }
+    acceptableQuestions = {
+      marginals
+        .filter(_._2 > reasonableQuestionFrequencyCutoff).keySet
+        .filter(_.wh == "what".lowerCase)
+    }
+    _ <- Log.info(s"""|${acceptableQuestions.size} "what" questions
+                      |of frequency > $reasonableQuestionFrequencyCutoff."""
+                    .stripMargin.replace("\n", " "))
+    unfilteredNpmis <- Log.infoBranch("Calculating question NPMIs") {
+      EvalUtils.calculateNPMIsLoggingEfficient(
+        flatQuestionDists.map { case (source, counts) =>
+          source.show -> counts.filter(p => acceptableQuestions.contains(p._1))
+        }.toVector
+      )
+    }
+    npmis = unfilteredNpmis.toVector.filter(
+      p => p._1.min != p._1.max &&
+        List(p._1.min, p._1.max).exists(q => marginals(q) > reasonablePairOneSidedFrequencyCutoff)
+    )
+    dir <- outDir.resolve("question-relatedness").pure[IO].flatTap(createDir)
+    _ <- writeMaxStatQuestions(npmis, dir, "npmi", _.npmi)
+    _ <- writeMaxStatQuestions(npmis, dir, "pmi", _.pmi)
+    _ <- writeMaxStatQuestions(npmis, dir, "correlation", _.correlation)
+    _ <- writeMaxStatQuestions(npmis, dir, "covariance", _.covariance)
+    _ <- writeMaxStatQuestions(
+      npmis.filter(p => !isBoringPair(p._1)),
+      dir, "covariance-exciting", _.covariance
+    )
+  } yield ()
+
+  def reportQuestionPairRelatednessFull[Arg](
     features: PropBankFeatures[Arg],
     outDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
@@ -101,46 +147,13 @@ case class Analysis[Arg: Encoder : Decoder : Order](
     for {
       questionDists <- features.argQuestionDists.get
       flatQuestionDists <- Log.infoBranch("Flattening question distributions") {
-        IO(questionDists.toList.flatMap { case (verb, argQs) => argQs.value.values.toVector.map(verb -> _) })
-      }
-      marginals <- flatQuestionDists.toVector.infoBarFoldMapM("Computing question marginals")(_._2.pure[IO])
-      totalQuestionCount = marginals.unorderedFold
-      marginalsPath = outDir.resolve("question-marginals.txt")
-      _ <- Log.infoBranch(s"Writing question marginals to $marginalsPath") {
-        FileUtil.writeString(marginalsPath)(
-          marginals.toVector.sortBy(-_._2).map { case (q, c) =>
-            f"${q.toQuestionString}%-50s $c%9.1f ${c/totalQuestionCount}%.10f"
-          }.mkString("\n")
+        IO(
+          questionDists.toVector.flatMap { case (verb, argQs) =>
+            argQs.value.values.toVector.map(verb -> _)
+          }
         )
       }
-      acceptableQuestions = {
-        marginals
-          .filter(_._2 > reasonableQuestionFrequencyCutoff).keySet
-          .filter(_.wh == "what".lowerCase)
-      }
-      _ <- Log.info(s"""|${acceptableQuestions.size} "what" questions
-                        |of frequency > $reasonableQuestionFrequencyCutoff."""
-                      .stripMargin.replace("\n", " "))
-      unfilteredNpmis <- Log.infoBranch("Calculating question NPMIs") {
-        EvalUtils.calculateNPMIsLoggingEfficient(
-          flatQuestionDists.map { case (verb, counts) =>
-            verb -> counts.filter(p => acceptableQuestions.contains(p._1))
-          }.toVector
-        )
-      }
-      npmis = unfilteredNpmis.toVector.filter(
-        p => p._1.min != p._1.max &&
-          List(p._1.min, p._1.max).exists(q => marginals(q) > reasonablePairOneSidedFrequencyCutoff)
-      )
-      dir <- outDir.resolve("question-relatedness").pure[IO].flatTap(createDir)
-      _ <- writeMaxStatQuestions(npmis, dir, "npmi", _.npmi)
-      _ <- writeMaxStatQuestions(npmis, dir, "pmi", _.pmi)
-      _ <- writeMaxStatQuestions(npmis, dir, "correlation", _.correlation)
-      _ <- writeMaxStatQuestions(npmis, dir, "covariance", _.covariance)
-      _ <- writeMaxStatQuestions(
-        npmis.filter(p => !isBoringPair(p._1)),
-        dir, "covariance-exciting", _.covariance
-      )
+      _ <- reportQuestionPairRelatedness(flatQuestionDists, outDir)
     } yield ()
   }
 
@@ -148,7 +161,7 @@ case class Analysis[Arg: Encoder : Decoder : Order](
     pair.min.copy(prep = pair.max.prep, obj2 = pair.max.obj2) == pair.max
   }
 
-  def reportRuleLexica(
+  def reportRuleLexica[Arg](
     features: PropBankFeatures[Arg],
     outDir: NIOPath)(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]

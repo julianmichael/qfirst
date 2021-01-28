@@ -216,8 +216,8 @@ object Evaluation {
     }
   }
 
-  def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show, Item](
-    itemDists: Option[Map[VerbType, NonMergingMap[InstanceId, Map[Item, Double]]]],
+  def runClusteringEvalWithMetric[VerbType : Show, InstanceId, GoldLabel : Order : Show](
+    itemDistsOpt: Option[Map[VerbType, NonMergingMap[InstanceId, Map[QuestionTemplate, Double]]]],
     parentDir: NIOPath,
     modelName: String,
     argClusterings: Map[VerbType, Clustering[InstanceId]],
@@ -256,8 +256,17 @@ object Evaluation {
                 .map(_.unorderedFold)
             ) -> clustering.extraClusters.values.toVector
           }
-          // TODO bring in question distributions.
           learnedClusterings = allClusterings.mapVals(_._1)
+          _ <- itemDistsOpt.traverse { itemDists =>
+            IO {
+              val allClusters = learnedClusterings.toVector.flatMap { case (verb, clusters) =>
+                clusters.map(verb -> _)
+              }
+              val allDists = itemDists.values.toList.combineAll
+              val allClusterDists = allClusters.mapSecond(_.unorderedFoldMap(allDists))
+              Analysis.reportQuestionPairRelatedness(allClusterDists, resultsDir)
+            }.flatten
+          }
           allClusters = allClusterings.mapVals { case (c, extra) => c ++ extra }
           allLabeledClusters = allClusters.map { case (verbType, clusters) =>
             val goldLabelFn = getGoldLabel(verbType)
@@ -308,8 +317,8 @@ object Evaluation {
     )
   }
 
-  def evaluateClusters[VerbType : Show, InstanceId, GoldLabel : Order : Show, Item](
-    itemDists: Option[Map[VerbType, NonMergingMap[InstanceId, Map[Item, Double]]]],
+  def evaluateClusters[VerbType : Show, InstanceId, GoldLabel : Order : Show](
+    itemDists: Option[Map[VerbType, NonMergingMap[InstanceId, Map[QuestionTemplate, Double]]]],
     resultsDir: NIOPath,
     modelName: String,
     clusterings: Map[VerbType, Clustering[InstanceId]],
