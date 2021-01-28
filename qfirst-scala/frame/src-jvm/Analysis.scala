@@ -86,7 +86,7 @@ object Analysis {
             val topSources = result.sourceDistribution.toVector.sortBy(-_._2).take(20)
             val topSourcesString = topSources.map(_._1).mkString(", ")
             val topSourceLogProbsString = topSources.map { case (source, prob) =>
-              f"${scala.math.log(prob) / scala.math.log(2)}%.2f)"
+              f"${scala.math.log(prob) / scala.math.log(2)}%.2f"
             }.mkString(", ")
             s"${q1.toQuestionString}\t${q2.toQuestionString}\t${stat(result)}\t${topSourcesString}\t${topSourceLogProbsString}"
           }.mkString("\n")

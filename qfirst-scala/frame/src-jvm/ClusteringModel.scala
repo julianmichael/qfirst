@@ -256,7 +256,8 @@ object SideClusteringModel {
     "or", "though", // "then", "next" // questionable
     "hence",
     "furthermore", "moreover", "thus", "so", // "further" /// questionable
-    "either", "nonetheless", "regardless", // "well" // questionable
+    // "either",
+    "nonetheless", "regardless", // "well" // questionable
     "rather", "ironically", "indeed", // "just", "even", "only", "say" // questionable
     "certainly", "frankly", "similarly", "thereby", "therefore",
     // "exactly",
@@ -618,6 +619,7 @@ object FullArgumentModel {
     ConstituentType -> "syntc",
     ConstituentTypeConverted -> "syntc2",
     Preposition -> "prep",
+    DifferentVerbs -> "dv"
   ) ++ List("masked", "repeated", "symm_both", "symm_left", "symm_right").flatMap(mode =>
     List(
       HeadMLMEntropy(mode) -> s"head_mlm_$mode",
@@ -777,6 +779,26 @@ object FullArgumentModel {
     } yield (
       new DirichletMAPClusteringSparse(indexedInstances, 1, 0.01),
       new MinEntropyClusteringSparse(indexedInstances, 1)
+    )
+  }
+
+  case object DifferentVerbs extends LossTerm {
+    type FlatParam = Map[VerbId, Double]
+    type AgglomParam = Map[VerbId, Double]
+
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = features.verbArgSets.get.as(())
+
+    override def create[VerbType, Arg](
+      features: Features[VerbType, Arg], verbType: VerbType
+    ) = for {
+      argIdToVerbId <- features.verbArgSets.get.map(_.apply(verbType)).map(
+        _.toList.flatMap { case (verbId, args) =>
+          args.toList.map(arg => ArgumentId(verbId, arg) -> verbId)
+        }.toMap
+      )
+    } yield (
+      new NonLikeClustering(argIdToVerbId),
+      new NonLikeClustering(argIdToVerbId)
     )
   }
 
