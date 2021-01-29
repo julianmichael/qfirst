@@ -313,6 +313,8 @@ sealed abstract class ArgumentModel(val sideClusteringModelOpt: Option[SideClust
     .toMap
 }
 object ArgumentModel {
+  implicit val argumentModelOrder = Order.by[ArgumentModel, String](_.toString)
+
   def fromString(x: String): Option[ArgumentModel] =
     ClusteringModel.fromString(x).collect {
       case model: ArgumentModel => model

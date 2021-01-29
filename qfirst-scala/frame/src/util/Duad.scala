@@ -13,4 +13,9 @@ object Duad {
     if(_1 <= _2) DuadImpl(_1, _2) else DuadImpl(_2, _1)
   }
   def unapply[A](d: Duad[A]): Some[(A, A)] = Some(d.min -> d.max)
+
+  implicit def duadOrder[A: Order]: Order[Duad[A]] = Order.whenEqual(
+    Order.by[Duad[A], A](_.min),
+    Order.by[Duad[A], A](_.max)
+  )
 }

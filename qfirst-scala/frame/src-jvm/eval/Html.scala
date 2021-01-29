@@ -13,30 +13,16 @@ object Html {
 
   def prfTableHtml[A : Show](stats: Map[A, WeightedPR]) = {
 
-    // val f1SmoothingCount = 1.0
-
-    def calculateSmoothedF1(target: WeightedPR, mean: WeightedPR, smoothing: Double) = {
-      val smoothedP = (
-        WeightedNumbers(target.precision, target.pseudocount) |+|
-          WeightedNumbers(mean.precision, smoothing)
-      ).stats.weightedMean
-      val smoothedR = (
-        WeightedNumbers(target.recall, target.pseudocount) |+|
-          WeightedNumbers(mean.recall, smoothing)
-      ).stats.weightedMean
-      Functions.harmonicMean(smoothedP, smoothedR)
-    }
-
     def prfCells(prf: WeightedPR, all: WeightedPR) = {
       val total = all.pseudocount
       val totalError = 1.0 - all.f1
 
       val (p, r, f1) = prf.prf
       val pcount = prf.pseudocount
-      val smoothedF1_1 = calculateSmoothedF1(prf, all, 1.0)
-      val smoothedF1_5 = calculateSmoothedF1(prf, all, 5.0)
-      val smoothedF1_10 = calculateSmoothedF1(prf, all, 10.0)
-      val smoothedF1_25 = calculateSmoothedF1(prf, all, 25.0)
+      val smoothedF1_1 =  Evaluation.calculateSmoothedF1(prf, all, 1.0)
+      val smoothedF1_5 =  Evaluation.calculateSmoothedF1(prf, all, 5.0)
+      val smoothedF1_10 = Evaluation.calculateSmoothedF1(prf, all, 10.0)
+      val smoothedF1_25 = Evaluation.calculateSmoothedF1(prf, all, 25.0)
 
       val percent = pcount / total
       val error = 1.0 - f1

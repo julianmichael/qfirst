@@ -31,6 +31,19 @@ import scala.annotation.tailrec
 
 object Evaluation {
 
+    def calculateSmoothedF1(target: WeightedPR, mean: WeightedPR, smoothing: Double): Double = {
+      val smoothedP = (
+        WeightedNumbers(target.precision, target.pseudocount) |+|
+          WeightedNumbers(mean.precision, smoothing)
+      ).stats.weightedMean
+      val smoothedR = (
+        WeightedNumbers(target.recall, target.pseudocount) |+|
+          WeightedNumbers(mean.recall, smoothing)
+      ).stats.weightedMean
+      Functions.harmonicMean(smoothedP, smoothedR)
+    }
+
+
   import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
 
   def getAllClusteringConfs[A](

@@ -5,6 +5,7 @@ import cats.implicits._
 
 
 // TODO weighted quartiles, etc.
+// TODO make this a CommutativeMonoid
 
 case class WeightedNumbers[N](values: Vector[(Double, N)])(implicit N: Numeric[N]) {
   def stats = {

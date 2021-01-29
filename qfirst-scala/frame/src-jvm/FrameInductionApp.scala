@@ -388,6 +388,60 @@ object FrameInductionApp extends CommandIOApp(
     _ <- Analysis.run(features, outDir, shouldDo)
   } yield ()
 
+  def getTunedArgClustering[VerbType : Encoder : Decoder, Arg : Encoder : Decoder : Order](
+    features: Features[VerbType, Arg],
+    model: ArgumentModel)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Map[VerbType, Vector[Set[ArgumentId[Arg]]]]] = for {
+    bestSettingFilename <- features.modelTuningDir.map(
+      _.resolve(s"$model/sense-agnostic/pur-coll/best-setting.txt")
+    )
+    tuningSpecStr <- FileUtil.readString(bestSettingFilename)
+    tuningSpec <- IO(SplitTuningSpec.fromString(tuningSpecStr).get)
+    _ <- Log.trace(s"Tuning spec: $tuningSpec")
+    _ <- IO(
+      require(
+        Set("entropy", "num-clusters").contains(tuningSpec.criterion.name) &&
+          tuningSpec.thresholds.size == 1
+      )
+    )
+    criterion = tuningSpec.criterion.name match {
+      case "entropy" => ClusterSplittingCriterion.Entropy(tuningSpec.thresholds.head)
+      case "num-clusters" => ClusterSplittingCriterion.Number(tuningSpec.thresholds.head.toInt)
+    }
+    clusterings <- getArgumentClusters(model, features).flatMap(_.read.map(_.get))
+    allClusterSets <- clusterings.toList.infoBarTraverse("Splitting clusters") { case (verb, clustering) =>
+      IO {
+        val res = clustering.clusterTreeOpt.foldMap(tree =>
+          criterion
+            .splitTree(tree, (x: Set[ArgumentId[Arg]]) => x.size.toDouble)
+            .map(_.unorderedFold)
+        ) ++ clustering.extraClusters.values
+        verb -> res
+      }
+    }
+  } yield allClusterSets.toMap
+
+  def runCompare[Arg: Encoder : Decoder : Order](
+    features: PropBankFeatures[Arg],
+    models: Duad[ArgumentModel])(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    split <- features.splitName
+    // _ <- argModelSpecs
+    outDir <- {
+      features.outDir
+        .map(_.resolve(s"comparison/$split")).flatTap(createDir)
+        .map(_.resolve(s"${models.min}###${models.max}")).flatTap(createDir)
+    }
+    clustering1 <- getTunedArgClustering(features, models.min)
+    clustering2 <- getTunedArgClustering(features, models.max)
+    _ <- Comparison.run(
+      outDir, features,
+      models.min.toString, clustering1,
+      models.max.toString, clustering2)
+  } yield ()
+
   def getFeatures(
     setting: DataSetting, mode: RunMode)(
     implicit Log: EphemeralTreeLogger[IO, String]
@@ -422,6 +476,16 @@ object FrameInductionApp extends CommandIOApp(
     ClusteringModel.fromString(string)
       .map(Validated.valid)
       .getOrElse(Validated.invalidNel(s"Invalid model $string. (todo: better error reporting)"))
+  }
+
+  val argModelsO = Opts.options[String](
+    "model", metavar = "loss spec", help = "Clustering model configuration."
+  ).mapValidated { strings =>
+    strings.traverse(string =>
+      ArgumentModel.fromString(string)
+        .map(Validated.valid)
+        .getOrElse(Validated.invalidNel(s"Invalid model $string. (Needs arg model. todo: better error reporting)"))
+    )
   }
 
   val defaultTuningSpecs = NonEmptyList.of(
@@ -558,9 +622,37 @@ object FrameInductionApp extends CommandIOApp(
     }
   )
 
+  val compare = Opts.subcommand(
+    name = "compare",
+    help = "Compare argument model performance.")(
+    (dataO, modeO, argModelsO.map(_.toList)).mapN { (data, mode, models) =>
+      withLogger { logger =>
+        implicit val Log = logger
+        Log.infoBranch("Compare") {
+          for {
+            _ <- Log.info(s"Mode: $mode")
+            _ <- Log.info(s"Data: $data")
+            modelPairs = for(x <- models; y <- models; if x != y) yield Duad(x, y)
+            _ <- modelPairs.distinct.infoBarTraverse("Comparing models") { models =>
+                data match {
+                  case d @ DataSetting.Qasrl =>
+                    IO.raiseError(new IllegalArgumentException("Cannot run analysis on QA-SRL."))
+                  case d @ DataSetting.Ontonotes5(_) =>
+                    runCompare(getFeatures(d, mode).getIfPropBank.get, models)
+                  case d @ DataSetting.CoNLL08(_) =>
+                    runCompare(getFeatures(d, mode).getIfPropBank.get, models)
+                }
+            }
+          } yield ExitCode.Success
+        }
+      }
+    }
+  )
+
   def main: Opts[IO[ExitCode]] =
     setup
       .orElse(run)
       .orElse(summarize)
       .orElse(analyze)
+      .orElse(compare)
 }
