@@ -792,8 +792,8 @@ class CoNLL08Features(
   }
 
   lazy val origPropBankArgSpans: CachedArgFeats[Map[ESpan, Double]] = {
-    // TODO decide what to do about including the VerbType, for sense-agnostic and sense-specific ones to share file cache...
-    fileCacheArgFeats("aligned-propbank-spans", log = true)(
+    val verbTypeLabel = if(assumeGoldVerbSense) "by-sense" else "by-lemma"
+    fileCacheArgFeats(s"aligned-propbank-spans-$verbTypeLabel", log = true)(
       (dataset.data, argRoleLabels.data).mapN { (data, argRoleLabels) =>
         for {
           ptb2Sentences <- ptb2Sentences.get

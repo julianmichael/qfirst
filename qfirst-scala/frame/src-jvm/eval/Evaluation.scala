@@ -318,7 +318,7 @@ object Evaluation {
               _.toList.foldMap { case (label, pr) => Map(getGoldLabelGroup(label) -> pr) }
             )
             Csv.writePrfTableCsv(
-              resultsDir.resolve("best-b3-by-verb-and-label.tsv"),
+              resultsDir.resolve("best-b3-by-verb-and-label.csv"),
               "Verb", "Role", b3instanceByVerbAndLabel
             ) >>
               FileUtil.writeString(

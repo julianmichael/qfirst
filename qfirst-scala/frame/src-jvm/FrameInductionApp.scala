@@ -101,27 +101,26 @@ object FrameInductionApp extends CommandIOApp(
         features.argQuestionDists.get.flatMap { questionDists =>
           features.argRoleLabels.get.flatMap { argRoleLabels =>
             if(features.mode.shouldEvaluate) {
+              Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                Evaluation.evaluateArgumentClusters(
+                  questionDists,
+                  evalDir.resolve("sense-agnostic"),
+                  s"$model (sense-agnostic roles)",
+                  argTreesRefined, argRoleLabels,
+                  tuningSpecs,
+                  useSenseSpecificRoles = false
+                )
+              )
               // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
               //   Evaluation.evaluateArgumentClusters(
+              //     questionDists,
               //     evalDir.resolve("sense-specific"),
               //     s"$model (sense-specific roles)",
               //     argTreesRefined, argRoleLabels,
               //     tuningSpecs,
               //     useSenseSpecificRoles = true
               //   )
-              // ) >>
-                IO.pure(features.assumeGoldVerbSense).ifM(
-                  IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
-                    Evaluation.evaluateArgumentClusters(
-                      questionDists,
-                      evalDir.resolve("sense-agnostic"),
-                      s"$model (sense-agnostic roles)",
-                      argTreesRefined, argRoleLabels,
-                      tuningSpecs,
-                      useSenseSpecificRoles = false
-                    )
-                  )
-                )
+              // )
             } else Log.info(s"Skipping evaluation for run mode ${features.mode}")
           }
         }
@@ -217,18 +216,7 @@ object FrameInductionApp extends CommandIOApp(
           features.argQuestionDists.get.flatMap { questionDists =>
             features.argRoleLabels.get.flatMap { argRoleLabels =>
               // : Map[String,NonMergingMap[ArgumentId[Arg],PropBankRoleLabel]]
-              // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
-              //   Evaluation.evaluateArgumentClusters[String, Arg](
-              //     evalDir.resolve("sense-specific"),
-              //     s"$model (sense-specific roles)",
-              //     verbClusterModelsRefined.mapVals(_.argumentClustering),
-              //     argRoleLabels,
-              //     tuningSpecs,
-              //     useSenseSpecificRoles = true
-              //   )
-              // ) >>
-                IO.pure(features.assumeGoldVerbSense).ifM(
-                  IO.unit, Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
+                  Log.infoBranch("Evaluating argument clustering (verb sense agnostic roles)")(
                     Evaluation.evaluateArgumentClusters(
                       questionDists,
                       evalDir.resolve("sense-agnostic"),
@@ -239,7 +227,17 @@ object FrameInductionApp extends CommandIOApp(
                       useSenseSpecificRoles = false
                     )
                   )
-                )
+                  // Log.infoBranch("Evaluating argument clustering (verb sense specific roles)")(
+                  //   Evaluation.evaluateArgumentClusters[String, Arg](
+                  //     questionDists,
+                  //     evalDir.resolve("sense-specific"),
+                  //     s"$model (sense-specific roles)",
+                  //     verbClusterModelsRefined.mapVals(_.argumentClustering),
+                  //     argRoleLabels,
+                  //     tuningSpecs,
+                  //     useSenseSpecificRoles = true
+                  //   )
+                  // )
             }
           } >> (
             if(features.assumeGoldVerbSense) {
@@ -428,7 +426,6 @@ object FrameInductionApp extends CommandIOApp(
     implicit Log: SequentialEphemeralTreeLogger[IO, String]
   ): IO[Unit] = for {
     split <- features.splitName
-    // _ <- argModelSpecs
     outDir <- {
       features.outDir
         .map(_.resolve(s"comparison/$split")).flatTap(createDir)
