@@ -289,6 +289,7 @@ class NewVerbUI[VerbType, Arg: Order](
   @Lenses case class FeatureOptions(
     questionDist: Boolean,
     argIndex: Boolean,
+    argSyntFunc: Boolean,
     argSpans: Boolean,
     argPrepositions: Boolean,
     argConstituentTypes: Option[String],
@@ -300,13 +301,14 @@ class NewVerbUI[VerbType, Arg: Order](
   object FeatureOptions {
     val constituentTypes = Set("ptb", "stripped")
     val mlmTypes = Set("masked", "repeated", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, false, None, None, None, None, false)
+    def init = FeatureOptions(false, false, false, false, false, None, None, None, None, false)
   }
 
   @Lenses case class FeatureValues(
     verbType: VerbType,
     questionDist: Option[Map[ArgumentId[Arg], Map[QuestionTemplate, Double]]],
     argIndex: Option[Map[ArgumentId[Arg], Int]],
+    argSyntFunc: Option[Map[ArgumentId[Arg], String]],
     argSpans: Option[Map[ArgumentId[Arg], Map[ESpan, Double]]],
     argPrepositions: Option[Map[ArgumentId[Arg], Map[String, Double]]],
     argConstituentTypes: Option[Map[ArgumentId[Arg], Map[String, Double]]],
@@ -319,7 +321,7 @@ class NewVerbUI[VerbType, Arg: Order](
     val questionPrior = questionDist.map(_.unorderedFold)
   }
   object FeatureValues {
-    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None, None)
+    def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None, None, None)
   }
 
   val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
@@ -382,6 +384,13 @@ class NewVerbUI[VerbType, Arg: Order](
             opts => (FeatureValues.argIndex, opts.argIndex),
             (b: Boolean) => Option(
               FeatureReq.ArgIndices[VerbType, Arg](state.features.verbType)
+            ).filter(_ => b)
+          ) >>
+          pullFeature(
+            featureService,
+            opts => (FeatureValues.argSyntFunc, opts.argSyntFunc),
+            (b: Boolean) => Option(
+              FeatureReq.ArgSyntacticFunctions[VerbType, Arg](state.features.verbType)
             ).filter(_ => b)
           ) >>
           pullFeature(
@@ -487,67 +496,80 @@ class NewVerbUI[VerbType, Arg: Order](
     showMetrics: StateSnapshot[Boolean]
   ) = {
     <.div(S.headerContainer)(
-      <.select(S.verbDropdown)(
-        ^.value := VerbType.toString(verb.value),
-        ^.onChange ==> ((e: ReactEventFromInput) =>
-          verb.setState(VerbType.fromString(e.target.value))
+      <.div(S.headerColumn)(
+        <.select(S.verbDropdown)(
+          ^.value := VerbType.toString(verb.value),
+          ^.onChange ==> ((e: ReactEventFromInput) =>
+            verb.setState(VerbType.fromString(e.target.value))
+          ),
+          sortedVerbCounts.toVdomArray { case (verb, count) =>
+            <.option(
+              ^.key := VerbType.toString(verb),
+              ^.value := VerbType.toString(verb),
+              f"$count%5d ${VerbType.toString(verb)}"
+            )
+          }
         ),
-        sortedVerbCounts.toVdomArray { case (verb, count) =>
-          <.option(
-            ^.key := VerbType.toString(verb),
-            ^.value := VerbType.toString(verb),
-            f"$count%5d ${VerbType.toString(verb)}"
-          )
-        }
-      ),
-      <.select(S.verbDropdown)(
-        ^.value := VerbType.toString(verb.value),
-        ^.onChange ==> ((e: ReactEventFromInput) =>
-          verb.setState(VerbType.fromString(e.target.value))
-        ),
-        sortedVerbCounts.toVdomArray { case (verb, count) =>
-          <.option(
-            ^.key := VerbType.toString(verb),
-            ^.value := VerbType.toString(verb),
-            f"${VerbType.toString(verb)} ($count)"
-          )
-        }
+        <.select(S.verbDropdown)(
+          ^.value := VerbType.toString(verb.value),
+          ^.onChange ==> ((e: ReactEventFromInput) =>
+            verb.setState(VerbType.fromString(e.target.value))
+          ),
+          sortedVerbCounts.toVdomArray { case (verb, count) =>
+            <.option(
+              ^.key := VerbType.toString(verb),
+              ^.value := VerbType.toString(verb),
+              f"${VerbType.toString(verb)} ($count)"
+            )
+          }
+        )
       ),
       <.div(S.featureOptions)(
-        View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
-        View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
-        View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
+        <.div(S.headerColumn)(
+          View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
+          View.checkboxToggle("Arg syntf", verbFeatures.zoomStateL(FeatureOptions.argSyntFunc)),
+        ),
+        <.div(S.headerColumn)(
+          View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
+          View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
+        ),
         View.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
-        <.span(S.labeledDropdown)(
-          <.span(S.labeledDropdownLabel)("Arg ctypes:"),
-          OptionalStringSelect(
-            FeatureOptions.constituentTypes,
-            verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)
+        <.div(S.headerColumn)(
+          <.span(S.labeledDropdown)(
+            <.span(S.labeledDropdownLabel)("Arg ctypes:"),
+            OptionalStringSelect(
+              FeatureOptions.constituentTypes,
+              verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)
+            )
+          ),
+          <.span(S.labeledDropdown)(
+            <.span(S.labeledDropdownLabel)("Arg MLM:"),
+            OptionalStringSelect(
+              FeatureOptions.mlmTypes,
+              verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
+            )
           )
         ),
-        <.span(S.labeledDropdown)(
-          <.span(S.labeledDropdownLabel)("Arg MLM:"),
-          OptionalStringSelect(
-            FeatureOptions.mlmTypes,
-            verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
+        <.div(S.headerColumn)(
+          <.span(S.labeledDropdown)(
+            <.span(S.labeledDropdownLabel)("Arg Prep MLM:"),
+            OptionalStringSelect(
+              FeatureOptions.mlmTypes,
+              verbFeatures.zoomStateL(FeatureOptions.argPrepMlmDist)
+            )
+          ),
+          <.span(S.labeledDropdown)(
+            <.span(S.labeledDropdownLabel)("Verb MLM:"),
+            OptionalStringSelect(
+              FeatureOptions.mlmTypes,
+              verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
+            )
           )
         ),
-        <.span(S.labeledDropdown)(
-          <.span(S.labeledDropdownLabel)("Arg Prep MLM:"),
-          OptionalStringSelect(
-            FeatureOptions.mlmTypes,
-            verbFeatures.zoomStateL(FeatureOptions.argPrepMlmDist)
-          )
-        ),
-        <.span(S.labeledDropdown)(
-          <.span(S.labeledDropdownLabel)("Verb MLM:"),
-          OptionalStringSelect(
-            FeatureOptions.mlmTypes,
-            verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
-          )
-        ),
-        View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
-        View.checkboxToggle("Metrics", showMetrics),
+        <.div(S.headerColumn)(
+          View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
+          View.checkboxToggle("Metrics", showMetrics),
+        )
       )
     )
   }
@@ -755,6 +777,9 @@ class NewVerbUI[VerbType, Arg: Order](
           },
           <.div(S.clauseSetDisplay)(
             allRoles.toVdomArray { case (nameOrIndex, argIds) =>
+              val syntFCountsOpt = verbFeatures.argSyntFunc.map(syntFuncs =>
+                argIds.unorderedFoldMap(argId => Map(syntFuncs(argId) -> 1))
+              )
               val ctypeDistOpt = verbFeatures.argConstituentTypes.map { dists =>
                 argIds.unorderedFoldMap(dists)
               }
@@ -792,6 +817,7 @@ class NewVerbUI[VerbType, Arg: Order](
                   val counts = argIds.unorderedFoldMap(argId => Map(goldLabels.argRoles(argId).role -> 1))
                   goldLabelDistDisplay(counts)
                 },
+                syntFCountsOpt.whenDefined(goldLabelDistDisplay(_)),
                 ctypeDistOpt.whenDefined(distributionDisplay(_)),
                 mlmDistOpt.whenDefined(distributionDisplay(_)),
                 prepDistOpt.whenDefined(distributionDisplay(_)),
@@ -1027,6 +1053,9 @@ class NewVerbUI[VerbType, Arg: Order](
                           features.argIndex.whenDefined(argIndices =>
                             <.td(<.i(sentence.tokens(argIndices(ArgumentId(verbId, arg)))))
                           ),
+                          features.argSyntFunc.whenDefined(argSyntFuncs =>
+                            <.td(argSyntFuncs(ArgumentId(verbId, arg)))
+                          ),
                           features.argSpans.whenDefined(argSpans =>
                             NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
                               .whenDefined(spansNel =>
@@ -1038,7 +1067,7 @@ class NewVerbUI[VerbType, Arg: Order](
                         ),
                         <.tr(
                           <.td(
-                            ^.colSpan := 5,
+                            ^.colSpan := 6,
                             features.argConstituentTypes.whenDefined { dists =>
                               distributionDisplay(dists(ArgumentId(verbId, arg)))
                             }
@@ -1046,7 +1075,7 @@ class NewVerbUI[VerbType, Arg: Order](
                         ),
                         <.tr(
                           <.td(
-                            ^.colSpan := 5,
+                            ^.colSpan := 6,
                             features.argMlmDist.whenDefined { dists =>
                               distributionDisplay(dists(ArgumentId(verbId, arg)))
                             }
@@ -1054,7 +1083,7 @@ class NewVerbUI[VerbType, Arg: Order](
                         ),
                         <.tr(
                           <.td(
-                            ^.colSpan := 5,
+                            ^.colSpan := 6,
                             features.argPrepMlmDist.whenDefined { dists =>
                               distributionDisplay(dists(ArgumentId(verbId, arg)))
                             }
@@ -1077,7 +1106,7 @@ class NewVerbUI[VerbType, Arg: Order](
 
                           <.tr(
                             <.td(
-                              ^.colSpan := 5,
+                              ^.colSpan := 6,
                               questionDistributionTable(inflectedForms, dist)
                             )
                           )

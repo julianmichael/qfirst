@@ -67,6 +67,9 @@ trait FeatureServiceCompanionPlatformExtensions {
       case FeatureReq.ArgIndices(vt) => features.argSemanticHeadIndices.get
           .map(_.apply(vt).value)
           .asInstanceOf[IO[req.Out]]
+      case FeatureReq.ArgSyntacticFunctions(vt) => features.argSyntacticFunctions.get
+          .map(_.apply(vt).value)
+          .asInstanceOf[IO[req.Out]]
     }
   }
 }

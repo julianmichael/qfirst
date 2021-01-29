@@ -65,6 +65,9 @@ object FeatureReq {
   case class ArgIndices[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Int]
   }
+  case class ArgSyntacticFunctions[VerbType, Arg](verbType: VerbType) extends FeatureReq[VerbType, Arg] {
+    type Out = Map[ArgumentId[Arg], String]
+  }
   case class ArgMLMDist[VerbType, Arg](verbType: VerbType, label: String) extends FeatureReq[VerbType, Arg] {
     type Out = Map[ArgumentId[Arg], Map[String, Float]]
   }
@@ -103,6 +106,9 @@ object FeatureReq {
       case ArgIndices(_) => implicitly[Encoder[List[(ArgumentId[Arg], Int)]]]
           .contramap[Map[ArgumentId[Arg], Int]](_.toList)
           .asInstanceOf[Encoder[req.Out]]
+      case ArgSyntacticFunctions(_) => implicitly[Encoder[List[(ArgumentId[Arg], String)]]]
+          .contramap[Map[ArgumentId[Arg], String]](_.toList)
+          .asInstanceOf[Encoder[req.Out]]
       case ArgMLMDist(_, _) => implicitly[Encoder[List[(ArgumentId[Arg], List[(String, Float)])]]]
           .contramap[Map[ArgumentId[Arg], Map[String, Float]]](_.iterator.map(p => p._1 -> p._2.toList).toList)
           .asInstanceOf[Encoder[req.Out]]
@@ -138,6 +144,9 @@ object FeatureReq {
           .map(_.iterator.map(p => p._1 -> p._2.toMap).toMap)
           .asInstanceOf[Decoder[req.Out]]
       case ArgIndices(_) => implicitly[Decoder[List[(ArgumentId[Arg], Int)]]]
+          .map(_.toMap)
+          .asInstanceOf[Decoder[req.Out]]
+      case ArgSyntacticFunctions(_) => implicitly[Decoder[List[(ArgumentId[Arg], String)]]]
           .map(_.toMap)
           .asInstanceOf[Decoder[req.Out]]
       case ArgMLMDist(_, _) => implicitly[Decoder[List[(ArgumentId[Arg], List[(String, Float)])]]]

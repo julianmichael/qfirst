@@ -77,7 +77,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   // header
 
-  val headerHeight = 30 px
+  val headerHeight = 60 px
 
   val flexyHeaderThing = style(
     display.flex,
@@ -85,6 +85,13 @@ object VerbAnnStyles extends StyleSheet.Inline {
     flexWrap.nowrap,
     position.relative,
     zIndex(10)
+  )
+
+  val headerColumn = style(
+    display.flex,
+    flexDirection.column,
+    flexWrap.nowrap,
+    position.relative
   )
 
   val headerContainer = style(
