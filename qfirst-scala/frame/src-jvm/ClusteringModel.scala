@@ -385,7 +385,7 @@ case class BaselineArgumentModel(
     features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
   ) = setting match {
-    case "syntf+" => features.argSyntacticFunctionsConverted.get.map(Some(_))
+    case "syntf2" => features.argSyntacticFunctionsConverted.get.map(Some(_))
     case "syntf" => features.argSyntacticFunctions.get.map(Some(_))
     case "gold_nosense" => for {
       feats <- IO(features.getIfPropBank.get)
@@ -523,7 +523,7 @@ case class BaselineArgumentModel(
 object BaselineArgumentModel {
 
   val validSettings = Set(
-    "syntf", "syntf+", "random", "random_linear", "random_weighted",
+    "syntf", "syntf2", "random", "random_linear", "random_weighted",
     "gold_nosense", "gold_nosense+noise",
     "gold_wsense", "gold_wsense+noise"
   )
@@ -616,6 +616,7 @@ object FullArgumentModel {
     QuestionEntropyNormalizedAdverbials -> "qent_nadv",
     MaxPriorEntropy -> "pent",
     SyntacticFunction -> "syntf",
+    SyntacticFunctionConverted -> "syntf2",
     ConstituentType -> "syntc",
     ConstituentTypeConverted -> "syntc2",
     Preposition -> "prep",
@@ -755,6 +756,15 @@ object FullArgumentModel {
   }
 
   case object SyntacticFunction extends DistributionEntropy[String] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[String, Double]] =
+      features.mapArgFeats(features.argSyntacticFunctions.data)(
+        syntf => Map(syntf -> 1.0)
+      )
+  }
+
+  case object SyntacticFunctionConverted extends DistributionEntropy[String] {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
     ): features.ArgFeats[Map[String, Double]] =
