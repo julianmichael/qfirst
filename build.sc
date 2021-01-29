@@ -312,7 +312,8 @@ object qfirst extends Module {
         ivy"org.scalanlp::breeze:$breezeVersion",
         ivy"org.scalanlp::breeze-natives:$breezeVersion",
         ivy"com.cibo::evilplot-repl:$evilplotVersion",
-        ivy"com.lihaoyi::scalatags:$scalatagsVersion"
+        ivy"com.lihaoyi::scalatags:$scalatagsVersion",
+        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
       )
     }
   }
