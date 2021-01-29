@@ -80,7 +80,7 @@ abstract class PropBankFeatures[Arg](
   )
 
   lazy val verbInflectedFormLists: IO[String => List[InflectedForms]] =
-    verbInflectedFormsByStem.get.map(m => lemma => m.apply(lemma.lowerCase))
+    verbInflectedFormsByStem.get.map(m => verbType => m.apply(getVerbLemma(verbType).lowerCase))
 
 
   def renderVerbType(verbType: String): String = verbType

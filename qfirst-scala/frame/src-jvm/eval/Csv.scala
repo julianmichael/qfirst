@@ -100,8 +100,8 @@ object Csv {
     val headers = List(
       firstHeader,
       secondHeader,
-      "Prec.",
-      "Rec.",
+      "Precision",
+      "Recall",
       "F1",
       "Count",
       "Percent",
