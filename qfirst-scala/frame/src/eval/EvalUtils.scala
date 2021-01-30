@@ -49,6 +49,83 @@ object EvalUtils {
     )
   }
 
+  def calculateHeterogeneousNPMIsLoggingEfficient[Source, X: Order, Y: Order, N: Numeric](
+    groupings: Vector[(Source, Double, Map[X, Double], Map[Y, Double])])(
+    implicit N: Numeric[N],
+    Log: freelog.SequentialEphemeralTreeLogger[cats.effect.IO, String]
+  ): cats.effect.IO[Map[(X, Y), NPMIResult[Source]]] = {
+    import freelog.implicits._
+    import scala.math.{pow, log, sqrt}
+    for {
+      // transform to probs. TODO: use a type for it in the input.
+      groups <- groupings.traceBarTraverse("Normalizing input distributions") {
+        case (source, weight, xs, ys) =>
+          cats.effect.IO(
+            (source, weight,
+             xs.normalize.withDefaultValue(0.0),
+             ys.normalize.withDefaultValue(0.0))
+          )
+      }
+      result <- {
+        val xLabels = groups.foldMap(_._3.keySet)
+        val yLabels = groups.foldMap(_._4.keySet)
+        val groupWeights = groups.map(_._2)
+        val total = groupWeights.combineAll
+        val xMarginalProbs = groups.foldMap { case (_, weight, xProbs, _) =>
+          xProbs.mapVals(_ * weight)
+        }.mapVals(_ / total)
+        val yMarginalProbs = groups.foldMap { case (_, weight, _, yProbs) =>
+          yProbs.mapVals(_ * weight)
+        }.mapVals(_ / total)
+        val pairs = for(x <- xLabels; y <- yLabels) yield (x, y)
+
+        // joint of (x, y) when we choose instance according to weight and sample x and y at random.
+        groups.infoBarFoldMapM("Computing joint probabilities") { case (source, weight, xProbs, yProbs) =>
+          cats.effect.IO {
+            xProbs.toList.foldMap { case (x, xProb) =>
+              yProbs.map { case (y, yProb) =>
+                (x, y) -> Map(source -> (xProb * yProb * weight))
+              }
+            }.mapVals(_.mapVals(_ / total))
+          }
+        }.flatMap { jointProbsWithSources =>
+          val xStdevs = xMarginalProbs.map { case (x, marginal) =>
+            val selfJointProb = groups.foldMap { case(_, w, p, _) => p(x) * p(x) * w } / total
+            x -> sqrt(selfJointProb - pow(marginal, 2))
+          }
+          val yStdevs = yMarginalProbs.map { case (y, marginal) =>
+            val selfJointProb = groups.foldMap { case(_, w, _, p) => p(y) * p(y) * w } / total
+            y -> sqrt(selfJointProb - pow(marginal, 2))
+          }
+          Log.info(s"${pairs.size} pairs to compute.") >>
+          pairs.toList.infoBarTraverse("Computing NPMIs") { case (x, y) =>
+            cats.effect.IO {
+              // joint of (x, y) when we choose an x at random and then choose a random y in x's cluster
+              val sources = jointProbsWithSources.getOrElse((x, y), Map())
+              val jointProb = sources.unorderedFold
+              val independentProb = xMarginalProbs(x) * yMarginalProbs(y)
+              val covariance = jointProb - independentProb
+              val correlation = covariance / (xStdevs(x) * yStdevs(y))
+              val result = if(jointProb == 0.0) NPMIResult.never[Source](covariance, correlation) else {
+                assert(independentProb != 0.0)
+                val logJointProb = log(jointProb)
+                val pmi = logJointProb - log(independentProb)
+                val npmi = pmi / (-logJointProb)
+                NPMIResult(
+                  pmi = pmi,
+                  npmi = npmi,
+                  covariance = covariance,
+                  correlation = correlation,
+                  sourceDistribution = sources)
+              }
+              (x, y) -> result
+            }
+          }.map(_.toMap)
+        }
+      }
+    } yield result
+  }
+
   def calculateNPMIsLoggingEfficient[Source, A: Order, N: Numeric](
     groupings: Vector[(Source, Map[A, N])])(
     implicit N: Numeric[N],

@@ -23,6 +23,7 @@ import qfirst.frame.eval.EvalUtils
 import freelog.EphemeralTreeLogger
 import qfirst.metrics.WeightedNumbers
 import cats.Show
+import qfirst.frame.eval.Plotting
 
 object Analysis {
 
@@ -35,6 +36,7 @@ object Analysis {
     _ <- IO(shouldDo("role-questions")).ifM(reportRoleQuestionDists(features, outDir), IO.unit)
     _ <- IO(shouldDo("question-relatedness")).ifM(reportQuestionPairRelatednessFull(features, outDir), IO.unit)
     _ <- IO(shouldDo("rule-lexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
+    _ <- IO(shouldDo("wh-npmis")).ifM(reportWhNpmis(features, outDir), IO.unit)
   } yield ()
 
   def reportRoleQuestionDists[Arg](
@@ -66,6 +68,57 @@ object Analysis {
           .mkString("\n")
       }.mkString("\n==========\n")
     )
+  } yield ()
+
+  def includeWhRolePair(wh: String, role: String) = {
+    val badRoles = Set(
+      "A4", "A5", "AA",
+      "AM-NEG", "AM-MOD", "AM-DIS",
+      "AM-PRD", "AM-EXT" //, "AM-DIR"
+    )
+    !badRoles.contains(role)
+  }
+
+  def reportWhNpmis[Arg](
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    argRoleLabels <- features.argRoleLabels.get
+    questionDists <- features.argQuestionDists.get
+    args <- features.args.get
+    cooccurrences <- args.toList.infoBarFoldMapM("Constructing wh/role cooccurrence sets") {
+      case (verbType, argIds) =>
+        Log.trace(s"$verbType (${argIds.size} args)") >> IO {
+          val roleLabels = argRoleLabels(verbType)
+          val questions = questionDists(verbType)
+          argIds.toVector.map { argId =>
+            val whDist = questions(argId).toList.foldMap { case (q, count) =>
+              Map(q.wh.toString -> count)
+            }
+            (verbType, 1.0,
+             whDist,
+             Map(roleLabels(argId).role -> 1.0)
+            )
+          }
+        }
+    }
+    npmis <- EvalUtils.calculateHeterogeneousNPMIsLoggingEfficient[
+      String, String, String, Double](
+      cooccurrences)
+    _ <- IO {
+      import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+      Plotting.plotHeterogeneousNPMI[String, String](
+        npmis.mapVals(_.npmi).filter(p => includeWhRolePair(p._1._1, p._1._2)),
+        f"Normalized PMI: wh/role",
+        xKeys = List("what", "how much", "where", "how", "why", "how long", "when"),
+        yKeys = List("A0", "A1", "A2", "A3",
+                     "AM-LOC", "AM-DIR",
+                     "AM-MNR", "AM-ADV",
+                     "AM-CAU", "AM-PNC",
+                     "AM-TMP")
+      ).render().write(new java.io.File(outDir.resolve("wh-role-npmi.png").toString))
+    }
   } yield ()
 
   val reasonableQuestionFrequencyCutoff = 5.0

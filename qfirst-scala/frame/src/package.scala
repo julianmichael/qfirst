@@ -61,6 +61,10 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
       val keys = x.keySet.intersect(y.keySet)
       keys.iterator.map(k => k -> (x(k) -> y(k))).toMap
     }
+    def normalize(implicit N: Numeric[B]): Map[A, Double] = {
+      val total = N.toDouble(x.values.sum)
+      mapVals(v => N.toDouble(v) / total)
+    }
   }
 
   import cats.Monoid
