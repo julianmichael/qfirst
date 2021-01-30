@@ -35,13 +35,15 @@ object Plotting {
     title: String,
     xKeys: List[X] = Nil,
     yKeys: List[Y] = Nil,
+    colors: ScaledColorBar = ScaledColorBar.apply(
+      List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0
+    )
   ): Plot = {
     val xAxis = if(xKeys.nonEmpty) xKeys else stats.keySet.map(_._1).toVector.sorted
     val yAxis = if(yKeys.nonEmpty) yKeys else stats.keySet.map(_._2).toVector.sorted
     val data = yAxis.map(y =>
       xAxis.map(x => stats((x, y)))
     )
-    val colors = ScaledColorBar.apply(List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0)
 
     Heatmap2(data, colors)
       .title(title)
@@ -52,13 +54,16 @@ object Plotting {
 
   def plotNPMI[A : Order : Show](
     stats: Map[Duad[A], Double],
-    title: String
+    title: String,
+    keys: List[A] = Nil
   ): Plot = {
-    val axis = stats.keySet.flatMap(p => Set(p.min, p.max)).toVector.sorted
+    val axis = if(keys.nonEmpty) keys else stats.keySet.flatMap(p => Set(p.min, p.max)).toVector.sorted
     val data = axis.map(x =>
       axis.map(y => stats(Duad(x, y)))
     )
-    val colors = ScaledColorBar.apply(List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0)
+    val colors = ScaledColorBar.apply(
+      List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0
+    )
 
     Heatmap2(data, colors)
       .title(title)

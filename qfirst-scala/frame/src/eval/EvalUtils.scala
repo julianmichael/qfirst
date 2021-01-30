@@ -33,6 +33,8 @@ object EvalUtils {
   // sourceDistribution is a probability distribution over sources where the pair appears.
   // TODO: change this to compute sample covariance correctly (with n-1 denom)
   case class NPMIResult[A](
+    count: Double,
+    prob: Double,
     pmi: Double,
     npmi: Double,
     covariance: Double,
@@ -41,6 +43,8 @@ object EvalUtils {
   )
   object NPMIResult {
     private[EvalUtils] def never[A](covariance: Double, correlation: Double) = NPMIResult[A](
+      count = 0.0,
+      prob = 0.0,
       pmi = Double.NegativeInfinity,
       npmi = -1.0,
       covariance = covariance,
@@ -112,6 +116,8 @@ object EvalUtils {
                 val pmi = logJointProb - log(independentProb)
                 val npmi = pmi / (-logJointProb)
                 NPMIResult(
+                  count = jointProb * total,
+                  prob = jointProb,
                   pmi = pmi,
                   npmi = npmi,
                   covariance = covariance,
@@ -181,6 +187,8 @@ object EvalUtils {
             val pmi = logJointProb - log(independentProb)
             val npmi = pmi / (-logJointProb)
             NPMIResult(
+              count = jointProb * total,
+              prob = jointProb,
               pmi = pmi,
               npmi = npmi,
               covariance = covariance,
@@ -238,7 +246,7 @@ object EvalUtils {
   // basically forming a stronger baseline.
   def calculateAggregateNPMIs[A: Order](
     clusterings: Vector[Vector[Map[A, Int]]]
-  ): Map[Duad[A], Double] = {
+  ): Map[Duad[A], NPMIResult[Nothing]] = {
     val allClusterings = clusterings.flatten
     val localCounts = clusterings.map(_.unorderedFold)
     val total = allClusterings.foldMap(_.unorderedFold)
@@ -269,11 +277,21 @@ object EvalUtils {
         }
       } / total
 
-      import scala.math.{pow, log}
-      val npmi = if(jointProb == 0.0) -1.0 else {
-        val logJointProb = log(jointProb)
-        val pmi = logJointProb - log(independentProb)
+      val npmi = if(jointProb == 0.0) NPMIResult.never[Nothing](0.0, 0.0) else {
+        // import scala.math.log
+        val logJointProb = scala.math.log(jointProb)
+        val pmi = logJointProb - scala.math.log(independentProb)
         pmi / -logJointProb
+
+        NPMIResult[Nothing](
+          count = jointProb * total,
+          prob = jointProb,
+          pmi = pmi,
+          npmi = pmi / -logJointProb,
+          covariance = 0.0, // TODO
+          correlation = 0.0, // TODO
+          sourceDistribution = Map() // TODO
+        )
       }
       pair -> npmi
     }.toMap

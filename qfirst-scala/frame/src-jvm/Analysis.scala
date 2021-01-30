@@ -68,6 +68,17 @@ object Analysis {
           .mkString("\n")
       }.mkString("\n==========\n")
     )
+    _ <- FileUtil.writeString(outDir.resolve("questions.tex"))(
+      roleQuestionDists.toList.map { case (role, qdist) =>
+        val total = qdist.unorderedFold
+        s"\\role{$role}\n" + qdist.toList
+          .sortBy(-_._2)
+          .map(p => p.copy(_2 = p._2 / total))
+          .takeWhile(_._2 > 0.005)
+          .map { case (qt, prob) => f"& ${qt.toQuestionString}%-50s & $prob%.2f \\\\" }
+          .mkString("\n")
+      }.mkString("\n\\cmidrule{2-3}\n")
+    )
   } yield ()
 
   def includeWhRolePair(wh: String, role: String) = {
@@ -98,7 +109,7 @@ object Analysis {
             }
             (verbType, 1.0,
              whDist,
-             Map(roleLabels(argId).role -> 1.0)
+             Map(roleLabels(argId).role.replaceAll("AM-", "") -> 1.0)
             )
           }
         }
@@ -106,18 +117,60 @@ object Analysis {
     npmis <- EvalUtils.calculateHeterogeneousNPMIsLoggingEfficient[
       String, String, String, Double](
       cooccurrences)
+    xKeys = List(
+      "what",
+      "how much",
+      "where",
+      "how", "why",
+      "when"
+        // "how long"
+    )
+    yKeys = List(
+      "A0", "A1",
+      "A2", "A3",
+      // "AM-DIR",
+      "LOC",
+      "ADV",
+      "MNR",
+      "PNC",
+      "CAU",
+      "TMP"
+    )
     _ <- IO {
       import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
       Plotting.plotHeterogeneousNPMI[String, String](
         npmis.mapVals(_.npmi).filter(p => includeWhRolePair(p._1._1, p._1._2)),
         f"Normalized PMI: wh/role",
-        xKeys = List("what", "how much", "where", "how", "why", "how long", "when"),
-        yKeys = List("A0", "A1", "A2", "A3",
-                     "AM-LOC", "AM-DIR",
-                     "AM-MNR", "AM-ADV",
-                     "AM-CAU", "AM-PNC",
-                     "AM-TMP")
+        xKeys = xKeys,
+        yKeys = yKeys
       ).render().write(new java.io.File(outDir.resolve("wh-role-npmi.png").toString))
+    }
+    _ <- IO {
+      import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
+      import com.cibo.evilplot.colors.HTMLNamedColors
+      import com.cibo.evilplot.colors.ScaledColorBar
+      val whMarginals = npmis.toList.foldMap { case ((wh, _), res) => Map(wh -> res.prob) }
+      val roleMarginals = npmis.toList.foldMap { case ((_, role), res) => Map(role -> res.prob) }
+      val roleWhProbs = npmis.map { case ((wh, role), x) => (wh, role) -> x.prob / roleMarginals(role) }
+        .filter(p => includeWhRolePair(p._1._1, p._1._2))
+        // .filter(p => Set("A0", "A1").forall(_ != p._1._2))
+      Plotting.plotHeterogeneousNPMI[String, String](
+        roleWhProbs, f"Wh probabilities for each role",
+        xKeys = xKeys, yKeys = yKeys,
+        colors = ScaledColorBar.apply(
+          List(HTMLNamedColors.white, HTMLNamedColors.blue), 0.0, 1.0
+        )
+      ).render().write(new java.io.File(outDir.resolve("role-wh-probs.png").toString))
+
+      val whRoleProbs = npmis.map { case ((wh, role), x) => (wh, role) -> x.prob / whMarginals(wh) }
+        .filter(p => includeWhRolePair(p._1._1, p._1._2))
+      Plotting.plotHeterogeneousNPMI[String, String](
+        whRoleProbs, f"Role probabilities for each wh",
+        xKeys = xKeys, yKeys = yKeys,
+        colors = ScaledColorBar.apply(
+          List(HTMLNamedColors.white, HTMLNamedColors.blue), 0.0, 1.0
+        )
+      ).render().write(new java.io.File(outDir.resolve("wh-role-probs.png").toString))
     }
   } yield ()
 

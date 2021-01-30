@@ -2,10 +2,15 @@ package qfirst.frame.util
 
 import cats.Order
 import cats.implicits._
+import cats.Traverse
+import cats.Applicative
+import cats.Eval
 
 sealed trait Duad[A] extends Product with Serializable {
   def min: A
   def max: A
+
+  def map[B: Order](f: A => B): Duad[B] = Duad(f(min), f(max))
 }
 object Duad {
   private case class DuadImpl[A](val min: A, val max: A) extends Duad[A]
