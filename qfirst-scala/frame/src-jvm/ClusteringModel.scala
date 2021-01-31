@@ -615,6 +615,9 @@ object FullArgumentModel {
     NoOp -> "noop",
     QuestionEntropy -> "qent",
     QuestionEntropyActive -> "qent_active",
+    QuestionEntropyOracleArgAdj -> "qent_argadj",
+    QuestionEntropyNoHow -> "qent_nohow",
+    QuestionEntropyOracleArgAdjNoHow -> "qent_argadj_nohow",
     QuestionEntropyNormalizedAdverbials -> "qent_nadv",
     MaxPriorEntropy -> "pent",
     SyntacticFunction -> "syntf",
@@ -730,6 +733,53 @@ object FullArgumentModel {
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
     ): features.ArgFeats[Map[QuestionTemplate, Double]] = features.argQuestionDistsActive.data
+  }
+
+  case object QuestionEntropyOracleArgAdj extends DistributionEntropy[(QuestionTemplate, Boolean)] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[(QuestionTemplate, Boolean), Double]] = {
+      features.getIfPropBank.get.argRoleLabels.data
+        .zip(features.argQuestionDists.data)
+        .map { case (roleLabels, questionDists) =>
+          (verb: VerbType) => (argId: ArgumentId[Arg]) => {
+            val isAdjunct = roleLabels(verb.asInstanceOf[String])(argId).role.startsWith("AM-")
+            questionDists(verb)(argId).map { case (q, c) =>
+              (q, isAdjunct) -> c
+            }
+          }
+        }
+    }
+  }
+
+  case object QuestionEntropyNoHow extends DistributionEntropy[QuestionTemplate] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[QuestionTemplate, Double]] =
+      features.mapArgFeats(features.argQuestionDists.data)(dist =>
+        dist.map { case (qt, pcount) =>
+          if(qt.wh == "how".lowerCase) qt -> (pcount / 100.0)
+          else qt -> pcount
+        }
+      )
+  }
+
+  case object QuestionEntropyOracleArgAdjNoHow extends DistributionEntropy[(QuestionTemplate, Boolean)] {
+    def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ): features.ArgFeats[Map[(QuestionTemplate, Boolean), Double]] = {
+      features.getIfPropBank.get.argRoleLabels.data
+        .zip(features.argQuestionDists.data)
+        .map { case (roleLabels, questionDists) =>
+          (verb: VerbType) => (argId: ArgumentId[Arg]) => {
+            val isAdjunct = roleLabels(verb.asInstanceOf[String])(argId).role.startsWith("AM-")
+            questionDists(verb)(argId).map { case (q, origC) =>
+              val c = if(q.wh == "how".lowerCase) origC / 100.0 else origC
+              (q, isAdjunct) -> c
+            }
+          }
+        }
+    }
   }
 
   // normalize out adverbials
@@ -1187,7 +1237,6 @@ object FullVerbModel {
   }
 
   val termIndex = List[(LossTerm, String)](
-    // QuestionEntropy -> "qent"
     NoOp -> "noop"
   ) ++ List("masked", "repeated", "symm_both", "symm_left", "symm_right").map(mode =>
     MLMEntropy(mode) -> s"mlm_$mode",
