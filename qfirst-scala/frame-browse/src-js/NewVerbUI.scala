@@ -878,7 +878,17 @@ class NewVerbUI[VerbType, Arg: Order](
     <.div(S.sentenceSelectionPaneContainer)(
       <.div(S.sentenceCountLabel)(
         <.span(S.sentenceCountLabelText)(
-          sentenceCountLabel
+          sentenceCountLabel,
+          " ",
+          <.a(
+            ^.href := "#",
+            ^.onClick --> {
+              CallbackTo((new scala.util.Random).nextInt(sentenceIds.size)).flatMap(
+                index => curSentenceId.setState(sentenceIds(index))
+              )
+            },
+            "(random)"
+          )
         )
       ),
       <.div(S.sentenceSelectionPane)(
@@ -932,6 +942,7 @@ class NewVerbUI[VerbType, Arg: Order](
         }.toMap
 
         <.div(S.sentenceDisplayPane)(
+          <.span(S.sentenceInfoText)(sentence.sentenceId),
           features.goldLabels.whenDefined(goldLabelsOpt =>
             <.div(S.sentenceInfoContainer)(
               "No gold labels available."
