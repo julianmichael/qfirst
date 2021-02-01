@@ -37,6 +37,21 @@ object Analysis {
     _ <- IO(shouldDo("question-relatedness")).ifM(reportQuestionPairRelatednessFull(features, outDir), IO.unit)
     _ <- IO(shouldDo("rule-lexica")).ifM(reportRuleLexica(features, outDir), IO.unit)
     _ <- IO(shouldDo("wh-npmis")).ifM(reportWhNpmis(features, outDir), IO.unit)
+    _ <- IO(shouldDo("sense-counts")).ifM(reportSenseCounts(features, outDir), IO.unit)
+  } yield ()
+
+  def reportSenseCounts[Arg](
+    features: PropBankFeatures[Arg],
+    outDir: NIOPath)(
+    implicit Log: SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Unit] = for {
+    senseLabels <- features.verbSenseLabels.get
+    _ <- FileUtil.writeString(outDir.resolve("sense-counts.txt"))(
+      senseLabels.toList.map { case (verbType, labels) =>
+        val numSenses = labels.value.values.toSet.size
+        s"$verbType\t$numSenses"
+      }.mkString("\n")
+    )
   } yield ()
 
   def reportRoleQuestionDists[Arg](

@@ -339,6 +339,9 @@ object Evaluation {
             }
             val b3instanceByVerb = b3instanceByVerbAndLabel.mapVals(_.values.toList.combineAll)
             val b3instanceByLabel = b3instanceByVerbAndLabel.values.toList.combineAll
+            val b3instanceByVerbAndLabelGroup = b3instanceByVerbAndLabel.mapVals(
+              _.toList.foldMap { case (label, pr) => Map(getGoldLabelGroup(label) -> pr) }
+            )
             val b3instanceByLabelGroup = b3instanceByVerbAndLabel.values.toList.foldMap(
               _.toList.foldMap { case (label, pr) => Map(getGoldLabelGroup(label) -> pr) }
             )
@@ -346,6 +349,10 @@ object Evaluation {
               resultsDir.resolve("best-b3-by-verb-and-label.csv"),
               "Verb", "Role", b3instanceByVerbAndLabel
             ) >>
+              Csv.writePrfTableCsv(
+                resultsDir.resolve("best-b3-by-verb-and-label-group.csv"),
+                "Verb", "Role", b3instanceByVerbAndLabelGroup
+              ) >>
               FileUtil.writeString(
                 resultsDir.resolve("best-b3-by-verb.html"))(
                 Html.prfTableHtml(b3instanceByVerb).render

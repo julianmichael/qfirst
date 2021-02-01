@@ -5,6 +5,10 @@ import qfirst.frame.util.Duad
 
 import cats.Order
 import cats.implicits._
+import cats.effect.IO
+
+import freelog.EphemeralTreeLogger
+import freelog.implicits._
 
 object EvalUtils {
 
@@ -56,8 +60,8 @@ object EvalUtils {
   def calculateHeterogeneousNPMIsLoggingEfficient[Source, X: Order, Y: Order, N: Numeric](
     groupings: Vector[(Source, Double, Map[X, Double], Map[Y, Double])])(
     implicit N: Numeric[N],
-    Log: freelog.SequentialEphemeralTreeLogger[cats.effect.IO, String]
-  ): cats.effect.IO[Map[(X, Y), NPMIResult[Source]]] = {
+    Log: freelog.SequentialEphemeralTreeLogger[IO, String]
+  ): IO[Map[(X, Y), NPMIResult[Source]]] = {
     import freelog.implicits._
     import scala.math.{pow, log, sqrt}
     for {
