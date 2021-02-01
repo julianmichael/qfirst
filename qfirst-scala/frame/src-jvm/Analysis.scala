@@ -155,7 +155,7 @@ object Analysis {
       import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
       Plotting.plotHeterogeneousNPMI[String, String](
         npmis.mapVals(_.npmi).filter(p => includeWhRolePair(p._1._1, p._1._2)),
-        f"Normalized PMI: wh/role",
+        title = None,//f"Normalized PMI: wh/role",
         xKeys = xKeys,
         yKeys = yKeys
       ).render().write(new java.io.File(outDir.resolve("wh-role-npmi.png").toString))
@@ -170,7 +170,8 @@ object Analysis {
         .filter(p => includeWhRolePair(p._1._1, p._1._2))
         // .filter(p => Set("A0", "A1").forall(_ != p._1._2))
       Plotting.plotHeterogeneousNPMI[String, String](
-        roleWhProbs, f"Wh probabilities for each role",
+        roleWhProbs,
+        title = None, // f"Wh probabilities for each role",
         xKeys = xKeys, yKeys = yKeys,
         colors = ScaledColorBar.apply(
           List(HTMLNamedColors.white, HTMLNamedColors.blue), 0.0, 1.0
@@ -180,7 +181,8 @@ object Analysis {
       val whRoleProbs = npmis.map { case ((wh, role), x) => (wh, role) -> x.prob / whMarginals(wh) }
         .filter(p => includeWhRolePair(p._1._1, p._1._2))
       Plotting.plotHeterogeneousNPMI[String, String](
-        whRoleProbs, f"Role probabilities for each wh",
+        whRoleProbs,
+        title = None, // f"Role probabilities for each wh",
         xKeys = xKeys, yKeys = yKeys,
         colors = ScaledColorBar.apply(
           List(HTMLNamedColors.white, HTMLNamedColors.blue), 0.0, 1.0

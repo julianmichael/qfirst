@@ -32,7 +32,7 @@ object Plotting {
 
   def plotHeterogeneousNPMI[X : Order : Show, Y : Order : Show](
     stats: Map[(X, Y), Double],
-    title: String,
+    title: Option[String] = None,
     xKeys: List[X] = Nil,
     yKeys: List[Y] = Nil,
     colors: ScaledColorBar = ScaledColorBar.apply(
@@ -45,16 +45,18 @@ object Plotting {
       xAxis.map(x => stats((x, y)))
     )
 
-    Heatmap2(data, colors)
-      .title(title)
+    val heatmap = Heatmap2(data, colors)
+
+    title.fold(heatmap)(heatmap.title(_))
       .xAxis(xAxis.map(_.show))
       .yAxis(yAxis.map(_.show))
       .frame().rightLegend()
+
   }
 
   def plotNPMI[A : Order : Show](
     stats: Map[Duad[A], Double],
-    title: String,
+    title: Option[String] = None,
     keys: List[A] = Nil
   ): Plot = {
     val axis = if(keys.nonEmpty) keys else stats.keySet.flatMap(p => Set(p.min, p.max)).toVector.sorted
@@ -65,11 +67,12 @@ object Plotting {
       List(HTMLNamedColors.red, HTMLNamedColors.white, HTMLNamedColors.blue), -1.0, 1.0
     )
 
-    Heatmap2(data, colors)
-      .title(title)
+    val heatmap = Heatmap2(data, colors)
+    title.fold(heatmap)(heatmap.title(_))
       .xAxis(axis.map(_.show))
       .yAxis(axis.map(_.show))
       .frame().rightLegend()
+
   }
 }
 

@@ -304,7 +304,7 @@ object Evaluation {
               goldNpmis.filter { case (Duad(l, r), _) =>
                 goldLabelCounts(l) > minGoldLabelCount && goldLabelCounts(r) > minGoldLabelCount
               }.mapVals(_.npmi),
-              f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
+              title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
             ).render().write(new java.io.File(resultsDir.resolve("best-npmi.png").toString))
           )
           keys = List(
@@ -321,14 +321,14 @@ object Evaluation {
           _ <- IO (
             Plotting.plotNPMI[String](
               goldNpmis.map { case (k, v) => k.map(_.show.replaceAll("AM-", "")) -> v.npmi },
-              f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
+              title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
               keys = keys
             ).render().write(new java.io.File(resultsDir.resolve("selected-best-npmi.png").toString))
           )
           _ <- IO (
             Plotting.plotNPMI[String](
               goldNpmis.map { case (k, v) => k.map(_.show.replaceAll("AM-", "")) -> v.prob },
-              f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
+              title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
               keys = keys
             ).render().write(new java.io.File(resultsDir.resolve("selected-best-jointprobs.png").toString))
           )
