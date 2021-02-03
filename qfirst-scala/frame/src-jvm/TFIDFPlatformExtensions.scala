@@ -3,12 +3,13 @@ package qfirst.frame
 import breeze.linalg.DenseVector
 import cats.Foldable
 import cats.implicits._
+import breeze.linalg.sum
 
 trait TFIDFPlatformExtensions {
   object Dense {
 
     def truncate[A](counts: DenseVector[Float], headProportion: Float): DenseVector[Float] = {
-      val total = counts.sum
+      val total = sum(counts)
       val headSize = total * headProportion
       val itemsDec = counts.toScalaVector.sortBy(-_).toList
       def getBottomThreshold(items: List[Float], acc: Float): Float = items match {
@@ -29,7 +30,7 @@ trait TFIDFPlatformExtensions {
 
     def rebalance[A](counts: DenseVector[Float], prior: DenseVector[Float]): DenseVector[Float] = {
       val adjusted = (counts /:/ prior).map(x => if(x.isNaN) 0.0f else x)
-      val adjustedTotal = adjusted.sum
+      val adjustedTotal = sum(adjusted)
       (adjusted / adjustedTotal).map(x => if(x.isNaN) 0.0f else x)
     }
 

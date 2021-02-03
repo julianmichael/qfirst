@@ -1172,7 +1172,7 @@ class NewVerbUI[VerbType, Arg: Order](
       )
 
       val npmis = EvalUtils.calculateNPMIs(goldCounts)(EvalUtils.conll08RoleOrder, implicitly[Numeric[Int]])
-      val plot = Plotting.plotNPMI(npmis, "Normalized PMIs")(
+      val plot = Plotting.plotNPMI(npmis, Some("Normalized PMIs"))(
         EvalUtils.conll08RoleOrder, implicitly[cats.Show[String]]
       )
 
