@@ -151,7 +151,7 @@ class NewVerbUI[VerbType, Arg: Order](
   import HOCs._
 
   val VerbsFetch = new CacheCallContent[Unit, Map[VerbType, Int]]
-  val VerbModelFetch = new CacheCallContent[VerbType, VerbClusterModel[VerbType, Arg]]
+  val VerbModelFetch = new CacheCallContent[(ClusterModelSpec, VerbType), VerbClusterModel[VerbType, Arg]]
   val SentencesFetch = new CacheCallContent[VerbType, Set[String]]
   val SentenceFetch = new CacheCallContent[String, SentenceInfo[VerbType, Arg]]
   val InflectedFormSetFetch = new CacheCallContent[VerbType, List[InflectedForms]]
@@ -220,7 +220,7 @@ class NewVerbUI[VerbType, Arg: Order](
   }
 
   case class Props(
-    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], ClusterModelSpec, VerbType, Arg],
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
     // urlNavQuery: NavQuery,
     mode: RunMode
@@ -490,12 +490,28 @@ class NewVerbUI[VerbType, Arg: Order](
 
   def headerContainer(
     featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    modelSpec: StateSnapshot[ClusterModelSpec],
     sortedVerbCounts: List[(VerbType, Int)],
     verb: StateSnapshot[VerbType],
     verbFeatures: StateSnapshot[FeatureOptions],
     showMetrics: StateSnapshot[Boolean]
   ) = {
     <.div(S.headerContainer)(
+      <.div(S.headerColumn)(
+        <.select(S.verbDropdown)(
+          ^.value := modelSpec.value.toString,
+          ^.onChange ==> ((e: ReactEventFromInput) =>
+            modelSpec.setState(ClusterModelSpec.fromString(e.target.value).get)
+          ),
+          ClusterModelSpec.all.toVdomArray { spec =>
+            <.option(
+              ^.key := spec.toString,
+              ^.value := spec.toString,
+              spec.toString
+            )
+          }
+        )
+      ),
       <.div(S.headerColumn)(
         <.select(S.verbDropdown)(
           ^.value := VerbType.toString(verb.value),
@@ -834,7 +850,7 @@ class NewVerbUI[VerbType, Arg: Order](
   }
 
   def frameContainer(
-    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], ClusterModelSpec, VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     clusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     allInflectedForms: List[InflectedForms],
@@ -1303,100 +1319,104 @@ class NewVerbUI[VerbType, Arg: Order](
       // }
     }
 
+    val ClusterModelSpecLocal = new LocalState[ClusterModelSpec]
+
     def render(props: Props, state: State) = {
-      VerbsFetch.make(request = (), sendRequest = _ => props.verbService.getVerbs) {
-        case VerbsFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
-        case VerbsFetch.Loaded(verbCounts) =>
-          val sortedVerbCounts = verbCounts.toList.sortBy(p => -p._2 -> VerbType.toString(p._1))
-          val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
-          ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
-            VerbFeatures.make(initVerb, props.featureService) { (options, verb, features) =>
-              InflectedFormSetFetch.make(
-                request = verb.value,
-                sendRequest = verb => props.featureService(FeatureReq.AllInflectedForms(verb))) {
-                case InflectedFormSetFetch.Loading => <.div(S.loadingNotice)("Loading inflections...")
-                case InflectedFormSetFetch.Loaded(formList) =>
-                  VerbModelFetch.make(
-                    request = verb.value,
-                    sendRequest = verb => props.verbService.getModel(verb)) {
-                    case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
-                    case VerbModelFetch.Loaded(model) =>
-                      InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
-                        ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
-                          // assume only verb tree. no extra roles. can fix later if necessary
-                          val verbTrees = clusterSplittingSpec.value.verbCriterion
-                            .splitTree[Set[VerbId]](model.verbClustering.clusterTreeOpt.get, _.size.toDouble)
-                          val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
-                            tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
-                          }.toMap
-                          // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
-                          val argClusterings = model.argumentClustering.split(argId => verbIndices(argId.verbId))
-                          val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
-                            argClusterings.get(i) match {
-                              case None => ResolvedFrame(verbTree, Vector(), Map())
-                              case Some(argClustering) =>
-                                val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
-                                  clusterSplittingSpec.value.argumentCriterion
-                                    .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+      ClusterModelSpecLocal.make(ClusterModelSpec.HumQQ) { modelSpec =>
+        VerbsFetch.make(request = (), sendRequest = _ => props.verbService.getVerbs) {
+          case VerbsFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
+          case VerbsFetch.Loaded(verbCounts) =>
+            val sortedVerbCounts = verbCounts.toList.sortBy(p => -p._2 -> VerbType.toString(p._1))
+            val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
+            ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
+              VerbFeatures.make(initVerb, props.featureService) { (options, verb, features) =>
+                InflectedFormSetFetch.make(
+                  request = verb.value,
+                  sendRequest = verb => props.featureService(FeatureReq.AllInflectedForms(verb))) {
+                  case InflectedFormSetFetch.Loading => <.div(S.loadingNotice)("Loading inflections...")
+                  case InflectedFormSetFetch.Loaded(formList) =>
+                    VerbModelFetch.make(
+                      request = (modelSpec.value, verb.value),
+                      sendRequest = { case (spec, verb) => props.verbService.getModel(spec, verb) }) {
+                      case VerbModelFetch.Loading => <.div(S.loadingNotice)("Loading verb clusters...")
+                      case VerbModelFetch.Loaded(model) =>
+                        InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
+                          ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
+                            // assume only verb tree. no extra roles. can fix later if necessary
+                            val verbTrees = clusterSplittingSpec.value.verbCriterion
+                              .splitTree[Set[VerbId]](model.verbClustering.clusterTreeOpt.get, _.size.toDouble)
+                            val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
+                              tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
+                            }.toMap
+                            // TODO: split down to how it was during verb clustering, then *possibly* re-cluster.
+                            val argClusterings = model.argumentClustering.split(argId => verbIndices(argId.verbId))
+                            val frames = verbTrees.zipWithIndex.map { case (verbTree, i) =>
+                              argClusterings.get(i) match {
+                                case None => ResolvedFrame(verbTree, Vector(), Map())
+                                case Some(argClustering) =>
+                                  val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
+                                    clusterSplittingSpec.value.argumentCriterion
+                                      .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                                  }
+                                  ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
+                              }
+                            }
+
+                            BoolLocal.make(false) { showMetrics =>
+                              <.div(S.mainContainer)(
+                                headerContainer(props.featureService, modelSpec, sortedVerbCounts, verb, options, showMetrics),
+                                SentencesFetch.make(
+                                  request = features.verbType,
+                                  sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {
+                                  case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
+                                  case SentencesFetch.Loaded(_sentenceIds) =>
+                                    val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
+                                    val initSentenceId = sentenceIds.head
+                                    StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
+                                      IntOptLocal.make(None) { curHighlightedFrame =>
+                                        <.div(S.dataContainer)(
+                                          frameContainer(
+                                            props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
+                                            formList, inflectedForms,
+                                            features, frames,
+                                            curSentenceId,
+                                            curHighlightedFrame
+                                          ),
+                                          if(showMetrics.value) <.div(S.dataContainer)(
+                                            npmiChart(features, frames)
+                                          ) else <.div(S.dataContainer)(
+                                            sentenceSelectionPane(
+                                              sentenceIds,
+                                              curSentenceId
+                                            ),
+                                            SentenceFetch.make(
+                                              request = curSentenceId.value,
+                                              sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
+                                              case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
+                                              case SentenceFetch.Loaded(sentenceInfo) =>
+                                                sentenceDisplayPane(
+                                                  features.verbType,
+                                                  sentenceInfo,
+                                                  features,
+                                                  inflectedForms.value.getOrElse(genericVerbForms),
+                                                  frames,
+                                                  curHighlightedFrame
+                                                )
+                                            }
+                                          )
+                                        )
+                                      }
+                                    }
                                 }
-                                ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
+                              )
                             }
                           }
-
-                          BoolLocal.make(false) { showMetrics =>
-                            <.div(S.mainContainer)(
-                              headerContainer(props.featureService, sortedVerbCounts, verb, options, showMetrics),
-                              SentencesFetch.make(
-                                request = features.verbType,
-                                sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {
-                                case SentencesFetch.Loading => <.div(S.loadingNotice)("Loading sentence IDs...")
-                                case SentencesFetch.Loaded(_sentenceIds) =>
-                                  val sentenceIds = _sentenceIds.toList.sorted(sentenceIdOrder.toOrdering)
-                                  val initSentenceId = sentenceIds.head
-                                  StringLocal.make(initialValue = initSentenceId) { curSentenceId =>
-                                    IntOptLocal.make(None) { curHighlightedFrame =>
-                                      <.div(S.dataContainer)(
-                                        frameContainer(
-                                          props.verbService, cachedClusterSplittingSpec, clusterSplittingSpec,
-                                          formList, inflectedForms,
-                                          features, frames,
-                                          curSentenceId,
-                                          curHighlightedFrame
-                                        ),
-                                        if(showMetrics.value) <.div(S.dataContainer)(
-                                          npmiChart(features, frames)
-                                        ) else <.div(S.dataContainer)(
-                                          sentenceSelectionPane(
-                                            sentenceIds,
-                                            curSentenceId
-                                          ),
-                                          SentenceFetch.make(
-                                            request = curSentenceId.value,
-                                            sendRequest = sid => props.featureService(FeatureReq.Sentence(sid))) {
-                                            case SentenceFetch.Loading => <.div(S.loadingNotice)("Loading sentence...")
-                                            case SentenceFetch.Loaded(sentenceInfo) =>
-                                              sentenceDisplayPane(
-                                                features.verbType,
-                                                sentenceInfo,
-                                                features,
-                                                inflectedForms.value.getOrElse(genericVerbForms),
-                                                frames,
-                                                curHighlightedFrame
-                                              )
-                                          }
-                                        )
-                                      )
-                                    }
-                                  }
-                              }
-                            )
-                          }
                         }
-                      }
-                  }
+                    }
+                }
               }
             }
-          }
+        }
       }
     }
   }

@@ -62,11 +62,11 @@ object Main {
       .getElementById(SharedConstants.verbApiUrlElementId)
       .getAttribute("value")
 
-    val initialVerbCache = DotMap.empty[Id, VerbFrameService.Request[VerbType, Arg]]
+    val initialVerbCache = DotMap.empty[Id, VerbFrameService.Request[ClusterModelSpec, VerbType, Arg]]
 
     val verbFrameService = VerbFrameService(
       jjm.Memo.memoizeDotFuture(
-        HttpUtil.makeHttpPostClient[VerbFrameService.Request[VerbType, Arg]](verbApiEndpoint),
+        HttpUtil.makeHttpPostClient[VerbFrameService.Request[ClusterModelSpec, VerbType, Arg]](verbApiEndpoint),
         initialVerbCache
       ).andThenK(OrWrapped.mapK(wrapCallback))
     )

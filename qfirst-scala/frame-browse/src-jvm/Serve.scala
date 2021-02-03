@@ -51,27 +51,36 @@ object Serve extends CommandIOApp(
   val verbApiSuffix = "verb"
   val featureApiSuffix = "feature"
 
-  def readCompleteClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
-    model: ClusteringModel, features: Features[VerbType, Arg])(
+  def getModelFromSpec(spec: ClusterModelSpec): ClusteringModel = {
+    ClusteringModel.fromString(spec.specString).get
+  }
+
+  def readAllClusterModels[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
+    features: Features[VerbType, Arg])(
     implicit Log: EphemeralTreeLogger[IO, String]
-  ): IO[Map[VerbType, VerbClusterModel[VerbType, Arg]]] = model match {
-    case m: JointModel => FrameInductionApp.getVerbFrames(m, features).flatMap(_.read.map(_.get))
-    case m: VerbModel => FrameInductionApp.getVerbClusters(m, features).flatMap(_.read.map(_.get))
-        .map(clusterings =>
-          clusterings.map { case (verbType, verbTree) =>
-            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, Clustering(None, Map()))
-          }
-        )
-    case m: ArgumentModel => FrameInductionApp.getArgumentClusters(m, features).flatMap(_.read.map(_.get))
-        .map(clusterings =>
-          clusterings.map { case (verbType, argClustering) =>
-            val allArgIds = argClustering.clusterTreeOpt.foldMap(_.unorderedFold) ++ argClustering.extraClusters.unorderedFold
-            val allVerbIds = allArgIds.map(_.verbId)
-            val verbTree = MergeTree.Leaf(0.0, allVerbIds)
-            val verbClustering = Clustering(Some(verbTree))
-            verbType -> VerbClusterModel[VerbType, Arg](verbType, verbClustering, argClustering)
-          }
-        )
+  ): IO[Map[ClusterModelSpec, Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
+    ClusterModelSpec.all.map(getModelFromSpec).traverse {
+      case m: JointModel => FrameInductionApp.getVerbFrames(m, features)
+          .flatMap(_.read.map(_.get))
+      case m: VerbModel => FrameInductionApp.getVerbClusters(m, features)
+          .flatMap(_.read.map(_.get))
+          .map(clusterings =>
+            clusterings.map { case (verbType, verbTree) =>
+              verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, Clustering(None, Map()))
+            }
+          )
+      case m: ArgumentModel => FrameInductionApp.getArgumentClusters(m, features)
+          .flatMap(_.read.map(_.get))
+          .map(clusterings =>
+            clusterings.map { case (verbType, argClustering) =>
+              val allArgIds = argClustering.clusterTreeOpt.foldMap(_.unorderedFold) ++ argClustering.extraClusters.unorderedFold
+              val allVerbIds = allArgIds.map(_.verbId)
+              val verbTree = MergeTree.Leaf(0.0, allVerbIds)
+              val verbClustering = Clustering(Some(verbTree))
+              verbType -> VerbClusterModel[VerbType, Arg](verbType, verbClustering, argClustering)
+            }
+          )
+    }.map(models => ClusterModelSpec.all.zip(models).toMap)
   }
 
   def _runSpecified[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
@@ -84,8 +93,12 @@ object Serve extends CommandIOApp(
     val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
 
     for {
-      verbModels <- readCompleteClusterModels[VerbType, Arg](model, features)
-      verbModelService = HttpUtil.makeHttpPostServer(VerbFrameService.basicIOService(verbModels))
+      // modelCache <- Ref[IO].of(Map.empty[ClusteringModel, Map[VerbType, VerbClusterModel[VerbType, Arg]]])
+      allVerbModels <- readAllClusterModels[VerbType, Arg](features)
+      verbCounts = allVerbModels.head._2.mapVals(_.numVerbInstances)
+      verbModelService = HttpUtil.makeHttpPostServer(
+        VerbFrameService.basicIOService(verbCounts, allVerbModels)
+      )
       app = Router(
         "/" -> pageService,
         s"/$verbApiSuffix" -> verbModelService,

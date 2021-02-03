@@ -17,43 +17,44 @@ import jjm.ling.en.VerbForm
 import io.circe.generic.JsonCodec
 import io.circe.{Encoder, Decoder}
 
-case class VerbFrameService[F[_], VerbType, Arg](
-  f: DotKleisli[F, VerbFrameService.Request[VerbType, Arg]]) { self =>
+case class VerbFrameService[F[_], Model, VerbType, Arg](
+  f: DotKleisli[F, VerbFrameService.Request[Model, VerbType, Arg]]) { self =>
   import VerbFrameService._
   def getVerbs: F[Map[VerbType, Int]] = f(GetVerbs())
-  def getModel(verb: VerbType): F[VerbClusterModel[VerbType, Arg]] = f(GetModel(verb))
+  def getModel(model: Model, verb: VerbType): F[VerbClusterModel[VerbType, Arg]] = f(GetModel(model, verb))
 }
 object VerbFrameService {
-  @JsonCodec sealed trait Request[VerbType, Arg] { type Out }
-  case class GetVerbs[VerbType, Arg]() extends Request[VerbType, Arg] { type Out = Map[VerbType, Int] }
-  @JsonCodec case class GetModel[VerbType, Arg](verb: VerbType) extends Request[VerbType, Arg] { type Out = VerbClusterModel[VerbType, Arg] }
+  @JsonCodec sealed trait Request[Model, VerbType, Arg] { type Out }
+  case class GetVerbs[Model, VerbType, Arg]() extends Request[Model, VerbType, Arg] { type Out = Map[VerbType, Int] }
+  @JsonCodec case class GetModel[Model, VerbType, Arg](model: Model, verb: VerbType) extends Request[Model, VerbType, Arg] { type Out = VerbClusterModel[VerbType, Arg] }
 
   object Request {
-    implicit def verbFrameServiceRequestDotEncoder[VerbType: Encoder, Arg: Encoder] = new DotKleisli[Encoder, Request[VerbType, Arg]] {
-      def apply(req: Request[VerbType, Arg]): Encoder[req.Out] = req match {
+    implicit def verbFrameServiceRequestDotEncoder[Model: Encoder, VerbType: Encoder, Arg: Encoder] = new DotKleisli[Encoder, Request[Model, VerbType, Arg]] {
+      def apply(req: Request[Model, VerbType, Arg]): Encoder[req.Out] = req match {
         case GetVerbs() => implicitly[Encoder[List[(VerbType, Int)]]]
             .contramap[Map[VerbType, Int]](_.toList).asInstanceOf[Encoder[req.Out]]
-        case GetModel(_) => implicitly[Encoder[VerbClusterModel[VerbType, Arg]]].asInstanceOf[Encoder[req.Out]]
+        case GetModel(_, _) => implicitly[Encoder[VerbClusterModel[VerbType, Arg]]].asInstanceOf[Encoder[req.Out]]
       }
     }
-    implicit def verbFrameServiceRequestDotDecoder[VerbType: Decoder, Arg: Decoder] = new DotKleisli[Decoder, Request[VerbType, Arg]] {
-      def apply(req: Request[VerbType, Arg]): Decoder[req.Out] = req match {
+    implicit def verbFrameServiceRequestDotDecoder[Model: Decoder, VerbType: Decoder, Arg: Decoder] = new DotKleisli[Decoder, Request[Model, VerbType, Arg]] {
+      def apply(req: Request[Model, VerbType, Arg]): Decoder[req.Out] = req match {
         case GetVerbs() => implicitly[Decoder[List[(VerbType, Int)]]]
             .map(_.toMap).asInstanceOf[Decoder[req.Out]]
-        case GetModel(_) => implicitly[Decoder[VerbClusterModel[VerbType, Arg]]].asInstanceOf[Decoder[req.Out]]
+        case GetModel(_, _) => implicitly[Decoder[VerbClusterModel[VerbType, Arg]]].asInstanceOf[Decoder[req.Out]]
       }
     }
   }
 
-  def basicIOService[VerbType, Arg](
-    verbModels: Map[VerbType, VerbClusterModel[VerbType, Arg]],
-  ): DotKleisli[IO, Request[VerbType, Arg]]  = DotKleisli.fromFunctionK(
-    new DotFunctionK[IO, Request[VerbType, Arg]] {
-      def apply[A](req: Request[VerbType, Arg] { type Out = A }): IO[A] = {
+  def basicIOService[Model, VerbType, Arg](
+    verbCounts: Map[VerbType, Int],
+    verbModels: Map[Model, Map[VerbType, VerbClusterModel[VerbType, Arg]]],
+  ): DotKleisli[IO, Request[Model, VerbType, Arg]]  = DotKleisli.fromFunctionK(
+    new DotFunctionK[IO, Request[Model, VerbType, Arg]] {
+      def apply[A](req: Request[Model, VerbType, Arg] { type Out = A }): IO[A] = {
         // @SuppressWarnings(Array("all"))
         val res = req match {
-          case GetVerbs() => IO.pure(verbModels.mapVals(_.verbClustering.size.toInt)): IO[Map[VerbType, Int]]
-          case GetModel(verb) => IO(verbModels(verb)): IO[VerbClusterModel[VerbType, Arg]]
+          case GetVerbs() => IO.pure(verbCounts): IO[Map[VerbType, Int]]
+          case GetModel(model, verb) => IO(verbModels(model)(verb)): IO[VerbClusterModel[VerbType, Arg]]
         }
         res.asInstanceOf[IO[A]]
       }
