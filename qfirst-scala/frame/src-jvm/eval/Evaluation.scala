@@ -47,35 +47,41 @@ object Evaluation {
   import com.cibo.evilplot.plot.aesthetics.DefaultTheme._
 
   def getAllClusteringConfs[A](
-    goldLabelTree: MergeTree[Map[A, Int]],
-    extraClusters: Map[String, Map[A, Int]],
-    metric: ClusterPRMetric
+    goldLabelTree: MergeTree[(Map[A, Int], Double)],
+    extraClusters: Map[String, (Map[A, Int], Double)],
+    metric: ClusterPRMetric,
   ): NonEmptyList[ConfStatsPoint] = {
-    val goldClusterSizes = goldLabelTree.unorderedFold |+| extraClusters.unorderedFold
+    val goldClusterSizes = goldLabelTree.unorderedFoldMap(_._1) |+| extraClusters.unorderedFoldMap(_._1)
     NonEmptyList.fromList(
       goldLabelTree.clusterSplittingsStreamByMaxLossPerCount(_.unorderedFold).take(1000).map { clusters =>
         val losses = clusters.map(_.loss)
-        val clusterSizes = clusters.map(_.unorderedFoldMap(_.unorderedFold))
-        val weightedPR = metric(goldClusterSizes, clusters.map(_.unorderedFold) ++ extraClusters.values)
-        ConfStatsPoint(losses, clusterSizes, weightedPR)
+        val clusterSizes = clusters.map(_.unorderedFoldMap(_._1.unorderedFold))
+        val clusterWeights = clusters.map(_.unorderedFoldMap(_._2))
+        val weightedPR = metric(
+          goldClusterSizes, clusters.map(_.unorderedFoldMap(_._1)) ++
+            extraClusters.values.map(_._1)
+        )
+        ConfStatsPoint(losses, clusterSizes, clusterWeights, weightedPR)
       }.compile.toList
     ).get
   }
 
   def getLeafClusteringConf[A](
-    goldLabelTree: MergeTree[Map[A, Int]],
-    extraClusters: Map[String, Map[A, Int]],
-    metric: ClusterPRMetric
+    goldLabelTree: MergeTree[(Map[A, Int], Double)],
+    extraClusters: Map[String, (Map[A, Int], Double)],
+    metric: ClusterPRMetric,
   ): ConfStatsPoint = {
-    val goldClusterSizes = goldLabelTree.unorderedFold |+| extraClusters.unorderedFold
-    val clusters = goldLabelTree.valuesWithLosses
+    val goldClusterSizes = goldLabelTree.unorderedFoldMap(_._1) |+| extraClusters.unorderedFoldMap(_._1)
+    val clusterWeights = goldLabelTree.map(_._2).values
+    val clusters = goldLabelTree.map(_._1).valuesWithLosses
     val losses = clusters.map(_._1)
     val clusterSizes = clusters.map(_._2.unorderedFold)
-    val weightedPR = metric(goldClusterSizes, clusters.map(_._2) ++ extraClusters.values)
-    ConfStatsPoint(losses, clusterSizes, weightedPR)
+    val weightedPR = metric(goldClusterSizes, clusters.map(_._2) ++ extraClusters.values.map(_._1))
+    ConfStatsPoint(losses, clusterSizes, clusterWeights, weightedPR)
   }
 
   def getAllPRStats[VerbType, InstanceId, GoldLabel](
+    itemWeightsOpt: Option[Map[VerbType, Map[InstanceId, Double]]],
     clusterings: Map[VerbType, Clustering[InstanceId]],
     getGoldLabel: VerbType => InstanceId => GoldLabel,
     metric: ClusterPRMetric,
@@ -85,21 +91,26 @@ object Evaluation {
     .filter(_._2.nonEmpty)
     .infoBarTraverse(s"Calculating ${metric.name} for all clusterings") { case (verbType, clustering) =>
       val getGoldLabelForVerb = getGoldLabel(verbType)
+      val getItemWeights = itemWeightsOpt.map(_.apply(verbType)).getOrElse((id: InstanceId) => 1.0)
       Log.trace(s"$verbType (${clustering.size} leaves + extras)") >> IO {
-        val extraClusterGoldCounts = clustering.extraClusters.mapVals(
-          _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
+        val extraClusterGoldCounts = clustering.extraClusters.mapVals(cluster =>
+          cluster.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1)) ->
+            cluster.unorderedFoldMap(getItemWeights)
         )
         val confs = clustering.clusterTreeOpt match {
           case None =>
-            val goldClusterSizes = extraClusterGoldCounts.unorderedFold
+            val goldClusterSizes = extraClusterGoldCounts.unorderedFoldMap(_._1)
             NonEmptyList.of(
               ConfStatsPoint(
-                Vector(), Vector(), metric(goldClusterSizes, extraClusterGoldCounts.values.toVector)
+                Vector(), Vector(), Vector(), metric(
+                  goldClusterSizes, extraClusterGoldCounts.values.toVector.map(_._1)
+                )
               )
             )
           case Some(tree) =>
-            val goldCountTree = tree.map(
-              _.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1))
+            val goldCountTree = tree.map(cluster =>
+              cluster.unorderedFoldMap(id => Map(getGoldLabelForVerb(id) -> 1)) ->
+                cluster.unorderedFoldMap(getItemWeights)
             )
             // we only consider default clustering of gold-derived models
             if(maxClustersOnly) NonEmptyList.of(
@@ -251,7 +262,10 @@ object Evaluation {
     implicit Log: SequentialEphemeralTreeLogger[IO, String], timer: Timer[IO]
   ) = {
     Log.infoBranch(s"Calculating metrics (${metric.name})") {
-      getAllPRStats(argClusterings, getGoldLabel, metric, modelName.startsWith("gold")) >>= (allStats =>
+      getAllPRStats(
+        itemDistsOpt.map(_.mapVals(_.value.mapVals(_.unorderedFold))),
+        argClusterings, getGoldLabel, metric, modelName.startsWith("gold")
+      ) >>= (allStats =>
         for {
           resultsDir <- IO.pure(parentDir.resolve(metric.name)).flatTap(createDir)
           _ <- Log.info(
@@ -429,7 +443,7 @@ object Evaluation {
   ): IO[Unit] = {
     for {
       tunedStatsByModel <- models.toList.infoBarTraverse("Getting tuned P/R curves for models") { case (model, (argClusterings, tuningSpec)) =>
-        Log.info(model) >> getAllPRStats(argClusterings, getGoldLabel, metric, model.startsWith("gold"))
+        Log.info(model) >> getAllPRStats(None, argClusterings, getGoldLabel, metric, model.startsWith("gold"))
           .flatMap(tuningSpec.run(_))
           .map(model -> _)
       }.map(_.toMap)
@@ -454,7 +468,7 @@ object Evaluation {
       _ <- IO.pure(!includeOracle).ifM(
         IO.unit, for {
           oracleStatsByModel <- models.toList.infoBarTraverse("Getting oracle P/R curves for models") { case (model, (argClusterings, _)) =>
-            Log.info(model) >> getAllPRStats(argClusterings, getGoldLabel, metric, model.startsWith("gold"))
+            Log.info(model) >> getAllPRStats(None, argClusterings, getGoldLabel, metric, model.startsWith("gold"))
               .flatMap(SplitTuningSpec(OracleCriterion).run(_))
               .map(model -> _)
           }.map(_.toMap)

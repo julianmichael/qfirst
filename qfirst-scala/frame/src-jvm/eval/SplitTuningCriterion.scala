@@ -112,6 +112,7 @@ object SplitTuningCriterion {
     OracleCriterion,
     NumClustersCriterion,
     TotalEntropyCriterion,
+    WeightedEntropyCriterion,
     LinearPenaltyCriterion,
     LogPenaltyCriterion,
     SqNumClustersPenaltyCriterion,
@@ -155,6 +156,32 @@ object OracleCriterion extends SplitTuningCriterion {
   }
   def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
     choices.toList.maxBy(_.fMeasure(threshold))
+  }
+}
+
+object WeightedEntropyCriterion extends SplitTuningCriterion {
+  val name: String = "wentropy"
+  val defaultThresholds = (-10 to 100).map(_.toDouble / 20).toList
+
+  private val getTotalLoss = (t: Double) => (s: ConfStatsPoint) => {
+    val totalWeight = s.clusterWeights.sum
+    val mixingLoss = s.clusterWeights.foldMap(weight =>
+      -weight * scala.math.log(weight / totalWeight)
+    )
+    s.loss + (t * mixingLoss)
+  }
+
+  def selectPoint(threshold: Double)(choices: NonEmptyList[ConfStatsPoint]): ConfStatsPoint = {
+    val getLoss = getTotalLoss(threshold)
+    choices.minimum(Order.by(getLoss))
+  }
+
+  override def splitTree[A](
+    tree: MergeTree[A],
+    count: A => Double,
+    threshold: Double
+  ): Vector[MergeTree[A]] = {
+    ClusterSplittingCriterion.Entropy(threshold).splitTree(tree, count)
   }
 }
 

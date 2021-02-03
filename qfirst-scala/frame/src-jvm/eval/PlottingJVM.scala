@@ -58,7 +58,7 @@ object PlottingJVM {
     val allData = allStats.transform { case (verbType, allStats) =>
 
       val bestF1 = allStats.map(_.f1).maximum
-      allStats.map { case p @ ConfStatsPoint(losses, clusterSizes, pr) =>
+      allStats.map { case p @ ConfStatsPoint(losses, clusterSizes, _, pr) =>
         PRPoint(verbType, p.loss, clusterSizes.sum, clusterSizes.size, p.f1 == bestF1, pr.recall, pr.precision)
       }
     }

@@ -2,7 +2,7 @@ package qfirst.frame.eval
 
 import qfirst.metrics.Functions
 
-case class ConfStatsPoint(losses: Vector[Double], clusterSizes: Vector[Int], weightedPR: WeightedPR) {
+case class ConfStatsPoint(losses: Vector[Double], clusterSizes: Vector[Int], clusterWeights: Vector[Double], weightedPR: WeightedPR) {
   val loss = losses.sum
   def precision = weightedPR.precision
   def recall = weightedPR.recall
