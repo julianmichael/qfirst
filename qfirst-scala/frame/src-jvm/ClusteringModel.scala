@@ -174,7 +174,9 @@ case class SideClusteringModel(
   modals: Boolean,
   negation: Boolean,
   adjuncts: Boolean,
-  discourse: Boolean
+  discourse: Boolean,
+  syntf: Boolean,
+  syntfConverted: Boolean,
 ){
   def extractSideClusters[VerbType, Arg: Order](
     features: Features[VerbType, Arg])(
@@ -184,11 +186,13 @@ case class SideClusteringModel(
     sentences <- features.sentences.get.map(_.value)
     headIndices <- features.argSemanticHeadIndices.get
     syntacticFuncs <- features.argSyntacticFunctions.get
+    syntacticFuncsConverted <- features.argSyntacticFunctionsConverted.get
     argSpans <- features.argSpans.get
     results <- args.toList.infoBarTraverse("Constructing side clusters") { case (verbType, args) =>
       Log.trace(verbType.toString) >> IO {
         val heads = headIndices(verbType)
         val funcs = syntacticFuncs(verbType)
+        val funcsConverted = syntacticFuncsConverted(verbType)
         val spans = argSpans(verbType)
         val getSideClusterLabel = (argId: ArgumentId[Arg]) => {
           val sentence = sentences(argId.verbId.sentenceId)
@@ -223,7 +227,13 @@ case class SideClusteringModel(
             .filter(_ => adjuncts)
             .filter(SideClusteringModel.adjunctFuncs.contains)
 
-          modal.orElse(neg).orElse(disc).orElse(adjunct)
+          val syntfunc = Some(funcs(argId))
+            .filter(_ => syntf)
+
+          val syntfuncConverted = Some(funcsConverted(argId))
+            .filter(_ => syntfConverted)
+
+          modal.orElse(neg).orElse(disc).orElse(adjunct).orElse(syntfunc).orElse(syntfuncConverted)
         }
         verbType -> args.groupBy(getSideClusterLabel).flatMap { case (keyOpt, v) => keyOpt.map(_ -> v) }
       }
@@ -235,7 +245,8 @@ case class SideClusteringModel(
       if(modals) "m" else "",
       if(negation) "n" else "",
       if(adjuncts) "a" else "",
-      if(discourse) "d" else ""
+      if(discourse) "d" else "",
+      if(syntf) "s" else if(syntfConverted) "S" else ""
     ).mkString
   }
 }
@@ -282,7 +293,9 @@ object SideClusteringModel {
         x.contains("m"),
         x.contains("n"),
         x.contains("a"),
-        x.contains("d")
+        x.contains("d"),
+        x.contains("s"),
+        x.contains("S") && !x.contains("s"),
       )
     )
   }
