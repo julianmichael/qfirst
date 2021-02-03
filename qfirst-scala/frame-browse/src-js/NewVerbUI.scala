@@ -592,7 +592,8 @@ class NewVerbUI[VerbType, Arg: Order](
 
   val defaultClusterSplittingSpec = ClusterSplittingSpec(
     ClusterSplittingCriterion.Number(1),
-    ClusterSplittingCriterion.Number(5)
+    ClusterSplittingCriterion.Entropy(0.35)
+    // ClusterSplittingCriterion.Number(5)
   )
 
   // def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
@@ -758,9 +759,9 @@ class NewVerbUI[VerbType, Arg: Order](
         val numberedRoles = frame.roleTrees.zipWithIndex.map { case (tree, index) =>
           Left(index) -> tree.unorderedFold
         }
-        val namedRoles = frame.extraRoles.toList.map { case (name, argIds) =>
-          Right(name) -> argIds
-        }
+        val namedRoles = frame.extraRoles
+          .toList.sortBy(-_._2.size)
+          .map { case (name, argIds) => Right(name) -> argIds }
         val allRoles = numberedRoles ++ namedRoles
         val isFrameChosen = false // TODO
         val isFrameHighlighted = curHighlightedFrame.value.exists(_ == frameIndex)
@@ -1322,12 +1323,14 @@ class NewVerbUI[VerbType, Arg: Order](
     val ClusterModelSpecLocal = new LocalState[ClusterModelSpec]
 
     def render(props: Props, state: State) = {
-      ClusterModelSpecLocal.make(ClusterModelSpec.HumQQ) { modelSpec =>
+      ClusterModelSpecLocal.make(ClusterModelSpec.HumQQLex) { modelSpec =>
         VerbsFetch.make(request = (), sendRequest = _ => props.verbService.getVerbs) {
           case VerbsFetch.Loading => <.div(S.loadingNotice)("Waiting for verb data...")
           case VerbsFetch.Loaded(verbCounts) =>
             val sortedVerbCounts = verbCounts.toList.sortBy(p => -p._2 -> VerbType.toString(p._1))
-            val initVerb = sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10))._1
+            val initVerb = sortedVerbCounts.find(p => VerbType.toString(p._1).contains("give"))
+              .getOrElse(sortedVerbCounts(scala.math.min(sortedVerbCounts.size - 1, 10)))
+              ._1
             ClusterSplittingSpecLocal.make(initialValue = defaultClusterSplittingSpec) { cachedClusterSplittingSpec =>
               VerbFeatures.make(initVerb, props.featureService) { (options, verb, features) =>
                 InflectedFormSetFetch.make(
@@ -1342,9 +1345,10 @@ class NewVerbUI[VerbType, Arg: Order](
                       case VerbModelFetch.Loaded(model) =>
                         InflectedFormsLocal.make(initialValue = formList.headOption) { inflectedForms =>
                           ClusterSplittingSpecLocal.make(initialValue = cachedClusterSplittingSpec.value) { clusterSplittingSpec =>
-                            // assume only verb tree. no extra roles. can fix later if necessary
+                            // NOTE: assumes only verb tree. ignores extra roles. can fix later if necessary
                             val verbTrees = clusterSplittingSpec.value.verbCriterion
                               .splitTree[Set[VerbId]](model.verbClustering.clusterTreeOpt.get, _.size.toDouble)
+                              .sortBy(-_.size)
                             val verbIndices = verbTrees.zipWithIndex.flatMap { case (tree, index) =>
                               tree.values.flatMap(verbIds => verbIds.toVector.map(_ -> index))
                             }.toMap
@@ -1357,6 +1361,7 @@ class NewVerbUI[VerbType, Arg: Order](
                                   val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
                                     clusterSplittingSpec.value.argumentCriterion
                                       .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
+                                      .sortBy(-_.size)
                                   }
                                   ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
                               }
