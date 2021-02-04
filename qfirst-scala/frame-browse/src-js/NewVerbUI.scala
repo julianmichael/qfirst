@@ -301,7 +301,16 @@ class NewVerbUI[VerbType, Arg: Order](
   object FeatureOptions {
     val constituentTypes = Set("ptb", "stripped")
     val mlmTypes = Set("masked", "repeated", "symm_left", "symm_right", "symm_both")
-    def init = FeatureOptions(false, false, false, false, false, None, None, None, None, false)
+    def init = FeatureOptions(
+      questionDist = true,
+      false,
+      argSyntFunc = false,
+      argSpans = true,
+      false,
+      None, None, None, None,
+      goldLabels = true // gold labels
+      // false
+    )
   }
 
   @Lenses case class FeatureValues(
@@ -466,9 +475,9 @@ class NewVerbUI[VerbType, Arg: Order](
     val Component = ScalaComponent.builder[Props]("Verb Features")
       .initialStateFromProps(p => State.initial(p.initVerb))
       .renderBackend[Backend]
+      .componentDidMount($ => $.backend.pullFeatures($.props.featureService))
       .build
     // might make sense to add if we want to start with some features.
-    // .componentDidMount($ => $.backend.pullFeatures($.props.featureService))
 
     def make(
       initVerb: VerbType,
@@ -765,6 +774,7 @@ class NewVerbUI[VerbType, Arg: Order](
         val allRoles = numberedRoles ++ namedRoles
         val isFrameChosen = false // TODO
         val isFrameHighlighted = curHighlightedFrame.value.exists(_ == frameIndex)
+
         <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
           ^.onMouseMove --> (
             if(isFrameHighlighted) Callback.empty
@@ -879,6 +889,7 @@ class NewVerbUI[VerbType, Arg: Order](
             ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
           )
         )
+
           // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
       ),
       framesetDisplay(verbFeatures, inflectedForms.value.getOrElse(genericVerbForms), frames, curSentenceId, curHighlightedFrame)
