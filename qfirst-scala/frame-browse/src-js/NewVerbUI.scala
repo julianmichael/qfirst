@@ -245,45 +245,43 @@ class NewVerbUI[VerbType, Arg: Order](
     label: String,
     criterion: StateSnapshot[ClusterSplittingCriterion]
   ): VdomElement = {
-    <.div(
-      LocalClusterCriterionControl.make(ClusterCriterionControl.default) { criterionControl =>
-        <.span(
-          label + " ",
-          <.span(S.disabledCriterionText.unless(criterion.value.isNumber))(
-            "clusters",
-            ^.onClick --> criterion.value.getEntropy.foldMap(_ =>
-              criterion.setState(
-                ClusterSplittingCriterion.Number(criterionControl.value.numClusters)
-              )
-            )
-          ),
-          " / ",
-          <.span(S.disabledCriterionText.unless(criterion.value.isEntropy))(
-            "entropy",
-            ^.onClick --> criterion.value.getNumber.foldMap(_ =>
-              criterion.setState(
-                ClusterSplittingCriterion.Entropy(criterionControl.value.entropyPenalty)
-              )
-            )
-          ),
-          ": ",
-          zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
-            View.intArrowField(S.shortTextField)(
-              None,
-              numClusters,
-              criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
-            )
-          ),
-          zoomStateP(criterion, ClusterSplittingCriterion.entropy)(Reusability.double(1e-3)).whenDefined(entropyPenalty =>
-            View.doubleTextField(S.shortTextField)(
-              None,
-              entropyPenalty,
-              criterionControl.zoomStateL(ClusterCriterionControl.entropyPenalty).setState(_)
+    LocalClusterCriterionControl.make(ClusterCriterionControl.default) { criterionControl =>
+      <.span(
+        label + " ",
+        <.span(S.disabledCriterionText.unless(criterion.value.isNumber))(
+          "clusters",
+          ^.onClick --> criterion.value.getEntropy.foldMap(_ =>
+            criterion.setState(
+              ClusterSplittingCriterion.Number(criterionControl.value.numClusters)
             )
           )
+        ),
+        " / ",
+        <.span(S.disabledCriterionText.unless(criterion.value.isEntropy))(
+          "lambda",
+          ^.onClick --> criterion.value.getNumber.foldMap(_ =>
+            criterion.setState(
+              ClusterSplittingCriterion.Entropy(criterionControl.value.entropyPenalty)
+            )
+          )
+        ),
+        ": ",
+        zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
+          View.intArrowField(S.shortTextField)(
+            None,
+            numClusters,
+            criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
+          )
+        ),
+        zoomStateP(criterion, ClusterSplittingCriterion.entropy)(Reusability.double(1e-3)).whenDefined(entropyPenalty =>
+          View.doubleTextField(S.shortTextField)(
+            None,
+            entropyPenalty,
+            criterionControl.zoomStateL(ClusterCriterionControl.entropyPenalty).setState(_)
+          )
         )
-      }
-    )
+      )
+    }
   }
 
   @Lenses case class FeatureOptions(
@@ -555,46 +553,55 @@ class NewVerbUI[VerbType, Arg: Order](
           View.checkboxToggle("Arg syntf", verbFeatures.zoomStateL(FeatureOptions.argSyntFunc)),
         ),
         <.div(S.headerColumn)(
-          View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
+          // View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
           View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
-        ),
-        View.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
-        <.div(S.headerColumn)(
-          <.span(S.labeledDropdown)(
-            <.span(S.labeledDropdownLabel)("Arg ctypes:"),
-            OptionalStringSelect(
-              FeatureOptions.constituentTypes,
-              verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)
-            )
-          ),
-          <.span(S.labeledDropdown)(
-            <.span(S.labeledDropdownLabel)("Arg MLM:"),
-            OptionalStringSelect(
-              FeatureOptions.mlmTypes,
-              verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
-            )
-          )
+          View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels))
         ),
         <.div(S.headerColumn)(
-          <.span(S.labeledDropdown)(
-            <.span(S.labeledDropdownLabel)("Arg Prep MLM:"),
-            OptionalStringSelect(
-              FeatureOptions.mlmTypes,
-              verbFeatures.zoomStateL(FeatureOptions.argPrepMlmDist)
-            )
-          ),
-          <.span(S.labeledDropdown)(
-            <.span(S.labeledDropdownLabel)("Verb MLM:"),
-            OptionalStringSelect(
-              FeatureOptions.mlmTypes,
-              verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
-            )
-          )
+          View.checkboxToggle("Show Metrics", showMetrics)
         ),
-        <.div(S.headerColumn)(
-          View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels)),
-          View.checkboxToggle("Metrics", showMetrics),
-        )
+        // <.div(S.headerColumn, S.legendColumn)(
+        //   <.span(S.legendTitleLinkText)(
+        //     <.a(
+        //       ^.href := "#", "Help",
+        //       dataToggle := "modal",
+        //       dataTarget := s"#$helpModalId"
+        //     )
+        //   )
+        // )
+        // View.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
+        // <.div(S.headerColumn)(
+        //   <.span(S.labeledDropdown)(
+        //     <.span(S.labeledDropdownLabel)("Arg ctypes:"),
+        //     OptionalStringSelect(
+        //       FeatureOptions.constituentTypes,
+        //       verbFeatures.zoomStateL(FeatureOptions.argConstituentTypes)
+        //     )
+        //   ),
+        //   <.span(S.labeledDropdown)(
+        //     <.span(S.labeledDropdownLabel)("Arg MLM:"),
+        //     OptionalStringSelect(
+        //       FeatureOptions.mlmTypes,
+        //       verbFeatures.zoomStateL(FeatureOptions.argMlmDist)
+        //     )
+        //   )
+        // ),
+        // <.div(S.headerColumn)(
+        //   <.span(S.labeledDropdown)(
+        //     <.span(S.labeledDropdownLabel)("Arg Prep MLM:"),
+        //     OptionalStringSelect(
+        //       FeatureOptions.mlmTypes,
+        //       verbFeatures.zoomStateL(FeatureOptions.argPrepMlmDist)
+        //     )
+        //   ),
+        //   <.span(S.labeledDropdown)(
+        //     <.span(S.labeledDropdownLabel)("Verb MLM:"),
+        //     OptionalStringSelect(
+        //       FeatureOptions.mlmTypes,
+        //       verbFeatures.zoomStateL(FeatureOptions.verbMlmDist)
+        //     )
+        //   )
+        // ),
       )
     )
   }
@@ -785,7 +792,8 @@ class NewVerbUI[VerbType, Arg: Order](
           ^.key := "frame-" + frameIndex.toString,
           <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
             <.span(S.frameHeadingText)(
-              f"Frame $frameIndex%s (${frameProb}%.3f)"
+              inflectedForms.stem.toString
+              // f"Frame $frameIndex%s (${frameProb}%.3f)"
             ),
             <.span(S.prevFrameInstanceText)(
               ^.onClick --> frame.prevSentence(curSentenceId.value).foldMap(curSentenceId.setState),
@@ -881,14 +889,20 @@ class NewVerbUI[VerbType, Arg: Order](
         ),
       },
       <.div(S.clusterSplittingSpecDisplay)(
-        clusterCriterionField("Verb", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)),
-        clusterCriterionField("Argument", clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)),
-        <.div(
-          <.button(
-            "cache",
-            ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
-          )
+        // clusterCriterionField(
+        //   "Verb",
+        //   clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.verbCriterion)
+        // ),
+        clusterCriterionField(
+          "Argument",
+          clusterSplittingSpec.zoomStateL(ClusterSplittingSpec.argumentCriterion)
+        ),
+        <.button(
+          "cache",
+          ^.onClick --> cachedClusterSplittingSpec.setState(clusterSplittingSpec.value)
         )
+        // <.div(
+        // )
 
           // <.div(f"Max Verb Loss/instance: ${maxLoss / numInstances}%.3f")
       ),
