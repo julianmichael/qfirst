@@ -1549,8 +1549,21 @@ class NewVerbUI[VerbType, Arg: Order](
               "data for that role. If you click one of the terms there, its probability will print in the ",
               "JavaScript console."
             ),
+            <.h4("Errata"),
             <.p(
-              "That's it. Hope this helps! Technically this interface probably should not be shared ",
+              "There was actually a mistake in the submitted version of the paper where we describe ",
+              "how we derive the question counts for each argument. We say we sum the questions ",
+              "for each span, weighing by its probability under a span detection model. In fact, we ",
+              "did not end up doing that, and instead we just take the mean of the counts for each ",
+              "span (this had worked best in development and it's what we had used for all of the numbers ",
+              "in the paper, but I had forgotten and misread the code). So the arguments (and their spans) ",
+              "get mostly equal weight, as you will see in the features for each argument ",
+              "listed in the sentence pane."
+            ),
+            <.h4("Thanks!"),
+            <.p(
+              "That's it. Hope this is interesting and helps elucidate how (and how well) our method ",
+              "works. Technically this interface probably should not be shared ",
               "publicly, because the data being visualized is owned by the LDC."
             )
           ),
