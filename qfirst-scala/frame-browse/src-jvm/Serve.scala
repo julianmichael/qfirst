@@ -86,7 +86,6 @@ object Serve extends CommandIOApp(
   def _runSpecified[VerbType: Encoder : Decoder, Arg: Encoder : Decoder : Order](
     features: Features[VerbType, Arg],
     pageService: org.http4s.HttpRoutes[IO],
-    model: ClusteringModel,
     port: Int)(
     implicit Log: EphemeralTreeLogger[IO, String]
   ): IO[ExitCode] = {
@@ -116,7 +115,6 @@ object Serve extends CommandIOApp(
     jsDepsPath: Path, jsPath: Path,
     dataSetting: DataSetting,
     mode: RunMode,
-    model: ClusteringModel,
     domain: String,
     port: Int
   ): IO[ExitCode] = {
@@ -129,9 +127,9 @@ object Serve extends CommandIOApp(
       )
 
       dataSetting match {
-        case d @ DataSetting.Qasrl         => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
-        case d @ DataSetting.Ontonotes5(_) => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
-        case d @ DataSetting.CoNLL08(_)    => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, model, port)
+        case d @ DataSetting.Qasrl         => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, port)
+        case d @ DataSetting.Ontonotes5(_) => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, port)
+        case d @ DataSetting.CoNLL08(_)    => _runSpecified(FrameInductionApp.getFeatures(d, mode), pageService, port)
       }
     }
   }
@@ -150,8 +148,6 @@ object Serve extends CommandIOApp(
 
     val modeO = FrameInductionApp.modeO
 
-    val modelO = FrameInductionApp.modelO
-
     val domainO = Opts.option[String](
       "domain", metavar = "domain", help = "domain name the server is being hosted at."
     )
@@ -165,6 +161,6 @@ object Serve extends CommandIOApp(
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, dataO, modeO, modelO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, dataO, modeO, domainO, portO).mapN(_run)
   }
 }

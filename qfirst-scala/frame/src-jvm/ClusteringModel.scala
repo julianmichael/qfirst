@@ -177,6 +177,8 @@ case class SideClusteringModel(
   discourse: Boolean,
   syntf: Boolean,
   syntfConverted: Boolean,
+  gold: Boolean,
+  goldWithSense: Boolean
 ){
   def extractSideClusters[VerbType, Arg: Order](
     features: Features[VerbType, Arg])(
@@ -188,12 +190,14 @@ case class SideClusteringModel(
     syntacticFuncs <- features.argSyntacticFunctions.get
     syntacticFuncsConverted <- features.argSyntacticFunctionsConverted.get
     argSpans <- features.argSpans.get
+    roleLabels <- features.getIfPropBank.traverse(_.argRoleLabels.get)
     results <- args.toList.infoBarTraverse("Constructing side clusters") { case (verbType, args) =>
       Log.trace(verbType.toString) >> IO {
         val heads = headIndices(verbType)
         val funcs = syntacticFuncs(verbType)
         val funcsConverted = syntacticFuncsConverted(verbType)
         val spans = argSpans(verbType)
+        val roleLabelsOpt = roleLabels.map(_.apply(verbType.toString))
         val getSideClusterLabel = (argId: ArgumentId[Arg]) => {
           val sentence = sentences(argId.verbId.sentenceId)
           val modal = Option("MODAL")
@@ -233,7 +237,17 @@ case class SideClusteringModel(
           val syntfuncConverted = Some(funcsConverted(argId))
             .filter(_ => syntfConverted)
 
-          modal.orElse(neg).orElse(disc).orElse(adjunct).orElse(syntfunc).orElse(syntfuncConverted)
+          val goldRole = roleLabelsOpt
+            .map(_.apply(argId).role)
+            .filter(_ => gold)
+
+          val goldRoleWithSense = roleLabelsOpt
+            .map(_.apply(argId).toString)
+            .filter(_ => goldWithSense)
+
+          modal.orElse(neg).orElse(disc).orElse(adjunct)
+            .orElse(syntfunc).orElse(syntfuncConverted)
+            .orElse(goldRole).orElse(goldRoleWithSense)
         }
         verbType -> args.groupBy(getSideClusterLabel).flatMap { case (keyOpt, v) => keyOpt.map(_ -> v) }
       }
@@ -246,7 +260,8 @@ case class SideClusteringModel(
       if(negation) "n" else "",
       if(adjuncts) "a" else "",
       if(discourse) "d" else "",
-      if(syntf) "s" else if(syntfConverted) "S" else ""
+      if(syntf) "s" else if(syntfConverted) "c" else "",
+      if(gold) "g" else if(goldWithSense) "r" else ""
     ).mkString
   }
 }
@@ -295,7 +310,9 @@ object SideClusteringModel {
         x.contains("a"),
         x.contains("d"),
         x.contains("s"),
-        x.contains("S") && !x.contains("s"),
+        x.contains("c") && !x.contains("s"),
+        x.contains("g"),
+        x.contains("r") && !x.contains("g"),
       )
     )
   }
