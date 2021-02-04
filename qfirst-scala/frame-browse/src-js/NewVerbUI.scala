@@ -1511,7 +1511,7 @@ class NewVerbUI[VerbType, Arg: Order](
             <.h4("Usage"),
             <.p(
               "Main data navigation and filtering controls are along the top row. ",
-              "The drop-down menus on the far left column allow you to change the data split or model ",
+              "The drop-down menu on the far left column lets you to change the model ",
               "you're looking at. To the right of those are two drop-downs which allow you to navigate ",
               "to your choice of verb. The first is sorted by verb frequency, and the second ",
               "alphabetically; if you have a particular verb you want to look at, click on the second one ",
