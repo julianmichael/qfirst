@@ -115,7 +115,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
     addClassNames("pr-1")
   )
 
-  val titleAndSearchContainer = style()
+  val titleAndSearchContainer = style(
+    addClassNames("pr-2")
+  )
 
   // title
 
@@ -161,6 +163,10 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   // legend
+
+  val legendColumn = style(
+    addClassNames("px-2")
+  )
 
   val legendContainer = style(
     addClassNames("pt-1"),

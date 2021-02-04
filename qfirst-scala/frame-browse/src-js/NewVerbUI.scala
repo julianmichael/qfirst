@@ -504,6 +504,17 @@ class NewVerbUI[VerbType, Arg: Order](
     showMetrics: StateSnapshot[Boolean]
   ) = {
     <.div(S.headerContainer)(
+      <.div(S.titleAndSearchContainer)(
+        <.h1(S.title)(
+          "Roleset Explorer ",
+          <.a(
+            ^.href := "#", "(Help)",
+            dataToggle := "modal",
+            dataTarget := s"#$helpModalId"
+          )
+        )
+        // searchPane(state.zoomStateL(State.search))
+      ),
       <.div(S.headerColumn)(
         <.select(S.verbDropdown)(
           ^.value := modelSpec.value.toString,
@@ -783,11 +794,11 @@ class NewVerbUI[VerbType, Arg: Order](
         val isFrameHighlighted = curHighlightedFrame.value.exists(_ == frameIndex)
 
         <.div(S.frameContainer, S.chosenFrameContainer.when(isFrameChosen))(
-          ^.onMouseMove --> (
-            if(isFrameHighlighted) Callback.empty
-            else curHighlightedFrame.setState(Some(frameIndex))
-          ),
-          ^.onMouseOut --> curHighlightedFrame.setState(None),
+          // ^.onMouseMove --> (
+          //   if(isFrameHighlighted) Callback.empty
+          //   else curHighlightedFrame.setState(Some(frameIndex))
+          // ),
+          // ^.onMouseOut --> curHighlightedFrame.setState(None),
           S.highlightedFrame.when(isFrameHighlighted),
           ^.key := "frame-" + frameIndex.toString,
           <.div(S.frameHeading, S.chosenFrameHeading.when(isFrameChosen))(
@@ -984,23 +995,23 @@ class NewVerbUI[VerbType, Arg: Order](
         }.toMap
 
         <.div(S.sentenceDisplayPane)(
-          <.span(S.sentenceInfoText)(sentence.sentenceId),
+          // <.span(S.sentenceInfoText)(sentence.sentenceId),
           features.goldLabels.whenDefined(goldLabelsOpt =>
             <.div(S.sentenceInfoContainer)(
               "No gold labels available."
             ).when(goldLabelsOpt.isEmpty)
           ),
-          features.questionDist.whenDefined(_ =>
-            <.div(
-              <.div(View.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
-              <.div(
-                View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))
-              ).when(tfidfConfig.value.use),
-              <.div(
-                View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass))
-              ).when(tfidfConfig.value.use)
-            )
-          ),
+          // features.questionDist.whenDefined(_ =>
+          //   <.div(
+          //     <.div(View.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
+          //     <.div(
+          //       View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))
+          //     ).when(tfidfConfig.value.use),
+          //     <.div(
+          //       View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass))
+          //     ).when(tfidfConfig.value.use)
+          //   )
+          // ),
           <.div(S.sentenceTextContainer)(
             <.span(S.sentenceText)(
               View.renderSentenceWithHighlights(
@@ -1042,11 +1053,11 @@ class NewVerbUI[VerbType, Arg: Order](
               }.toMap
               <.div(S.verbEntryDisplay)(
                 S.highlightedFrame.when(isFrameHighlighted),
-                ^.onMouseMove --> (
-                  if(isFrameHighlighted) Callback.empty
-                  else curHighlightedFrame.setState(Some(frameIndex))
-                ),
-                ^.onMouseOut --> curHighlightedFrame.setState(None),
+                // ^.onMouseMove --> (
+                //   if(isFrameHighlighted) Callback.empty
+                //   else curHighlightedFrame.setState(Some(frameIndex))
+                // ),
+                // ^.onMouseOut --> curHighlightedFrame.setState(None),
                 <.div(
                   <.a(
                     ^.name := s"verb-${verb.index}",
@@ -1394,6 +1405,7 @@ class NewVerbUI[VerbType, Arg: Order](
 
                             BoolLocal.make(false) { showMetrics =>
                               <.div(S.mainContainer)(
+                                helpModal,
                                 headerContainer(props.featureService, modelSpec, sortedVerbCounts, verb, options, showMetrics),
                                 SentencesFetch.make(
                                   request = features.verbType,
@@ -1455,5 +1467,102 @@ class NewVerbUI[VerbType, Arg: Order](
     .initialState(State.initial)
     .renderBackend[Backend]
     .build
+
+  val helpModalId = "help-modal"
+  val helpModalLabelId = "help-modal-label"
+  val dataToggle = VdomAttr("data-toggle")
+  val dataTarget = VdomAttr("data-target")
+  val ariaLabelledBy = VdomAttr("aria-labelledby")
+  val ariaHidden = VdomAttr("aria-hidden")
+  val dataDismiss = VdomAttr("data-dismiss")
+  val ariaLabel = VdomAttr("aria-label")
+
+  def helpModal = {
+    <.div(^.id := helpModalId)(
+      S.helpModal, ^.tabIndex := -1, ^.role := "dialog",
+      ariaLabelledBy := helpModalLabelId, ariaHidden := true
+    )(
+      <.div(S.helpModalDialog, ^.role := "document")(
+        <.div(S.helpModalContent)(
+          <.div(S.helpModalHeader)(
+            <.h1(S.helpModalTitle)(
+              ^.id := helpModalLabelId,
+              "Roleset Explorer"
+            ),
+            <.button(S.helpModalHeaderCloseButton)(
+              ^.`type` := "button", dataDismiss := "modal", ariaLabel := "Close",
+              <.span(ariaHidden := true, "×")
+            )
+          ),
+          <.div(S.helpModalBody)(
+            <.p(
+              "This page presents the rolesets induced by the models in the ACL 2021 submission ",
+              <.i("Semantic Role Induction Without Syntax"), ". ",
+              "Explorable in this interface are the induced rolesets for the training and development sets ",
+              "of the CoNLL 2008 Shared Task distribution of PropBank. ",
+            ),
+            <.p(S.helpWarningAlert)(
+              <.b("Warning: "), "This interface will be messed up if your window is too narrow. ",
+              "If the interface seems laid out wrong, try zooming out in your browser ",
+              "(e.g., cmd+hyphen on Chrome on Mac) or widening your browser window. ",
+              "Also, it may be a little slow and lag for a couple seconds as you interact with it. ",
+              "If so, sorry about that. If it has stopped responding or seems buggy, just refresh."
+            ),
+            <.h4("Usage"),
+            <.p(
+              "Main data navigation and filtering controls are along the top row. ",
+              "The drop-down menus on the far left column allow you to change the data split or model ",
+              "you're looking at. To the right of those are two drop-downs which allow you to navigate ",
+              "to your choice of verb. The first is sorted by verb frequency, and the second ",
+              "alphabetically; if you have a particular verb you want to look at, click on the second one ",
+              "and type it in to find it in the drop-down. "
+            ),
+            <.p(
+              "The rest of the header has toggles for various features to display in the roleset or ",
+              "sentence panes. Clicking 'Show Metrics' will replace the sentence pane with visualizations ",
+              "of B-Cubed and normalized PMI metrics for the current model on the current verb."
+            ),
+            <.h4("Roleset Pane"),
+            <.p(
+              "On the left is a display of the roles induced by the current model. If they were produced ",
+              "by a deterministic rule, they are given a name corresponding to the rule (like 'MODAL'). ",
+              "Otherwise, they are given a colored letter. ",
+            ),
+            <.p(
+              "Each role corresponds to a cluster of PropBank arguments. The arguments can be seen on the ",
+              "right in the sentence pane, where they are labeled with their corresponding symbols. ",
+              "The features are visualized for each argument in the current sentence as well as in ",
+              "aggregate for each role."
+            ),
+            <.p(
+              "You can adjust the granularity of the roles using the controls at the top of the roleset ",
+              "pane. Clicking either 'clusters' or 'lambda' will switch between tuning the number of roles ",
+              "directly and tuning using the method described in the paper and the specified ",
+              "hyperparameter value. The cluster tuning setting will reset between verbs, unless you ",
+              "click 'cache'."
+            ),
+            <.p(
+              "Each role in the roleset pane has a 'prev' and 'next' control which will navigate among ",
+              "sentences where that role appears for the current verb. ",
+              "For the distributions of features like syntactic function or gold label which appear ",
+              "just under the role name, their opacity corresponds to their relative proportion in the ",
+              "data for that role. If you click one of the terms there, its probability will print in the ",
+              "JavaScript console."
+            ),
+            <.p(
+              "That's it. Hope this helps! Technically this interface probably should not be shared ",
+              "publicly, because the data being visualized is owned by the LDC."
+            )
+          ),
+          <.div(S.helpModalFooter)(
+            <.button(S.helpModalFooterCloseButton)(
+              ^.`type` := "button", dataDismiss := "modal")(
+              "Close"
+            )
+          )
+        )
+      )
+    )
+  }
 
 }
