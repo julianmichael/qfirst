@@ -1498,7 +1498,7 @@ class NewVerbUI[VerbType, Arg: Order](
             <.p(
               "This page presents the rolesets induced by the models in the ACL 2021 submission ",
               <.i("Semantic Role Induction Without Syntax"), ". ",
-              "Explorable in this interface are the induced rolesets for the training and development sets ",
+              "Explorable in this interface are the induced rolesets for the training set ",
               "of the CoNLL 2008 Shared Task distribution of PropBank. ",
             ),
             <.p(S.helpWarningAlert)(

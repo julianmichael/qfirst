@@ -563,7 +563,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
     padding(0 px)
   )
 
-  val verbDropdown = style()
+  val verbDropdown = style(
+    addClassNames("mx-1")
+  )
   val framesetContainer = style(
     addClassNames("p-3"),
     width(30 rem)
