@@ -61,16 +61,16 @@ object Serve extends CommandIOApp(
   ): IO[Map[ClusterModelSpec, Map[VerbType, VerbClusterModel[VerbType, Arg]]]] = {
     ClusterModelSpec.all.map(getModelFromSpec).traverse {
       case m: JointModel => FrameInductionApp.getVerbFrames(m, features)
-          .flatMap(_.read.map(_.get))
+          .flatMap(_.get)
       case m: VerbModel => FrameInductionApp.getVerbClusters(m, features)
-          .flatMap(_.read.map(_.get))
+          .flatMap(_.get)
           .map(clusterings =>
             clusterings.map { case (verbType, verbTree) =>
               verbType -> VerbClusterModel[VerbType, Arg](verbType, verbTree, Clustering(None, Map()))
             }
           )
       case m: ArgumentModel => FrameInductionApp.getArgumentClusters(m, features)
-          .flatMap(_.read.map(_.get))
+          .flatMap(_.get)
           .map(clusterings =>
             clusterings.map { case (verbType, argClustering) =>
               val allArgIds = argClustering.clusterTreeOpt.foldMap(_.unorderedFold) ++ argClustering.extraClusters.unorderedFold
