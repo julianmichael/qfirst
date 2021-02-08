@@ -95,9 +95,9 @@ object StaticPageService {
     val config = {
       import scalatags.Text.all._
       PageConfig(
-        docApiUrl = s"http://$domain:$port/$docApiSuffix",
-        verbApiUrl = s"http://$domain:$port/$verbApiSuffix",
-        featureApiUrl = s"http://$domain:$port/$featureApiSuffix",
+        docApiUrl = s"https://$domain:$port/$docApiSuffix",
+        verbApiUrl = s"https://$domain:$port/$verbApiSuffix",
+        featureApiUrl = s"https://$domain:$port/$featureApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
         dataSetting = dataSetting,

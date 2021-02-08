@@ -91,6 +91,8 @@ object Serve extends CommandIOApp(
   ): IO[ExitCode] = {
     val featureService = HttpUtil.makeHttpPostServer(FeatureService.baseService(features))
 
+    import scala.concurrent.duration._
+
     for {
       // modelCache <- Ref[IO].of(Map.empty[ClusteringModel, Map[VerbType, VerbClusterModel[VerbType, Arg]]])
       allVerbModels <- readAllClusterModels[VerbType, Arg](features)
@@ -105,6 +107,7 @@ object Serve extends CommandIOApp(
       ).orNotFound
       _ <- Log.info("Starting server.")
       _ <- BlazeServerBuilder[IO]
+      .withIdleTimeout(5.minutes)
       .bindHttp(port, "0.0.0.0")
       .withHttpApp(app)
       .serve.compile.drain

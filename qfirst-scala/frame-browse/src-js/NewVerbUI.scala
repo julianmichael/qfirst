@@ -516,7 +516,7 @@ class NewVerbUI[VerbType, Arg: Order](
         // searchPane(state.zoomStateL(State.search))
       ),
       <.div(S.headerColumn)(
-        <.select(S.verbDropdown)(
+        <.select(S.headerDropdown)(
           ^.value := modelSpec.value.toString,
           ^.onChange ==> ((e: ReactEventFromInput) =>
             modelSpec.setState(ClusterModelSpec.fromString(e.target.value).get)
@@ -531,7 +531,7 @@ class NewVerbUI[VerbType, Arg: Order](
         )
       ),
       <.div(S.headerColumn)(
-        <.select(S.verbDropdown)(
+        <.select(S.headerDropdown)(
           ^.value := VerbType.toString(verb.value),
           ^.onChange ==> ((e: ReactEventFromInput) =>
             verb.setState(VerbType.fromString(e.target.value))
@@ -544,7 +544,7 @@ class NewVerbUI[VerbType, Arg: Order](
             )
           }
         ),
-        <.select(S.verbDropdown)(
+        <.select(S.headerDropdown)(
           ^.value := VerbType.toString(verb.value),
           ^.onChange ==> ((e: ReactEventFromInput) =>
             verb.setState(VerbType.fromString(e.target.value))
@@ -895,7 +895,7 @@ class NewVerbUI[VerbType, Arg: Order](
     <.div(S.framesetContainer)(
       inflectedForms.value match {
         case None => <.div("No inflected forms available.")
-        case Some(forms) => View.select[InflectedForms](S.verbDropdown)(
+        case Some(forms) => View.select[InflectedForms](S.inflectionDropdown)(
           _.allForms.mkString(", "), allInflectedForms, forms, f => inflectedForms.setState(Some(f))
         ),
       },
