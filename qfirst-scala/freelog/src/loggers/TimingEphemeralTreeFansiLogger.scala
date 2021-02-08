@@ -22,7 +22,7 @@ case class TimingEphemeralTreeFansiLogger(
   timingAttr: Attr,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
-) extends SequentialEphemeralTreeLogger[IO, String] {
+) extends SequentialEphemeralTreeLogger[IO, String] with ProgressBarLogger[IO, String] {
   val F: Monad[IO] = implicitly[Monad[IO]]
 
   private[this] val branchEnd = "\u2514"

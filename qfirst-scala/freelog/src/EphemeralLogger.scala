@@ -5,7 +5,46 @@ import cats.Applicative
 import cats.Monad
 import cats.implicits._
 
+trait ProgressBarLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
+  def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]]
+
+  val F: Monad[F]
+
+  def emitProgress(
+    prefix: Option[Msg],
+    sizeHint: Option[Long],
+    logLevel: LogLevel,
+    current: Long)(
+    implicit progress: ProgressSpec[Msg]
+  ): F[Unit] = {
+    F.flatMap(getLoggableLineLength(F)) { lineLength =>
+      val progressInput = ProgressInput(prefix, sizeHint, lineLength)
+      val renderProgress = progress.renderProgress(progressInput)
+      emit(renderProgress(current), logLevel)
+    }
+  }
+}
+
 trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
+  def emitProgress(
+    prefix: Option[Msg],
+    sizeHint: Option[Long],
+    level: LogLevel,
+    current: Long)(
+    implicit progress: ProgressSpec[Msg]
+  ): F[Unit]
+
+  def logProgress(
+    prefix: Option[Msg],
+    sizeHint: Option[Long],
+    level: LogLevel,
+    current: Long)(
+    implicit progress: ProgressSpec[Msg], ambientLevel: LogLevel, F: Applicative[F]
+  ): F[Unit] = {
+    if(level >= ambientLevel) emitProgress(prefix, sizeHint, level, current)
+    else F.unit
+  }
+
   /** Create a rewind block, wherein calls to `rewind` will rewind to the current state */
   def block[A](fa: F[A]): F[A]
   /** Rewind to the state at the last containing `block`; Effectful changes to the log may be done lazily */
@@ -30,20 +69,14 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
     body: F[A])(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[A] = {
-    getLoggableLineLength.flatMap { lineLength =>
-      val progressInput = ProgressInput(Some(prefix), sizeHint, lineLength)
-      val renderProgress = progress.renderProgress(progressInput)
-      log(renderProgress(index), logLevel) >> body <* rewind
-    }
+    val prefixOpt = if(wrapProgressInnerUsesPrefix) Some(prefix) else None
+    logProgress(prefixOpt, sizeHint, logLevel, index) >> body <* rewind
   }
   def progressEnd[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[Unit] = {
-    getLoggableLineLength.flatMap { lineLength =>
-      val progressInput = ProgressInput(Some(prefix), sizeHint, lineLength)
-      val renderProgress = progress.renderProgress(progressInput)
-      log(renderProgress(total), logLevel)
-    }
+    val prefixOpt = if(wrapProgressInnerUsesPrefix) Some(prefix) else None
+    logProgress(prefixOpt, sizeHint, logLevel, total)
   }
 }

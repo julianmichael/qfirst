@@ -11,10 +11,12 @@ case class EphemeralTreeConsoleLogger(
   logger: RewindingConsoleLineLogger,
   distances: Ref[IO, List[Int]],
   distanceHistory: Ref[IO, List[List[Int]]]
-) extends EphemeralTreeLogger[IO, String] {
+) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO, String] {
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"
+
+  val F = implicitly[Monad[IO]]
 
   override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
     for {

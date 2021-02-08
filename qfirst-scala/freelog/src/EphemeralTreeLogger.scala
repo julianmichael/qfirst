@@ -30,31 +30,40 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
     branch(prefix, logLevel)(body)
   }
   override def wrapProgressInnerUsesPrefix: Boolean = false
-  override def wrapProgressInner[A](
-    prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], index: Long)(
-    body: F[A])(
-    implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
-  ): F[A] = {
-    getLoggableLineLength.flatMap { lineLength =>
-      val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
-      val renderProgress = progress.renderProgress(progressInput)
-      branch(renderProgress(index), logLevel)(body) <* rewind
-    }
-  }
-  override def progressEnd[A](
-    prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
-    implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
-  ): F[Unit] = {
-    getLoggableLineLength.flatMap { lineLength =>
-      val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
-      val renderProgress = progress.renderProgress(progressInput)
-      log(renderProgress(total), logLevel)
-    }
-  }
+  // override def wrapProgressInner[A](
+  //   prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], index: Long)(
+  //   body: F[A])(
+  //   implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
+  // ): F[A] = {
+  //   // getLoggableLineLength.flatMap { lineLength =>
+  //   //   val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
+  //   //   val renderProgress = progress.renderProgress(progressInput)
+  //   //   branch(renderProgress(index), logLevel)(body) <* rewind
+  //   // }
+  //   logProgress(None, sizeHint, logLevel, index) >> body <* rewind
+  // }
+  // override def progressEnd[A](
+  //   prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
+  //   implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
+  // ): F[Unit] = {
+  //   getLoggableLineLength.flatMap { lineLength =>
+  //     val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
+  //     val renderProgress = progress.renderProgress(progressInput)
+  //     log(renderProgress(total), logLevel)
+  //   }
+  // }
 }
 object EphemeralTreeLogger {
   def noop[F[_], Msg](implicit F: Sync[F]): EphemeralTreeLogger[F, Msg] = new EphemeralTreeLogger[F, Msg] {
     def emit(msg: Msg, level: LogLevel): F[Unit] = F.delay(())
+
+    def emitProgress(
+      prefix: Option[Msg],
+      sizeHint: Option[Long],
+      level: LogLevel,
+      current: Long)(
+      implicit progress: ProgressSpec[Msg]
+    ): F[Unit] = F.unit
 
     def emitBranch[A](
       msg: Msg, logLevel: LogLevel)(

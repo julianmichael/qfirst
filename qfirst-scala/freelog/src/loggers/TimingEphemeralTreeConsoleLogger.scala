@@ -16,11 +16,13 @@ case class TimingEphemeralTreeConsoleLogger(
   createLogMessage: (String, LogLevel) => String,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
-) extends EphemeralTreeLogger[IO, String] {
+) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO, String] {
   private[this] val branchEnd = "\u2514"
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"
+
+  val F = implicitly[Monad[IO]]
 
   override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>

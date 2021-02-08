@@ -16,6 +16,14 @@ object SequentialEphemeralTreeLogger {
     val F = implicitly[Monad[F]]
     def emit(msg: Msg, level: LogLevel): F[Unit] = F.unit
 
+    def emitProgress(
+      prefix: Option[Msg],
+      sizeHint: Option[Long],
+      logLevel: LogLevel,
+      current: Long)(
+      implicit progress: ProgressSpec[Msg]
+    ): F[Unit] = F.unit
+
     def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit] = F.unit
     def endBranch(logLevel: LogLevel): F[Unit] = F.unit
 
@@ -32,11 +40,14 @@ object SequentialEphemeralTreeLogger {
   ) extends SequentialEphemeralTreeLogger[F, Msg] {
     val F = implicitly[Monad[F]]
 
-    override def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]] =
-      for {
-        fstLen <- first.getLoggableLineLength
-        sndLen <- second.getLoggableLineLength
-      } yield fstLen.orElse(sndLen)
+    def emitProgress(
+      prefix: Option[Msg],
+      sizeHint: Option[Long],
+      logLevel: LogLevel,
+      current: Long)(
+      implicit progress: ProgressSpec[Msg]
+    ): F[Unit] = first.emitProgress(prefix, sizeHint, logLevel, current) *>
+      second.emitProgress(prefix, sizeHint, logLevel, current)
 
     def emit(msg: Msg, level: LogLevel): F[Unit] = first.emit(msg, level) *> second.emit(msg, level)
 

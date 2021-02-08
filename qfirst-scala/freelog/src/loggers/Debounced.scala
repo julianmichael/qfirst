@@ -18,6 +18,13 @@ object Debounced {
   // TODO this probably could be generalized and given some more subtypes
   // to use as a general logging interface (ie LogCommand[Msg] => F[Unit]).
   sealed trait LogCommand[+Msg]
+  case class EmitProgress[Msg](
+    prefix: Option[Msg],
+    sizeHint: Option[Long],
+    logLevel: LogLevel,
+    current: Long,
+    progressSpec: ProgressSpec[Msg]
+  ) extends LogCommand[Msg]
   case class Emit[Msg](msg: Msg, logLevel: LogLevel) extends LogCommand[Msg]
   case object BeginBlock extends LogCommand[Nothing]
   case object EndBlock extends LogCommand[Nothing]
@@ -34,9 +41,6 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
   debounceTime: FiniteDuration
 ) extends SequentialEphemeralTreeLogger[F, Msg] {
 
-  override def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]] =
-    innerLogger.getLoggableLineLength
-
   // TODO: maybe use a semaphore to ensure single-user access to stuff? meh
 
   val F: Monad[F] = implicitly[Monad[F]]
@@ -51,6 +55,8 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
 
   private[this] def hardRun(command: LogCommand[Msg]): F[Unit] = command match {
     case Emit(msg, logLevel) => innerLogger.emit(msg, logLevel)
+    case EmitProgress(prefix, sizeHint, logLevel, current, progressSpec) =>
+      innerLogger.emitProgress(prefix, sizeHint, logLevel, current)(progressSpec)
     case Rewind => innerLogger.rewind
     case Flush => innerLogger.flush
     case BeginBlock => innerLogger.beginBlock
@@ -134,6 +140,14 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
     }
 
   def emit(msg: Msg, logLevel: LogLevel) = run(Emit(msg, logLevel))
+
+  def emitProgress(
+    prefix: Option[Msg],
+    sizeHint: Option[Long],
+    logLevel: LogLevel,
+    current: Long)(
+    implicit progress: ProgressSpec[Msg]
+  ): F[Unit] = run(EmitProgress(prefix, sizeHint, logLevel, current, progress))
 
   def rewind: F[Unit] = run(Rewind)
 

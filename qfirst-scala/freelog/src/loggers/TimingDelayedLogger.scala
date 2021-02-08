@@ -15,7 +15,9 @@ case class TimingDelayedLogger(
   branchBeginTimesMillis: Ref[IO, List[Long]],
   emitMessage: String => IO[Unit])(
   implicit timer: Timer[IO]
-) extends RewindingLogger[IO, String] with SequentialEphemeralTreeLogger[IO, String] {
+) extends RewindingLogger[IO, String]
+    with SequentialEphemeralTreeLogger[IO, String]
+    with ProgressBarLogger[IO, String] {
 
   override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
