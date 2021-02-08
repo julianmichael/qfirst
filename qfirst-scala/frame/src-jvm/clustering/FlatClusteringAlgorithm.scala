@@ -161,7 +161,6 @@ trait FlatClusteringAlgorithm {
   import freelog.EphemeralTreeLogger
   import freelog.implicits._
   import qfirst.frame.logLevel
-  import qfirst.frame.progressSpec
 
   def runSoftEM(
     initModel: Vector[ClusterParam],

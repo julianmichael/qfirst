@@ -20,7 +20,7 @@ trait Fs2Syntax {
     // 1) rewind _before_ logging the progress indicator so we don't insta-rewind our progress bar
     // 2) explicitly log the progress bar instead of using the logger's native inner-wrapper function
     //    since there's no effectful value to wrap.
-    def logCompile[Msg: ProgressSpec, A](
+    def logCompile[Msg, A](
       logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel
@@ -32,9 +32,9 @@ trait Fs2Syntax {
           Ref[F].of(0) >>= { index =>
             val compiledStream = stream.evalTap { a =>
               index.get.flatMap { i =>
-                val progressInput = ProgressInput(innerPrefix, sizeHintOpt, lineLength)
-                val renderProgress = implicitly[ProgressSpec[Msg]].renderProgress(progressInput)
-                logger.rewind >> logger.log(renderProgress(i), logLevel) >> index.update(_ + 1)
+                logger.rewind >>
+                  logger.logProgress(innerPrefix, sizeHintOpt, logLevel, i) >>
+                  index.update(_ + 1)
               }
             }.compile
 
@@ -47,27 +47,27 @@ trait Fs2Syntax {
         )
       }
     }
-    def debugCompile[Msg: ProgressSpec, A](
+    def debugCompile[Msg, A](
       prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel
     ): F[A] = logCompile(LogLevel.Debug, prefix, sizeHint)(run)
-    def traceCompile[Msg: ProgressSpec, A](
+    def traceCompile[Msg, A](
       prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel
     ): F[A] = logCompile(LogLevel.Trace, prefix, sizeHint)(run)
-    def infoCompile[Msg: ProgressSpec, A](
+    def infoCompile[Msg, A](
       prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel
     ): F[A] = logCompile(LogLevel.Info, prefix, sizeHint)(run)
-    def warnCompile[Msg: ProgressSpec, A](
+    def warnCompile[Msg, A](
       prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel
     ): F[A] = logCompile(LogLevel.Warn, prefix, sizeHint)(run)
-    def errorCompile[Msg: ProgressSpec, A](
+    def errorCompile[Msg, A](
       prefix: Msg, sizeHint: Long = -1)(
       run: CompileOps[F, F, O] => F[A])(
       implicit logger: EphemeralLogger[F, Msg], F: Sync[F], ambientLevel: LogLevel

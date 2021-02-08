@@ -20,8 +20,7 @@ object SequentialEphemeralTreeLogger {
       prefix: Option[Msg],
       sizeHint: Option[Long],
       logLevel: LogLevel,
-      current: Long)(
-      implicit progress: ProgressSpec[Msg]
+      current: Long
     ): F[Unit] = F.unit
 
     def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit] = F.unit
@@ -44,8 +43,7 @@ object SequentialEphemeralTreeLogger {
       prefix: Option[Msg],
       sizeHint: Option[Long],
       logLevel: LogLevel,
-      current: Long)(
-      implicit progress: ProgressSpec[Msg]
+      current: Long
     ): F[Unit] = first.emitProgress(prefix, sizeHint, logLevel, current) *>
       second.emitProgress(prefix, sizeHint, logLevel, current)
 

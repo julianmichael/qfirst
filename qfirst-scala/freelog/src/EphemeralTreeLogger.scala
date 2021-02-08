@@ -61,8 +61,7 @@ object EphemeralTreeLogger {
       prefix: Option[Msg],
       sizeHint: Option[Long],
       level: LogLevel,
-      current: Long)(
-      implicit progress: ProgressSpec[Msg]
+      current: Long
     ): F[Unit] = F.unit
 
     def emitBranch[A](

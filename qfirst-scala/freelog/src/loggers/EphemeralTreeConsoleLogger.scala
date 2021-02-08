@@ -11,7 +11,7 @@ case class EphemeralTreeConsoleLogger(
   logger: RewindingConsoleLineLogger,
   distances: Ref[IO, List[Int]],
   distanceHistory: Ref[IO, List[List[Int]]]
-) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO, String] {
+) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO] {
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"

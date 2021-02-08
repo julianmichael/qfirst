@@ -19,14 +19,12 @@ import qasrl.ArgumentSlot
 import qasrl.Frame
 
 import freelog.LogLevel
-import freelog.ProgressSpec
 
 import scala.collection.immutable.SortedSet
 import _root_.cats.Functor
 
 package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
-  implicit val progressSpec = ProgressSpec.simple(defaultBarLength = 50)
 
   import freelog.EphemeralTreeLogger
   var loggerUnsafe: EphemeralTreeLogger[cats.effect.IO, String] = null

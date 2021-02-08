@@ -26,7 +26,7 @@ trait CatsSyntax {
       implicit G: Monad[G], M: Monoid[B]
     ): G[B] = foldMapWithIndexAndSizeM(f).map(_._1)
 
-    def logFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def logFoldMapM[G[_]: Monad, Msg, B: Monoid](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = {
       val sizeHintOpt = Option(sizeHint).filter(_ >= 0)
@@ -39,35 +39,35 @@ trait CatsSyntax {
         }
       )
     }
-    def debugFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def debugFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Debug, prefix, sizeHint)(f)
-    def traceFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def traceFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Trace, prefix, sizeHint)(f)
-    def infoFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def infoFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Info, prefix, sizeHint)(f)
-    def warnFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def warnFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Warn, prefix, sizeHint)(f)
-    def errorFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def errorFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Error, prefix, sizeHint)(f)
 
-    def debugBarFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg)(f: A => G[B])(
+    def debugBarFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Debug, prefix, fa.size)(f)
-    def traceBarFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg)(f: A => G[B])(
+    def traceBarFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Trace, prefix, fa.size)(f)
-    def infoBarFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg)(f: A => G[B])(
+    def infoBarFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Info, prefix, fa.size)(f)
-    def warnBarFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg)(f: A => G[B])(
+    def warnBarFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Warn, prefix, fa.size)(f)
-    def errorBarFoldMapM[G[_]: Monad, Msg: ProgressSpec, B: Monoid](prefix: Msg)(f: A => G[B])(
+    def errorBarFoldMapM[G[_]: Monad, Msg, B: Monoid](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = logFoldMapM(LogLevel.Error, prefix, fa.size)(f)
   }
@@ -88,7 +88,7 @@ trait CatsSyntax {
     // ) =
     //   block(fa.traverseWithIndexM((a, i) => f(a, i) <* rewind))
 
-    def logTraverse[G[_]: Monad, Msg: ProgressSpec, B](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def logTraverse[G[_]: Monad, Msg, B](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = {
       val sizeHintOpt = Option(sizeHint).filter(_ >= 0)
@@ -100,38 +100,38 @@ trait CatsSyntax {
         }
       )
     }
-    def debugTraverse[G[_]: Monad, Msg: ProgressSpec, B](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def debugTraverse[G[_]: Monad, Msg, B](logLevel: LogLevel, prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Debug, prefix, sizeHint)(f)
-    def traceTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def traceTraverse[G[_]: Monad, Msg, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Trace, prefix, sizeHint)(f)
-    def infoTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def infoTraverse[G[_]: Monad, Msg, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Info, prefix, sizeHint)(f)
-    def warnTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def warnTraverse[G[_]: Monad, Msg, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Warn, prefix, sizeHint)(f)
-    def errorTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
+    def errorTraverse[G[_]: Monad, Msg, B](prefix: Msg, sizeHint: Long = -1)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Error, prefix, sizeHint)(f)
 
-    def logBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](logLevel: LogLevel, prefix: Msg)(f: A => G[B])(
+    def logBarTraverse[G[_]: Monad, Msg, B](logLevel: LogLevel, prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(logLevel, prefix, fa.size)(f)
-    def debugBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg)(f: A => G[B])(
+    def debugBarTraverse[G[_]: Monad, Msg, B](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Debug, prefix, fa.size)(f)
-    def traceBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg)(f: A => G[B])(
+    def traceBarTraverse[G[_]: Monad, Msg, B](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Trace, prefix, fa.size)(f)
-    def infoBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg)(f: A => G[B])(
+    def infoBarTraverse[G[_]: Monad, Msg, B](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Info, prefix, fa.size)(f)
-    def warnBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg)(f: A => G[B])(
+    def warnBarTraverse[G[_]: Monad, Msg, B](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Warn, prefix, fa.size)(f)
-    def errorBarTraverse[G[_]: Monad, Msg: ProgressSpec, B](prefix: Msg)(f: A => G[B])(
+    def errorBarTraverse[G[_]: Monad, Msg, B](prefix: Msg)(f: A => G[B])(
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[F[B]] = logTraverse(LogLevel.Error, prefix, fa.size)(f)
 

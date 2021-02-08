@@ -17,7 +17,7 @@ case class TimingDelayedLogger(
   implicit timer: Timer[IO]
 ) extends RewindingLogger[IO, String]
     with SequentialEphemeralTreeLogger[IO, String]
-    with ProgressBarLogger[IO, String] {
+    with ProgressBarLogger[IO] {
 
   val F = implicitly[Monad[IO]]
 

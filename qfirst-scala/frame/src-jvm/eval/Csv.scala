@@ -9,7 +9,6 @@ import cats.effect.IO
 import cats.implicits._
 
 import qfirst.frame.logLevel
-import qfirst.frame.progressSpec
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 

@@ -12,7 +12,7 @@ case class RewindingConsoleStringLogger(
   pendingCheckpoint: Ref[IO, Option[RewindingConsoleStringLogger.ConsoleCheckpoint]],
   putStr: String => IO[Unit] = x => IO(print(x)),
   getLogMessage: (String, LogLevel) => String = (x, _) => x
-) extends RewindingLogger[IO, String] with ProgressBarLogger[IO, String] {
+) extends RewindingLogger[IO, String] with ProgressBarLogger[IO] {
   val F = implicitly[Monad[IO]]
 
   override def getLoggableLineLength: IO[Option[Int]] =

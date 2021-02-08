@@ -18,7 +18,6 @@ object Main extends CommandIOApp(
   header = "FreeLog sandbox."){
 
   implicit val logLevel = LogLevel.Info
-  implicit val progBar = ProgressSpec.simple(50)
 
   def ephemeralTreeDemo: IO[ExitCode] = {
     for {

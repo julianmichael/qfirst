@@ -22,8 +22,7 @@ object Debounced {
     prefix: Option[Msg],
     sizeHint: Option[Long],
     logLevel: LogLevel,
-    current: Long,
-    progressSpec: ProgressSpec[Msg]
+    current: Long
   ) extends LogCommand[Msg]
   case class Emit[Msg](msg: Msg, logLevel: LogLevel) extends LogCommand[Msg]
   case object BeginBlock extends LogCommand[Nothing]
@@ -55,8 +54,8 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
 
   private[this] def hardRun(command: LogCommand[Msg]): F[Unit] = command match {
     case Emit(msg, logLevel) => innerLogger.emit(msg, logLevel)
-    case EmitProgress(prefix, sizeHint, logLevel, current, progressSpec) =>
-      innerLogger.emitProgress(prefix, sizeHint, logLevel, current)(progressSpec)
+    case EmitProgress(prefix, sizeHint, logLevel, current) =>
+      innerLogger.emitProgress(prefix, sizeHint, logLevel, current)
     case Rewind => innerLogger.rewind
     case Flush => innerLogger.flush
     case BeginBlock => innerLogger.beginBlock
@@ -145,9 +144,8 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
     prefix: Option[Msg],
     sizeHint: Option[Long],
     logLevel: LogLevel,
-    current: Long)(
-    implicit progress: ProgressSpec[Msg]
-  ): F[Unit] = run(EmitProgress(prefix, sizeHint, logLevel, current, progress))
+    current: Long
+  ): F[Unit] = run(EmitProgress(prefix, sizeHint, logLevel, current))
 
   def rewind: F[Unit] = run(Rewind)
 

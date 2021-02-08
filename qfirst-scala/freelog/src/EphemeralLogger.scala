@@ -10,16 +10,14 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
     prefix: Option[Msg],
     sizeHint: Option[Long],
     level: LogLevel,
-    current: Long)(
-    implicit progress: ProgressSpec[Msg]
-  ): F[Unit]
+    current: Long): F[Unit]
 
   def logProgress(
     prefix: Option[Msg],
     sizeHint: Option[Long],
     level: LogLevel,
     current: Long)(
-    implicit progress: ProgressSpec[Msg], ambientLevel: LogLevel, F: Applicative[F]
+    implicit ambientLevel: LogLevel, F: Applicative[F]
   ): F[Unit] = {
     if(level >= ambientLevel) emitProgress(prefix, sizeHint, level, current)
     else F.unit
@@ -47,14 +45,14 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
   def wrapProgressInner[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], index: Long)(
     body: F[A])(
-    implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
+    implicit F: Monad[F], ambientLevel: LogLevel
   ): F[A] = {
     val prefixOpt = if(wrapProgressInnerUsesPrefix) Some(prefix) else None
     logProgress(prefixOpt, sizeHint, logLevel, index) >> body <* rewind
   }
   def progressEnd[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
-    implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
+    implicit F: Monad[F], ambientLevel: LogLevel
   ): F[Unit] = {
     val prefixOpt = if(wrapProgressInnerUsesPrefix) Some(prefix) else None
     logProgress(prefixOpt, sizeHint, logLevel, total)

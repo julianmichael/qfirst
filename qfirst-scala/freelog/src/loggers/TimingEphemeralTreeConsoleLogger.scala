@@ -16,7 +16,7 @@ case class TimingEphemeralTreeConsoleLogger(
   createLogMessage: (String, LogLevel) => String,
   minElapsedTimeToLog: FiniteDuration = FiniteDuration(1, duration.SECONDS))(
   implicit timer: Timer[IO]
-) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO, String] {
+) extends EphemeralTreeLogger[IO, String] with ProgressBarLogger[IO] {
   private[this] val branchEnd = "\u2514"
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"

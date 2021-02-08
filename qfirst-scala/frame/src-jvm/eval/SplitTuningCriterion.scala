@@ -13,7 +13,6 @@ import qfirst.metrics.Numbers
 
 import qfirst.frame.MergeTree
 import qfirst.frame.logLevel
-import qfirst.frame.progressSpec
 import qfirst.frame.getMetricsString
 import qfirst.frame.ClusterSplittingCriterion
 
