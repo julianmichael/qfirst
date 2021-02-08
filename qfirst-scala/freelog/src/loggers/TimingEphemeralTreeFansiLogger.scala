@@ -53,7 +53,7 @@ case class TimingEphemeralTreeFansiLogger(
       }
   }
 
-  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+  override def getLoggableLineLength: IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
       widthOpt.traverse(width =>
         getIndents.map(_.active.length).map(indentLength =>

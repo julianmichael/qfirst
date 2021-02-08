@@ -19,7 +19,9 @@ case class TimingDelayedLogger(
     with SequentialEphemeralTreeLogger[IO, String]
     with ProgressBarLogger[IO, String] {
 
-  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+  val F = implicitly[Monad[IO]]
+
+  override def getLoggableLineLength: IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
       widthOpt.traverse(width =>
         branchBeginTimesMillis.get.map(_.size).map(level =>
@@ -27,8 +29,6 @@ case class TimingDelayedLogger(
         )
       )
     )
-
-  val F = implicitly[Monad[IO]]
 
   private[this] val lastBranch = "\u2514"
   private[this] val midBranch = "\u251C"

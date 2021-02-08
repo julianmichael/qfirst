@@ -15,7 +15,7 @@ case class RewindingConsoleLineLogger(
 ) extends RewindingLogger[IO, String] with ProgressBarLogger[IO, String] {
   val F = implicitly[Monad[IO]]
 
-  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+  override def getLoggableLineLength: IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO]
 
   private[this] def flushWithMessage(msg: String) = for {

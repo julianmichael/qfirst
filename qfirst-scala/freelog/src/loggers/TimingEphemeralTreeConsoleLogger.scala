@@ -24,7 +24,7 @@ case class TimingEphemeralTreeConsoleLogger(
 
   val F = implicitly[Monad[IO]]
 
-  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+  override def getLoggableLineLength: IO[Option[Int]] =
     freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
       widthOpt.traverse(width =>
         branchBeginTimesMillis.get.map(_.size).map(level =>

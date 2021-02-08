@@ -5,26 +5,6 @@ import cats.Applicative
 import cats.Monad
 import cats.implicits._
 
-trait ProgressBarLogger[F[_], Msg] extends EphemeralLogger[F, Msg] {
-  def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]]
-
-  val F: Monad[F]
-
-  def emitProgress(
-    prefix: Option[Msg],
-    sizeHint: Option[Long],
-    logLevel: LogLevel,
-    current: Long)(
-    implicit progress: ProgressSpec[Msg]
-  ): F[Unit] = {
-    F.flatMap(getLoggableLineLength(F)) { lineLength =>
-      val progressInput = ProgressInput(prefix, sizeHint, lineLength)
-      val renderProgress = progress.renderProgress(progressInput)
-      emit(renderProgress(current), logLevel)
-    }
-  }
-}
-
 trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
   def emitProgress(
     prefix: Option[Msg],

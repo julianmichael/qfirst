@@ -18,7 +18,7 @@ case class EphemeralTreeConsoleLogger(
 
   val F = implicitly[Monad[IO]]
 
-  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+  override def getLoggableLineLength: IO[Option[Int]] =
     for {
       dists <- distances.get
       innerLength <- logger.getLoggableLineLength
