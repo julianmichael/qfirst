@@ -14,6 +14,10 @@ case class RewindingConsoleLineLogger(
   createLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
   val F = implicitly[Monad[IO]]
+
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    freelog.util.getTerminalWidth[IO]
+
   private[this] def flushWithMessage(msg: String) = for {
     backtrackingStr <- pendingCheckpoint.get.flatMap {
       case None => IO.pure("")

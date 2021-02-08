@@ -30,6 +30,7 @@ trait CatsSyntax {
       implicit logger: EphemeralLogger[G, Msg], ambientLevel: LogLevel
     ): G[B] = {
       val sizeHintOpt = Option(sizeHint).filter(_ >= 0)
+
       logger.wrapProgressOuter(prefix, logLevel)(
         fa.foldMapWithIndexAndSizeM((a, i) =>
           logger.wrapProgressInner(prefix, logLevel, sizeHintOpt, i)(f(a))

@@ -1,5 +1,6 @@
 package freelog
 
+import cats.Applicative
 import cats.Monad
 import cats.Monoid
 import cats.implicits._
@@ -30,6 +31,13 @@ object SequentialEphemeralTreeLogger {
     second: SequentialEphemeralTreeLogger[F, Msg]
   ) extends SequentialEphemeralTreeLogger[F, Msg] {
     val F = implicitly[Monad[F]]
+
+    override def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]] =
+      for {
+        fstLen <- first.getLoggableLineLength
+        sndLen <- second.getLoggableLineLength
+      } yield fstLen.orElse(sndLen)
+
     def emit(msg: Msg, level: LogLevel): F[Unit] = first.emit(msg, level) *> second.emit(msg, level)
 
     def beginBranch(msg: Msg, logLevel: LogLevel): F[Unit] =

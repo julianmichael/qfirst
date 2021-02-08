@@ -27,22 +27,25 @@ trait Fs2Syntax {
     ): F[A] = {
       val sizeHintOpt = Option(sizeHint).filter(_ >= 0)
       val innerPrefix = Option(prefix).filter(_ => logger.wrapProgressInnerUsesPrefix)
-      logger.wrapProgressOuter(prefix, logLevel)(
-        Ref[F].of(0) >>= { index =>
-          val compiledStream = stream.evalTap { a =>
-            index.get >>= { i =>
-              val renderProgress = implicitly[ProgressSpec[Msg]].renderProgress(innerPrefix, sizeHintOpt)
-              logger.rewind >> logger.log(renderProgress(i), logLevel) >> index.update(_ + 1)
-            }
-          }.compile
+      logger.getLoggableLineLength.flatMap { lineLength =>
+        logger.wrapProgressOuter(prefix, logLevel)(
+          Ref[F].of(0) >>= { index =>
+            val compiledStream = stream.evalTap { a =>
+              index.get.flatMap { i =>
+                val progressInput = ProgressInput(innerPrefix, sizeHintOpt, lineLength)
+                val renderProgress = implicitly[ProgressSpec[Msg]].renderProgress(progressInput)
+                logger.rewind >> logger.log(renderProgress(i), logLevel) >> index.update(_ + 1)
+              }
+            }.compile
 
-          run(compiledStream).flatTap { _ =>
-            index.get >>= { i =>
-              logger.rewind >> logger.progressEnd(prefix, logLevel, sizeHintOpt, i)
+            run(compiledStream).flatTap { _ =>
+              index.get >>= { i =>
+                logger.rewind >> logger.progressEnd(prefix, logLevel, sizeHintOpt, i)
+              }
             }
           }
-        }
-      )
+        )
+      }
     }
     def debugCompile[Msg: ProgressSpec, A](
       prefix: Msg, sizeHint: Long = -1)(

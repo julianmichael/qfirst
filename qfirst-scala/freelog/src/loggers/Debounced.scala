@@ -12,6 +12,7 @@ import cats.effect.concurrent.Ref
 import cats.effect.Concurrent
 import cats.effect.Timer
 import cats.effect.implicits._
+import cats.Applicative
 
 object Debounced {
   // TODO this probably could be generalized and given some more subtypes
@@ -32,6 +33,9 @@ case class Debounced[F[_]: Concurrent : Timer, Msg](
   innerLogger: SequentialEphemeralTreeLogger[F, Msg],
   debounceTime: FiniteDuration
 ) extends SequentialEphemeralTreeLogger[F, Msg] {
+
+  override def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]] =
+    innerLogger.getLoggableLineLength
 
   // TODO: maybe use a semaphore to ensure single-user access to stuff? meh
 

@@ -159,6 +159,8 @@ trait FullJvmModule extends JvmModule {
   )
 }
 
+val jlineVersion = "3.19.0"
+
 object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
@@ -173,7 +175,8 @@ object qfirst extends Module {
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.http4s::http4s-blaze-client::$http4sVersion",
         ivy"org.http4s::http4s-blaze-server::$http4sVersion",
-        ivy"com.lihaoyi::fansi::$fansiVersion"
+        ivy"com.lihaoyi::fansi::$fansiVersion",
+        ivy"org.jline:jline-terminal:$jlineVersion"
       )
       object test extends Tests {
         override def millSourcePath = freelog.this.millSourcePath / "test"

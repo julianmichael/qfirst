@@ -2,10 +2,7 @@ package freelog
 import freelog.implicits._
 
 import cats.Applicative
-import cats.Foldable
 import cats.Monad
-import cats.Monoid
-import cats.Traverse
 import cats.implicits._
 
 trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
@@ -17,6 +14,8 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
   def flush: F[Unit]
 
   // utility functions for logging traversals and folds
+
+  def getLoggableLineLength(implicit F: Applicative[F]): F[Option[Int]] = none[Int].pure[F]
 
   def wrapProgressOuter[A](
     prefix: Msg, logLevel: LogLevel)(
@@ -31,14 +30,20 @@ trait EphemeralLogger[F[_], Msg] extends Logger[F, Msg] {
     body: F[A])(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[A] = {
-    val renderProgress = progress.renderProgress(Some(prefix), sizeHint)
-    log(renderProgress(index), logLevel) >> body <* rewind
+    getLoggableLineLength.flatMap { lineLength =>
+      val progressInput = ProgressInput(Some(prefix), sizeHint, lineLength)
+      val renderProgress = progress.renderProgress(progressInput)
+      log(renderProgress(index), logLevel) >> body <* rewind
+    }
   }
   def progressEnd[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[Unit] = {
-    val renderProgress = progress.renderProgress(Some(prefix), sizeHint)
-    log(renderProgress(total), logLevel)
+    getLoggableLineLength.flatMap { lineLength =>
+      val progressInput = ProgressInput(Some(prefix), sizeHint, lineLength)
+      val renderProgress = progress.renderProgress(progressInput)
+      log(renderProgress(total), logLevel)
+    }
   }
 }

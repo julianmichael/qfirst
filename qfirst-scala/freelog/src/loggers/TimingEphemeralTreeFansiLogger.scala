@@ -53,6 +53,15 @@ case class TimingEphemeralTreeFansiLogger(
       }
   }
 
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
+      widthOpt.traverse(width =>
+        getIndents.map(_.active.length).map(indentLength =>
+          scala.math.max(0, width - indentLength)
+        )
+      )
+    )
+
 
   def emit(msg: String, logLevel: LogLevel) =
     justDoneMessageBuffer.set(None) >> getIndents >>= { indents =>

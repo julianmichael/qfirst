@@ -17,6 +17,15 @@ case class TimingDelayedLogger(
   implicit timer: Timer[IO]
 ) extends RewindingLogger[IO, String] with SequentialEphemeralTreeLogger[IO, String] {
 
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
+      widthOpt.traverse(width =>
+        branchBeginTimesMillis.get.map(_.size).map(level =>
+          (level - 1) + (2 * scala.math.min(level, 1))
+        )
+      )
+    )
+
   val F = implicitly[Monad[IO]]
 
   private[this] val lastBranch = "\u2514"

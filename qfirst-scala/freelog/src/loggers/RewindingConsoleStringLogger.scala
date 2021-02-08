@@ -14,6 +14,14 @@ case class RewindingConsoleStringLogger(
   getLogMessage: (String, LogLevel) => String = (x, _) => x
 ) extends RewindingLogger[IO, String] {
   val F = implicitly[Monad[IO]]
+
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
+      widthOpt.traverse(width =>
+        checkpointState.get.map(_.curColumn).map(width - _)
+      )
+    )
+
   import RewindingConsoleStringLogger.{CheckpointState, ConsoleCheckpoint}
   private[this] def getCheckpointRestorationStr = {
     pendingCheckpoint.get.flatMap {

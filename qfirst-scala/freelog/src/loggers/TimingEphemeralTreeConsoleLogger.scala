@@ -22,6 +22,15 @@ case class TimingEphemeralTreeConsoleLogger(
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"
 
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    freelog.util.getTerminalWidth[IO].flatMap(widthOpt =>
+      widthOpt.traverse(width =>
+        branchBeginTimesMillis.get.map(_.size).map(level =>
+          scala.math.max(0, width - getPassiveIndent(level).length + 2)
+        )
+      )
+    )
+
   // private[this] def getActiveIndent(level: Int) = {
   //   if(level < 1) "" else (vertBranch * (level - 1)) + midBranch
   // }

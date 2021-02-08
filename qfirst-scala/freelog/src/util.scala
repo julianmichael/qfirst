@@ -5,7 +5,7 @@ import cats.implicits._
 import scala.concurrent.duration
 import scala.concurrent.duration.FiniteDuration
 
-object util {
+object util extends UtilPlatformExtensions {
 
   val bigUnitSpecs = {
     import duration._

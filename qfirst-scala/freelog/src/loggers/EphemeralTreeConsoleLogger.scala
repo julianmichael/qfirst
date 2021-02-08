@@ -16,6 +16,14 @@ case class EphemeralTreeConsoleLogger(
   private[this] val midBranch = "\u251C"
   private[this] val vertBranch = "\u2502"
 
+  override def getLoggableLineLength(implicit F: Applicative[IO]): IO[Option[Int]] =
+    for {
+      dists <- distances.get
+      innerLength <- logger.getLoggableLineLength
+    } yield innerLength.map(length =>
+      scala.math.max(0, length - (dists.size * 2) - 2)
+    )
+
   private[this] def    up(i: Int) = if(i == 0) "" else s"\u001b[${i}A"
   private[this] def  down(i: Int) = if(i == 0) "" else s"\u001b[${i}B"
   private[this] def right(i: Int) = if(i == 0) "" else s"\u001b[${i}C"

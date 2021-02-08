@@ -35,15 +35,21 @@ trait EphemeralTreeLogger[F[_], Msg] extends EphemeralLogger[F, Msg] with TreeLo
     body: F[A])(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[A] = {
-    val renderProgress = progress.renderProgress(None, sizeHint)
-    branch(renderProgress(index), logLevel)(body) <* rewind
+    getLoggableLineLength.flatMap { lineLength =>
+      val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
+      val renderProgress = progress.renderProgress(progressInput)
+      branch(renderProgress(index), logLevel)(body) <* rewind
+    }
   }
   override def progressEnd[A](
     prefix: Msg, logLevel: LogLevel, sizeHint: Option[Long], total: Long)(
     implicit F: Monad[F], progress: ProgressSpec[Msg], ambientLevel: LogLevel
   ): F[Unit] = {
-    val renderProgress = progress.renderProgress(None, sizeHint)
-    log(renderProgress(total), logLevel)
+    getLoggableLineLength.flatMap { lineLength =>
+      val progressInput = ProgressInput[Msg](None, sizeHint, lineLength)
+      val renderProgress = progress.renderProgress(progressInput)
+      log(renderProgress(total), logLevel)
+    }
   }
 }
 object EphemeralTreeLogger {

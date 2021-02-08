@@ -26,7 +26,7 @@ import _root_.cats.Functor
 
 package object frame extends qfirst.frame.PackagePlatformExtensions {
   implicit val logLevel = LogLevel.Trace
-  implicit val progressSpec = ProgressSpec.simple(barLength = 50)
+  implicit val progressSpec = ProgressSpec.simple(defaultBarLength = 50)
 
   import freelog.EphemeralTreeLogger
   var loggerUnsafe: EphemeralTreeLogger[cats.effect.IO, String] = null
