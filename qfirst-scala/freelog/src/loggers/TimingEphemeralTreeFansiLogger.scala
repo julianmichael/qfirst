@@ -64,16 +64,25 @@ case class TimingEphemeralTreeFansiLogger(
 
 
   def emit(msg: String, logLevel: LogLevel) =
-    justDoneMessageBuffer.set(None) >> getIndents >>= { indents =>
-      logger.emit(
-        indents.active + (
-          msg.split("\n").map(getLogLevelAttr(logLevel).apply(_: String))
-            .toList
-            .intercalate(fansi.Str("\n") ++ indents.passive)
-        ).toString,
-        logLevel
-      )
-    }
+    justDoneMessageBuffer.set(None) >>
+      getIndents >>= { indents =>
+        getLoggableLineLength >>= { lineLengthOpt =>
+          logger.emit(
+            indents.active + (
+              msg.split("\n")
+                .toList
+                .flatMap(line =>
+                  lineLengthOpt.fold(List(line))(lengthLimit =>
+                    line.grouped(lengthLimit).toList
+                  )
+                )
+                .map(getLogLevelAttr(logLevel).apply(_: String))
+                .intercalate(fansi.Str("\n") ++ indents.passive)
+            ).toString,
+            logLevel
+          )
+        }
+      }
 
   override def beginBranch(msg: String, logLevel: LogLevel): IO[Unit] =
     emit(msg, logLevel) >> timer.clock.monotonic(duration.MILLISECONDS) >>= (
