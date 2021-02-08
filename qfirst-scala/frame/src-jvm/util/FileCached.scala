@@ -19,16 +19,20 @@ class FileCached[A](
 ) {
   def read(implicit Log: TreeLogger[IO, String]): IO[Option[A]] =
     IO(Files.exists(path)).ifM(
-      Log.infoBranch(s"$name: reading cached data from $path")(_read(path).map(Some(_))),
+      Log.infoBranch(s"$name: reading cached data")(
+        Log.info(s"Path: $path") >> _read(path).map(Some(_))
+      ),
       Log.warn(s"$name: no cached data found at $path.").as(None)
     )
 
   def get(implicit Log: TreeLogger[IO, String]) =
     IO(Files.exists(path)).ifM(
-      Log.infoBranch(s"$name: reading cached data from $path")(_read(path)),
-      Log.infoBranch(s"$name: no cached data found at $path. Computing now.")(
-        compute.flatTap(x =>
-          Log.infoBranch(s"$name: writing to cache at $path")(
+      Log.infoBranch(s"$name: reading cached data")(
+        Log.info(s"Path: $path") >> _read(path)
+      ),
+      Log.infoBranch(s"$name: no cached data found. Computing now.")(
+        Log.info(s"Path: $path") >> compute.flatTap(x =>
+          Log.infoBranch(s"$name: writing to cache")(
             write(path, x)
           )
         )
