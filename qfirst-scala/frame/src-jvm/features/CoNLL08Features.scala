@@ -10,12 +10,13 @@ import java.nio.file._
 
 import jjm.LowerCaseString
 import jjm.ling.ESpan
+import jjm.ling.PredArgStructure
+import jjm.ling.SyntaxTree
 import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 import jjm.io.FileUtil
 import jjm.implicits._
-
 
 import cats.Id
 import cats.Order
@@ -34,10 +35,6 @@ import monocle.function.{all => Optics}
 import freelog._
 import freelog.implicits._
 
-import qfirst.datasets.PredArgStructure
-import qfirst.datasets.PropBankPredicate
-import qfirst.datasets.SyntaxTree
-
 class CoNLL08Features(
   mode: RunMode,
   assumeGoldVerbSense: Boolean)(
@@ -45,7 +42,8 @@ class CoNLL08Features(
   Log: EphemeralTreeLogger[IO, String]
 ) extends PropBankFeatures[Int](mode, assumeGoldVerbSense)(cs, Log) {
 
-  import qfirst.datasets.conll08._
+  import jjm.datasets.PropBankPredicate
+  import jjm.datasets.conll08._
 
   override val rootDir = Paths.get("frame-induction/conll08")
 
@@ -239,7 +237,6 @@ class CoNLL08Features(
   }
 
   val argSyntacticFunctionsConverted: CachedArgFeats[String] = {
-    import qfirst.datasets.conll08.HasLemma.ops._
     cacheArgFeats("CoNLL 2008 converted argument syntactic functions")(
       dataset.data.map { data =>
         (verbType: String) => (argId: ArgumentId[Int]) => {
@@ -404,10 +401,10 @@ class CoNLL08Features(
     // )
   }
 
-  import qfirst.datasets.conll05
-  import qfirst.datasets.ptb2
-  import qfirst.datasets.propbank1
-  import qfirst.datasets.propbank3
+  import jjm.datasets.conll05
+  import jjm.datasets.ptb2
+  import jjm.datasets.propbank1
+  import jjm.datasets.propbank3
 
   val conll05Path = Paths.get("data/conll05st-release")
 

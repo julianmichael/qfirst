@@ -1,5 +1,6 @@
 package qfirst.frame
 
+import jjm.datasets.PropBankPredicate
 import jjm.ling.ESpan
 import jjm.implicits._
 
@@ -19,8 +20,6 @@ object PropBankRoleLabel {
       l.contains("C-") || l.contains("R-") ||
       l == "rel"// || l == "Support"
   }
-
-  import qfirst.datasets.PropBankPredicate
 
   def isArgRelevant(predIndex: Int, pred: PropBankPredicate, roleLabel: String, argSpan: ESpan) =
     !roleLabelIsIrrelevant(roleLabel) &&

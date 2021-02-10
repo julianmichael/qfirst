@@ -36,7 +36,6 @@ val breezeVersion = "0.13.2"
 val fansiVersion = "0.2.10"
 val scalaCsvVersion = "1.3.6"
 val fastparseVersion = "2.3.1"
-val macmemoVersion = "0.4"
 
 // jvm webby libs
 val scalatagsVersion = "0.9.3"
@@ -259,17 +258,19 @@ object qfirst extends Module {
 
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(clause.js, `model-eval`.js, datasets.js)
+      def moduleDeps = Seq(clause.js, `model-eval`.js)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::jjm-datasets::$jjmVersion",
         ivy"org.julianmichael::freelog::$freelogVersion",
         ivy"com.cibo::evilplot::$evilplotVersion"
       )
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, `model-eval`.jvm, datasets.jvm)
+      def moduleDeps = Seq(clause.jvm, `model-eval`.jvm)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::jjm-datasets::$jjmVersion",
         ivy"org.julianmichael::freelog::$freelogVersion",
         ivy"com.cibo::evilplot::$evilplotVersion",
         ivy"org.scalanlp::breeze:$breezeVersion",
@@ -336,34 +337,32 @@ object qfirst extends Module {
     }
   }
 
-  object datasets extends Module {
-    object js extends JsModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-    }
-    object jvm extends JvmModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        // TODO remove macmemo
-        ivy"com.softwaremill.macmemo::macros::$macmemoVersion",
-        ivy"com.lihaoyi::fastparse::$fastparseVersion"
-      )
-      object test extends Tests {
-        def moduleDeps = super.moduleDeps
-        override def millSourcePath = datasets.this.millSourcePath / "test"
-        override def scalaVersion = jvm.this.scalaVersion
-        // def platformSegment = jvm.this.platformSegment
-        override def ivyDeps = Agg(
-          ivy"org.julianmichael::freelog::$freelogVersion",
-          ivy"org.scalatest::scalatest:$scalatestVersion",
-          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-          ivy"org.typelevel::discipline-core:$disciplineVersion"
-            // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
-        )
-        def testFrameworks = Seq("org.scalatest.tools.Framework")
-      }
-    }
-  }
+  // object datasets extends Module {
+  //   object js extends JsModule {
+  //     override def ivyDeps = super.ivyDeps() ++ Agg(
+  //       ivy"com.lihaoyi::fastparse::$fastparseVersion"
+  //     )
+  //   }
+  //   object jvm extends JvmModule {
+  //     override def ivyDeps = super.ivyDeps() ++ Agg(
+  //       ivy"com.lihaoyi::fastparse::$fastparseVersion"
+  //     )
+  //     object test extends Tests {
+  //       def moduleDeps = super.moduleDeps
+  //       override def millSourcePath = datasets.this.millSourcePath / "test"
+  //       override def scalaVersion = jvm.this.scalaVersion
+  //       // def platformSegment = jvm.this.platformSegment
+  //       override def ivyDeps = Agg(
+  //         ivy"org.julianmichael::freelog::$freelogVersion",
+  //         ivy"org.scalatest::scalatest:$scalatestVersion",
+  //         ivy"org.scalacheck::scalacheck:$scalacheckVersion",
+  //         ivy"org.typelevel::discipline-core:$disciplineVersion"
+  //           // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
+  //       )
+  //       def testFrameworks = Seq("org.scalatest.tools.Framework")
+  //     }
+  //   }
+  // }
 
   object reprocess extends Module {
     object jvm extends FullJvmModule
