@@ -8,17 +8,16 @@ import cats.effect.Sync
 
 import fs2.Stream
 
-import scala.concurrent.ExecutionContext
-
 class CoNLL08FileSystemService(rootPath: Path) {
-  // TODO: change to Blocker after update
   def streamSentences[F[_]: Sync](split: CoNLL08Split)(
-    implicit ec: ExecutionContext, cs: ContextShift[F]): Stream[F, CoNLL08Sentence] = {
+    implicit cs: ContextShift[F]): Stream[F, CoNLL08Sentence] = {
     val suffix = if(split.isTest) ".GOLD" else ""
     val filePath = rootPath.resolve(s"data/$split/$split.closed$suffix")
-    fs2.io.file.readAll[F](filePath, ec, 4096)
-      .through(fs2.text.utf8Decode)
-      .through(fs2.text.lines)
-      .through(CoNLL08Parsing.streamSentencesFromLines(split))
+    Stream.resource(Blocker[F]).flatMap(blocker =>
+      fs2.io.file.readAll[F](filePath, blocker, 4096)
+        .through(fs2.text.utf8Decode)
+        .through(fs2.text.lines)
+        .through(CoNLL08Parsing.streamSentencesFromLines(split))
+    )
   }
 }

@@ -29,6 +29,7 @@ import io.circe.{Encoder, Decoder}
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 import java.net.URL
+import cats.effect.Blocker
 
 abstract class PropBankFeatures[Arg](
   mode: RunMode,
@@ -52,10 +53,11 @@ abstract class PropBankFeatures[Arg](
     path = path,
     read = path => FileUtil.readJsonLines[InflectedForms](path).compile.toList,
     write = (path, inflections) => FileUtil.writeJsonLines(path)(inflections))(
-    Stream.resource(FileUtil.blockingExecutionContext).flatMap { ec =>
+    Stream.resource(Blocker[IO]).flatMap { blocker =>
       val urlStream = IO(new URL(wiktionaryInflectionsURL).openConnection.getInputStream)
-      fs2.io.readInputStream(urlStream, 4096, ec, true)
-        .through(fs2.compress.gunzip(4096))
+      fs2.io.readInputStream(urlStream, 4096, blocker, true)
+        .through(fs2.compression.gunzip(4096))
+        .flatMap(_.content)
         .through(fs2.text.utf8Decode)
         .through(fs2.text.lines)
         .filter(_.trim.nonEmpty)

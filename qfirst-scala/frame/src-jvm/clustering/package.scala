@@ -23,7 +23,7 @@ package object clustering {
 
   // assume normalized
   def sample[F[_]: Foldable](dist: F[Double], rand: Random): Int = {
-    dist.toList.zipWithIndex.foldM[Either[Int, ?], Double](rand.nextDouble) {
+    dist.toList.zipWithIndex.foldM[Either[Int, *], Double](rand.nextDouble) {
       case (mass, (prob, index)) =>
         if(mass <= prob) Left(index)
         else Right(mass - prob)

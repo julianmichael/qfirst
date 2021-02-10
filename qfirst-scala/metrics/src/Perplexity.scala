@@ -36,7 +36,7 @@ object Perplexity {
 
   implicit val perplexityMonoid: Monoid[Perplexity] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
 
   implicit val perplexityHasMetrics = new HasMetrics[Perplexity] {

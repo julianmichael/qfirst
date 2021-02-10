@@ -76,7 +76,7 @@ object Counts {
 
   implicit val countsMonoid: Monoid[Counts] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
 
   implicit val countsHasMetrics = new HasMetrics[Counts] {

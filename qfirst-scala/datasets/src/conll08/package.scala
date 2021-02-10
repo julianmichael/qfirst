@@ -26,7 +26,7 @@ package object conll08 {
     def lemma(t: T): String
   }
   object HasLemma {
-    implicit def recordHasLemma[T <: HList : Selector.Aux[?, Lemma.type, String]] = new HasLemma[T] {
+    implicit def recordHasLemma[T <: HList : Selector.Aux[*, Lemma.type, String]] = new HasLemma[T] {
       def lemma(t: T): String = t(Lemma)
     }
     implicit val lemmaHasLemma = new HasLemma[Lemma] {

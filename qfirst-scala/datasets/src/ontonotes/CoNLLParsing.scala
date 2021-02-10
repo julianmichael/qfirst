@@ -22,32 +22,35 @@ object PredicateArgumentStructureParsing {
   import cats.implicits._
   private[this] type TokenState[A] = State[Int, A]
 
-  import fastparse.all._
+  import fastparse._
+  import NoWhitespace._
+  // import fastparse.all._
+
   private[this] val nextWord: TokenState[Int] = for {
     index <- State.get
     _ <- State.set(index + 1)
   } yield index
 
-  private[this] val labelP: P[String] =
-    P(CharIn(('A' to 'Z') ++ ('0' to '9') ++ Seq('-')).rep.!)
+  private[this] def labelP[_: P]: P[String] =
+    P(CharIn("A-Z", "0-9", "\\-").rep.!)
 
-  private[this] val wordP: P[TokenState[Int]] =
+  private[this] def wordP[_: P]: P[TokenState[Int]] =
     P("*").map(_ => nextWord)
 
-  private[this] val wordsP: P[TokenState[List[Int]]] =
+  private[this] def wordsP[_: P]: P[TokenState[List[Int]]] =
     P(wordP.rep).map(_.toList.sequence)
 
-  private[this] val spanP: P[TokenState[ESpan]] =
+  private[this] def spanP[_: P]: P[TokenState[ESpan]] =
     P(wordP.rep(1)).map(_.toList.sequence.map(is => ESpan(is.head, is.last + 1)))
 
-  private[this] val argP: P[TokenState[(String, ESpan)]] =
+  private[this] def argP[_: P]: P[TokenState[(String, ESpan)]] =
     P("(" ~ labelP ~ spanP ~ ")").map {
       case (label, spanState) => for {
         span <- spanState
       } yield label -> span
     }
 
-  private[this] val wordsAndArgP: P[TokenState[(String, ESpan)]] =
+  private[this] def wordsAndArgP[_: P]: P[TokenState[(String, ESpan)]] =
     P(wordsP ~ argP).map {
       case (wordsState, argState) => for {
         _ <- wordsState
@@ -55,7 +58,7 @@ object PredicateArgumentStructureParsing {
       } yield arg
     }
 
-  private[this] val allArgsP: P[TokenState[List[(String, ESpan)]]] =
+  private[this] def allArgsP[_: P]: P[TokenState[List[(String, ESpan)]]] =
     P(wordsAndArgP.rep ~ wordsP).map {
       case (argStates, finalWords) => for {
         args <- argStates.toList.sequence
@@ -65,15 +68,16 @@ object PredicateArgumentStructureParsing {
     }
 
   def readArgumentSpans(s: String): List[(String, ESpan)] =
-    allArgsP.parse(s).get.value.runA(0).value
+    parse(s, allArgsP(_)).get.value.runA(0).value
 }
 
 object SyntaxTreeParsing {
   private[this] type SentenceState[A] = State[List[CoNLLToken], A]
 
-  import fastparse.all._
-  private[this] val symbolP: P[String] = P(CharIn('A' to 'Z').rep.!)
-  private[this] lazy val treeP: P[SentenceState[SyntaxTree[CoNLLToken]]] =
+  import fastparse._
+  import NoWhitespace._
+  private[this] def symbolP[_: P]: P[String] = P(CharIn("A-Z").rep.!)
+  private[this] def treeP[_: P]: P[SentenceState[SyntaxTree[CoNLLToken]]] =
     P("(" ~ symbolP ~ treeP.rep(1) ~ ")").map {
       case (symbol, childrenState) => for {
         children <- childrenState.toList.sequence
@@ -93,7 +97,7 @@ object SyntaxTreeParsing {
     * @param words the words of the sentence this tree parses
     */
   def readSyntaxTree(s: String, words: List[CoNLLToken]): SyntaxTree[CoNLLToken] =
-    treeP.parse(s).get.value.runA(words).value
+    parse(s, treeP(_)).get.value.runA(words).value
 }
 
 object CoNLLParsing {

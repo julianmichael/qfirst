@@ -61,9 +61,9 @@ object ClauseResolutionMetricsApp extends App {
   //   // _ <- printBeams
   // } yield ExitCode.Success
 
-  lazy val train = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz")).get
-  lazy val dev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
-  lazy val denseDev = Data.readDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz")).get
+  lazy val train = Data.readQasrlDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("train.jsonl.gz")).get
+  lazy val dev = Data.readQasrlDataset(Paths.get("qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
+  lazy val denseDev = Data.readQasrlDataset(Paths.get("qasrl-v2_1").resolve("dense").resolve("dev.jsonl.gz")).get
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
   lazy val sortSpec = {

@@ -76,7 +76,7 @@ object VerbTypeRendering {
     import io.circe.parser.decode
     val printer = io.circe.Printer.noSpaces
     def fromString(x: String) = decode[InflectedForms](x).right.get
-    def toString(verbType: InflectedForms): String = printer.pretty(verbType.asJson)
+    def toString(verbType: InflectedForms): String = printer.print(verbType.asJson)
   }
   implicit val stringVerbTypeRendering = new VerbTypeRendering[String] {
     def fromString(x: String) = x
@@ -220,8 +220,8 @@ class NewVerbUI[VerbType, Arg: Order](
   }
 
   case class Props(
-    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], ClusterModelSpec, VerbType, Arg],
-    featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, *], ClusterModelSpec, VerbType, Arg],
+    featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
     // urlNavQuery: NavQuery,
     mode: RunMode
   )
@@ -339,7 +339,7 @@ class NewVerbUI[VerbType, Arg: Order](
   object VerbFeatures {
     case class Props(
       initVerb: VerbType,
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+      featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
       render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
     )
 
@@ -354,7 +354,7 @@ class NewVerbUI[VerbType, Arg: Order](
     class Backend(scope: BackendScope[Props, State]) {
 
       def pullFeature[A, B](
-        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+        featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
         getLens: FeatureOptions => (Lens[FeatureValues, Option[A]], B),
         makeReq: B => Option[FeatureReq[VerbType, Arg] { type Out = A }]
       ): Callback = scope.state >>= { state =>
@@ -377,7 +377,7 @@ class NewVerbUI[VerbType, Arg: Order](
       }
 
       def pullFeatures(
-        featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+        featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
       ): Callback = scope.state >>= { state =>
         pullFeature(
           featureService,
@@ -479,7 +479,7 @@ class NewVerbUI[VerbType, Arg: Order](
 
     def make(
       initVerb: VerbType,
-      featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg])(
+      featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg])(
       render: (StateSnapshot[FeatureOptions], StateSnapshot[VerbType], FeatureValues) => VdomElement
     ) = Component(Props(initVerb, featureService, render))
   }
@@ -496,7 +496,7 @@ class NewVerbUI[VerbType, Arg: Order](
   )
 
   def headerContainer(
-    featureService: FeatureService[OrWrapped[AsyncCallback, ?], VerbType, Arg],
+    featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
     modelSpec: StateSnapshot[ClusterModelSpec],
     sortedVerbCounts: List[(VerbType, Int)],
     verb: StateSnapshot[VerbType],
@@ -880,7 +880,7 @@ class NewVerbUI[VerbType, Arg: Order](
   }
 
   def frameContainer(
-    verbService: VerbFrameService[OrWrapped[AsyncCallback, ?], ClusterModelSpec, VerbType, Arg],
+    verbService: VerbFrameService[OrWrapped[AsyncCallback, *], ClusterModelSpec, VerbType, Arg],
     cachedClusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     clusterSplittingSpec: StateSnapshot[ClusterSplittingSpec],
     allInflectedForms: List[InflectedForms],
@@ -1532,7 +1532,8 @@ class NewVerbUI[VerbType, Arg: Order](
               "Each role corresponds to a cluster of PropBank arguments. The arguments can be seen on the ",
               "right in the sentence pane, where they are labeled with their corresponding symbols. ",
               "The features are visualized for each argument in the current sentence as well as in ",
-              "aggregate for each role."
+              "aggregate for each role. Questions are only displayed if they receive probability greater ",
+              "than 0.5."
             ),
             <.p(
               "You can adjust the granularity of the roles using the controls at the top of the roleset ",

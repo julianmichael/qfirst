@@ -128,7 +128,7 @@ case class TimingEphemeralTreeFansiLogger(
               indents.last.init + getLogLevelAttr(logLevel)(horiz) +
               innerLogLevels.init.map(level => getLogLevelAttr(level)(boxTee + horiz)).mkString +
               getLogLevelAttr(innerLogLevels.last)(boxTee) +
-              doneString,
+              fansi.Str(" ") + doneString,
             logLevel
           ) >> justDoneMessageBuffer.set(Some(timingString -> NonEmptyList(logLevel, innerLogLevels.toList)))
       }

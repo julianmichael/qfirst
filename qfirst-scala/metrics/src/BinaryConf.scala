@@ -66,7 +66,7 @@ object BinaryConf {
 
   implicit val confAMonoidK: MonoidK[BinaryConf] = {
     import cats.derived.auto.monoidK._
-    cats.derived.semi.monoidK
+    cats.derived.semiauto.monoidK
   }
   implicit def confAMonoid[A]: Monoid[BinaryConf[A]] = confAMonoidK.algebra[A]
   implicit def confAHasMetrics[A] = new HasMetrics[BinaryConf[A]] {

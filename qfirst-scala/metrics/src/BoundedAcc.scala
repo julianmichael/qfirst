@@ -18,7 +18,7 @@ case class BoundedAcc[A](
 object BoundedAcc {
   implicit val boundedAccMonoidK: MonoidK[BoundedAcc] = {
     import cats.derived.auto.monoidK._
-    cats.derived.semi.monoidK
+    cats.derived.semiauto.monoidK
   }
   implicit def boundedAccMonoid[A]: Monoid[BoundedAcc[A]] = boundedAccMonoidK.algebra[A]
   implicit def boundedAccHasMetrics[A] = new HasMetrics[BoundedAcc[A]] {
@@ -50,7 +50,7 @@ object BoundedAcc {
     def uncertain(n: Int = 1) = Stats(uncertain = n)
     implicit val boundedAccStatsMonoid: Monoid[Stats] = {
       import cats.derived.auto.monoid._
-      cats.derived.semi.monoid
+      cats.derived.semiauto.monoid
     }
     implicit val boundedAccStatsHasMetrics = new HasMetrics[Stats] {
       def getMetrics(stats: Stats) = stats.metrics

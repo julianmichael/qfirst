@@ -616,13 +616,13 @@ object MetricsApp extends CommandIOApp(
         case _ => throw new RuntimeException("Must specify mode of dense-curve or dense.")
       }
     }
-    trainIO = IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
+    trainIO = IO.fromTry(qasrl.bank.Data.readQasrlDataset(qasrlBankPath.resolve("orig").resolve("train.jsonl.gz")))
     verbFrequenciesIO = trainIO.map(getVerbFrequencies)
     dataset <- (
       if(isTest) {
-        IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz")))
+        IO.fromTry(qasrl.bank.Data.readQasrlDataset(qasrlBankPath.resolve("dense").resolve("test.jsonl.gz")))
       } else {
-        IO.fromTry(qasrl.bank.Data.readDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
+        IO.fromTry(qasrl.bank.Data.readQasrlDataset(qasrlBankPath.resolve("dense").resolve("dev.jsonl.gz")))
       }
     )
     clauseInfoOpt = clauseInfoPathOpt.map(readClauseInfo)

@@ -94,7 +94,7 @@ object Serve extends CommandIOApp(
     import scala.concurrent.duration._
 
     for {
-      // modelCache <- Ref[IO].of(Map.empty[ClusteringModel, Map[VerbType, VerbClusterModel[VerbType, Arg]]])
+      _ <- features.argQuestionDists.get
       allVerbModels <- readAllClusterModels[VerbType, Arg](features)
       verbCounts = allVerbModels.head._2.mapVals(_.numVerbInstances)
       verbModelService = HttpUtil.makeHttpPostServer(
@@ -106,7 +106,7 @@ object Serve extends CommandIOApp(
         s"/$featureApiSuffix" -> featureService
       ).orNotFound
       _ <- Log.info("Starting server.")
-      _ <- BlazeServerBuilder[IO]
+      _ <- BlazeServerBuilder[IO](global)
       .withIdleTimeout(5.minutes)
       .bindHttp(port, "0.0.0.0")
       .withHttpApp(app)
@@ -119,14 +119,18 @@ object Serve extends CommandIOApp(
     dataSetting: DataSetting,
     mode: RunMode,
     domain: String,
-    port: Int
+    port: Int,
+    behindProxy: Boolean
   ): IO[ExitCode] = {
     freelog.loggers.TimingEphemeralTreeFansiLogger.create().flatMap { implicit Log =>
+      val portOpt = if(behindProxy) None else Some(port)
+      val useHttps = behindProxy
+
       val pageService = StaticPageService.makeService(
         domain,
         docApiSuffix, verbApiSuffix, featureApiSuffix,
         dataSetting, mode,
-        jsDepsPath, jsPath, port
+        jsDepsPath, jsPath, portOpt, useHttps
       )
 
       dataSetting match {
@@ -159,11 +163,15 @@ object Serve extends CommandIOApp(
       "port", metavar = "port number", help = "Port to host the HTTP service on."
     )
 
+    val proxyO = Opts.flag(
+      "proxy", help = "Whether the server is behind an HTTPS reverse proxy."
+    ).orFalse
+
     // val domainRestrictionO = Opts.option[String](
     //   "domain", metavar = "http://...",
     //   help = "Domain to impose CORS restrictions to (otherwise, all domains allowed)."
     // ).map(NonEmptySet.of(_)).orNone
 
-    (jsDepsPathO, jsPathO, dataO, modeO, domainO, portO).mapN(_run)
+    (jsDepsPathO, jsPathO, dataO, modeO, domainO, portO, proxyO).mapN(_run)
   }
 }

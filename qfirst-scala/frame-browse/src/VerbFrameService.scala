@@ -51,7 +51,7 @@ object VerbFrameService {
   ): DotKleisli[IO, Request[Model, VerbType, Arg]]  = DotKleisli.fromFunctionK(
     new DotFunctionK[IO, Request[Model, VerbType, Arg]] {
       def apply[A](req: Request[Model, VerbType, Arg] { type Out = A }): IO[A] = {
-        // @SuppressWarnings(Array("all"))
+        @scala.annotation.nowarn
         val res = req match {
           case GetVerbs() => IO.pure(verbCounts): IO[Map[VerbType, Int]]
           case GetModel(model, verb) => IO(verbModels(model)(verb)): IO[VerbClusterModel[VerbType, Arg]]

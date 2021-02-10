@@ -26,7 +26,7 @@ object Count {
 
   implicit val countMonoidK: MonoidK[Count] = {
     import cats.derived.auto.monoidK._
-    cats.derived.semi.monoidK
+    cats.derived.semiauto.monoidK
   }
 
   implicit def countMonoid[A]: Monoid[Count[A]] = countMonoidK.algebra[A]

@@ -13,7 +13,6 @@ import qasrl.ArgumentSlot
 import qasrl.labeling.SlotBasedLabel
 
 import qasrl.bank.Data
-import qasrl.bank.FullData
 
 import jjm.LowerCaseString
 import jjm.ling.ESpan

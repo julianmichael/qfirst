@@ -54,7 +54,7 @@ object Logger {
     def emit(msg: Msg, level: LogLevel): F[Unit] = first.emit(msg, level) *> second.emit(msg, level)
   }
 
-  implicit def loggerContravariant[F[_]]: Contravariant[Logger[F, ?]] = new Contravariant[Logger[F, ?]] {
+  implicit def loggerContravariant[F[_]]: Contravariant[Logger[F, *]] = new Contravariant[Logger[F, *]] {
     def contramap[A, B](fa: Logger[F, A])(f: B => A): Logger[F, B] = new Logger[F, B] {
       def emit(msg: B, level: LogLevel): F[Unit] = fa.emit(f(msg), level)
     }

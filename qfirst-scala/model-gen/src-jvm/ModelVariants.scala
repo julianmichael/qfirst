@@ -220,7 +220,7 @@ object ModelVariants extends CommandIOApp(
     private val nextRand = (l: Long) => {
       l * 6364136223846793005L + 1442695040888963407L
     }
-    val randomSample = new (List ~> State[Long, ?]) {
+    val randomSample = new (List ~> State[Long, *]) {
       def apply[A](xs: List[A]) = for {
         _ <- State.modify(nextRand)
         l <- State.get[Long]

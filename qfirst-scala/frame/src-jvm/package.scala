@@ -59,7 +59,7 @@ trait PackagePlatformExtensions {
   }
 
   def readDataset(path: Path): IO[Dataset] = IO.fromTry(
-    qasrl.bank.Data.readDataset(path)
+    qasrl.bank.Data.readQasrlDataset(path)
   )
 
   import qfirst.metrics._

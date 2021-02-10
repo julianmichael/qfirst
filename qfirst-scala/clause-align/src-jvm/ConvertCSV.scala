@@ -55,7 +55,7 @@ object ConvertCSV extends CommandIOApp(
       use = reader => {
         IO(reader.readNext.get) >>= (headers =>
           f(headers,
-            Stream.fromIterator[IO, Map[String, String]](
+            Stream.fromIterator[IO](
               reader.all.iterator.map(line => headers.zip(line).toMap)
             )
           )

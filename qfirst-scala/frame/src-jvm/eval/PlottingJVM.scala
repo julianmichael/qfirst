@@ -117,6 +117,7 @@ object PlottingJVM {
       .xAxis().yAxis()
       .frame().rightLegend()
 
+    // com.cibo.evilplot.JSONUtils.
     IO(plot1.render().write(new java.io.File(makePath("best").toString))) >>
       IO(plot2.render().write(new java.io.File(makePath("precise").toString)))
   }

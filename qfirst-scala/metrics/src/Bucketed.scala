@@ -48,7 +48,7 @@ object Bucketed {
   }
   implicit def bucketedMonoid[A : Monoid]: Monoid[Bucketed[A]] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   // TODO perhaps draw out the proportion calculation into a separate method so user can decide when to do it
   implicit def bucketedHasMetrics[A : HasMetrics : Monoid]: HasMetrics[Bucketed[A]] = new HasMetrics[Bucketed[A]] {

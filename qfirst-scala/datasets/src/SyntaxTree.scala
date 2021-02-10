@@ -40,7 +40,7 @@ import jjm.implicits._
       children.traverse(_.cataUnlabeledM(leaf)(node)).flatMap(node)
   }
 
-  final def size = cataUnlabeled(_ => 1)(_.sum)
+  final def size = cataUnlabeled(_ => 1)(_.combineAll)
   final def depth = cataUnlabeled(_ => 0)(_.maximum + 1)
   final def beginIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.head)
   final def endIndex(implicit ev: HasIndex[Word]) = cataUnlabeled(_.index)(_.last)

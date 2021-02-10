@@ -419,8 +419,8 @@ object MergeTree {
 
   // stack-safe implementation of hylo particular to the Either monad (for json decoding)
   def hyloEither[E, A, B, C](
-    destructM: CoalgebraM[Either[E, ?], B, A],
-    constructM: AlgebraM[Either[E, ?], B, C]
+    destructM: CoalgebraM[Either[E, *], B, A],
+    constructM: AlgebraM[Either[E, *], B, C]
   ): A => Either[E, C] = (a: A) => {
     @tailrec
     def loop(
@@ -449,11 +449,11 @@ object MergeTree {
     }
     loop(List(a), Nil)
   }
-  def anaEither[E, A, B](destruct: CoalgebraM[Either[E, ?], B, A]): A => Either[E, MergeTree[B]] = {
-    hyloEither(destruct, embedM[Either[E, ?], B])
+  def anaEither[E, A, B](destruct: CoalgebraM[Either[E, *], B, A]): A => Either[E, MergeTree[B]] = {
+    hyloEither(destruct, embedM[Either[E, *], B])
   }
-  def cataEither[E, A, B](construct: AlgebraM[Either[E, ?], A, B]): MergeTree[A] => Either[E, B] = {
-    hyloEither(projectM[Either[E, ?], A], construct)
+  def cataEither[E, A, B](construct: AlgebraM[Either[E, *], A, B]): MergeTree[A] => Either[E, B] = {
+    hyloEither(projectM[Either[E, *], A], construct)
   }
 
   // def tailRecM[B](arg: A)(func: A => Tree[Either[A, B]]): Tree[B] = {

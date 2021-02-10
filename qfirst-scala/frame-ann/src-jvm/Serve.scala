@@ -74,7 +74,7 @@ object Serve extends CommandIOApp(
           s"/$docApiSuffix" -> docService,
           s"/$verbApiSuffix" -> annotationService,
         ).orNotFound
-        _ <- BlazeServerBuilder[IO]
+        _ <- BlazeServerBuilder[IO](global)
         .bindHttp(port, "0.0.0.0")
         .withHttpApp(app)
         .serve.compile.drain

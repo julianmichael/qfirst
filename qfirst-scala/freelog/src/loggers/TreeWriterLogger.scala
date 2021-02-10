@@ -9,7 +9,7 @@ import cats.implicits._
 
 case class TreeWriterLogger[Msg](
   getLogMessage: (Msg, LogLevel) => Msg
-) extends TreeLogger[Writer[LogTree[Msg], ?], Msg] {
+) extends TreeLogger[Writer[LogTree[Msg], *], Msg] {
   def emit(msg: Msg, logLevel: LogLevel): Writer[LogTree[Msg], Unit] = Writer.tell(LogTree.labeled(getLogMessage(msg, logLevel), Nil))
 
   def emitBranch[A](
@@ -27,7 +27,7 @@ case class TreeWriterLogger[Msg](
 
 case class TreeWriterTLogger[Msg, F[_]: Applicative](
   getLogMessage: (Msg, LogLevel) => Msg
-) extends TreeLogger[WriterT[F, LogTree[Msg], ?], Msg] {
+) extends TreeLogger[WriterT[F, LogTree[Msg], *], Msg] {
   def emit(msg: Msg, logLevel: LogLevel): WriterT[F, LogTree[Msg], Unit] = WriterT.tell[F, LogTree[Msg]](
     LogTree.labeled(getLogMessage(msg, logLevel), Nil)
   )

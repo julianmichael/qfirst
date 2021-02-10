@@ -6,58 +6,58 @@ import $ivy.`com.lihaoyi::mill-contrib-bloop:$MILL_VERSION`
 
 import ammonite.ops._
 
-val thisScalaVersion = "2.12.12"
-val thisScalaJSVersion = "0.6.33"
+val thisScalaVersion = "2.12.13"
+val thisScalaJSVersion = "1.4.0"
 
+// locally published lib
+val evilplotVersion = "0.8.1-SNAPSHOT"
+
+// my libs
+val jjmVersion = "0.2.0-SNAPSHOT"
+val qasrlVersion = "0.3.0-SNAPSHOT"
+val qasrlBankVersion = "0.4.0-SNAPSHOT"
+val radhocVersion = "0.4.0-SNAPSHOT"
+val spacroVersion = "0.4.0-SNAPSHOT"
+val freelogVersion = "0.1.0-SNAPSHOT"
+
+// compiler plugins
 val macroParadiseVersion = "2.1.1"
-val kindProjectorVersion = "0.9.4"
+val kindProjectorVersion = "0.11.3"
 val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
 
-val jjmVersion = "0.1.1-SNAPSHOT"
-val qasrlVersion = "0.2.1-SNAPSHOT"
-val qasrlBankVersion = "0.2.0"
-val radhocVersion = "0.3.0"
-val spacroVersion = "0.3.0"
-
-val http4sVersion = "0.20.11"
-val kittensVersion = "1.1.1"
-val declineVersion = "1.0.0"
-
-val breezeVersion = "0.13.2"
-val evilplotVersion = "0.6.3"
-val fansiVersion = "0.2.7"
-val scalaCsvVersion = "1.3.6"
+// cats libs
+val http4sVersion = "0.21.18"
+val kittensVersion = "2.2.1"
+val declineVersion = "1.3.0"
 
 // non-cats
-// val upickleVersion = "0.5.1"
-val fastparseVersion = "0.4.4"
+val breezeVersion = "0.13.2"
+val fansiVersion = "0.2.10"
+val scalaCsvVersion = "1.3.6"
+val fastparseVersion = "2.3.1"
 val macmemoVersion = "0.4"
 
 // jvm webby libs
-val scalatagsVersion = "0.8.2"
+val scalatagsVersion = "0.9.3"
 
 // jvm libs
 val ammoniteOpsVersion = "1.1.2"
 val logbackVersion = "1.2.3"
-// jvm crowd libs
-// val akkaActorVersion = "2.4.20"
-val scalaLoggingVersion = "3.5.0"
-val slf4jApiVersion = "1.7.21"
 
 // js libs
-val scalajsDomVersion = "0.9.6"
-val scalajsJqueryVersion = "0.9.3"
+val scalajsDomVersion = "1.1.0"
+val scalajsJqueryVersion = "1.0.0"
 // val scalajsReactVersion = "1.2.3"
 // val scalajsReactVersion = "1.3.1"
-val scalacssVersion = "0.5.3"
+val scalacssVersion = "0.7.0"
 
+// test libs
 val scalatestVersion = "3.0.8"
 val scalacheckVersion = "1.14.0"
 val disciplineVersion = "1.0.0"
 
 import $file.`scripts-build`.SimpleJSDepsBuild, SimpleJSDepsBuild.SimpleJSDeps
-import $file.`scripts-build`.ScalatexBuild, ScalatexBuild.ScalatexModule
 
 trait CommonModule extends ScalaModule with ScalafmtModule {
 
@@ -83,7 +83,7 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   override def scalacPluginIvyDeps = super.scalacPluginIvyDeps() ++ Agg(
     // ivy"io.tryp:::splain:$splainVersion",
     ivy"org.scalamacros:::paradise:$macroParadiseVersion",
-    ivy"org.spire-math::kind-projector:$kindProjectorVersion",
+    ivy"org.typelevel:::kind-projector:$kindProjectorVersion",
     ivy"com.olegpy::better-monadic-for:$betterMonadicForVersion"
   )
 
@@ -296,25 +296,19 @@ object qfirst extends Module {
     object js extends JsModule {
       def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js, datasets.js)
 
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
-
       override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::freelog::$freelogVersion",
         ivy"com.cibo::evilplot::$evilplotVersion"
       )
     }
     object jvm extends FullJvmModule {
       def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, datasets.jvm)
 
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
-
       override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::freelog::$freelogVersion",
+        ivy"com.cibo::evilplot::$evilplotVersion",
         ivy"org.scalanlp::breeze:$breezeVersion",
         ivy"org.scalanlp::breeze-natives:$breezeVersion",
-        ivy"com.cibo::evilplot-repl:$evilplotVersion",
         ivy"com.lihaoyi::scalatags:$scalatagsVersion",
         ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
       )
@@ -324,16 +318,8 @@ object qfirst extends Module {
   object `frame-ann` extends Module {
     object js extends FullJsModule {
       def moduleDeps = Seq(frame.js, `clause-ext`.js)
-
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
     }
-    object jvm extends FullJvmModule with ScalatexModule {
-
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
+    object jvm extends FullJvmModule {
 
       def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm)
 
@@ -354,18 +340,10 @@ object qfirst extends Module {
   object `frame-browse` extends Module {
     object js extends FullJsModule {
       def moduleDeps = Seq(frame.js)
-
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
     }
-    object jvm extends FullJvmModule with ScalatexModule {
+    object jvm extends FullJvmModule {
 
       def moduleDeps = Seq(frame.jvm)
-
-      override def repositories = super.repositories ++ Seq(
-        coursier.MavenRepository("https://dl.bintray.com/cibotech/public")
-      )
 
       def serve(args: String*) = T.command {
         val jsPath = `frame-browse`.js.fastOpt().path.toString
@@ -398,24 +376,23 @@ object qfirst extends Module {
 
   object datasets extends Module {
     object js extends JsModule {
-      // def moduleDeps = Seq(freelog.js)
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"com.lihaoyi::fastparse::$fastparseVersion"
       )
     }
     object jvm extends JvmModule {
-      // def moduleDeps = Seq(freelog.jvm)
       override def ivyDeps = super.ivyDeps() ++ Agg(
         // TODO remove macmemo
         ivy"com.softwaremill.macmemo::macros::$macmemoVersion",
         ivy"com.lihaoyi::fastparse::$fastparseVersion"
       )
       object test extends Tests {
-        def moduleDeps = super.moduleDeps ++ Seq(freelog.jvm)
+        def moduleDeps = super.moduleDeps
         override def millSourcePath = datasets.this.millSourcePath / "test"
         override def scalaVersion = jvm.this.scalaVersion
         // def platformSegment = jvm.this.platformSegment
         override def ivyDeps = Agg(
+          ivy"org.julianmichael::freelog::$freelogVersion",
           ivy"org.scalatest::scalatest:$scalatestVersion",
           ivy"org.scalacheck::scalacheck:$scalacheckVersion",
           ivy"org.typelevel::discipline-core:$disciplineVersion"

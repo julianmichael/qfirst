@@ -18,7 +18,7 @@ object ExpectedCount {
   def apply(expectedCount: Double): ExpectedCount = ExpectedCount(expectedCount, 1.0)
   implicit val expectedCountMonoid: Monoid[ExpectedCount] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   implicit val expectedCountHasMetrics = new HasMetrics[ExpectedCount] {
     def getMetrics(ec: ExpectedCount) = ec.metrics

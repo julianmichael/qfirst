@@ -37,7 +37,7 @@ object Numbers {
 
   implicit def numbersMonoid[A: Numeric]: Monoid[Numbers[A]] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   implicit def numbersHasMetrics[A] = new HasMetrics[Numbers[A]] {
     def getMetrics(nums: Numbers[A]) = nums.stats.getMetrics

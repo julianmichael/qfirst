@@ -32,7 +32,7 @@ object Proportion {
   object Stats {
     implicit val proportionStatsMonoid: Monoid[Proportion.Stats] = {
       import cats.derived.auto.monoid._
-      cats.derived.semi.monoid
+      cats.derived.semiauto.monoid
     }
     implicit val proportionStatsHasMetrics = new HasMetrics[Proportion.Stats] {
       def getMetrics(acc: Proportion.Stats) = acc.getTree
@@ -40,7 +40,7 @@ object Proportion {
   }
   implicit def proportionMonoid[A]: Monoid[Proportion[A]] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   implicit def proportionHasMetrics[A] = new HasMetrics[Proportion[A]] {
     def getMetrics(acc: Proportion[A]) = acc.stats.getTree

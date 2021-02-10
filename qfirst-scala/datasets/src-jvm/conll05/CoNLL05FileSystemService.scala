@@ -14,7 +14,7 @@ import scala.concurrent.ExecutionContext
 class CoNLL05FileSystemService(rootPath: Path) {
   // TODO: change to Blocker after update
   def streamSentences[F[_]: Sync](split: CoNLL05Split)(
-    implicit ec: ExecutionContext, cs: ContextShift[F]): Stream[F, CoNLL05Sentence] = {
+    implicit cs: ContextShift[F]): Stream[F, CoNLL05Sentence] = {
     def getFilePathsForFeature(feature: String) = {
       val prefix = rootPath.resolve(s"$split/$feature")
       split match {
@@ -33,11 +33,14 @@ class CoNLL05FileSystemService(rootPath: Path) {
       }
     }
     val predArgSetsBySid = getFilePathsForFeature("props") >>= (filePath =>
-      fs2.io.file.readAll[F](filePath, ec, 4096)
-        .through(fs2.compress.gunzip(4096))
-        .through(fs2.text.utf8Decode)
-        .through(fs2.text.lines)
-        .through(PropsParsing.streamPropsFromLines(split))
+      Stream.resource(Blocker[F]).flatMap { blocker =>
+        fs2.io.file.readAll[F](filePath, blocker, 4096)
+          .through(fs2.compression.gunzip(4096))
+          .flatMap(_.content)
+          .through(fs2.text.utf8Decode)
+          .through(fs2.text.lines)
+          .through(PropsParsing.streamPropsFromLines(split))
+      }
     )
 
     // val sensesBySid = getFilePathsForFeature("senses") >>= (filePath =>

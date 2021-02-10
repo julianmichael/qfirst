@@ -37,7 +37,7 @@ case class Chosen[Param, MetricData](
   }
 }
 object Chosen {
-  implicit def chosenTraverse[Param]: Traverse[Chosen[Param, ?]] = new Traverse[Chosen[Param, ?]] {
+  implicit def chosenTraverse[Param]: Traverse[Chosen[Param, *]] = new Traverse[Chosen[Param, *]] {
     def traverse[G[_]: Applicative, A, B](fa: Chosen[Param, A])(f: A => G[B]): G[Chosen[Param, B]] = {
       fa.data.toList.traverse { case (param, value) => f(value).map(param -> _) }.map(l => Chosen(l.toMap))
     }
@@ -46,7 +46,7 @@ object Chosen {
   }
   implicit def chosenMonoid[Param, A: Monoid]: Monoid[Chosen[Param, A]] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   implicit def chosenHasMetrics[Param: Show, A: HasMetrics]: HasMetrics[Chosen[Param, A]] = new HasMetrics[Chosen[Param, A]] {
     def getMetrics(ba: Chosen[Param, A]): MapTree[String, Metric] = {
@@ -57,5 +57,5 @@ object Chosen {
       )
     }
   }
-  implicit def chosenEach[Param, A] = Each.fromTraverse[Chosen[Param, ?], A]
+  implicit def chosenEach[Param, A] = Each.fromTraverse[Chosen[Param, *], A]
 }

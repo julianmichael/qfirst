@@ -1,4 +1,4 @@
-package qfirst.ontonotes
+package qfirst.datasets.ontonotes
 
 import org.scalatest._
 import org.scalatest.prop._
@@ -16,7 +16,6 @@ import freelog.implicits._
 class OntonotesTests extends FunSuite with Matchers {
 
   implicit val ambLevel = LogLevel.Trace
-  implicit val progressSpec = ProgressSpec.simple(50)
   implicit def executionContext = scala.concurrent.ExecutionContext.global
   implicit val timer: Timer[IO] = IO.timer(executionContext)
   implicit val cs: ContextShift[IO] = IO.contextShift(executionContext)

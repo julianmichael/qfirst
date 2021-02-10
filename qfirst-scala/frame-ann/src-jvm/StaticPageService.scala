@@ -13,6 +13,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 
 import scala.concurrent.ExecutionContext
+import cats.effect.Blocker
 
 object StaticPageService {
 
@@ -85,6 +86,8 @@ object StaticPageService {
     val jsDepsSuffix = "deps.js"
     val jsSuffix = jsPath.getFileName.toString
 
+    val blocker = Blocker.liftExecutionContext(ec)
+
     val config = {
       import scalatags.Text.all._
       PageConfig(
@@ -103,10 +106,10 @@ object StaticPageService {
 
     HttpRoutes.of[IO] {
       case req @ GET -> Root / `jsDepsSuffix` =>
-        StaticFile.fromString(jsDepsPath.toString, ec, Some(req))
+        StaticFile.fromString(jsDepsPath.toString, blocker, Some(req))
           .getOrElseF(NotFound())
       case req @ GET -> Root / `jsSuffix` =>
-        StaticFile.fromString(jsPath.toString, ec, Some(req))
+        StaticFile.fromString(jsPath.toString, blocker, Some(req))
           .getOrElseF(NotFound())
       case GET -> _ => Ok(indexStr)
           .map(_.withContentType(`Content-Type`(MediaType.text.`html`)))

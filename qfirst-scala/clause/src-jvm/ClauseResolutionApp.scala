@@ -44,7 +44,7 @@ object ClauseResolutionApp extends CommandIOApp(
 
   def processSentence(sentence: Sentence): String = {
     val printer = io.circe.Printer.noSpaces
-    printer.pretty(
+    printer.print(
       Json.obj(
         "sentenceId" -> sentence.sentenceId.asJson,
         "verbs" -> Json.obj(
@@ -54,7 +54,7 @@ object ClauseResolutionApp extends CommandIOApp(
             verb.verbIndex.toString -> Json.obj(
               qLabels.zip(framePairs).map { case (qLabel, (frame, slot)) =>
                 qLabel.questionString -> Json.obj(
-                  "clause" -> printer.pretty(getClauseTemplate(frame).asJson).asJson,
+                  "clause" -> printer.print(getClauseTemplate(frame).asJson).asJson,
                   "slot" -> ArgumentSlot.toString(slot).asJson
                 )
               }: _*
@@ -70,13 +70,13 @@ object ClauseResolutionApp extends CommandIOApp(
       "out", metavar = "path", help = "Output path."
     )
     outPathO.map(outPath =>
-      Stream.resource(FileUtil.blockingExecutionContext).flatMap { _ec =>
+      Stream.resource(Blocker[IO]).flatMap { blocker  =>
         Stream.emits[IO, Path](paths)
-          .flatMap(path => FileUtil.streamJsonLines[Sentence](path, _ec))
+          .flatMap(path => FileUtil.streamJsonLines[Sentence](path, blocker))
           .map(processSentence)
           .intersperse("\n")
           .through(fs2.text.utf8Encode)
-          .through(fs2.io.file.writeAll(outPath, _ec))
+          .through(fs2.io.file.writeAll(outPath, blocker))
       }.compile.drain.as(ExitCode.Success)
     )
   }

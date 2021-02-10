@@ -218,7 +218,7 @@ class FrameTests extends FunSuite with Matchers {
   {
     import qasrl.bank.Data
     import qasrl.data.Dataset
-    val train = Data.readDataset(Paths.get("../qasrl-bank/data/qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
+    val train = Data.readQasrlDataset(Paths.get("../qasrl-bank/data/qasrl-v2_1").resolve("orig").resolve("dev.jsonl.gz")).get
     Dataset.verbEntries.getAll(train).foreach { verb =>
       verb.questionLabels.keys.foreach { question =>
         val questionTokensIsh = question.init.split(" ").toVector

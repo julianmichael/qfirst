@@ -26,7 +26,7 @@ object Accuracy {
   object Stats {
     implicit val accuracyStatsMonoid: Monoid[Accuracy.Stats] = {
       import cats.derived.auto.monoid._
-      cats.derived.semi.monoid
+      cats.derived.semiauto.monoid
     }
     implicit val accuracyStatsHasMetrics = new HasMetrics[Accuracy.Stats] {
       def getMetrics(acc: Accuracy.Stats) = acc.getTree
@@ -34,7 +34,7 @@ object Accuracy {
   }
   implicit def accuracyMonoid[A]: Monoid[Accuracy[A]] = {
     import cats.derived.auto.monoid._
-    cats.derived.semi.monoid
+    cats.derived.semiauto.monoid
   }
   implicit def accuracyHasMetrics[A] = new HasMetrics[Accuracy[A]] {
     def getMetrics(acc: Accuracy[A]) = acc.stats.getTree

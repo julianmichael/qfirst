@@ -51,7 +51,7 @@ trait TreeLogger[F[_], Msg] extends Logger[F, Msg] {
 }
 object TreeLogger {
 
-  implicit def treeLoggerContravariant[F[_]]: Contravariant[TreeLogger[F, ?]] = new Contravariant[TreeLogger[F, ?]] {
+  implicit def treeLoggerContravariant[F[_]]: Contravariant[TreeLogger[F, *]] = new Contravariant[TreeLogger[F, *]] {
     def contramap[A, B](fa: TreeLogger[F, A])(f: B => A): TreeLogger[F, B] = new TreeLogger[F, B] {
       def emit(msg: B, level: LogLevel): F[Unit] = fa.emit(f(msg), level)
       def emitBranch[C](

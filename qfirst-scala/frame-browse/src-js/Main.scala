@@ -33,7 +33,7 @@ import radhoc._
 object Main {
   def runApp[
     VerbType: Encoder : Decoder : VerbTypeRendering,
-    Arg: Encoder : Decoder : Order : ArgRendering[VerbType, ?]
+    Arg: Encoder : Decoder : Order : ArgRendering[VerbType, *]
   ]: Unit = {
     VerbAnnStyles.addToDocument()
 

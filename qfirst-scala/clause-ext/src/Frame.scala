@@ -181,9 +181,9 @@ object TAN
   private[this] def appendEither[A](e: Either[String, A]): StateT[List, List[Either[String, A]], Unit] =
     StateT.modify[List, List[Either[String, A]]](e :: _)
   private[this] def appendAllStrings[F[_]: Foldable, A](fs: F[String]): StateT[List, List[Either[String, A]], Unit] =
-    fs.foldM[StateT[List, List[Either[String, A]], ?], Unit](()) { case (_, s) => appendString(s) }
+    fs.foldM[StateT[List, List[Either[String, A]], *], Unit](()) { case (_, s) => appendString(s) }
   private[this] def appendAll[F[_]: Foldable, A](fs: F[Either[String, A]]): StateT[List, List[Either[String, A]], Unit] =
-    fs.foldM[StateT[List, List[Either[String, A]], ?], Unit](()) { case (_, s) => appendEither(s) }
+    fs.foldM[StateT[List, List[Either[String, A]], *], Unit](()) { case (_, s) => appendEither(s) }
   private[this] def choose[A, B](as: List[A]): StateT[List, List[Either[String, B]], A] =
     StateT.liftF[List, List[Either[String, B]], A](as)
   private[this] def pass[A]: StateT[List, List[Either[String, A]], Unit] =

@@ -20,6 +20,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val originalRoundIndicatorColor = grey(200)
   val expansionRoundIndicatorColor = rgba(  64, 192,   0, 1.0)
   val evalRoundIndicatorColor = orange
+  val qaNomRoundIndicatorColor = blue
 
   val metadataLabelBackgroundColor = grey(240)
 
@@ -446,6 +447,11 @@ object VerbAnnStyles extends StyleSheet.Inline {
   val evalRoundIndicator = style(
     roundIndicator,
     backgroundColor(evalRoundIndicatorColor)
+  )
+
+  val qaNomRoundIndicator = style(
+    roundIndicator,
+    backgroundColor(qaNomRoundIndicatorColor)
   )
 
   // detour to legend real quick

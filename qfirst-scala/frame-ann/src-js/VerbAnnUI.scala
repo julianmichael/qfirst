@@ -64,6 +64,7 @@ import radhoc._
 import io.circe._
 
 import scala.concurrent.Future
+import qasrl.bank.ConsolidatedSentence
 
 case class Rgba(r: Double, g: Double, b: Double, a: Double) {
   def add(that: Rgba) = {
@@ -92,7 +93,7 @@ case class NavQuery(
     val docStr = docMeta.toString.lowerCase
     docMatch.forall(docStr.contains)
   }
-  def matchesSentence(sentence: Sentence): Boolean = {
+  def matchesSentence(sentence: ConsolidatedSentence): Boolean = {
     val sentenceStr = (sentence.sentenceId :: sentence.sentenceTokens.toList).mkString(" ").lowerCase
     sentenceMatch.forall(sentenceStr.contains)
   }
@@ -120,7 +121,7 @@ object VerbAnnUI {
   val VerbLocal = new LocalState[InflectedForms]
   val FrameLocal = new LocalState[Option[VerbFrame]]
   val DocMetaOptLocal = new LocalState[Option[DocumentMetadata]]
-  val SentOptLocal = new LocalState[Option[Sentence]]
+  val SentOptLocal = new LocalState[Option[ConsolidatedSentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]
   val IntSetLocal = new LocalState[Set[Int]]
   val FrameChoiceLocal = new LocalState[Set[(QuestionId, ArgStructure, ArgumentSlot)]]
@@ -132,13 +133,13 @@ object VerbAnnUI {
     import io.circe.syntax._
     import io.circe.parser.decode
     val printer = io.circe.Printer.noSpaces
-    val toStr = (f: InflectedForms) => printer.pretty(f.asJson)
+    val toStr = (f: InflectedForms) => printer.print(f.asJson)
     val fromStr = (s: String) => decode[InflectedForms](s).right.get
     (toStr, fromStr)
   }
 
   case class Props(
-    docService: DocumentService[OrWrapped[AsyncCallback, ?]],
+    docService: DocumentService[OrWrapped[AsyncCallback, *]],
     verbService: VerbAnnotationService[AsyncCallback],
     urlNavQuery: NavQuery
   )
@@ -176,14 +177,16 @@ object VerbAnnUI {
   )
 
   def getCurSentences(
-    allSentences: SortedSet[Sentence],
+    allSentences: SortedSet[ConsolidatedSentence],
     query: Search.Query
   ) = {
     val searchFilteredSentences = if(query.isEmpty) {
       allSentences
     } else {
       allSentences.filter { sent =>
-        qasrl.bank.service.Search.getQueryMatchesInSentence(sent, query).nonEmpty
+        qasrl.bank.service.Search.getQueryMatchesInSentence(
+          sent, query
+        ).nonEmpty
       }
     }
     searchFilteredSentences
@@ -192,7 +195,8 @@ object VerbAnnUI {
   def getRoundForQuestion(label: QuestionLabel) = {
     val qSource = label.questionSources.map(s => QuestionSource.fromString(s): QuestionSource).min
     qSource match {
-      case QuestionSource.Turker(_) => AnnotationRound.Original
+      case QuestionSource.QasrlTurker(_) => AnnotationRound.Original
+      case QuestionSource.QANomTurker(_) => AnnotationRound.QANom
       case QuestionSource.Model(_)  =>
         val hasAnswersInExpansion = label.answerJudgments.map(_.sourceId).exists(s =>
           AnswerSource.fromString(s).round == AnnotationRound.Expansion
@@ -314,7 +318,7 @@ object VerbAnnUI {
   val colspan = VdomAttr("colspan")
 
   def qaLabelRow(
-    sentence: Sentence,
+    sentence: ConsolidatedSentence,
     label: QuestionLabel,
     color: Rgba,
     qid: QuestionId,
@@ -326,7 +330,8 @@ object VerbAnnUI {
     val answerJudgments = label.answerJudgments
     val qSource = label.questionSources.map(s => QuestionSource.fromString(s): QuestionSource).min
     val roundIndicatorStyle = qSource match {
-      case QuestionSource.Turker(_) => S.originalRoundIndicator
+      case QuestionSource.QasrlTurker(_) => S.originalRoundIndicator
+      case QuestionSource.QANomTurker(_) => S.qaNomRoundIndicator// S.qaNomRoundIndicator
       case QuestionSource.Model(_)  =>
         val hasAnswersInExpansion = label.answerJudgments.map(_.sourceId).exists(s =>
           AnswerSource.fromString(s).round == AnnotationRound.Expansion
@@ -384,7 +389,7 @@ object VerbAnnUI {
   }
 
   def verbEntryDisplay(
-    curSentence: Sentence,
+    curSentence: ConsolidatedSentence,
     syncedFrameOpt: Option[StateSnapshot[VerbFrame]],
     verb: VerbEntry,
     color: Rgba,
@@ -488,10 +493,10 @@ object VerbAnnUI {
 
   def sentenceSelectionPane(
     numSentencesInDocument: Int,
-    curSentences: SortedSet[Sentence],
+    curSentences: SortedSet[ConsolidatedSentence],
     labeledSentences: Set[SentenceId],
     searchQuery: Search.Query,
-    curSentence: StateSnapshot[Sentence]
+    curSentence: StateSnapshot[ConsolidatedSentence]
   ) = {
     val sentencesWord = if(numSentencesInDocument == 1) "sentence" else "sentences"
     val sentenceCountLabel = if(curSentences.size == numSentencesInDocument) {
@@ -549,7 +554,7 @@ object VerbAnnUI {
   def sentenceDisplayPane(
     part: DatasetPartition,
     docMeta: DocumentMetadata,
-    sentence: Sentence,
+    sentence: ConsolidatedSentence,
     verbForms: InflectedForms,
     syncedFrameOpt: Option[StateSnapshot[VerbFrame]],
     frameChoices: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
@@ -641,7 +646,7 @@ object VerbAnnUI {
     dataIndex: DataIndex,
     verbInflectedForms: InflectedForms,
     curDocMetasOpt: Option[Set[DocumentMetadata]],
-    sentenceOpt: Option[Sentence],
+    sentenceOpt: Option[ConsolidatedSentence],
     frame: StateSnapshot[VerbFrame],
     clauseOptions: StateSnapshot[Set[(QuestionId, ArgStructure, ArgumentSlot)]],
     hoveredQids: StateSnapshot[Set[QuestionId]],
@@ -1119,7 +1124,7 @@ object VerbAnnUI {
                                         labeledDocuments,
                                         curDocMeta
                                       ),
-                                      (docCtx, zoomOpt(curSentenceOpt)(Reusability.by_==[Sentence])) match {
+                                      (docCtx, zoomOpt(curSentenceOpt)(Reusability.by_==[ConsolidatedSentence])) match {
                                         case (None, _) | (_, None) => <.div(S.loadingNotice)("Loading document...")
                                         case (Some((doc, curSentences, _)), Some(curSentence)) =>
                                           <.div(S.documentContainer)(

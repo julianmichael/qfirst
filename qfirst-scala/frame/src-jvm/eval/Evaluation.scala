@@ -319,7 +319,7 @@ object Evaluation {
                 goldLabelCounts(l) > minGoldLabelCount && goldLabelCounts(r) > minGoldLabelCount
               }.mapVals(_.npmi),
               title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)"
-            ).render().write(new java.io.File(resultsDir.resolve("best-npmi.png").toString))
+              ).render().write(new java.io.File(resultsDir.resolve("best-npmi.png").toString))
           )
           keys = List(
             "A0", "A1",
@@ -332,14 +332,14 @@ object Evaluation {
             "CAU",
             "TMP"
           )
-          _ <- IO (
+          _ <- IO(
             Plotting.plotNPMI[String](
               goldNpmis.map { case (k, v) => k.map(_.show.replaceAll("AM-", "")) -> v.npmi },
               title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",
               keys = keys
             ).render().write(new java.io.File(resultsDir.resolve("selected-best-npmi.png").toString))
           )
-          _ <- IO (
+          _ <- IO(
             Plotting.plotNPMI[String](
               goldNpmis.map { case (k, v) => k.map(_.show.replaceAll("AM-", "")) -> v.prob },
               title = None, // f"Normalized PMIs ($bestCriterion%s=$bestThreshold%.2f)",

@@ -626,7 +626,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
   )
 
   val frameContainer = style(
-    userSelect := "none"
+    userSelect.none
   )
   val chosenFrameContainer = style(
     borderStyle.solid,
@@ -733,10 +733,11 @@ object VerbAnnStyles extends StyleSheet.Inline {
       backgroundColor(rgb(204, 204, 204))
     ),
   )
+
   val goldClauseCheckmarkContainer = style(
     &.after(
       position.absolute,
-      content := "\"\"",
+      content :=! "\"\"",
       top(3 px),
       left(7 px),
       width(6 px),
@@ -751,7 +752,7 @@ object VerbAnnStyles extends StyleSheet.Inline {
     &.after(
       position.absolute,
       color(white),
-      content := "\"\\00d7\"",
+      content :=! "\"\\00d7\"",
       top(0 px),
       left(0 px),
       lineHeight(18 px),

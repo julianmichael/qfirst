@@ -22,8 +22,9 @@ import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 import jjm.implicits._
 
+import qasrl.bank.ConsolidatedSentence
 import qasrl.bank.Data
-import qasrl.bank.FullData
+import qasrl.bank.FullQasrlData
 import qasrl.bank.SentenceId
 
 import qasrl.data.Dataset
@@ -88,7 +89,7 @@ object ReprocessApp extends CommandIOApp(
     final def any(a: Any): F[Unit] = apply(a.toString)
   }
   object Log {
-    val writer: Log[Writer[Vector[String], ?]] = new Log[Writer[Vector[String], ?]] {
+    val writer: Log[Writer[Vector[String], *]] = new Log[Writer[Vector[String], *]] {
       override def apply(s: String) = Writer.tell[Vector[String]](Vector(s))
     }
     val nop: Log[Id] = new Log[Id] {
@@ -126,7 +127,7 @@ object ReprocessApp extends CommandIOApp(
   }
 
   // mostly copied from QA-SRL Bank client library
-  def reprocessAllData(old: FullData): FullData = {
+  def reprocessAllData(old: FullQasrlData): FullQasrlData = {
 
     import qasrl.bank.qasrlDataSentenceOrder
     import qasrl.bank.DatasetPartition
@@ -175,7 +176,7 @@ object ReprocessApp extends CommandIOApp(
             title
           )
           val metadata = docIdToMeta(docId)
-          Document(metadata, SortedSet(sentences.toSeq: _*))
+          Document(metadata, SortedSet(sentences.map(ConsolidatedSentence.fromSentence).toSeq: _*))
       }.toSeq
 
       val documentsById = documents.map(doc => doc.metadata.id -> doc).toMap
@@ -183,7 +184,7 @@ object ReprocessApp extends CommandIOApp(
       documentsById
     }
 
-    FullData(
+    FullQasrlData(
       index,
       all,
       documentsById,
@@ -200,11 +201,11 @@ object ReprocessApp extends CommandIOApp(
   def writeDatasetLines(path: NIOPath, dataset: Dataset) = {
     import io.circe.syntax._
     val printer = io.circe.Printer.noSpaces
-    val linesStr = dataset.sentences.iterator.map(_._2).map(_.asJson).map(printer.pretty).mkString("\n")
+    val linesStr = dataset.sentences.iterator.map(_._2).map(_.asJson).map(printer.print).mkString("\n")
     Files.write(path, linesStr.getBytes("UTF-8"))
   }
 
-  def writeDataToDirectory(data: FullData, path: NIOPath) = {
+  def writeDataToDirectory(data: FullQasrlData, path: NIOPath) = {
     for(dirname <- List("", "orig", "expanded", "dense")) {
       val dirPath = path.resolve(dirname)
       if(!Files.exists(dirPath)) {

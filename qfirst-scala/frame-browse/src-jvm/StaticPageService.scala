@@ -6,6 +6,7 @@ import qfirst.frame.RunMode
 import cats.effect.IO
 import cats.effect.Sync
 import cats.effect.ContextShift
+import cats.implicits._
 
 import org.http4s._
 import org.http4s.headers._
@@ -16,6 +17,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 
 import scala.concurrent.ExecutionContext
+import cats.effect.Blocker
 
 object StaticPageService {
 
@@ -86,18 +88,24 @@ object StaticPageService {
     mode: RunMode,
     jsDepsPath: Path,
     jsPath: Path,
-    port: Int
+    port: Option[Int],
+    useHttps: Boolean
   )(implicit ec: ExecutionContext, s: Sync[IO], cs: ContextShift[IO]) = {
     val jsDepsSuffix = "deps.js"
     val jsSuffix = jsPath.getFileName.toString
     val jsMapSuffix = jsSuffix + ".map"
 
+    val blocker = Blocker.liftExecutionContext(ec)
+
+    val scheme = if(useHttps) "https" else "http"
+    val baseUrl = domain + port.foldMap(p => s":$p")
+
     val config = {
       import scalatags.Text.all._
       PageConfig(
-        docApiUrl = s"https://$domain:$port/$docApiSuffix",
-        verbApiUrl = s"https://$domain:$port/$verbApiSuffix",
-        featureApiUrl = s"https://$domain:$port/$featureApiSuffix",
+        docApiUrl = s"$scheme://$baseUrl/$docApiSuffix",
+        verbApiUrl = s"$scheme://$baseUrl/$verbApiSuffix",
+        featureApiUrl = s"$scheme://$baseUrl/$featureApiSuffix",
         bootstrapLink = bootstrapLink.makeTag(false),
         bootstrapScripts = div(bootstrapScripts.map(_.makeTag(false))),
         dataSetting = dataSetting,
@@ -113,13 +121,13 @@ object StaticPageService {
 
     HttpRoutes.of[IO] {
       case req @ GET -> Root / `jsDepsSuffix` =>
-        StaticFile.fromString(jsDepsPath.toString, ec, Some(req))
+        StaticFile.fromString(jsDepsPath.toString, blocker, Some(req))
           .getOrElseF(NotFound())
       case req @ GET -> Root / `jsSuffix` =>
-        StaticFile.fromString(jsPath.toString, ec, Some(req))
+        StaticFile.fromString(jsPath.toString, blocker, Some(req))
           .getOrElseF(NotFound())
       case req @ GET -> Root / `jsMapSuffix` =>
-        StaticFile.fromString(jsPath.toString + ".map", ec, Some(req))
+        StaticFile.fromString(jsPath.toString + ".map", blocker, Some(req))
           .getOrElseF(NotFound())
       case GET -> _ => Ok(indexStr)
           .map(_.withContentType(`Content-Type`(MediaType.text.`html`)))

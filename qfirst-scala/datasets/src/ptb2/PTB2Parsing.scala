@@ -15,11 +15,13 @@ import qfirst.datasets.SyntaxTree
 object PTB2Parsing {
   private[this] type SentenceState[A] = State[Int, A]
 
-  import fastparse.all._
-  private[this] val symbolP: P[String] = P(CharPred(c => !" ()".contains(c)).rep.!)
+  import fastparse._
+  import NoWhitespace._
+
+  private[this] def symbolP[_: P]: P[String] = P(CharPred(c => !" ()".contains(c)).rep.!)
   // P(CharIn('A' to 'Z', '0' to '9', "-$,.").rep.!)
-  private[this] val tokenP: P[String] = P(CharPred(c => !" ()".contains(c)).rep.!)
-  private[this] lazy val treeP: P[SentenceState[SyntaxTree[PTB2Token]]] =
+  private[this] def tokenP[_: P]: P[String] = P(CharPred(c => !" ()".contains(c)).rep.!)
+  private[this] def treeP[_: P]: P[SentenceState[SyntaxTree[PTB2Token]]] =
     P("(" ~ symbolP ~ " " ~ treeP.rep(1) ~ ")").map {
       case (symbol, childrenState) =>
         for {
@@ -32,11 +34,11 @@ object PTB2Parsing {
           _     <- State.set(index + 1)
         } yield SyntaxTree.Leaf(PTB2Token(index = index, pos = pos, token = token)): SyntaxTree[PTB2Token]
     }
-  private[this] val fullTreeP: P[SyntaxTree[PTB2Token]] =
+  private[this] def fullTreeP[_: P]: P[SyntaxTree[PTB2Token]] =
     P("(" ~ " ".? ~ treeP ~ ")").map(_.runA(0).value)
 
   def readSyntaxTree(s: String): SyntaxTree[PTB2Token] =
-    fullTreeP.parse(s).get.value
+    parse(s, fullTreeP(_)).get.value
 
   // /** Reads a PTBFile from an iterator over lines.
   //   *

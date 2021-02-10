@@ -27,7 +27,7 @@ object FewClassCount {
 
   implicit val fewClassCountMonoidK: MonoidK[FewClassCount] = {
     import cats.derived.auto.monoidK._
-    cats.derived.semi.monoidK
+    cats.derived.semiauto.monoidK
   }
 
   implicit def fewClassCountMonoid[A]: Monoid[FewClassCount[A]] = fewClassCountMonoidK.algebra[A]

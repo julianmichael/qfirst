@@ -69,7 +69,7 @@ object Confusion {
     // }
   }
 
-  implicit def confusionMonoidK[A]: MonoidK[Confusion[A, ?]] = new MonoidK[Confusion[A, ?]] {
+  implicit def confusionMonoidK[A]: MonoidK[Confusion[A, *]] = new MonoidK[Confusion[A, *]] {
     override def empty[I] = Confusion[A, I](Map())
     override def combineK[I](x: Confusion[A, I], y: Confusion[A, I]) = Confusion[A, I](x.matrix |+| y.matrix)
   }

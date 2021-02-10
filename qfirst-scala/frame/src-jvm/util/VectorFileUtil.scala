@@ -16,6 +16,7 @@ import freelog.Logger
 import freelog.LogLevel
 
 import qfirst.frame.logLevel
+import cats.effect.Blocker
 
 object VectorFileUtil {
 
@@ -26,15 +27,11 @@ object VectorFileUtil {
 
   val bufferNumBytes = 4 * 4096
 
-   val blockingExecutionContext = Resource.make(
-     IO(ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(2)))
-   )(ec => IO(ec.shutdown()))
-
   def readDenseFloatVectors(path: NIOPath, dim: Int)(
     implicit cs: ContextShift[IO], t: Timer[IO]
   ) = {
-    Stream.resource(blockingExecutionContext).flatMap { _ec =>
-      fs2.io.file.readAll[IO](path, _ec, bufferNumBytes)
+    Stream.resource(Blocker[IO]).flatMap { blocker =>
+      fs2.io.file.readAll[IO](path, blocker, bufferNumBytes)
         .groupWithin(4, 1.minute) // should always do 4 chunk
         .map { c =>
           val bytes = c.toBytes

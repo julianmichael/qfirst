@@ -9,6 +9,7 @@ import cats.effect.Sync
 import cats.implicits._
 
 import fs2.Stream
+import cats.effect.Blocker
 
 class PTB2FileSystemService(location: Path) {
   private[this] val wsjAnnotationPath =
@@ -23,22 +24,23 @@ class PTB2FileSystemService(location: Path) {
   }
 
   def streamFiles[F[_]: Sync](
-    implicit ec: ExecutionContext,
-    cs: ContextShift[F]
+    implicit cs: ContextShift[F]
   ): Stream[F, PTB2File] = {
-    Stream.emits[F, Int](0 to 24) >>= { section =>
-      val sectionPath = wsjAnnotationPath.resolve(f"$section%02d")
-      Stream.eval(listFiles(sectionPath))
-        .flatMap(Stream.emits[F, Path])
-        .evalMap { path =>
-          val fileName = path.getFileName.toString
-          PTB2Parsing.readFile[F, F](
-            PTB2FilePath(section, fileName),
-            fs2.io.file.readAll[F](path, ec, 4096)
-              .through(fs2.text.utf8Decode)
-              .through(fs2.text.lines)
-          )
-        }
+    Stream.resource(Blocker[F]).flatMap { blocker =>
+      Stream.emits[F, Int](0 to 24) >>= { section =>
+        val sectionPath = wsjAnnotationPath.resolve(f"$section%02d")
+        Stream.eval(listFiles(sectionPath))
+          .flatMap(Stream.emits[F, Path])
+          .evalMap { path =>
+            val fileName = path.getFileName.toString
+            PTB2Parsing.readFile[F, F](
+              PTB2FilePath(section, fileName),
+              fs2.io.file.readAll[F](path, blocker, 4096)
+                .through(fs2.text.utf8Decode)
+                .through(fs2.text.lines)
+            )
+          }
+      }
     }
   }
 }

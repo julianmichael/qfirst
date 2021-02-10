@@ -76,7 +76,7 @@ object ConvertConsolidatedQASRL extends CommandIOApp(
 
   def sentenceQuestionAlignments(data: ConsolidatedData) = {
     Stream
-      .fromIterator[IO, (String, ConsolidatedSentence)](data.all.sentences.iterator)
+      .fromIterator[IO](data.all.sentences.iterator)
       .map { case (sid, sentence) =>
         SentenceQuestionAlignment(
           sid, sentence.verbEntries.toMap.transform { case (_, verb) =>
@@ -88,7 +88,7 @@ object ConvertConsolidatedQASRL extends CommandIOApp(
 
   def alignmentMetrics(data: ConsolidatedData) = {
     Stream
-      .fromIterator[IO, (String, ConsolidatedSentence)](data.all.sentences.iterator)
+      .fromIterator[IO](data.all.sentences.iterator)
       .map { case (sid, sentence) =>
         sentence.verbEntries.values.toList.foldMap { verb =>
           getAlignmentMetrics(sentence.sentenceTokens, verb)

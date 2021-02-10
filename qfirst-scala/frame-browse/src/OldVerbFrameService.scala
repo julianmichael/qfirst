@@ -76,7 +76,7 @@ object OldVerbGrameService {
   ): DotKleisli[IO, Request]  = DotKleisli.fromFunctionK(
     new DotFunctionK[IO, Request] {
       def apply[A](req: Request { type Out = A }): IO[A] = {
-        // @SuppressWarnings(Array("all"))
+        @scala.annotation.nowarn
         val res = req match {
           case GetVerbs => IO.pure(inflectionCounts): IO[Map[InflectedForms, Int]]
           case GetModel(verb) => IO(verbModels(verb)): IO[VerbClusterModel[InflectedForms, ClausalQuestion]]
