@@ -136,9 +136,8 @@ object ConvertCSV extends CommandIOApp(
 
     val newLines = (originalLines, resolvedFramePairs).zipped.map {
       case (fields, (frame, slot)) =>
-        val frame2 = Frame2.fromFrame(frame)
         val templatedFrame = frame.copy(
-          tense = PresentTense, isPerfect = false,
+          tense = Tense.Finite.Present, isPerfect = false,
           isProgressive = false, isNegated = false
         )
         val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
@@ -146,47 +145,47 @@ object ConvertCSV extends CommandIOApp(
           aligner.getAlignedAnswers(clauseTemplate -> slot).map(_.map(slot -> _))
         }.sequence.map(_.toMap)
 
-        val tenseLens = Frame2.tense
-        val negLens = Frame2.isNegated
+        val tenseLens = Frame.tense
+        val negLens = Frame.isNegated
 
         def renderFrameStrings(getString: Map[ArgumentSlot, String] => String) =
           argMappings.map(getString).toSet.mkString("~!~")
 
         val decl = renderFrameStrings(
-          argValues => frame2.clausesWithArgs(argValues).head
+          argValues => frame.clausesWithArgs(argValues).head
         )
 
         val ngClause = renderFrameStrings(
           argValues => tenseLens
-            .set(Tense2.NonFinite.Gerund)(frame2)
+            .set(Tense.NonFinite.Gerund)(frame)
             .clausesWithArgs(argValues).head
         )
         val negFlippedNgClause = renderFrameStrings(
           argValues => tenseLens
-            .set(Tense2.NonFinite.Gerund)(
-              negLens.modify(!_)(frame2)
+            .set(Tense.NonFinite.Gerund)(
+              negLens.modify(!_)(frame)
             ).clausesWithArgs(argValues).head
         )
         val toClause = renderFrameStrings(
           argValues => tenseLens
-            .set(Tense2.NonFinite.To)(frame2)
+            .set(Tense.NonFinite.To)(frame)
             .clausesWithArgs(argValues).head
         )
         val invClause = renderFrameStrings(
-          argValues => frame2
+          argValues => frame
             .questionsForSlotWithArgs(None, argValues).head.init
         )
         val invNegWouldClause = renderFrameStrings(
           argValues => tenseLens
-            .set(Tense2.Finite.Modal("would".lowerCase))(
-              negLens.set(true)(frame2)
+            .set(Tense.Finite.Modal("would".lowerCase))(
+              negLens.set(true)(frame)
             )
             .questionsForSlotWithArgs(None, argValues).head.init
         )
 
         fields +
           ("aligned_question" -> renderFrameStrings(argMapping =>
-             frame.questionsForSlotWithArgs(slot, argMapping).head)) +
+             frame.questionsForSlotWithArgs(Some(slot), argMapping).head)) +
           ("arg_slot" -> slot.toString) +
           ("clause" -> decl) +
           ("templated_clause" -> templatedFrame.clauses.head) +

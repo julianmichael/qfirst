@@ -143,7 +143,6 @@ object ConvertConsolidatedQASRL extends CommandIOApp(
     val aligner = QuestionAligner(resolvedFramePairs.zip(answerSpanCounts))
 
     val questionAlignments = questions.zip(resolvedFramePairs).map { case (questionLabel, (frame, slot)) =>
-      val frame2 = Frame2.fromFrame(frame)
       val clauseTemplate = ArgStructure(frame.args, frame.isPassive).forgetAnimacy
       val allSlots = clauseTemplate.args.keys.toList
       val slotAnswers = allSlots.flatMap { (slot: ArgumentSlot) =>
@@ -156,7 +155,7 @@ object ConvertConsolidatedQASRL extends CommandIOApp(
       def renderAlignedQuestion(choice: Map[ArgumentSlot, (ESpan, Int)]): Map[String, Map[ArgumentSlot, Int]] = {
         val argValues = choice.transform { case (_, (span, _)) => Text.renderSpan(recapSent, span) }
         val counts = (choice - slot).transform { case (k, v) => v._2 }
-        Map(frame.questionsForSlotWithArgs(slot, argValues).head -> counts)
+        Map(frame.questionsForSlotWithArgs(Some(slot), argValues).head -> counts)
       }
       val questionMap = argMappings.foldMap(renderAlignedQuestion)
         .transform { case (k, v) => v.values.toList }

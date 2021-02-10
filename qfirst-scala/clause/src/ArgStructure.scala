@@ -49,7 +49,7 @@ import monocle.macros._
 
 
   override def toString = Frame(
-    InflectedForms.generic, args, isPassive = isPassive, tense = qasrl.PresentTense, isPerfect = false, isProgressive = false, isNegated = false
+    InflectedForms.generic, args, isPassive = isPassive, tense = qasrl.Tense.Finite.Present, isPerfect = false, isProgressive = false, isNegated = false
   ).clauses.head
 }
 object ArgStructure
