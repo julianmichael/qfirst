@@ -21,6 +21,7 @@ import fs2.Stream
 
 import jjm.DependentMap
 import jjm.ling.en.InflectedForms
+import jjm.metrics._
 import jjm.implicits._
 
 import qasrl._
@@ -29,8 +30,6 @@ import qasrl.data.Dataset
 import qasrl.labeling.SlotBasedLabel
 
 import qfirst.clause._
-import qfirst.metrics._
-import qfirst.metrics.HasMetrics.ops._
 
 object ConvertCSV extends CommandIOApp(
   name = "mill -i qfirst.clause-align.jvm.runMain qfirst.clause.align.ConvertCSV",

@@ -6,10 +6,9 @@ import qasrl.data.VerbEntry
 import cats.data.NonEmptyList
 import cats.implicits._
 
-import qfirst.metrics._
-import qfirst.metrics.HasMetrics.ops._
-
 import jjm.ling.en.InflectedForms
+import jjm.metrics._
+import jjm.metrics.HasMetrics.ops._
 
 package object eval {
 

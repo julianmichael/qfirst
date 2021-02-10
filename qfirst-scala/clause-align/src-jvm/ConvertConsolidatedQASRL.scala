@@ -21,13 +21,12 @@ import jjm.io.FileUtil
 import jjm.implicits._
 
 import qfirst.clause._
-import qfirst.metrics._
-// import qfirst.metrics.HasMetrics.ops._
 
 import io.circe.generic.JsonCodec
 import _root_.qasrl.bank.ConsolidatedSentence
 import jjm.ling.Text
 import jjm.ling.ESpan
+import jjm.metrics._
 
 @JsonCodec case class SentenceQuestionAlignment(
   sentenceId: String,

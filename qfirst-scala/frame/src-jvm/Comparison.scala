@@ -3,6 +3,7 @@ package qfirst.frame
 import java.nio.file.{Path => NIOPath}
 
 import cats.Order
+import cats.Show
 import cats.implicits._
 
 import cats.effect.IO
@@ -10,19 +11,18 @@ import cats.effect.IO
 import io.circe.Decoder
 import io.circe.Encoder
 
+import freelog.EphemeralTreeLogger
 import freelog.SequentialEphemeralTreeLogger
 import freelog.implicits._
 
 import jjm.LowerCaseString
 import jjm.io.FileUtil
+import jjm.metrics.WeightedNumbers
 import jjm.implicits._
 
 import qfirst.frame.features.PropBankFeatures
 import qfirst.frame.util.Duad
 import qfirst.frame.eval.EvalUtils
-import freelog.EphemeralTreeLogger
-import qfirst.metrics.WeightedNumbers
-import cats.Show
 import qfirst.frame.eval.ClusterPRMetric
 import qfirst.frame.eval.Csv
 

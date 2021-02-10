@@ -1,6 +1,6 @@
 package qfirst
 
-import qfirst.metrics.MapTree
+import jjm.metrics.MapTree
 
 import cats.~>
 import cats.Applicative

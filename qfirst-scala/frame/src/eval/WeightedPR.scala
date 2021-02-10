@@ -1,11 +1,11 @@
 package qfirst.frame.eval
 
 import cats.Monoid
-import qfirst.metrics.Functions
-import qfirst.metrics.HasMetrics
-import qfirst.metrics.MapTree
-import qfirst.metrics.Metric
-import qfirst.metrics.WeightedNumbers
+import jjm.metrics.Functions
+import jjm.metrics.HasMetrics
+import jjm.metrics.MapTree
+import jjm.metrics.Metric
+import jjm.metrics.WeightedNumbers
 
 case class WeightedPR(
   precisions: WeightedNumbers[Double],

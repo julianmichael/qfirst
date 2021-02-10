@@ -9,13 +9,13 @@ import cats.implicits._
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 
+import jjm.metrics.Functions
 import jjm.implicits._
 
-import qfirst.metrics.Functions
-
-import qfirst.frame.logLevel
 import com.cibo.evilplot.plot.renderers.PlotElementRenderer
 import com.cibo.evilplot.plot.aesthetics.Colors
+
+import qfirst.frame.logLevel
 
 object PlottingJVM {
 

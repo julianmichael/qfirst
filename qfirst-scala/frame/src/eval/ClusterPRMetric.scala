@@ -1,7 +1,7 @@
 package qfirst.frame.eval
 
-import qfirst.metrics.Proportion
-import qfirst.metrics.WeightedNumbers
+import jjm.metrics.Proportion
+import jjm.metrics.WeightedNumbers
 
 import cats.implicits._
 

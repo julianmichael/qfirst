@@ -1,9 +1,9 @@
 package qfirst.model.eval
 
-import qfirst.metrics.Confusion
 
 import jjm.LowerCaseString
 import jjm.ling.ESpan
+import jjm.metrics.Confusion
 import jjm.implicits._
 
 import cats.implicits._

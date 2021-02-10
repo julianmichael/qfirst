@@ -5,10 +5,8 @@ import qfirst.frame.features.Features
 import qfirst.frame.util.Duad
 import qfirst.frame.util.NonMergingMap
 
-import qfirst.metrics._
-import qfirst.metrics.HasMetrics.ops._
-
 import jjm.io.FileUtil
+import jjm.metrics._
 import jjm.implicits._
 
 import freelog.EphemeralTreeLogger

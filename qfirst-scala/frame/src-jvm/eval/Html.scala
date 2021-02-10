@@ -1,8 +1,6 @@
 package qfirst.frame.eval
 
-import qfirst.metrics._
-// import qfirst.metrics.HasMetrics.ops._
-// import qfirst.metrics.Functions
+import jjm.metrics._
 
 import cats.Show
 import cats.implicits._

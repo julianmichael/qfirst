@@ -430,7 +430,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
                   vecs.take(numToCheck).traverse(e => Log.info(e.activeValuesIterator.take(10).mkString("\t")))
               } else Log.info(sanityCheckText)
             }
-            norms <- Ref[IO].of(qfirst.metrics.Numbers(Vector[Float]()))
+            norms <- Ref[IO].of(jjm.metrics.Numbers(Vector[Float]()))
             normedVecs <- ids.zip(vecs).infoTraverse("Normalizing vectors") { case (id, vec) =>
               import breeze.math._
               import breeze.linalg._
@@ -451,7 +451,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
               // }
               // TODO make it a parameter whether to norm vectors or not. perhaps in the clustering alg instead though.
               // or at least do this in-place or something.
-              norms.update(_ |+| qfirst.metrics.Numbers(total)) >> IO(vec /:/ total)
+              norms.update(_ |+| jjm.metrics.Numbers(total)) >> IO(vec /:/ total)
             }
             _ <- norms.get >>= (n => Log.info(s"Vector normalizers: ${getMetricsString(n)}"))
             // for now don't use the normalized vectors.

@@ -1,5 +1,4 @@
 package qfirst.model.eval
-import qfirst.metrics._
 
 import cats.Show
 import cats.implicits._
@@ -17,6 +16,7 @@ import jjm.LowerCaseString
 import jjm.ling.ESpan
 import jjm.ling.Text
 import jjm.ling.en.VerbForm
+import jjm.metrics._
 import jjm.implicits._
 import jjm.io.FileUtil
 
@@ -32,8 +32,6 @@ import qasrl.labeling.SlotBasedLabel
 import fs2.Stream
 
 import io.circe.{Encoder, Decoder}
-
-import HasMetrics.ops._
 
 object MetricsApp extends CommandIOApp(
   name = "qfirst.jvm.runMetrics",
@@ -200,7 +198,7 @@ object MetricsApp extends CommandIOApp(
   import Rendering._
 
   val I = Instances
-  import qfirst.metrics.{Transformers => M}
+  import jjm.metrics.{Transformers => M}
   import shapeless._
   import shapeless.syntax.singleton._
   import shapeless.record._

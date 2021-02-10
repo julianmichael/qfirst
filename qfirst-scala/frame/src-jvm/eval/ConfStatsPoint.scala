@@ -1,6 +1,6 @@
 package qfirst.frame.eval
 
-import qfirst.metrics.Functions
+import jjm.metrics.Functions
 
 case class ConfStatsPoint(losses: Vector[Double], clusterSizes: Vector[Int], clusterWeights: Vector[Double], weightedPR: WeightedPR) {
   val loss = losses.sum

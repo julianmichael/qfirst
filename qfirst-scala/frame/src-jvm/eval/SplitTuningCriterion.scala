@@ -8,8 +8,8 @@ import cats.implicits._
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 
-import qfirst.metrics.Chosen
-import qfirst.metrics.Numbers
+import jjm.metrics.Chosen
+import jjm.metrics.Numbers
 
 import qfirst.frame.MergeTree
 import qfirst.frame.logLevel

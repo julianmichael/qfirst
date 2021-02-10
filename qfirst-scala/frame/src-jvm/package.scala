@@ -14,7 +14,7 @@ import freelog.TreeLogger
 
 import qfirst.model.eval.questionLabelIsValidNonDense
 import qfirst.clause.ArgStructure
-import qfirst.metrics.HasMetrics.ops._
+import jjm.metrics.HasMetrics.ops._
 
 trait PackagePlatformExtensions {
 
@@ -62,7 +62,7 @@ trait PackagePlatformExtensions {
     qasrl.bank.Data.readQasrlDataset(path)
   )
 
-  import qfirst.metrics._
+  import jjm.metrics._
 
   lazy val sortSpec = {
     import Metric._

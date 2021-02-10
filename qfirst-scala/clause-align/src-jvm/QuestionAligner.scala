@@ -126,7 +126,7 @@ case class QuestionAligner[A](qaPairs: List[((Frame, ArgumentSlot), A)]) {
     // }
   }
 
-  import qfirst.metrics._
+  import jjm.metrics._
   import shapeless.syntax.singleton._
   import shapeless._
 

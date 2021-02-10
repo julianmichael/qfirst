@@ -1,5 +1,4 @@
 package qfirst.model.eval
-import qfirst.metrics._
 
 import cats.Functor
 import cats.Monoid
@@ -13,6 +12,7 @@ import jjm.ling.ESpan
 import jjm.ling.Text
 import jjm.ling.en.VerbForm
 import jjm.ling.en.VerbForm.PastParticiple
+import jjm.metrics._
 import jjm.implicits._
 
 // import qasrl.QuestionProcessor

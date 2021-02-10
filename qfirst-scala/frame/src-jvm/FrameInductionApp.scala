@@ -9,8 +9,6 @@ import qfirst.frame.util.NonMergingMap
 
 import qfirst.clause.ArgStructure
 import qfirst.clause.ClauseResolution
-import qfirst.metrics._
-import qfirst.metrics.HasMetrics.ops._
 
 import cats.Monoid
 import cats.Order
@@ -37,6 +35,7 @@ import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
 import jjm.io.FileUtil
+import jjm.metrics._
 import jjm.implicits._
 
 import fs2.Stream

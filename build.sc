@@ -165,16 +165,9 @@ object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
-  object metrics extends Module {
-    object js extends JsModule
-    object jvm extends JvmModule
-  }
-
   object clause extends Module {
     object js extends JsModule
-    object jvm extends FullJvmModule {
-      def moduleDeps = Seq(metrics.jvm)
-    }
+    object jvm extends FullJvmModule
   }
 
   object `clause-align` extends Module {
@@ -182,7 +175,7 @@ object qfirst extends Module {
       def moduleDeps = Seq(clause.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm)
+      def moduleDeps = Seq(clause.jvm)
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion",
         ivy"org.julianmichael::qasrl-bank::0.3.0-SNAPSHOT",
@@ -266,7 +259,7 @@ object qfirst extends Module {
 
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, datasets.js)
+      def moduleDeps = Seq(clause.js, `model-eval`.js, datasets.js)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::freelog::$freelogVersion",
@@ -274,7 +267,7 @@ object qfirst extends Module {
       )
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, datasets.jvm)
+      def moduleDeps = Seq(clause.jvm, `model-eval`.jvm, datasets.jvm)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::freelog::$freelogVersion",
@@ -332,17 +325,14 @@ object qfirst extends Module {
   }
 
   object `model-gen` extends Module {
-    object jvm extends FullJvmModule {
-      def moduleDeps = Seq(metrics.jvm)
-    }
+    object jvm extends FullJvmModule
   }
-
   object `model-eval` extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(metrics.js, `clause-ext`.js)
+      def moduleDeps = Seq(`clause-ext`.js)
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(metrics.jvm, `clause-ext`.js)
+      def moduleDeps = Seq(`clause-ext`.js)
     }
   }
 

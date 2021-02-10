@@ -1,7 +1,5 @@
 package qfirst.clause
 
-import qfirst.metrics._
-
 import cats.Foldable
 import cats.Order
 import cats.data.NonEmptyList
@@ -19,6 +17,7 @@ import jjm.LowerCaseString
 import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.metrics._
 import jjm.implicits._
 
 import qasrl.bank.Data
@@ -29,8 +28,6 @@ import qasrl.data.Dataset
 import qasrl.data.QuestionLabel
 import qasrl.data.Sentence
 import qasrl.data.VerbEntry
-
-import HasMetrics.ops._
 
 /**
  * Computes and prints metrics w.r.t. clause resolution on the QA-SRL Bank.
@@ -90,7 +87,7 @@ object ClauseResolutionMetricsApp extends App {
   def getMetricsString[M: HasMetrics](m: M) =
     m.getMetrics.toStringPrettySorted(identity, x => x.render, sortSpec)
 
-  import qfirst.metrics.{Transformers => M}
+  import jjm.metrics.{Transformers => M}
   import shapeless._
   import shapeless.syntax.singleton._
   import shapeless.record._
