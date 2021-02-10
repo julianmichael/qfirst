@@ -165,34 +165,6 @@ object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
-  object freelog extends Module {
-    object js extends JsModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.lihaoyi::fansi::$fansiVersion"
-      )
-    }
-    object jvm extends FullJvmModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.http4s::http4s-blaze-client::$http4sVersion",
-        ivy"org.http4s::http4s-blaze-server::$http4sVersion",
-        ivy"com.lihaoyi::fansi::$fansiVersion",
-        ivy"org.jline:jline-terminal:$jlineVersion"
-      )
-      object test extends Tests {
-        override def millSourcePath = freelog.this.millSourcePath / "test"
-        override def scalaVersion = jvm.this.scalaVersion
-        // def platformSegment = jvm.this.platformSegment
-        override def ivyDeps = Agg(
-          ivy"org.scalatest::scalatest:$scalatestVersion",
-          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-          ivy"org.typelevel::discipline-core:$disciplineVersion"
-            // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
-        )
-        def testFrameworks = Seq("org.scalatest.tools.Framework")
-      }
-    }
-  }
-
   object metrics extends Module {
     object js extends JsModule
     object jvm extends JvmModule
@@ -294,7 +266,7 @@ object qfirst extends Module {
 
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, freelog.js, datasets.js)
+      def moduleDeps = Seq(clause.js, metrics.js, `model-eval`.js, datasets.js)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::freelog::$freelogVersion",
@@ -302,7 +274,7 @@ object qfirst extends Module {
       )
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, freelog.jvm, datasets.jvm)
+      def moduleDeps = Seq(clause.jvm, metrics.jvm, `model-eval`.jvm, datasets.jvm)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::freelog::$freelogVersion",

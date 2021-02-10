@@ -1,3 +1,0 @@
-package freelog.loggers.remote
-
-trait RemoteEphemeralTreeLoggerServicePlatformExtensions
