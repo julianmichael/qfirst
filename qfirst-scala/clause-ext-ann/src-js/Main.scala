@@ -9,7 +9,7 @@
 // 
 // import scala.concurrent.Future
 // 
-// import radhoc._
+// import jjm.ui._
 // 
 // import nlpdata.util.LowerCaseStrings._
 // 

@@ -26,9 +26,8 @@ import jjm.DotKleisli
 import jjm.DotMap
 import jjm.OrWrapped
 import jjm.io.HttpUtil
+import jjm.ui._
 import jjm.implicits._
-
-import radhoc._
 
 object Main {
   def runApp[

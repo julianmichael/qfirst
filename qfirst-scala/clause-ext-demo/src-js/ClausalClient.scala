@@ -15,6 +15,7 @@ import cats.implicits._
 import jjm.OrWrapped
 import jjm.ling.{ESpan, ISpan}
 import jjm.ling.Text
+import jjm.ui._
 import jjm.implicits._
 
 import scalajs.js
@@ -37,8 +38,6 @@ import monocle.macros._
 import japgolly.scalajs.react.extra.StateSnapshot
 import japgolly.scalajs.react.MonocleReact._
 import japgolly.scalajs.react.CatsReact._
-
-import radhoc._
 
 import io.circe.{Encoder, Decoder}
 

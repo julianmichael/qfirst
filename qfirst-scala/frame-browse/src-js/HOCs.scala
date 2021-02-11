@@ -1,6 +1,6 @@
 package qfirst.frame.browse
 
-import radhoc.LocalState
+import jjm.ui.LocalState
 
 object HOCs {
   val BoolLocal = new LocalState[Boolean]

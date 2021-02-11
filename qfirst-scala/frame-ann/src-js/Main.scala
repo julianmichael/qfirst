@@ -14,8 +14,6 @@ import qasrl.bank.service._
 
 import scala.concurrent.Future
 
-import radhoc._
-
 import jjm.DotMap
 import jjm.OrWrapped
 import jjm.LowerCaseString

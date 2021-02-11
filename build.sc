@@ -16,7 +16,6 @@ val evilplotVersion = "0.8.1-SNAPSHOT"
 val jjmVersion = "0.2.0-SNAPSHOT"
 val qasrlVersion = "0.3.0-SNAPSHOT"
 val qasrlBankVersion = "0.4.0-SNAPSHOT"
-val radhocVersion = "0.4.0-SNAPSHOT"
 val spacroVersion = "0.4.0-SNAPSHOT"
 val freelogVersion = "0.1.0-SNAPSHOT"
 
@@ -27,13 +26,11 @@ val splainVersion = "0.3.4"
 val betterMonadicForVersion = "0.3.1"
 
 // cats libs
-val http4sVersion = "0.21.18"
 val kittensVersion = "2.2.1"
 val declineVersion = "1.3.0"
 
 // non-cats
 val breezeVersion = "0.13.2"
-val fansiVersion = "0.2.10"
 val scalaCsvVersion = "1.3.6"
 val fastparseVersion = "2.3.1"
 
@@ -110,7 +107,7 @@ trait JsModule extends CommonModule with ScalaJSModule {
 
 trait FullJsModule extends JsModule with SimpleJSDeps {
   override def ivyDeps = super.ivyDeps() ++ Agg(
-    ivy"org.julianmichael::radhoc::$radhocVersion",
+    ivy"org.julianmichael::jjm-ui::$jjmVersion",
     ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
     ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
     ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
@@ -149,31 +146,13 @@ trait FullJvmModule extends JvmModule {
   override def ivyDeps = super.ivyDeps() ++ Agg(
     ivy"com.monovore::decline::$declineVersion",
     ivy"com.monovore::decline-effect::$declineVersion",
-    ivy"ch.qos.logback:logback-classic:$logbackVersion",
-    // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-    // ivy"org.slf4j:slf4j-api:$slf4jApiVersion", // decided to match scala-logging transitive dep
-    // ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion"
-    // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-    // ivy"com.typesafe.akka::akka-actor::$akkaActorVersion",
+    ivy"ch.qos.logback:logback-classic:$logbackVersion"
   )
 }
-
-val jlineVersion = "3.19.0"
 
 object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
-
-  object `clause-align` extends Module {
-    object js extends FullJsModule
-    object jvm extends FullJvmModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion",
-        ivy"org.julianmichael::qasrl-bank::0.3.0-SNAPSHOT",
-        ivy"org.julianmichael::qasrl-bank-service::0.3.0-SNAPSHOT",
-      )
-    }
-  }
 
   object `clause-ext` extends Module {
     object js extends JsModule
@@ -356,7 +335,4 @@ object qfirst extends Module {
   //   }
   // }
 
-  object reprocess extends Module {
-    object jvm extends FullJvmModule
-  }
 }
