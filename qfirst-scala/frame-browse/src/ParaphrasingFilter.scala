@@ -6,8 +6,6 @@ import qfirst.frame.OldClusterSplittingCriterion
 import qfirst.frame.MergeTree
 // import qfirst.frame.VerbFrame
 
-import qfirst.clause.ArgStructure
-
 import qasrl.ArgumentSlot
 
 import io.circe.generic.JsonCodec

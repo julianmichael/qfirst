@@ -3,8 +3,6 @@ package qfirst
 import qfirst.frame.util.Duad
 import qfirst.frame.util.NonMergingMap
 
-import qfirst.clause.ArgStructure
-
 import cats.Order
 import cats.data.NonEmptySet
 import cats.implicits._
@@ -15,6 +13,7 @@ import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
+import qasrl.ArgStructure
 import qasrl.ArgumentSlot
 import qasrl.Frame
 

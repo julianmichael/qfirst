@@ -1,7 +1,5 @@
 package qfirst.frame.browse
 
-import qfirst.clause.ArgStructure
-import qfirst.clause.ClauseResolution
 import qfirst.frame._
 import qfirst.frame.math._
 import qfirst.frame.eval._
@@ -169,7 +167,7 @@ class NewVerbUI[VerbType, Arg: Order](
   val SentOptLocal = new LocalState[Option[Sentence]]
   val QuestionLabelSetLocal = new LocalState[Set[QuestionLabel]]
   val IntSetLocal = new LocalState[Set[Int]]
-  val FrameChoiceLocal = new LocalState[Set[(ArgumentId[Arg], ArgStructure, ArgumentSlot)]]
+  // val FrameChoiceLocal = new LocalState[Set[(ArgumentId[Arg], ArgStructure, ArgumentSlot)]]
   val QuestionSetLocal = new LocalState[Set[ArgumentId[Arg]]]
   val InflectedFormsLocal = new LocalState[Option[InflectedForms]]
 

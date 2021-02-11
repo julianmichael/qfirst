@@ -7,9 +7,6 @@ import qfirst.frame.util.Duad
 import qfirst.frame.util.FileCached
 import qfirst.frame.util.NonMergingMap
 
-import qfirst.clause.ArgStructure
-import qfirst.clause.ClauseResolution
-
 import cats.Monoid
 import cats.Order
 import cats.Show

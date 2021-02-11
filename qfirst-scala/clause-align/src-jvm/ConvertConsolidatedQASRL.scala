@@ -5,10 +5,12 @@ import java.nio.file.Path
 import fs2.Stream
 
 import qasrl.ArgumentSlot
+import qasrl.ArgStructure
 import qasrl.bank.ConsolidatedData
 import qasrl.bank.Data
 import qasrl.data._
 import qasrl.labeling.SlotBasedLabel
+import qasrl.labeling.ClauseResolution
 
 import com.monovore.decline._
 import com.monovore.decline.effect._

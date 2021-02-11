@@ -11,6 +11,7 @@ import java.nio.file._
 import qasrl.data.Dataset
 import qasrl.ArgumentSlot
 import qasrl.labeling.SlotBasedLabel
+import qasrl.labeling.ClauseResolution
 
 import qasrl.bank.Data
 
@@ -32,9 +33,6 @@ import io.circe.generic.JsonCodec
 import io.circe.{Encoder, Decoder}
 
 import monocle.function.{all => Optics}
-
-import qfirst.clause.ArgStructure
-import qfirst.clause.ClauseResolution
 
 import freelog._
 import freelog.implicits._

@@ -28,8 +28,7 @@ import qasrl._
 import qasrl.bank.Data
 import qasrl.data.Dataset
 import qasrl.labeling.SlotBasedLabel
-
-import qfirst.clause._
+import qasrl.labeling.ClauseResolution
 
 object ConvertCSV extends CommandIOApp(
   name = "mill -i qfirst.clause-align.jvm.runMain qfirst.clause.align.ConvertCSV",

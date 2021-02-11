@@ -164,17 +164,9 @@ object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
-  object clause extends Module {
-    object js extends JsModule
-    object jvm extends FullJvmModule
-  }
-
   object `clause-align` extends Module {
-    object js extends FullJsModule {
-      def moduleDeps = Seq(clause.js)
-    }
+    object js extends FullJsModule
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm)
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion",
         ivy"org.julianmichael::qasrl-bank::0.3.0-SNAPSHOT",
@@ -258,7 +250,7 @@ object qfirst extends Module {
 
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(clause.js, `model-eval`.js)
+      def moduleDeps = Seq(`model-eval`.js)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::jjm-datasets::$jjmVersion",
@@ -267,7 +259,7 @@ object qfirst extends Module {
       )
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(clause.jvm, `model-eval`.jvm)
+      def moduleDeps = Seq(`model-eval`.jvm)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::jjm-datasets::$jjmVersion",

@@ -1,7 +1,5 @@
 package qfirst.clause.align
 
-import qfirst.clause.ArgStructure
-
 import qasrl._
 
 import jjm.DependentMap

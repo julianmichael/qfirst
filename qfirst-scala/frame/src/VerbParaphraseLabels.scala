@@ -1,6 +1,7 @@
 package qfirst.frame
 
-import qfirst.clause.ArgStructure
+import qasrl.ArgStructure
+
 import qfirst.frame.math.EquivalenceWithApartness
 
 import io.circe.generic.JsonCodec

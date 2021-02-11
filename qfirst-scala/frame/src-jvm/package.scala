@@ -13,7 +13,7 @@ import qasrl.data.Dataset
 import freelog.TreeLogger
 
 import qfirst.model.eval.questionLabelIsValidNonDense
-import qfirst.clause.ArgStructure
+import qasrl.ArgStructure
 import jjm.metrics.HasMetrics.ops._
 
 trait PackagePlatformExtensions {

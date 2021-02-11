@@ -1,7 +1,6 @@
 package qfirst.frame
 
-import qfirst.clause.ArgStructure
-
+import qasrl.ArgStructure
 import qasrl.ArgumentSlot
 import qasrl.Frame
 

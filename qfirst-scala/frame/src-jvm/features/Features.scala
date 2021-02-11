@@ -35,9 +35,6 @@ import io.circe.{Encoder, Decoder}
 
 import monocle.function.{all => Optics}
 
-import qfirst.clause.ArgStructure
-import qfirst.clause.ClauseResolution
-
 import freelog._
 import freelog.implicits._
 
