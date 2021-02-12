@@ -2,6 +2,7 @@ package qfirst.frame.browse
 import qfirst._
 import qfirst.frame._
 import qfirst.frame.features._
+import qfirst.clustering.MergeTree
 
 import qasrl.bank.Data
 import qasrl.data.Dataset
@@ -38,6 +39,7 @@ import jjm.io.FileUtil
 import jjm.io.HttpUtil
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.implicits._
 
 import freelog.EphemeralTreeLogger
 

@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import qfirst.clustering.MergeTree
+
 import jjm.implicits._
 import cats.implicits._
 

@@ -1,8 +1,9 @@
 package qfirst.frame
 
-import qfirst.frame.clustering.FlatClusteringAlgorithm
-import qfirst.frame.clustering.AgglomerativeClusteringAlgorithm
-import qfirst.frame.clustering.AgglomerativeSetClustering
+import qfirst.clustering.MergeTree
+import qfirst.clustering.FlatClusteringAlgorithm
+import qfirst.clustering.AgglomerativeClusteringAlgorithm
+import qfirst.clustering.AgglomerativeSetClustering
 
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
@@ -35,7 +36,7 @@ object ClusteringParams {
   val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
     // smoothes with dirichlet, then inverts the odds.
     // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
-    import qfirst.frame.clustering._
+    // import qfirst.clustering._
     // dirichletPosteriorFromSparseNew(counts, numClusters, 100)
 
     // always assume uniform prior --- seems to work just as well if not better

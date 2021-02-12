@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import qfirst.clustering.MergeTree
+
 import io.circe.generic.JsonCodec
 
 import monocle.macros._

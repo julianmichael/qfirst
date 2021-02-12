@@ -1,4 +1,4 @@
-package qfirst.frame
+package qfirst.clustering
 
 import cats.Foldable
 import cats.implicits._
@@ -11,9 +11,9 @@ import breeze.numerics._
 import breeze.stats.distributions.Multinomial
 import scala.collection.immutable.Vector
 
-package object clustering {
+trait PackagePlatformExtensions {
 
-  case class ClusterMean[A](mean: DenseVector[A], total: Double)
+  // case class ClusterMean[A](mean: DenseVector[A], total: Double)
 
   type DenseMultinomial = Multinomial[DenseVector[Double], Int]
 
@@ -90,22 +90,22 @@ package object clustering {
     Multinomial(exp(negLogits - normalizer))
   }
 
-  import cats.effect.concurrent.Ref
-  // import cats.effect.IO
+  // import cats.effect.concurrent.Ref
+  // // import cats.effect.IO
 
-  // shim for until i upgrade cats-effect version
-  implicit class RichRef[F[_], A](val ref: Ref[F, A]) extends AnyVal {
-    def updateAndGet(f: A => A): F[A] = ref.modify { a =>
-      val newA = f(a)
-      (newA, newA)
-    }
-    def getAndUpdate(f: A => A): F[A] = ref.modify { a =>
-      (f(a), a)
-    }
-  }
+  // // shim for until i upgrade cats-effect version
+  // implicit class RichRef[F[_], A](val ref: Ref[F, A]) extends AnyVal {
+  //   def updateAndGet(f: A => A): F[A] = ref.modify { a =>
+  //     val newA = f(a)
+  //     (newA, newA)
+  //   }
+  //   def getAndUpdate(f: A => A): F[A] = ref.modify { a =>
+  //     (f(a), a)
+  //   }
+  // }
 
   import scala.collection.mutable
-  implicit class RichMutablePriorityQueue[A](val q: mutable.PriorityQueue[A]) extends AnyVal {
+  implicit class RichMutablePriorityQueue[A](val q: mutable.PriorityQueue[A]) { // TODO AnyVal
     def dequeueOption: Option[A] = if (!q.isEmpty) Some(q.dequeue) else None
     def filterDequeue(p: A => Boolean) = {
       dequeueOption.filter(p).orElse(dequeueOption)

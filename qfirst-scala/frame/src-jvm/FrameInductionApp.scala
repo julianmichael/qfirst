@@ -1,8 +1,9 @@
 package qfirst.frame
 
-import qfirst.frame.clustering._
 import qfirst.frame.eval._
 import qfirst.frame.features._
+
+import qfirst.clustering._
 
 import cats.Monoid
 import cats.Order

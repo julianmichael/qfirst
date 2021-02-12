@@ -3,7 +3,7 @@ package qfirst.frame.browse
 import qfirst.frame.ArgumentId
 import qfirst.frame.ClausalQuestion
 import qfirst.frame.OldClusterSplittingCriterion
-import qfirst.frame.MergeTree
+import qfirst.clustering.MergeTree
 // import qfirst.frame.VerbFrame
 
 import qasrl.ArgumentSlot

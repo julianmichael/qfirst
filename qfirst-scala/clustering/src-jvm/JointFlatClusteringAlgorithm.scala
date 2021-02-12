@@ -1,7 +1,4 @@
-package qfirst.frame.clustering
-
-import qfirst.frame.MergeTree
-import qfirst.frame.logLevel
+package qfirst.clustering
 
 import jjm.implicits._
 
@@ -24,7 +21,8 @@ import freelog.EphemeralTreeLogger
 class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
   val innerAlgorithm: FlatClusteringAlgorithm { type Index = InnerIndex; type ClusterParam = InnerParam },
   getSubInstances: I => Vector[InnerIndex],
-  numInnerClusters: Int
+  numInnerClusters: Int,
+  innerHardEMStoppingDelta: Double
   // getLossPenalty: Int => Double // should grow monotonically
 ) extends FlatClusteringAlgorithm {
   type Index = I
@@ -80,7 +78,7 @@ class JointFlatClusteringAlgorithm[I, InnerIndex, InnerParam](
     val (clusters, assignments, loss) = innerAlgorithm.runHardEM(
       initModel,
       innerIndices,
-      stoppingThreshold = qfirst.frame.ClusteringParams.flatClusteringHardStoppingDelta,
+      stoppingThreshold = innerHardEMStoppingDelta,
       estimateClusterPrior = estimateClusterPrior
     )(EphemeralTreeLogger.noop[cats.effect.IO, String]).unsafeRunSync()
     // )(qfirst.frame.loggerUnsafe).unsafeRunSync()

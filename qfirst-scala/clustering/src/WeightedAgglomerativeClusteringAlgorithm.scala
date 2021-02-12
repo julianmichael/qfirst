@@ -1,6 +1,4 @@
-package qfirst.frame.clustering
-
-import qfirst.frame.MergeTree
+package qfirst.clustering
 
 import cats.implicits._
 

@@ -3,6 +3,7 @@ package qfirst.frame.browse
 import qfirst.frame.features.Features
 
 import jjm.DotKleisli
+import jjm.implicits._
 
 import cats.effect.IO
 import cats.implicits._

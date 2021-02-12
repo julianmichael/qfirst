@@ -1,6 +1,6 @@
 package qfirst.frame
 
-import qfirst.frame.clustering._
+import qfirst.clustering._
 import qfirst.frame.features._
 
 import cats.Order
@@ -116,7 +116,8 @@ case class JointModel(
         val _2 = new JointFlatClusteringAlgorithm[VerbId, ArgumentId[Arg], argFlatAlg.ClusterParam](
           innerAlgorithm = argFlatAlg,
           getSubInstances = verbArgNevs,
-          numInnerClusters = numFlatInnerClusters
+          numInnerClusters = numFlatInnerClusters,
+          innerHardEMStoppingDelta = ClusteringParams.flatClusteringHardStoppingDelta
         )
         val _2Lambda = 1.0
       }

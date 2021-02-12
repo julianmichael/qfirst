@@ -1,10 +1,6 @@
-package qfirst.frame.clustering
-
-import qfirst.frame.logLevel
-import qfirst.frame.MergeTree
+package qfirst.clustering
 
 import jjm.TarjanUnionFind
-import qfirst.frame.util.SplayTreeQueue
 
 import cats.Foldable
 import cats.Order

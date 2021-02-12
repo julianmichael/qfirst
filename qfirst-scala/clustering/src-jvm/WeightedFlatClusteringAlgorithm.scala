@@ -1,4 +1,4 @@
-package qfirst.frame.clustering
+package qfirst.clustering
 
 // derp. this is where I forget the types. I wonder if there's a nicer way
 object WeightedFlatClusteringAlgorithm {

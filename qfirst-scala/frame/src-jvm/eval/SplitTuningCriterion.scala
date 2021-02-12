@@ -11,7 +11,7 @@ import freelog.implicits._
 import jjm.metrics.Chosen
 import jjm.metrics.Numbers
 
-import qfirst.frame.MergeTree
+import qfirst.clustering.MergeTree
 import qfirst.frame.logLevel
 import qfirst.frame.getMetricsString
 import qfirst.frame.ClusterSplittingCriterion

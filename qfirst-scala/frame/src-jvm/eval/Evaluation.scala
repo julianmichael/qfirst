@@ -1,5 +1,7 @@
 package qfirst.frame.eval
 
+import qfirst.clustering.MergeTree
+
 import qfirst.frame._
 import qfirst.frame.features.Features
 

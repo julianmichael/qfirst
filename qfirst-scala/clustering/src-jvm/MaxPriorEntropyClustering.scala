@@ -1,4 +1,4 @@
-package qfirst.frame.clustering
+package qfirst.clustering
 
 object MaxPriorEntropyClustering {
   // case class ClusterMixture(counts: DenseVector[Float], total: Float)

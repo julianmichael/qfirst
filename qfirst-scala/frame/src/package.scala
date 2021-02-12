@@ -1,6 +1,5 @@
 package qfirst
 
-
 import cats.Order
 import cats.data.NonEmptySet
 import cats.implicits._

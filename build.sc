@@ -227,9 +227,24 @@ object qfirst extends Module {
     }
   }
 
+  object clustering extends Module {
+    object js extends JsModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::freelog::$freelogVersion"
+      )
+    }
+    object jvm extends FullJvmModule {
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"org.julianmichael::freelog::$freelogVersion",
+        ivy"org.scalanlp::breeze:$breezeVersion",
+        ivy"org.scalanlp::breeze-natives:$breezeVersion"
+      )
+    }
+  }
+
   object frame extends Module {
     object js extends JsModule {
-      def moduleDeps = Seq(`model-eval`.js)
+      def moduleDeps = Seq(`model-eval`.js, clustering.js)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::jjm-datasets::$jjmVersion",
@@ -238,7 +253,7 @@ object qfirst extends Module {
       )
     }
     object jvm extends FullJvmModule {
-      def moduleDeps = Seq(`model-eval`.jvm)
+      def moduleDeps = Seq(`model-eval`.jvm, clustering.jvm)
 
       override def ivyDeps = super.ivyDeps() ++ Agg(
         ivy"org.julianmichael::jjm-datasets::$jjmVersion",

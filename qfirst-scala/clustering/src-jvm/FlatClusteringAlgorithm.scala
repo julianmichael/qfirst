@@ -1,7 +1,4 @@
-package qfirst.frame.clustering
-
-import qfirst.frame.MergeTree
-import qfirst.frame.logLevel
+package qfirst.clustering
 
 import jjm.implicits._
 
@@ -160,7 +157,6 @@ trait FlatClusteringAlgorithm {
 
   import freelog.EphemeralTreeLogger
   import freelog.implicits._
-  import qfirst.frame.logLevel
 
   def runSoftEM(
     initModel: Vector[ClusterParam],

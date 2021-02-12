@@ -1,4 +1,4 @@
-package qfirst.frame.util
+package qfirst.clustering
 
 import cats.Order
 import cats.implicits._

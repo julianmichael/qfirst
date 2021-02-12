@@ -1,0 +1,3 @@
+package qfirst.clustering
+
+trait PackagePlatformExtensions

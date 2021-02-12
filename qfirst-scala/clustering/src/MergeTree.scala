@@ -1,4 +1,4 @@
-package qfirst.frame
+package qfirst.clustering
 
 import jjm.implicits._
 
