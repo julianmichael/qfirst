@@ -159,8 +159,6 @@ class NewVerbUI[VerbType, Arg: Order](
   val DocFetch = new CacheCallContent[DocumentId, Document]
   val DocOptFetch = new CacheCallContent[Option[DocumentId], Option[Document]]
   val SearchFetch = new CacheCallContent[Search.Query, Set[DocumentId]]
-  // val FramesetFetch = new CacheCallContent[InflectedForms, VerbFrameset]
-  val EvalItemFetch = new CacheCallContent[Int, ParaphrasingInfo]
   val IntLocal = new LocalState[Int]
   val IntOptLocal = new LocalState[Option[Int]]
   val VerbModelLocal = new LocalState[Option[VerbClusterModel[VerbType, Arg]]]
@@ -173,7 +171,6 @@ class NewVerbUI[VerbType, Arg: Order](
   val InflectedFormsLocal = new LocalState[Option[InflectedForms]]
 
   val ClusterSplittingSpecLocal = new LocalState[ClusterSplittingSpec]
-  val GoldParaphrasesLocal = new LocalState[VerbParaphraseLabels]
   val DoubleLocal = new LocalState[Double]
 
   val CanvasRef = new Reference[dom.html.Canvas]

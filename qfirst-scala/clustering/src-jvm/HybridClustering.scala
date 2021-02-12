@@ -1,9 +1,4 @@
-package qfirst.frame
-
-import qfirst.clustering.MergeTree
-import qfirst.clustering.FlatClusteringAlgorithm
-import qfirst.clustering.AgglomerativeClusteringAlgorithm
-import qfirst.clustering.AgglomerativeSetClustering
+package qfirst.clustering
 
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
@@ -12,38 +7,39 @@ import cats.data.NonEmptyVector
 import cats.effect.IO
 import cats.implicits._
 
-object ClusteringParams {
+import breeze.linalg.DenseVector
+import breeze.stats.distributions.Multinomial
 
-  import breeze.linalg.DenseVector
-  import breeze.stats.distributions.Multinomial
-
-  val flatClusteringThreshold = 100
-  val numFlatClusters = 100
-
+class HybridClustering(
+  val flatClusteringThreshold: Int = 100,
+  val numFlatClusters: Int = 100,
   // soft EM hyperparams
-  val flatClusteringSoftStoppingDelta = 1e-8
-  val flatClusteringTempSched = (x: Int) => scala.math.pow(0.8, x)
-  val flatClusteringPriorEstimatorDense = (counts: DenseVector[Double]) => {
-    // smoothes with dirichlet, then inverts the odds.
-    // invertOdds(dirichletPosteriorFromDense(counts, 1000))
+  val flatClusteringSoftStoppingDelta: Double = 1e-8,
+  val flatClusteringTempSched: (Int => Double) = (x: Int) => scala.math.pow(0.8, x),
+  val flatClusteringPriorEstimatorDense: DenseVector[Double] => Multinomial[DenseVector[Double], Int] =
+    (counts: DenseVector[Double]) => {
+      // smoothes with dirichlet, then inverts the odds.
+      // invertOdds(dirichletPosteriorFromDense(counts, 1000))
 
-    // uniform prior
-    Multinomial(DenseVector.ones[Double](counts.size))
-  }
+      // uniform prior
+      Multinomial(DenseVector.ones[Double](counts.size))
+    },
   // hard EM hyperparams
-  val numEMTrials = 5
-  val flatClusteringHardStoppingDelta = 1e-5
-  val flatClusteringPriorEstimatorSparse = (counts: Map[Int, Int], numClusters: Int) => {
-    // smoothes with dirichlet, then inverts the odds.
-    // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
-    // import qfirst.clustering._
-    // dirichletPosteriorFromSparseNew(counts, numClusters, 100)
+  val numEMTrials: Int = 5,
+  val flatClusteringHardStoppingDelta: Double = 1e-5,
+  val flatClusteringPriorEstimatorSparse: (Map[Int, Int], Int) => Multinomial[DenseVector[Double], Int] =
+    (counts: Map[Int, Int], numClusters: Int) => {
+      // smoothes with dirichlet, then inverts the odds.
+      // invertOdds(dirichletPosteriorFromSparseNew(counts, numClusters, 1000))
+      // import qfirst.clustering._
+      // dirichletPosteriorFromSparseNew(counts, numClusters, 100)
 
-    // always assume uniform prior --- seems to work just as well if not better
-    Multinomial(DenseVector.ones[Double](numClusters))
-  }
+      // always assume uniform prior --- seems to work just as well if not better
+      Multinomial(DenseVector.ones[Double](numClusters))
+    }
+) {
 
-  def runCombinedClustering[I, FP, AP](
+  def run[I, FP, AP](
     indices: NonEmptyVector[I],
     flatAlgorithm: FlatClusteringAlgorithm { type Index = I; type ClusterParam = FP },
     agglomAlgorithm: AgglomerativeClusteringAlgorithm { type Index = I; type ClusterParam = AP })(

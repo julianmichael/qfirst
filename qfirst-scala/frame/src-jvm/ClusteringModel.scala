@@ -117,7 +117,7 @@ case class JointModel(
           innerAlgorithm = argFlatAlg,
           getSubInstances = verbArgNevs,
           numInnerClusters = numFlatInnerClusters,
-          innerHardEMStoppingDelta = ClusteringParams.flatClusteringHardStoppingDelta
+          innerHardEMStoppingDelta = new HybridClustering().flatClusteringHardStoppingDelta
         )
         val _2Lambda = 1.0
       }
@@ -152,7 +152,7 @@ case class JointModel(
           NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
+              new HybridClustering().run(args, flatAlgorithm, agglomAlgorithm).flatMap { case (verbTree, param) =>
                 IO { // wrapped this here to make sure logging works in the correct order inside
                   // if this is empty, that means there are no arguments at all.
                   // if this ever happens, I'll need to adjust my VerbClusterModel data type.
@@ -620,7 +620,7 @@ case class FullArgumentModel private (
           NonEmptyVector.fromVector(args.get(verbType).foldMap(_.toVector)).traverse { verbArgs =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              ClusteringParams.runCombinedClustering(verbArgs, flatAlgorithm, agglomAlgorithm).map {
+              new HybridClustering().run(verbArgs, flatAlgorithm, agglomAlgorithm).map {
                 case (argTree, _) => verbType -> argTree
               }
             }
@@ -1245,7 +1245,7 @@ case class FullVerbModel private (
           NonEmptyVector.fromVector(verbIds.toVector).traverse { args =>
             this.create(features, verbType) >>= { case (flatAlgorithm, agglomAlgorithm) =>
               val setAgglomAlgorithm = new AgglomerativeSetClustering(agglomAlgorithm) // repetitive here, but whatever
-              ClusteringParams.runCombinedClustering(args, flatAlgorithm, agglomAlgorithm).map {
+              new HybridClustering().run(args, flatAlgorithm, agglomAlgorithm).map {
                 case (verbTree, _) => verbType -> verbTree
               }
             }
