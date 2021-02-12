@@ -98,10 +98,13 @@ object ArgRendering {
   }
 }
 
-class NewVerbUI[VerbType, Arg: Order](
+class FrameBrowserUI[VerbType, Arg: Order](
   implicit VerbType: VerbTypeRendering[VerbType],
   Arg: ArgRendering[VerbType, Arg],
 ){
+
+  val S = FrameBrowserStyles
+  val V = new jjm.ui.View(S)
 
   val genericVerbForms = InflectedForms.fromStrings("verb", "verbs", "verbing", "verbed", "verben")
 
@@ -116,8 +119,6 @@ class NewVerbUI[VerbType, Arg: Order](
     override def empty = Callback.empty
     override def combine(x: Callback, y: Callback) = x >> y
   }
-
-  val S = VerbAnnStyles
 
   val argSigilLetters = Stream.from(1).flatMap { i =>
     val lets = List("X", "Y", "Z", "A", "B", "C", "D", "E", "F")
@@ -147,7 +148,8 @@ class NewVerbUI[VerbType, Arg: Order](
     )
   }
 
-  import HOCs._
+  val BoolLocal = new LocalState[Boolean]
+  val StringLocal = new LocalState[String]
 
   val VerbsFetch = new CacheCallContent[Unit, Map[VerbType, Int]]
   val VerbModelFetch = new CacheCallContent[(ClusterModelSpec, VerbType), VerbClusterModel[VerbType, Arg]]
@@ -263,17 +265,15 @@ class NewVerbUI[VerbType, Arg: Order](
         ),
         ": ",
         zoomStateP(criterion, ClusterSplittingCriterion.number).whenDefined(numClusters =>
-          View.intArrowField(S.shortTextField)(
-            None,
+          V.NumberField.mod(span = S.shortTextField)(
             numClusters,
-            criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
+            didUpdate = criterionControl.zoomStateL(ClusterCriterionControl.numClusters).setState(_)
           )
         ),
         zoomStateP(criterion, ClusterSplittingCriterion.entropy)(Reusability.double(1e-3)).whenDefined(entropyPenalty =>
-          View.doubleTextField(S.shortTextField)(
-            None,
+          V.LiveTextField.Double.mod(input = S.shortTextField)(
             entropyPenalty,
-            criterionControl.zoomStateL(ClusterCriterionControl.entropyPenalty).setState(_)
+            didUpdateValue = criterionControl.zoomStateL(ClusterCriterionControl.entropyPenalty).setState(_)
           )
         )
       )
@@ -327,7 +327,7 @@ class NewVerbUI[VerbType, Arg: Order](
     def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None, None, None)
   }
 
-  val OptionalStringSelect = new View.OptionalSelect[String](x => x, "-")
+  val OptionalStringSelect = new V.OptionalSelect[String](x => x, "-")
   val FeatureOptionsLocal = new LocalState[FeatureOptions]
 
   import scala.util.{Try, Success, Failure}
@@ -494,6 +494,7 @@ class NewVerbUI[VerbType, Arg: Order](
   def headerContainer(
     featureService: FeatureService[OrWrapped[AsyncCallback, *], VerbType, Arg],
     modelSpec: StateSnapshot[ClusterModelSpec],
+    verbCounts: Map[VerbType, Int],
     sortedVerbCounts: List[(VerbType, Int)],
     verb: StateSnapshot[VerbType],
     verbFeatures: StateSnapshot[FeatureOptions],
@@ -512,60 +513,69 @@ class NewVerbUI[VerbType, Arg: Order](
         // searchPane(state.zoomStateL(State.search))
       ),
       <.div(S.headerColumn)(
-        <.select(S.headerDropdown)(
-          ^.value := modelSpec.value.toString,
-          ^.onChange ==> ((e: ReactEventFromInput) =>
-            modelSpec.setState(ClusterModelSpec.fromString(e.target.value).get)
-          ),
-          ClusterModelSpec.all.toVdomArray { spec =>
-            <.option(
-              ^.key := spec.toString,
-              ^.value := spec.toString,
-              spec.toString
-            )
-          }
+        V.Select[ClusterModelSpec](_.toString).mod(S.headerDropdown)(
+          ClusterModelSpec.all, modelSpec
         )
+        // <.select(S.headerDropdown)(
+        //   ^.value := modelSpec.value.toString,
+        //   ^.onChange ==> ((e: ReactEventFromInput) =>
+        //     modelSpec.setState(ClusterModelSpec.fromString(e.target.value).get)
+        //   ),
+        //   ClusterModelSpec.all.toVdomArray { spec =>
+        //     <.option(
+        //       ^.key := spec.toString,
+        //       ^.value := spec.toString,
+        //       spec.toString
+        //     )
+        //   }
+        // )
       ),
       <.div(S.headerColumn)(
-        <.select(S.headerDropdown)(
-          ^.value := VerbType.toString(verb.value),
-          ^.onChange ==> ((e: ReactEventFromInput) =>
-            verb.setState(VerbType.fromString(e.target.value))
-          ),
-          sortedVerbCounts.toVdomArray { case (verb, count) =>
-            <.option(
-              ^.key := VerbType.toString(verb),
-              ^.value := VerbType.toString(verb),
-              f"$count%5d ${VerbType.toString(verb)}"
-            )
-          }
-        ),
-        <.select(S.headerDropdown)(
-          ^.value := VerbType.toString(verb.value),
-          ^.onChange ==> ((e: ReactEventFromInput) =>
-            verb.setState(VerbType.fromString(e.target.value))
-          ),
-          sortedVerbCounts.toVdomArray { case (verb, count) =>
-            <.option(
-              ^.key := VerbType.toString(verb),
-              ^.value := VerbType.toString(verb),
-              f"${VerbType.toString(verb)} ($count)"
-            )
-          }
-        )
+        V.Select[VerbType](
+          v => f"${verbCounts(v)}%5d ${VerbType.toString(v)}%s"
+        ).mod(S.headerDropdown)(sortedVerbCounts.map(_._1), verb),
+        V.Select[VerbType](
+          v => f"${VerbType.toString(v)}%s (${verbCounts(v)}%d)"
+        ).mod(S.headerDropdown)(sortedVerbCounts.map(_._1), verb),
+        // <.select(S.headerDropdown)(
+        //   ^.value := VerbType.toString(verb.value),
+        //   ^.onChange ==> ((e: ReactEventFromInput) =>
+        //     verb.setState(VerbType.fromString(e.target.value))
+        //   ),
+        //   sortedVerbCounts.toVdomArray { case (verb, count) =>
+        //     <.option(
+        //       ^.key := VerbType.toString(verb),
+        //       ^.value := VerbType.toString(verb),
+        //       f"$count%5d ${VerbType.toString(verb)}"
+        //     )
+        //   }
+        // ),
+        // <.select(S.headerDropdown)(
+        //   ^.value := VerbType.toString(verb.value),
+        //   ^.onChange ==> ((e: ReactEventFromInput) =>
+        //     verb.setState(VerbType.fromString(e.target.value))
+        //   ),
+        //   sortedVerbCounts.toVdomArray { case (verb, count) =>
+        //     <.option(
+        //       ^.key := VerbType.toString(verb),
+        //       ^.value := VerbType.toString(verb),
+        //       f"${VerbType.toString(verb)} ($count)"
+        //     )
+        //   }
+        // )
       ),
       <.div(S.featureOptions)(
         <.div(S.headerColumn)(
-          View.checkboxToggle("Questions", verbFeatures.zoomStateL(FeatureOptions.questionDist)),
-          View.checkboxToggle("Arg syntf", verbFeatures.zoomStateL(FeatureOptions.argSyntFunc)),
+          V.Checkbox(verbFeatures.zoomStateL(FeatureOptions.questionDist), Some("Questions")),
+          V.Checkbox(verbFeatures.zoomStateL(FeatureOptions.argSyntFunc), Some("Arg syntf")),
         ),
         <.div(S.headerColumn)(
-          // View.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
-          View.checkboxToggle("Arg spans", verbFeatures.zoomStateL(FeatureOptions.argSpans)),
-          View.checkboxToggle("Gold labels", verbFeatures.zoomStateL(FeatureOptions.goldLabels))
+          // V.checkboxToggle("Arg index", verbFeatures.zoomStateL(FeatureOptions.argIndex)),
+          V.Checkbox(verbFeatures.zoomStateL(FeatureOptions.argSpans), Some("Arg spans")),
+          V.Checkbox(verbFeatures.zoomStateL(FeatureOptions.goldLabels), Some("Gold labels"))
         ),
         <.div(S.headerColumn)(
-          View.checkboxToggle("Show Metrics", showMetrics)
+          V.Checkbox(showMetrics, Some("Show Metrics"))
         ),
         // <.div(S.headerColumn, S.legendColumn)(
         //   <.span(S.legendTitleLinkText)(
@@ -576,7 +586,7 @@ class NewVerbUI[VerbType, Arg: Order](
         //     )
         //   )
         // )
-        // View.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
+        // V.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
         // <.div(S.headerColumn)(
         //   <.span(S.labeledDropdown)(
         //     <.span(S.labeledDropdownLabel)("Arg ctypes:"),
@@ -891,9 +901,11 @@ class NewVerbUI[VerbType, Arg: Order](
     <.div(S.framesetContainer)(
       inflectedForms.value match {
         case None => <.div("No inflected forms available.")
-        case Some(forms) => View.select[InflectedForms](S.inflectionDropdown)(
-          _.allForms.mkString(", "), allInflectedForms, forms, f => inflectedForms.setState(Some(f))
-        ),
+        case Some(forms) => V.Select[InflectedForms](
+          _.allForms.mkString(", ")
+        ).modFull(S.inflectionDropdown)(
+          allInflectedForms, forms, f => inflectedForms.setState(Some(f))
+        )
       },
       <.div(S.clusterSplittingSpecDisplay)(
         // clusterCriterionField(
@@ -999,20 +1011,20 @@ class NewVerbUI[VerbType, Arg: Order](
           ),
           // features.questionDist.whenDefined(_ =>
           //   <.div(
-          //     <.div(View.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
+          //     <.div(V.checkboxToggle("Use TF-IDF", tfidfConfig.zoomStateL(TFIDFConfig.use))),
           //     <.div(
-          //       View.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))
+          //       V.sliderField("Prior smoothing", 0.0, 2.0, tfidfConfig.zoomStateL(TFIDFConfig.priorSmoothingLambda))
           //     ).when(tfidfConfig.value.use),
           //     <.div(
-          //       View.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass))
+          //       V.sliderField("Head size", 0.0, 1.0, tfidfConfig.zoomStateL(TFIDFConfig.headProbabilityMass))
           //     ).when(tfidfConfig.value.use)
           //   )
           // ),
           <.div(S.sentenceTextContainer)(
             <.span(S.sentenceText)(
-              View.renderSentenceWithHighlights(
+              V.Spans.renderHighlightedPassage(
                 sentence.tokens,
-                View.RenderWholeSentence(answerSpansWithColors),
+                answerSpansWithColors,
                 verbColorMap.collect { case (verbIndex, color) =>
                   verbIndex -> (
                     (v: VdomTag) => <.a(
@@ -1120,7 +1132,10 @@ class NewVerbUI[VerbType, Arg: Order](
                             NonEmptyList.fromList(argSpans(ArgumentId(verbId, arg)).toList)
                               .whenDefined(spansNel =>
                                 <.td(
-                                  View.makeAllHighlightedAnswer(sentence.tokens, spansNel.map(_._1), color)
+                                  V.Spans.renderHighlights(
+                                    sentence.tokens,
+                                    spansNel.map(_._1 -> color)
+                                  )
                                 )
                               )
                           )
@@ -1402,7 +1417,7 @@ class NewVerbUI[VerbType, Arg: Order](
                             BoolLocal.make(false) { showMetrics =>
                               <.div(S.mainContainer)(
                                 helpModal,
-                                headerContainer(props.featureService, modelSpec, sortedVerbCounts, verb, options, showMetrics),
+                                headerContainer(props.featureService, modelSpec, verbCounts, sortedVerbCounts, verb, options, showMetrics),
                                 SentencesFetch.make(
                                   request = features.verbType,
                                   sendRequest = verb => props.featureService(FeatureReq.Sentences(verb))) {

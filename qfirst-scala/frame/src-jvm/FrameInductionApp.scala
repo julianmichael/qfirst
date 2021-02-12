@@ -74,7 +74,7 @@ object FrameInductionApp extends CommandIOApp(
           FileCached[Map[VerbType, Clustering.Argument[Arg]]](
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, Clustering.Argument[Arg])](path)
-              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+              .infoCompile(s"Reading cached models: $path")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getArgumentClusters(features)
           }
@@ -136,7 +136,7 @@ object FrameInductionApp extends CommandIOApp(
           FileCached[Map[VerbType, Clustering.Verb]](
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, Clustering.Verb)](path)
-              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+              .infoCompile(s"Reading cached models: $path")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getVerbClusters(features)
           }
@@ -185,7 +185,7 @@ object FrameInductionApp extends CommandIOApp(
           FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]](
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType, Arg])](path)
-              .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
+              .infoCompile(s"Reading cached models: $path")(_.toList).map(_.toMap),
             write = (path, models) => FileUtil.writeJsonLines(path)(models.toList)) {
             model.getJointClusters(features)
           }

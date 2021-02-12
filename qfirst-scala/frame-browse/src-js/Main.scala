@@ -14,6 +14,7 @@ import org.scalajs.dom
 import org.scalajs.dom.experimental
 
 import scalacss.DevDefaults._
+import scalacss.ScalaCssReact._
 
 import qasrl.bank._
 import qasrl.bank.service._
@@ -34,7 +35,7 @@ object Main {
     VerbType: Encoder : Decoder : VerbTypeRendering,
     Arg: Encoder : Decoder : Order : ArgRendering[VerbType, *]
   ]: Unit = {
-    VerbAnnStyles.addToDocument()
+    FrameBrowserStyles.addToDocument()
 
     import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -76,7 +77,7 @@ object Main {
       dom.document.getElementById(SharedConstants.devFlagElementId).getAttribute("value")
     ).right.get
 
-    val UI = new NewVerbUI[VerbType, Arg]
+    val UI = new FrameBrowserUI[VerbType, Arg]
 
     UI.Component(
       UI.Props(

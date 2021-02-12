@@ -3,7 +3,9 @@ package qfirst.frame.browse
 import scalacss.DevDefaults._
 import scala.language.postfixOps
 
-object VerbAnnStyles extends StyleSheet.Inline {
+import jjm.ui.View
+
+object FrameBrowserStyles extends View.Styles {
   import dsl._
 
   // color scheme
@@ -52,19 +54,35 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   )
 
-  // styles
+  // overrides
 
-  val checkboxSpan = style(
+  override val checkboxSpan = style(
     addClassNames("ml-3", "pl-3")
   )
 
-  val checkbox = style(
+  override val checkbox = style(
     addClassNames("form-check-input")
   )
 
-  val checkboxLabel = style(
+  override val checkboxLabel = style(
     addClassNames("form-check-label")
   )
+
+  override val invalidTextBackground = style(
+    backgroundColor(rgba(255, 0, 0, 0.3))
+  )
+
+  override val textField = style()
+
+  override val shortTextField = style(
+    width(50 px)
+  )
+
+  override val intArrowFieldInput = style(
+    width(3 em)
+  )
+
+  // styles
 
   val webkitScrollbar = {
     import scalacss.internal._
@@ -565,7 +583,9 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val inflectionDropdown = style()
 
-  val headerDropdown = style()
+  val headerDropdown = style(
+    addClassNames("mx-1")
+  )
 
   val framesetContainer = style(
     addClassNames("p-3"),
@@ -679,17 +699,11 @@ object VerbAnnStyles extends StyleSheet.Inline {
     backgroundColor(labeledHighlightColor)
   )
 
-  val invalidTextBackground = style(
-    backgroundColor(rgba(255, 0, 0, 0.3))
-  )
-
   val verbInflectionsDisplay = style()
 
   val frameSubheading = style(
     color(grey(128))
   )
-
-  val textField = style()
 
   val paraphrasingFilterDisplay = style(
     addClassNames("pb-2")
@@ -701,10 +715,6 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val indexUnificationThresholdDisplay = style(
     addClassNames("pb-2")
-  )
-
-  val shortTextField = style(
-    width(50 px)
   )
 
   // TODO
@@ -886,10 +896,6 @@ object VerbAnnStyles extends StyleSheet.Inline {
 
   val incorrectClausePredictedParaphraseRow = style(
     backgroundColor(grey(240))
-  )
-
-  val intArrowFieldInput = style(
-    width(3 em)
   )
 
   val metricsTable = style(
