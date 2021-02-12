@@ -2,9 +2,10 @@ package qfirst.frame.browse
 
 import qfirst.frame.ArgumentId
 import qfirst.frame.PropBankRoleLabel
-import qfirst.frame.QuestionTemplate
 import qfirst.frame.SentenceInfo
 import qfirst.frame.VerbId
+
+import qasrl.labeling.QuestionTemplate
 
 import jjm.DotKleisli
 import jjm.ling.ESpan

@@ -9,6 +9,8 @@ import qasrl.data.Dataset
 import qasrl.ArgumentSlot
 import qasrl.labeling.SlotBasedLabel
 import qasrl.labeling.ClauseResolution
+import qasrl.labeling.ClausalQuestion
+import qasrl.labeling.QuestionTemplate
 
 import qasrl.bank.Data
 

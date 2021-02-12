@@ -11,6 +11,8 @@ import cats.implicits._
 import jjm.Vocab
 import jjm.implicits._
 
+import qasrl.labeling.QuestionTemplate
+
 import freelog.EphemeralTreeLogger
 import freelog.implicits._
 

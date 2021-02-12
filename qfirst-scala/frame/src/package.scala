@@ -15,6 +15,7 @@ import jjm.implicits._
 import qasrl.ArgStructure
 import qasrl.ArgumentSlot
 import qasrl.Frame
+import qasrl.labeling.ClausalQuestion
 
 import freelog.LogLevel
 
@@ -33,7 +34,7 @@ package object frame extends qfirst.frame.PackagePlatformExtensions {
     def unapply(argId: QuestionId): Some[(VerbId, ClausalQuestion)] = Some(argId.verbId -> argId.argument)
   }
 
-  type TemplateQ = (ArgStructure, ArgumentSlot)
+  // type TemplateQ = (ArgStructure, ArgumentSlot)
   type QAPairs = Map[ClausalQuestion, List[List[ESpan]]]
 
   def nonEmptySetOptionIso[A: Order] = Iso[Option[NonEmptySet[A]], Set[A]](

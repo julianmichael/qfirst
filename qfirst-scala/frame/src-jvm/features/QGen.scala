@@ -1,6 +1,6 @@
 package qfirst.frame.features
 
-import qfirst.frame.QuestionTemplate
+import qasrl.labeling.QuestionTemplate
 
 import io.circe.generic.JsonCodec
 

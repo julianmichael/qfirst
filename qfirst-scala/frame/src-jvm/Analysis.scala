@@ -21,6 +21,8 @@ import jjm.io.FileUtil
 import jjm.metrics.WeightedNumbers
 import jjm.implicits._
 
+import qasrl.labeling.QuestionTemplate
+
 import qfirst.frame.features.PropBankFeatures
 import qfirst.frame.eval.EvalUtils
 import qfirst.frame.eval.Plotting

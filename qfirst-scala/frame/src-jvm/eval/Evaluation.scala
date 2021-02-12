@@ -1,9 +1,10 @@
 package qfirst.frame.eval
 
 import qfirst.clustering.MergeTree
-
 import qfirst.frame._
 import qfirst.frame.features.Features
+
+import qasrl.labeling.QuestionTemplate
 
 import jjm.Duad
 import jjm.NonMergingMap

@@ -327,7 +327,7 @@ class FrameBrowserUI[VerbType, Arg: Order](
     def empty(verbType: VerbType) = FeatureValues(verbType, None, None, None, None, None, None, None, None, None, None)
   }
 
-  val OptionalStringSelect = new V.OptionalSelect[String](x => x, "-")
+  val OptionalStringSelect = V.OptionalSelect[String](x => x, "-")
   val FeatureOptionsLocal = new LocalState[FeatureOptions]
 
   import scala.util.{Try, Success, Failure}
@@ -536,33 +536,7 @@ class FrameBrowserUI[VerbType, Arg: Order](
         ).mod(S.headerDropdown)(sortedVerbCounts.map(_._1), verb),
         V.Select[VerbType](
           v => f"${VerbType.toString(v)}%s (${verbCounts(v)}%d)"
-        ).mod(S.headerDropdown)(sortedVerbCounts.map(_._1), verb),
-        // <.select(S.headerDropdown)(
-        //   ^.value := VerbType.toString(verb.value),
-        //   ^.onChange ==> ((e: ReactEventFromInput) =>
-        //     verb.setState(VerbType.fromString(e.target.value))
-        //   ),
-        //   sortedVerbCounts.toVdomArray { case (verb, count) =>
-        //     <.option(
-        //       ^.key := VerbType.toString(verb),
-        //       ^.value := VerbType.toString(verb),
-        //       f"$count%5d ${VerbType.toString(verb)}"
-        //     )
-        //   }
-        // ),
-        // <.select(S.headerDropdown)(
-        //   ^.value := VerbType.toString(verb.value),
-        //   ^.onChange ==> ((e: ReactEventFromInput) =>
-        //     verb.setState(VerbType.fromString(e.target.value))
-        //   ),
-        //   sortedVerbCounts.toVdomArray { case (verb, count) =>
-        //     <.option(
-        //       ^.key := VerbType.toString(verb),
-        //       ^.value := VerbType.toString(verb),
-        //       f"${VerbType.toString(verb)} ($count)"
-        //     )
-        //   }
-        // )
+        ).mod(S.headerDropdown)(sortedVerbCounts.map(_._1), verb)
       ),
       <.div(S.featureOptions)(
         <.div(S.headerColumn)(
@@ -577,16 +551,7 @@ class FrameBrowserUI[VerbType, Arg: Order](
         <.div(S.headerColumn)(
           V.Checkbox(showMetrics, Some("Show Metrics"))
         ),
-        // <.div(S.headerColumn, S.legendColumn)(
-        //   <.span(S.legendTitleLinkText)(
-        //     <.a(
-        //       ^.href := "#", "Help",
-        //       dataToggle := "modal",
-        //       dataTarget := s"#$helpModalId"
-        //     )
-        //   )
-        // )
-        // V.checkboxToggle("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
+        // V.Checkbox("Preps", verbFeatures.zoomStateL(FeatureOptions.argPrepositions)),
         // <.div(S.headerColumn)(
         //   <.span(S.labeledDropdown)(
         //     <.span(S.labeledDropdownLabel)("Arg ctypes:"),
@@ -626,19 +591,7 @@ class FrameBrowserUI[VerbType, Arg: Order](
   val defaultClusterSplittingSpec = ClusterSplittingSpec(
     ClusterSplittingCriterion.Number(1),
     ClusterSplittingCriterion.Entropy(0.35)
-    // ClusterSplittingCriterion.Number(5)
   )
-
-  // def makeSurrogateFrame(structure: ArgStructure, forms: InflectedForms, useModal: Boolean) = {
-  //   Frame(
-  //     forms, structure.args,
-  //     tense = (if(useModal) Modal("might".lowerCase) else PresentTense),
-  //     isPassive = structure.isPassive,
-  //     isPerfect = false,
-  //     isProgressive = false,
-  //     isNegated = false
-  //   )
-  // }
 
   def questionDistributionTable(
     inflectedForms: InflectedForms,
@@ -773,7 +726,9 @@ class FrameBrowserUI[VerbType, Arg: Order](
       verbTree: MergeTree[Set[VerbId]],
       roleTrees: Vector[MergeTree[Set[ArgumentId[Arg]]]],
       extraRoles: Map[String, Set[ArgumentId[Arg]]]
-    ): ResolvedFrame = new ResolvedFrame(verbTree, roleTrees.sortBy(-_.size), extraRoles)
+    ): ResolvedFrame = new ResolvedFrame(
+      verbTree, roleTrees.sortBy(-_.unorderedFoldMap(_.size)), extraRoles
+    )
   }
 
   def framesetDisplay(
@@ -1408,7 +1363,6 @@ class FrameBrowserUI[VerbType, Arg: Order](
                                   val roleTrees = argClustering.clusterTreeOpt.foldMap { argTree =>
                                     clusterSplittingSpec.value.argumentCriterion
                                       .splitTree[Set[ArgumentId[Arg]]](argTree, _.size.toDouble)
-                                      .sortBy(-_.size)
                                   }
                                   ResolvedFrame(verbTree, roleTrees, argClustering.extraClusters)
                               }

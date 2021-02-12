@@ -3,6 +3,8 @@ package qfirst.frame
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 
+import qasrl.labeling.ClausalQuestion
+
 sealed trait DataSetting {
   type VerbType; type Arg
 }
