@@ -1,6 +1,6 @@
 package qfirst.frame.math
 
-import qfirst.frame.util.SetUnionFind
+import jjm.SetUnionFind
 
 import cats.kernel.CommutativeMonoid
 import cats.implicits._
@@ -20,7 +20,8 @@ import monocle.Lens
   * - Cotransitive: x ^ z --> x ^ y | y ^ z
   * The complement of an equivalence relation is an apartness relation and vice versa.
   * We say an equivalence relation and apartness relation are _consistent_
-  * if each is contained in the other's complement.
+  * if each is contained in the other's complement:
+  * - Consistent: (x ~ y --> !(x ^ y)) & (x ^ y --> !(x ~ y))
   * Consistency gets us further:
   * - Transport: x ~ y & y ^ z --> x ^ z
   * Proof:
@@ -30,13 +31,17 @@ import monocle.Lens
   * 4. y ^ x | x ^ z          | by cotransitivity and 3.
   * 5. y ~ x                  | by symmetry and 2.
   * 6. !(y ^ x)               | by consistency and 5.
-  * 5. x ^ z                  | by resolution and 4.
+  * 7. x ^ z                  | by resolution, 4, and 6.
   * qed.
   * Transport implies that apartness relations over X that are consistent with ~
   * are in one-to-one correspondence with arbitrary apartness relations over X/~.
   * We regardless represent ~ via X/~ in a union-find data structure.
   * So we may represent the paired relations by storing an apartness relation over
   * the class representatives in X/~ and updating them appropriately.
+  *
+  * This representation can be thought of as an underspecified equivalence relation.
+  * Members of the equivalence are known to be equal, members of the apartness are
+  * known to be unequal, and members of neither have unknown status.
   */
 @JsonCodec sealed trait EquivalenceWithApartness[A] {
   def equal(x: A, y: A): Boolean

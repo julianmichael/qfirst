@@ -21,7 +21,7 @@ import jjm.metrics.WeightedNumbers
 import jjm.implicits._
 
 import qfirst.frame.features.PropBankFeatures
-import qfirst.frame.util.Duad
+import jjm.Duad
 import qfirst.frame.eval.EvalUtils
 import qfirst.frame.eval.ClusterPRMetric
 import qfirst.frame.eval.Csv

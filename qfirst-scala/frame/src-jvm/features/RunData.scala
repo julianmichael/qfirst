@@ -5,8 +5,8 @@ import qfirst.frame.DataSplit
 import qfirst.frame.RunMode
 import qfirst.frame.VerbId
 
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
+import jjm.io.Cell
+import jjm.io.FileCached
 
 import cats.Applicative
 import cats.Monad
@@ -54,27 +54,25 @@ case class RunData[+A](
     this.test product that.test
   )
 
-  def toCell(name: String)(
+  def toCell(
     implicit mode: RunMode,
     // monoid: Monoid[A],
     Log: TreeLogger[IO, String]) = new RunDataCell(
-    name,
-    new Cell(s"$name (train)", train),
-    new Cell(s"$name (dev)", dev),
-    new Cell(s"$name (test)", test),
+    new Cell(train),
+    new Cell(dev),
+    new Cell(test),
   )
 
   def toFileCachedCell[B >: A](
-    name: String, getCachePath: String => IO[Path])(
+    getCachePath: String => IO[Path])(
     read: Path => IO[B], write: (Path, B) => IO[Unit])(
     implicit mode: RunMode,
     // monoid: Monoid[A],
     Log: TreeLogger[IO, String]) = {
     def doCache(runName: String, a: IO[B]) = {
-      new Cell(
-        s"$name ($runName)",
+      Cell(
         getCachePath(runName) >>= (path =>
-          FileCached.get[B](s"$name ($runName)")(
+          FileCached.get[B](
             path = path,
             read = read,
             write = write)(
@@ -84,7 +82,6 @@ case class RunData[+A](
       )
     }
     new RunDataCell(
-      name,
       doCache("train", train),
       doCache("dev", dev),
       doCache("test", test)
@@ -142,7 +139,6 @@ object RunData {
 }
 
 class RunDataCell[+A](
-  name: String,
   train: Cell[A],
   dev: Cell[A],
   test: Cell[A])(

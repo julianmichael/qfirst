@@ -3,7 +3,7 @@ package qfirst.frame.clustering
 import qfirst.frame.logLevel
 import qfirst.frame.MergeTree
 
-import qfirst.frame.util.TarjanUnionFind
+import jjm.TarjanUnionFind
 import qfirst.frame.util.SplayTreeQueue
 
 import cats.Foldable

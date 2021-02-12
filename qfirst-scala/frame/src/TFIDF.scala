@@ -1,5 +1,7 @@
 package qfirst.frame
 
+import jjm.implicits._
+
 import cats.UnorderedFoldable
 import cats.implicits._
 

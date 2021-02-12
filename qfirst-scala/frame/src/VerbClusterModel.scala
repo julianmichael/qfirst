@@ -1,5 +1,6 @@
 package qfirst.frame
 
+import jjm.implicits._
 import cats.implicits._
 
 import io.circe.generic.JsonCodec

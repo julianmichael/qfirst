@@ -1,16 +1,16 @@
 package qfirst.frame.features
 
 import qfirst.frame._
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
 
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.Cell
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.implicits._
 
@@ -50,7 +50,7 @@ class OntoNotes5Features(
 
   val ontonotesService = new CoNLLFileSystemService(ontonotesPath)
 
-  val fullIndex = Cell("OntoNotes Index")(
+  val fullIndex = Cell(
     Log.infoBranch("Reading OntoNotes file paths")(
       ontonotesService.getAllPaths
     )
@@ -61,7 +61,7 @@ class OntoNotes5Features(
     dev = "development",
     test = "test").flatMap(
     spec => fullIndex.get.map(_.filter(_.split == spec))
-  ).toCell("OntoNotes Index")
+  ).toCell
 
   val rawDataset: RunDataCell[NonMergingMap[String, CoNLLSentence]] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
@@ -70,7 +70,7 @@ class OntoNotes5Features(
           NonMergingMap(file.sentences.map(s => s.path.toString -> s).toMap)
         }
       }
-    }.toCell("Raw PropBank dataset")
+    }.toCell
 
   val verbSenseAndArgs: CachedVerbFeats[(String, Map[ESpan, String])] = RunData.strings.zip(index.data)
     .flatMap { case (split, filePaths) =>
@@ -99,7 +99,7 @@ class OntoNotes5Features(
           }
         }
       }
-    }.toCell("PropBank verb senses and args")
+    }.toCell
 
   // TODO: fill this in after adding sense information to `dataset`
   override def verbSenseLabels = ???
@@ -112,7 +112,7 @@ class OntoNotes5Features(
           _.sentences.foldMap(s => NonMergingMap(s.path.toString -> s.tokens.map(_.token).toVector))
         )
       }
-    ).toCell("Sentence index")
+    ).toCell
 
   override val verbArgSets = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
@@ -120,7 +120,7 @@ class OntoNotes5Features(
         verbId -> labels.keySet
       }
     }
-  ).toCell("PropBank gold span instances")
+  ).toCell
 
   override val argSpans: CachedArgFeats[Map[ESpan, Double]] = verbSenseAndArgs.data.map(
     _.mapVals { verbs =>
@@ -132,7 +132,7 @@ class OntoNotes5Features(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping")
+  ).toCell
 
   override def argSemanticHeadIndices: CachedArgFeats[Set[Int]] = ???
 
@@ -154,7 +154,7 @@ class OntoNotes5Features(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping")
+  ).toCell
 
   override val qgInputs: RunData[Stream[IO, PropBankQGInput]] = index.data.map { paths =>
     Stream.emits[IO, CoNLLPath](paths) >>= { path =>

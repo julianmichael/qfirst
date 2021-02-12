@@ -2,16 +2,16 @@ package qfirst.frame.features
 
 import qfirst.frame._
 
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
 
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.Cell
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.implicits._
 
@@ -49,7 +49,7 @@ abstract class PropBankFeatures[Arg](
   import jjm.ling.en.Inflections
 
   val wiktionaryInflectionsURL = "https://www.dropbox.com/s/1wpsydqsuf9jm8v/en_verb_inflections.txt.gz?dl=1"
-  def allInflectionLists(path: Path) = FileCached[List[InflectedForms]]("verb inflections")(
+  def allInflectionLists(path: Path) = FileCached[List[InflectedForms]](
     path = path,
     read = path => FileUtil.readJsonLines[InflectedForms](path).compile.toList,
     write = (path, inflections) => FileUtil.writeJsonLines(path)(inflections))(
@@ -74,12 +74,10 @@ abstract class PropBankFeatures[Arg](
     }.compile.toList
   )
 
-  lazy val verbInflectedFormsByStem = new Cell(
-    "Inflected forms by stem", {
-      cacheDir.flatMap(dir => allInflectionLists(dir.resolve("en_verb_inflections.txt.gz")).get)
-        .map(_.groupBy(_.stem))
-    }
-  )
+  lazy val verbInflectedFormsByStem = Cell {
+    cacheDir.flatMap(dir => allInflectionLists(dir.resolve("en_verb_inflections.txt.gz")).get)
+      .map(_.groupBy(_.stem))
+  }
 
   lazy val verbInflectedFormLists: IO[String => List[InflectedForms]] =
     verbInflectedFormsByStem.get.map(m => verbType => m.apply(getVerbLemma(verbType).lowerCase))

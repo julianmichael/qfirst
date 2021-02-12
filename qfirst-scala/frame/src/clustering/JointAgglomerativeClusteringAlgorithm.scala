@@ -1,5 +1,7 @@
 package qfirst.frame.clustering
 
+import jjm.implicits._
+
 import qfirst.frame.MergeTree
 
 import cats.data.NonEmptyVector

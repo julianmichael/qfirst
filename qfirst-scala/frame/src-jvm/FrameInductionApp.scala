@@ -3,9 +3,6 @@ package qfirst.frame
 import qfirst.frame.clustering._
 import qfirst.frame.eval._
 import qfirst.frame.features._
-import qfirst.frame.util.Duad
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 
 import cats.Monoid
 import cats.Order
@@ -27,10 +24,13 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import jjm.LowerCaseString
+import jjm.Duad
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.metrics._
 import jjm.implicits._
@@ -71,7 +71,6 @@ object FrameInductionApp extends CommandIOApp(
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, Clustering.Argument[Arg]]](
-            s"Argument cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, Clustering.Argument[Arg])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
@@ -134,7 +133,6 @@ object FrameInductionApp extends CommandIOApp(
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, Clustering.Verb]](
-            s"Verb cluster model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, Clustering.Verb)](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),
@@ -184,7 +182,6 @@ object FrameInductionApp extends CommandIOApp(
         .flatTap(createDir)
         .map(modelDir =>
           FileCached[Map[VerbType, VerbClusterModel[VerbType, Arg]]](
-            s"Joint model: $model. Clustering data from $splitName")(
             path = modelDir.resolve(s"model.jsonl.gz"),
             read = path => FileUtil.readJsonLines[(VerbType, VerbClusterModel[VerbType, Arg])](path)
               .infoCompile("Reading cached models for verbs")(_.toList).map(_.toMap),

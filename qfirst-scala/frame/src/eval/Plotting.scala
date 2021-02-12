@@ -26,7 +26,7 @@ object Plotting {
   import com.cibo.evilplot.plot.aesthetics.Theme
   import com.cibo.evilplot.plot.renderers._
 
-  import qfirst.frame.util.Duad
+  import jjm.Duad
   import cats.Order
   import cats.Show
 

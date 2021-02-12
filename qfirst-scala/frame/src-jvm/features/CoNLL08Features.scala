@@ -1,20 +1,20 @@
 package qfirst.frame.features
 
 import qfirst.frame._
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
 
 import jjm.LowerCaseString
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.PredArgStructure
 import jjm.ling.SyntaxTree
 import jjm.ling.Text
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.Cell
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.implicits._
 
@@ -154,7 +154,7 @@ class CoNLL08Features(
           )
         )
         .infoCompile(s"Reading CoNLL 2008 data ($split)")(_.foldMonoid)
-    ).toCell("CoNLL 2008 dataset")
+    ).toCell
   }
 
   override val sentences: RunDataCell[NonMergingMap[String, Vector[String]]] =
@@ -164,7 +164,7 @@ class CoNLL08Features(
           sid -> sent.tokens.map(_.token)
         }
       )
-    ).toCell("CoNLL 2008 sentence index")
+    ).toCell
 
   val predArgStructures: CachedVerbFeats[PredArgStructure[PropBankPredicate, Int]] = {
     dataset.data.map(
@@ -177,7 +177,7 @@ class CoNLL08Features(
           Map(verbType -> NonMergingMap(Map(verbId -> pas)))
         }
       }
-    ).toCell("CoNLL 2008 predicate-argument structures")
+    ).toCell
   }
 
   override val verbArgSets: RunDataCell[Map[String, Map[VerbId, Set[Int]]]] =
@@ -187,7 +187,7 @@ class CoNLL08Features(
           pas.arguments.map(_._2).toSet
         }
       }
-    ).toCell("CoNLL 2008 verb arg sets")
+    ).toCell
 
   override lazy val verbSenseLabels =
     cacheVerbFeats("CoNLL 2008 verb sense labels")(
@@ -208,7 +208,7 @@ class CoNLL08Features(
           }
         }
       }
-    ).toCell("CoNLL 2008 argument role labels")
+    ).toCell
 
 
   // other things that could be used as argument keys
@@ -427,13 +427,13 @@ class CoNLL08Features(
         .infoCompile("Reading CoNLL 2005 sentences")(
           _.toList.map(l => NonMergingMap(l.toMap))
         )
-    ).toCell("CoNLL 2005 Sentences")
+    ).toCell
   }
 
   val ptb2Path = Paths.get("data/treebank2")
 
-  lazy val ptb2Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, ptb2.PTB2Sentence]] = new Cell(
-    "PTB2 sentences", {
+  lazy val ptb2Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, ptb2.PTB2Sentence]] =
+    Cell {
       val service = new ptb2.PTB2FileSystemService(ptb2Path)
       import scala.concurrent.ExecutionContext.Implicits.global
       service.streamFiles[IO]
@@ -442,81 +442,78 @@ class CoNLL08Features(
         .map(s => NonMergingMap(s.id -> s))
         .infoCompile("Reading Penn Treebank sentences")(_.foldMonoid)
     }
-  )
 
-  lazy val ptb2TextIndex = new Cell(
-    "PTB2 sentence index", {
+  lazy val ptb2TextIndex =
+    Cell {
       ptb2Sentences.get.map(
         _.value.toList.foldMap { case (sid, sentence) =>
           Map(Text.render(sentence.tokens.filter(_.pos != "-NONE-")) -> Set(sid))
         }
       )
     }
-  )
 
-  lazy val conllToPTB2SentenceAlignments: Cell[NonMergingMap[String, ptb2.PTB2SentenceId]] = new Cell(
-    "CoNLL 2008 to PTB 2 sentence alignments",
-    cacheDir.map(_.resolve("ptb-alignments.jsonl.gz")) >>= (cachePath =>
-      FileCached.get[NonMergingMap[String, ptb2.PTB2SentenceId]](
-        "CoNLL 2008 to PTB 2 sentence alignments")(
-        path = cachePath,
-        read = path => FileUtil
-          .readJsonLines[(String, ptb2.PTB2SentenceId)](path)
-          .infoCompile("Reading alignment pairs")(_.toList.map(ls => NonMergingMap(ls.toMap))),
-        write = (path, alignments) => FileUtil
-          .writeJsonLines[(String, ptb2.PTB2SentenceId)](path)(alignments.value.toList))(
-        for {
-          ptbSentences <- ptb2Sentences.get
-          // ptbIndex <- ptb2SentenceIndex.get
-          ptbTextIndex <- ptb2TextIndex.get
-          conllSentences <- dataset.data.all.map(_.combineAll)
-          alignments <- conllSentences.value.toList.infoBarTraverse("Aligning CoNLL sentences") { case (sid, sentence) =>
+  lazy val conllToPTB2SentenceAlignments: Cell[NonMergingMap[String, ptb2.PTB2SentenceId]] =
+    Cell {
+      cacheDir.map(_.resolve("ptb-alignments.jsonl.gz")) >>= (cachePath =>
+        FileCached.get[NonMergingMap[String, ptb2.PTB2SentenceId]](
+          path = cachePath,
+          read = path => FileUtil
+            .readJsonLines[(String, ptb2.PTB2SentenceId)](path)
+            .infoCompile("Reading alignment pairs")(_.toList.map(ls => NonMergingMap(ls.toMap))),
+          write = (path, alignments) => FileUtil
+            .writeJsonLines[(String, ptb2.PTB2SentenceId)](path)(alignments.value.toList))(
+          for {
+            ptbSentences <- ptb2Sentences.get
+            // ptbIndex <- ptb2SentenceIndex.get
+            ptbTextIndex <- ptb2TextIndex.get
+            conllSentences <- dataset.data.all.map(_.combineAll)
+            alignments <- conllSentences.value.toList.infoBarTraverse("Aligning CoNLL sentences") { case (sid, sentence) =>
 
-            val collapsedTokens = sentence.tokens.zipWithIndex.foldLeft("") {
-              case (str, (next, idx)) => {
-                if(sentence.paddingIndices.contains(idx)) str + next.token
-                else str + " " + next.token
+              val collapsedTokens = sentence.tokens.zipWithIndex.foldLeft("") {
+                case (str, (next, idx)) => {
+                  if(sentence.paddingIndices.contains(idx)) str + next.token
+                  else str + " " + next.token
+                }
+              }.trim.split(" ").toList
+              val sentText = Text.render(collapsedTokens)
+
+              val textMatches = ptbTextIndex.getOrElse(sentText, Set.empty[ptb2.PTB2SentenceId])
+
+              val alignment = if(textMatches.size >= 1) {
+                // if(textMatches.size > 1) {
+                //   System.err.println("\n===== Multiple matches! =====")
+                //   System.err.println(sentText)
+                //   textMatches.foreach(System.err.println)
+                // }
+                sid -> textMatches.head
+              } else {
+                // val softMatches = sentence.tokens.foldMap(tok =>
+                //   ptbIndex.get(tok.token.lowerCase).combineAll
+                // ).toVector.sortBy(-_._2).take(5)
+                // val topPath = softMatches.head._1
+
+                System.err.println("\n===== NO TEXT MATCH! =====")
+                System.err.println(sid)
+                System.err.println(sentText)
+                System.err.println(Text.render(sentence.tokens))
+                // softMatches.foreach { case (path, count) =>
+                //   System.err.println(s"$count: $path")
+                //   val ptbSentence = ptbSentences(path)
+                //   System.err.println(Text.render(ptbSentence.tokens.filter(_.pos != "-NONE-")))
+                //   System.err.println(Text.render(ptbSentence.tokens.map(t => s"${t.token}#${t.pos}")))
+                // }
+                System.err.println()
+
+                ???
+                // sid -> topPath
               }
-            }.trim.split(" ").toList
-            val sentText = Text.render(collapsedTokens)
 
-            val textMatches = ptbTextIndex.getOrElse(sentText, Set.empty[ptb2.PTB2SentenceId])
-
-            val alignment = if(textMatches.size >= 1) {
-              // if(textMatches.size > 1) {
-              //   System.err.println("\n===== Multiple matches! =====")
-              //   System.err.println(sentText)
-              //   textMatches.foreach(System.err.println)
-              // }
-              sid -> textMatches.head
-            } else {
-              // val softMatches = sentence.tokens.foldMap(tok =>
-              //   ptbIndex.get(tok.token.lowerCase).combineAll
-              // ).toVector.sortBy(-_._2).take(5)
-              // val topPath = softMatches.head._1
-
-              System.err.println("\n===== NO TEXT MATCH! =====")
-              System.err.println(sid)
-              System.err.println(sentText)
-              System.err.println(Text.render(sentence.tokens))
-              // softMatches.foreach { case (path, count) =>
-              //   System.err.println(s"$count: $path")
-              //   val ptbSentence = ptbSentences(path)
-              //   System.err.println(Text.render(ptbSentence.tokens.filter(_.pos != "-NONE-")))
-              //   System.err.println(Text.render(ptbSentence.tokens.map(t => s"${t.token}#${t.pos}")))
-              // }
-              System.err.println()
-
-              ???
-              // sid -> topPath
+              Log.trace(f"${alignment._1}%-15s -> ${alignment._2}%s") >> IO.pure(alignment)
             }
-
-            Log.trace(f"${alignment._1}%-15s -> ${alignment._2}%s") >> IO.pure(alignment)
-          }
-        } yield NonMergingMap(alignments.toMap)
+          } yield NonMergingMap(alignments.toMap)
+        )
       )
-    )
-  )
+    }
 
   lazy val ptb2ArgConstituentTypes: CachedArgFeats[Map[String, Double]] = {
     // TODO decide what to do about including the VerbType, for sense-agnostic and sense-specific ones to share file cache...
@@ -619,13 +616,14 @@ class CoNLL08Features(
 
   val propbank1Path = Paths.get("data/propbank_1")
 
-  lazy val propbank1Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, propbank1.PropBank1Sentence]] = new Cell("PropBank 1 sentences", {
-    val service = new propbank1.PropBank1FileSystemService(propbank1Path)
-    import scala.concurrent.ExecutionContext.Implicits.global
-    service.streamSentences[IO]
-      .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
-      .infoCompile("Reading PropBank sentences")(_.foldMonoid)
-  })
+  lazy val propbank1Sentences: Cell[NonMergingMap[ptb2.PTB2SentenceId, propbank1.PropBank1Sentence]] =
+    Cell {
+      val service = new propbank1.PropBank1FileSystemService(propbank1Path)
+      import scala.concurrent.ExecutionContext.Implicits.global
+      service.streamSentences[IO]
+        .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
+        .infoCompile("Reading PropBank sentences")(_.foldMonoid)
+    }
 
   def reindexPAStructures(
     ptbTree: SyntaxTree[ptb2.PTB2Token],
@@ -952,21 +950,21 @@ class CoNLL08Features(
 
   val propbank3Path = Paths.get("data/propbank-release")
 
-  lazy val propbank3Sentences: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3Sentence]] = new Cell("PropBank 3 sentences", {
+  lazy val propbank3Sentences: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3Sentence]] = Cell {
     val service = new propbank3.PropBank3FileSystemService(propbank3Path)
     import scala.concurrent.ExecutionContext.Implicits.global
     service.streamSentencesFromProps[IO]
       .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
       .infoCompile("Reading PropBank sentences")(_.foldMonoid)
-  })
+  }
 
-  lazy val propbank3SentencesCoNLLStyle: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3SentenceCoNLLStyle]] = new Cell("PropBank 3 sentences (CoNLL Style)", {
+  lazy val propbank3SentencesCoNLLStyle: Cell[NonMergingMap[propbank3.PropBank3SentenceId, propbank3.PropBank3SentenceCoNLLStyle]] = Cell {
     val service = new propbank3.PropBank3FileSystemService(propbank3Path)
     import scala.concurrent.ExecutionContext.Implicits.global
     service.streamSentencesFromCoNLLSkels[IO]
       .evalMap(s => Log.trace(s.id.toString).as(NonMergingMap(s.id -> s)))
       .infoCompile("Reading PropBank sentences")(_.foldMonoid)
-  })
+  }
 
   def relabelPAStructures(
     ptbTree: SyntaxTree[ptb2.PTB2Token],

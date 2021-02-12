@@ -1,7 +1,9 @@
 package qfirst.frame.eval
 
 import qfirst.frame._
-import qfirst.frame.util.Duad
+
+import jjm.Duad
+import jjm.implicits._
 
 import cats.Order
 import cats.implicits._

@@ -2,13 +2,13 @@ package qfirst.frame
 
 import qfirst.frame.clustering._
 import qfirst.frame.features._
-import qfirst.frame.util.Vocab
 
 import cats.Order
 import cats.data.NonEmptyVector
 import cats.effect.IO
 import cats.implicits._
 
+import jjm.Vocab
 import jjm.implicits._
 
 import freelog.EphemeralTreeLogger

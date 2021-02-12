@@ -1,9 +1,6 @@
 package qfirst.frame.features
 
 import qfirst.frame._
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
@@ -15,9 +12,12 @@ import qasrl.labeling.SlotBasedLabel
 import qasrl.bank.Data
 
 import jjm.LowerCaseString
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.Cell
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.implicits._
 
@@ -71,7 +71,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
           }.toMap
         )
       }
-    }.toCell(name)
+    }.toCell
 
   def fileCacheVerbFeats[A: Encoder : Decoder](
     name: String, log: Boolean = false)(
@@ -86,7 +86,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
           }.toMap
         )
       }
-    }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+    }.toFileCachedCell(n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
       read = path => FileUtil.readJsonLines[(VerbType,List[(VerbId,A)])](path).compile.toList
         .map(_.map { case (vt, verbs) => vt -> NonMergingMap(verbs.toMap) }.toMap),
       write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, verbs) => vt -> verbs.value.toList }.toList)
@@ -105,7 +105,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             argsForVerbType.map(args => Map(verbType -> args))
           }
         }
-      }.toCell(name)
+      }.toCell
     } else {
       (args.data.zip(feats)).map { case (args, feats) =>
         args.transform { case (verbType, args) =>
@@ -116,7 +116,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             }.toMap
           )
         }
-      }.toCell(name)
+      }.toCell
     }
 
   def fileCacheArgFeats[A: Encoder : Decoder](
@@ -137,7 +137,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             argsForVerbType.map(args => Map(verbType -> args))
           }
         }
-      }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+      }.toFileCachedCell(n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
         read = path => FileUtil.readJsonLines[(VerbType,List[(ArgumentId[Arg],A)])](path).compile.toList
           .map(_.map { case (vt, args) => vt -> NonMergingMap(args.toMap) }.toMap),
         write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, args) => vt -> args.value.toList }.toList)
@@ -152,7 +152,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             }.toMap
           )
         }
-      }.toFileCachedCell(name, n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
+      }.toFileCachedCell(n => cacheDir.map(_.resolve(s"$name/$n.jsonl.gz")))(
         read = path => FileUtil.readJsonLines[(VerbType,List[(ArgumentId[Arg],A)])](path).compile.toList
           .map(_.map { case (vt, args) => vt -> NonMergingMap(args.toMap) }.toMap),
         write = (path, a) => FileUtil.writeJsonLines(path)(a.iterator.map { case (vt, args) => vt -> args.value.toList }.toList)
@@ -199,11 +199,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
       sentMaps.map { case (sid, sentMap) =>
         sid -> SentenceInfo(sid, sents.value(sid), sentMap.value)
       }
-    }.toCell("Sentence infos")
+    }.toCell
   }
 
   lazy val sentencesByVerbType: RunDataCell[Map[VerbType, Set[String]]] =
-    verbArgSets.data.map(_.mapVals(_.keySet.map(_.sentenceId))).toCell("Sentence IDs by verb type")
+    verbArgSets.data.map(_.mapVals(_.keySet.map(_.sentenceId))).toCell
 
   lazy val args: RunDataCell[Map[VerbType, Set[ArgumentId[Arg]]]] = verbArgSets.data.map(
     _.transform { case (_, verbs) =>
@@ -211,11 +211,11 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
         args.map(arg => ArgumentId(verbId, arg))
       }
     }
-  ).toCell("Argument IDs")
+  ).toCell
 
   lazy val verbs: RunDataCell[Map[VerbType, Set[VerbId]]] = verbArgSets.data.map(
     _.transform { case (_, verbs) => verbs.keySet }
-  ).toCell("Verb IDs")
+  ).toCell
 
   lazy val verbIdToType = verbArgSets.data.map(
     _.toList.foldMap { case (verbType, verbs) =>
@@ -225,7 +225,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
         }.toMap
       )
     }
-  ).toCell("Verb ID to verb type mapping")
+  ).toCell
 
   // Metadata
 
@@ -252,7 +252,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
     )
     val total = pcounts.values.sum
     pcounts.mapVals(_ / total)
-  }.toCell("Global question prior")
+  }.toCell
 
   lazy val argQuestionDistsActive: CachedArgFeats[Map[QuestionTemplate, Double]] = {
     cacheArgFeats("active/passive normalized question dists")(
@@ -314,7 +314,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
             }
           }
           .infoCompile(s"Reading QG Predictions ($split)")(_.foldMonoid)
-    }.toCell("Question distributions for arguments")
+    }.toCell
   }
 
   // new style arg features
@@ -383,8 +383,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
   private lazy val mlmVocabs: Map[String, Map[String, Cell[NonMergingMap[String, Vector[String]]]]] = {
     List("arg", "verb").map(label =>
       label -> makeMLMFeatures { case (setting, path) =>
-        new Cell(
-          s"MLM $label vocab ($setting)",
+        Cell(
           FileUtil.readJson[Map[String, Vector[String]]](path.resolve(s"${label}_vocabs.json"))
             .map(NonMergingMap(_))
         )
@@ -457,7 +456,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
           } yield ids.zip(finalVecs).foldMap { case (mlmFeatureId, vec) =>
               Map(mlmFeatureId.verbLemma -> Map(mlmFeatureId.sentenceId -> NonMergingMap(mlmFeatureId.span -> vec)))
           }
-        }.toCell(s"$label MLM Vectors")
+        }.toCell
       }
     ).toMap
   }
@@ -478,8 +477,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   lazy val postprocessedVerbMLMFeatures: Map[String, Cell[CachedVerbFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
-      setting -> new Cell(
-        s"Postprocessed verb MLM features ($setting)",
+      setting -> Cell(
         verbMLMVocab(setting).get.map(_.value).map { vocabs =>
           cacheVerbFeats("Postprocessed verb MLM features")(
             mapVerbFeatsWithType(getVerbMLMFeatures(setting)) { verbType => vec =>
@@ -545,8 +543,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   lazy val postprocessedArgPrepMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
-      setting -> new Cell(
-        s"Postprocessed arg prep MLM features ($setting)",
+      setting -> Cell(
         argMLMVocab(setting).get.map(_.value).map { vocabs =>
           cacheArgFeats("Postprocessed arg prep MLM features")(
             mapArgFeatsWithType(getArgPrepMLMFeatures(setting)) { verbType => vec =>
@@ -563,8 +560,7 @@ abstract class Features[VerbType : Encoder : Decoder, Arg](
 
   lazy val postprocessedArgSpanMLMFeatures: Map[String, Cell[CachedArgFeats[Map[String, Float]]]] = {
     mlmSettings.map(setting =>
-      setting -> new Cell(
-        s"Postprocessed arg MLM features ($setting)",
+      setting -> Cell(
         argMLMVocab(setting).get.map(_.value).map { vocabs =>
           cacheArgFeats("Postprocessed arg MLM features")(
             mapArgFeatsWithType(getArgSpanMLMFeatures(setting)) { verbType => vec =>

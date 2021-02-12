@@ -2,9 +2,9 @@ package qfirst.frame.eval
 
 import qfirst.frame._
 import qfirst.frame.features.Features
-import qfirst.frame.util.Duad
-import qfirst.frame.util.NonMergingMap
 
+import jjm.Duad
+import jjm.NonMergingMap
 import jjm.io.FileUtil
 import jjm.metrics._
 import jjm.implicits._

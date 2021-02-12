@@ -1,9 +1,6 @@
 package qfirst.frame.features
 
 import qfirst.frame._
-import qfirst.frame.util.Cell
-import qfirst.frame.util.FileCached
-import qfirst.frame.util.NonMergingMap
 import qfirst.frame.util.VectorFileUtil
 
 import java.nio.file._
@@ -15,9 +12,12 @@ import qasrl.labeling.ClauseResolution
 
 import qasrl.bank.Data
 
+import jjm.NonMergingMap
 import jjm.ling.ESpan
 import jjm.ling.en.InflectedForms
 import jjm.ling.en.VerbForm
+import jjm.io.Cell
+import jjm.io.FileCached
 import jjm.io.FileUtil
 import jjm.implicits._
 
@@ -60,8 +60,7 @@ class GoldQasrlFeatures(
 
   implicit val datasetMonoid = Dataset.datasetMonoid(Dataset.printMergeErrors)
 
-  val qasrlBank = new Cell(
-    "QA-SRL Bank",
+  val qasrlBank = Cell(
     Log.infoBranch("Reading QA-SRL Bank")(
       IO(Data.readFromQasrlBank(qasrlBankPath).toEither.right.get)
     )
@@ -72,7 +71,7 @@ class GoldQasrlFeatures(
     dev = "expanded/dev",
     test = "orig/test").flatMap(
     spec => readQasrlDataset(spec).map(filterDatasetNonDense)
-  ).toCell("QA-SRL dataset")
+  ).toCell
 
   val qaPairs: RunDataCell[Map[InflectedForms, NonMergingMap[VerbId, QAPairs]]] = {
     dataset.data.map(
@@ -97,7 +96,7 @@ class GoldQasrlFeatures(
           }
       }
     )
-  }.toCell("QA-SRL All QA Pairs")
+  }.toCell
 
   override val verbArgSets: RunDataCell[Map[InflectedForms, Map[VerbId, Set[ClausalQuestion]]]] =
     qaPairs.data.map(
@@ -106,7 +105,7 @@ class GoldQasrlFeatures(
           qaPairs.keySet
         }
       }
-    ).toCell("QA-SRL ArgumentIds by verb ID")
+    ).toCell
 
   val argIdToSpans: ArgFeats[List[List[ESpan]]] = qaPairs.data.map(
     _.mapVals { verbs =>
@@ -118,7 +117,7 @@ class GoldQasrlFeatures(
         )
       }
     }
-  ).toCell("QA-SRL ArgumentId to spans").data
+  ).toCell.data
 
   // TODO replace with this
   // qaPairs
@@ -131,7 +130,7 @@ class GoldQasrlFeatures(
   override val sentences = dataset.data
     .map(_.sentences.map { case (sid, sent) => sid -> sent.sentenceTokens })
     .map(NonMergingMap.apply[String, Vector[String]])
-    .toCell("QA-SRL sentences")
+    .toCell
 
   // TODO temp before we have distribution results from the models
   // override val argQuestionDists: RunDataCell[ArgFeats[Map[QuestionTemplate, Double]]] = {
@@ -186,7 +185,7 @@ class GoldQasrlFeatures(
             }
           }
         }.infoCompile(s"Processing QG Predictions ($split)")(_.foldMonoid)
-    }.toCell("Question distributions for arguments")
+    }.toCell
   }
 
   override val argSpans: CachedArgFeats[Map[ESpan, Double]] = qaPairs.data.map(
@@ -199,7 +198,7 @@ class GoldQasrlFeatures(
         )
       }
     }
-  ).toCell("PropBank span to role label mapping")
+  ).toCell
 
   override lazy val argSemanticHeadIndices: CachedArgFeats[Set[Int]] = {
     cacheArgFeats("Argument semantic head indices")(

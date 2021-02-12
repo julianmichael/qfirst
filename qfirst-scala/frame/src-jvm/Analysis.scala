@@ -15,13 +15,13 @@ import freelog.EphemeralTreeLogger
 import freelog.SequentialEphemeralTreeLogger
 import freelog.implicits._
 
+import jjm.Duad
 import jjm.LowerCaseString
 import jjm.io.FileUtil
 import jjm.metrics.WeightedNumbers
 import jjm.implicits._
 
 import qfirst.frame.features.PropBankFeatures
-import qfirst.frame.util.Duad
 import qfirst.frame.eval.EvalUtils
 import qfirst.frame.eval.Plotting
 
