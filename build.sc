@@ -13,11 +13,11 @@ val thisScalaJSVersion = "1.4.0"
 val evilplotVersion = "0.8.1-SNAPSHOT"
 
 // my libs
-val jjmVersion = "0.2.0-SNAPSHOT"
-val qasrlVersion = "0.3.0-SNAPSHOT"
-val qasrlBankVersion = "0.4.0-SNAPSHOT"
-val spacroVersion = "0.4.0-SNAPSHOT"
-val freelogVersion = "0.1.0-SNAPSHOT"
+val jjmVersion = "0.2.0"
+val qasrlVersion = "0.3.0"
+// val qasrlBankVersion = "0.3.0"
+// val spacroVersion = "0.4.0"
+val freelogVersion = "0.1.0"
 
 // compiler plugins
 val macroParadiseVersion = "2.1.1"
@@ -94,8 +94,8 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     // ivy"org.typelevel::alleycats-core::$catsVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
-    ivy"org.julianmichael::qasrl-bank::$qasrlBankVersion",
-    ivy"org.julianmichael::qasrl-bank-service::$qasrlBankVersion",
+    ivy"org.julianmichael::qasrl-bank::$qasrlVersion",
+    ivy"org.julianmichael::qasrl-bank-service::$qasrlVersion",
     ivy"com.github.japgolly.scalacss::core::$scalacssVersion"
   )
 }
@@ -194,38 +194,38 @@ object qfirst extends Module {
   //   }
   // }
 
-  object `clause-ext-demo` extends Module {
-    object js extends FullJsModule {
+  // object `clause-ext-demo` extends Module {
+  //   object js extends FullJsModule {
 
-      def moduleDeps = Seq(`clause-ext`.js, `model-eval`.js)
+  //     def moduleDeps = Seq(`clause-ext`.js, `model-eval`.js)
 
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::spacro::$spacroVersion",
-        ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
-      )
-    }
-    object jvm extends FullJvmModule {
+  //     override def ivyDeps = super.ivyDeps() ++ Agg(
+  //       ivy"org.julianmichael::spacro::$spacroVersion",
+  //       ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+  //     )
+  //   }
+  //   object jvm extends FullJvmModule {
 
-      def moduleDeps = Seq(`clause-ext`.jvm, `model-eval`.jvm)
+  //     def moduleDeps = Seq(`clause-ext`.jvm, `model-eval`.jvm)
 
-      override def resources = T.sources(
-        millSourcePath / "resources",
-        `clause-ext-demo`.js.fastOpt().path / RelPath.up,
-        `clause-ext-demo`.js.aggregatedJSDeps().path / RelPath.up
-      )
+  //     override def resources = T.sources(
+  //       millSourcePath / "resources",
+  //       `clause-ext-demo`.js.fastOpt().path / RelPath.up,
+  //       `clause-ext-demo`.js.aggregatedJSDeps().path / RelPath.up
+  //     )
 
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::spacro::$spacroVersion",
-        ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
-        ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
-        ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-        // not sure if any of these are needed
-        // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-        // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-        // ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
-      )
-    }
-  }
+  //     override def ivyDeps = super.ivyDeps() ++ Agg(
+  //       ivy"org.julianmichael::spacro::$spacroVersion",
+  //       ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
+  //       ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
+  //       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
+  //       // not sure if any of these are needed
+  //       // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
+  //       // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
+  //       // ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
+  //     )
+  //   }
+  // }
 
   object clustering extends Module {
     object js extends JsModule {
