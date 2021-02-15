@@ -53,20 +53,19 @@ val scalatestVersion = "3.0.8"
 val scalacheckVersion = "1.14.0"
 val disciplineVersion = "1.0.0"
 
+val munitVersion = "0.7.21"
+val munitCatsEffectVersion = "0.11.0"
+
 import $file.`scripts-build`.SimpleJSDepsBuild, SimpleJSDepsBuild.SimpleJSDeps
 
 trait CommonModule extends ScalaModule with ScalafmtModule {
 
   def platformSegment: String
 
-  def millSourcePath = super.millSourcePath / RelPath.up
-
   override def sources = T.sources(
     millSourcePath / "src",
     millSourcePath / s"src-$platformSegment"
   )
-
-  def scalaVersion = thisScalaVersion
 
   override def scalacOptions = Seq(
     "-unchecked",
@@ -100,26 +99,20 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   )
 }
 
-trait JsModule extends CommonModule with ScalaJSModule {
-  def scalaJSVersion = T(thisScalaJSVersion)
-  def platformSegment = "js"
+trait CommonMainModule extends CommonModule {
+  def scalaVersion = thisScalaVersion
+  def millSourcePath = super.millSourcePath / RelPath.up
+
+  trait CommonTestModule extends CommonModule with TestModule {
+    override def ivyDeps = Agg(
+      ivy"org.scalameta::munit::$munitVersion",
+      ivy"org.typelevel::munit-cats-effect-2::$munitCatsEffectVersion",
+    )
+    def testFrameworks = Seq("munit.Framework")
+  }
 }
 
-trait FullJsModule extends JsModule with SimpleJSDeps {
-  override def ivyDeps = super.ivyDeps() ++ Agg(
-    ivy"org.julianmichael::jjm-ui::$jjmVersion",
-    ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
-    ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
-    ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
-  )
-  override def jsDeps = Agg(
-    "https://code.jquery.com/jquery-2.1.4.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
-  )
-}
-
-trait JvmModule extends CommonModule {
+trait JvmModule extends CommonMainModule {
   def platformSegment = "jvm"
 
   // for using runMain in commands
@@ -140,6 +133,10 @@ trait JvmModule extends CommonModule {
         Result.Failure("subprocess failed")
     }
   }
+
+  trait Tests extends super.Tests with CommonTestModule {
+    def platformSegment = "jvm"
+  }
 }
 
 trait FullJvmModule extends JvmModule {
@@ -150,26 +147,37 @@ trait FullJvmModule extends JvmModule {
   )
 }
 
+trait JsModule extends CommonMainModule with ScalaJSModule {
+  def scalaJSVersion = T(thisScalaJSVersion)
+  def platformSegment = "js"
+  trait Tests extends super.Tests with CommonTestModule {
+    def scalaJSVersion = T(thisScalaJSVersion)
+    def platformSegment = "js"
+    def moduleKind = T(mill.scalajslib.api.ModuleKind.CommonJSModule)
+  }
+}
+
+trait FullJsModule extends JsModule with SimpleJSDeps {
+  override def ivyDeps = super.ivyDeps() ++ Agg(
+    ivy"org.julianmichael::jjm-ui::$jjmVersion",
+    ivy"org.scala-js::scalajs-dom::$scalajsDomVersion",
+    ivy"be.doeraene::scalajs-jquery::$scalajsJqueryVersion",
+    ivy"com.github.japgolly.scalacss::ext-react::$scalacssVersion"
+  )
+  override def jsDeps = Agg(
+    "https://code.jquery.com/jquery-2.1.4.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react/15.6.1/react-dom.js"
+  )
+}
+
 object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
   object `clause-ext` extends Module {
     object js extends JsModule
-    object jvm extends JvmModule {
-      object test extends Tests {
-        override def millSourcePath = `clause-ext`.this.millSourcePath / "test"
-        override def scalaVersion = jvm.this.scalaVersion
-        // def platformSegment = jvm.this.platformSegment
-        override def ivyDeps = Agg(
-          ivy"org.scalatest::scalatest:$scalatestVersion",
-          ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-          ivy"org.typelevel::discipline-core:$disciplineVersion"
-          // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
-        )
-        def testFrameworks = Seq("org.scalatest.tools.Framework")
-      }
-    }
+    object jvm extends JvmModule
   }
 
   // object `clause-ext-ann` extends Module {
@@ -268,46 +276,36 @@ object qfirst extends Module {
   }
 
   object `frame-ann` extends Module {
-    object js extends FullJsModule {
-      def moduleDeps = Seq(frame.js, `clause-ext`.js)
-    }
-    object jvm extends FullJvmModule {
+    object jvm extends FullJvmModule { def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm) }
+    object js extends FullJsModule { def moduleDeps = Seq(frame.js, `clause-ext`.js) }
 
-      def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm)
-
-      def serve(args: String*) = T.command {
-        val jsPath = `frame-ann`.js.fastOpt().path.toString
-        val jsDepsPath = `frame-ann`.js.aggregatedJSDeps().path.toString
-        val runMain = runMainFn()
-        runMain(
-          "qfirst.frame.ann.Serve",
-          List(
-            "--jsDeps", jsDepsPath,
-            "--js", jsPath
-          ) ++ args)
-      }
+    def serve(args: String*) = T.command {
+      val jsPath = js.fastOpt().path.toString
+      val jsDepsPath = js.aggregatedJSDeps().path.toString
+      val runMain = jvm.runMainFn()
+      runMain(
+        "qfirst.frame.ann.Serve",
+        List(
+          "--jsDeps", jsDepsPath,
+          "--js", jsPath
+        ) ++ args)
     }
   }
 
   object `frame-browse` extends Module {
-    object js extends FullJsModule {
-      def moduleDeps = Seq(frame.js)
-    }
-    object jvm extends FullJvmModule {
+    object jvm extends FullJvmModule { def moduleDeps = Seq(frame.jvm) }
+    object js extends FullJsModule { def moduleDeps = Seq(frame.js) }
 
-      def moduleDeps = Seq(frame.jvm)
-
-      def serve(args: String*) = T.command {
-        val jsPath = `frame-browse`.js.fastOpt().path.toString
-        val jsDepsPath = `frame-browse`.js.aggregatedJSDeps().path.toString
-        val runMain = runMainFn()
-        runMain(
-          "qfirst.frame.browse.Serve",
-          List(
-            "--jsDeps", jsDepsPath,
-            "--js", jsPath
-          ) ++ args)
-      }
+    def serve(args: String*) = T.command {
+      val jsPath = js.fastOpt().path.toString
+      val jsDepsPath = js.aggregatedJSDeps().path.toString
+      val runMain = jvm.runMainFn()
+      runMain(
+        "qfirst.frame.browse.Serve",
+        List(
+          "--jsDeps", jsDepsPath,
+          "--js", jsPath
+        ) ++ args)
     }
   }
 
@@ -315,39 +313,7 @@ object qfirst extends Module {
     object jvm extends FullJvmModule
   }
   object `model-eval` extends Module {
-    object js extends JsModule {
-      def moduleDeps = Seq(`clause-ext`.js)
-    }
-    object jvm extends FullJvmModule {
-      def moduleDeps = Seq(`clause-ext`.js)
-    }
+    object jvm extends FullJvmModule { def moduleDeps = Seq(`clause-ext`.js) }
+    object js extends JsModule { def moduleDeps = Seq(`clause-ext`.js) }
   }
-
-  // object datasets extends Module {
-  //   object js extends JsModule {
-  //     override def ivyDeps = super.ivyDeps() ++ Agg(
-  //       ivy"com.lihaoyi::fastparse::$fastparseVersion"
-  //     )
-  //   }
-  //   object jvm extends JvmModule {
-  //     override def ivyDeps = super.ivyDeps() ++ Agg(
-  //       ivy"com.lihaoyi::fastparse::$fastparseVersion"
-  //     )
-  //     object test extends Tests {
-  //       def moduleDeps = super.moduleDeps
-  //       override def millSourcePath = datasets.this.millSourcePath / "test"
-  //       override def scalaVersion = jvm.this.scalaVersion
-  //       // def platformSegment = jvm.this.platformSegment
-  //       override def ivyDeps = Agg(
-  //         ivy"org.julianmichael::freelog::$freelogVersion",
-  //         ivy"org.scalatest::scalatest:$scalatestVersion",
-  //         ivy"org.scalacheck::scalacheck:$scalacheckVersion",
-  //         ivy"org.typelevel::discipline-core:$disciplineVersion"
-  //           // ivy"org.typelevel::discipline-scalatest:$disciplineVersion-SNAPSHOT"
-  //       )
-  //       def testFrameworks = Seq("org.scalatest.tools.Framework")
-  //     }
-  //   }
-  // }
-
 }
