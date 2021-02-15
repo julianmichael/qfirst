@@ -175,6 +175,11 @@ object qfirst extends Module {
 
   override def millSourcePath = build.millSourcePath / "qfirst-scala"
 
+  object cafe extends Module {
+    object js extends JsModule
+    object jvm extends JvmModule
+  }
+
   object `clause-ext` extends Module {
     object js extends JsModule
     object jvm extends JvmModule
