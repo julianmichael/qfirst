@@ -225,7 +225,7 @@ object Predication {
   case class Oblique(
     typ: Option[ObliqueType],
     prepPhrase: Option[PrepPhrase]
-  ) extends NounOrOblique with NonObjectArgument {
+  ) extends NounOrOblique with NonNominalArgument {
     override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
       def validTree(x: LabeledTreeChild[String, String]) =
         Validated.valid(LabeledTree("pp" -> x))
@@ -253,13 +253,13 @@ object Predication {
   case class Copular(
     subject: Option[Subject],
     predicate: NounOrOblique,
-    complements: Vector[NonObjectArgument]
+    complements: Vector[NonNominalArgument]
   ) extends Predication
 
   case class Adjectival(
     subject: Option[Subject],
     adjective: Option[Adjective],
-    arguments: Vector[NonNominalPredication]
+    arguments: Vector[NonNominalArgument]
   ) extends Predication {
     override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
       def validLeaf(x: String) =
@@ -281,18 +281,35 @@ object Predication {
     }
   }
 
-  sealed trait ClauseType
-  // active verb, be + passive verb, copula,
-  // be + progressive, have + perfect, have been + progressive,
-  // have been + passive, have been + copula
-  // 
-  case class Bare(
-    verb: VerbStructure
-  ) extends ClauseType
-  case object Participle extends ClauseType
-  case object Progressive extends ClauseType
-  case object Infinitive extends ClauseType
-  case object Finite extends ClauseType
+  // TODO:
+  // verb/clause rendering
+  // gapping
+  // rendering questions, filling gaps, adding rich info to errors
+  // relative clauses, free relatives, embedded questions
+
+  // @JsonCodec @Lenses case class TAN(
+  //   tense: Tense,
+  //   isPerfect: Boolean,
+  //   isProgressive: Boolean,
+  //   isNegated: Boolean
+  // ) {
+  //   def getVerbPrefixAndForm(
+  //     isPassive: Boolean,
+  //     subjectPresent: Boolean
+  //   ): (List[LowerCaseString], VerbForm) = {
+  //     val dummyFrame = Frame(
+  //       ArgStructure(DependentMap.empty[ArgumentSlot.Aux, Id], isPassive),
+  //       InflectedForms.generic, this)
+  //     val initVerbStack = dummyFrame.getVerbStack
+  //     val verbStack = if(subjectPresent) {
+  //       dummyFrame.splitVerbStackIfNecessary(initVerbStack)
+  //     } else initVerbStack
+  //     val verbPrefix = verbStack.init.map(_.lowerCase)
+  //     val verbForm = dummyFrame.getVerbConjugation(subjectPresent)
+  //     verbPrefix -> verbForm
+  //   }
+  // }
+  // object TAN
 
   // argument: 'he helped (me/_) do the laundry / finish the homework.'
   // argument: 'he helped (me/*_) be designated as leader.'
@@ -348,38 +365,7 @@ object Predication {
   //   -- TODO: aspectual possibilities
   //  - infinitive: 'he to go to the store': again 2 args.
 
-  // case class BareComplement(
-  //   complementizer: Complementizer,
-  //   subject: Nominal,
-  //   verbPhrase: VoicedVerbPhrase
-  // ) extends NonNominalPredication
-
   // for-np-to-vp
-  case class InfinitiveComplement(
-    complementizer: InfinitiveComplementizer,
-    subject: RelaxedNominal,
-    infinitive: Infinitive
-  ) extends RelaxedNominal with NonNominalPredication
-
-  case class GerundiveClause(
-    subject: Nominal,
-    gerund: Gerund
-  ) extends Nominal with Adverbial
-
-  // TODO more features for rendering
-  case class FiniteClause(
-    subject: RelaxedNominal,
-    verb: VoicedVerbPhrase
-  ) extends NonNominalPredication
-
-  case class FiniteComplement(
-    complementizer: Complementizer,
-    clause: FiniteClause
-  ) extends RelaxedNominal with NonNominalPredication
-
-  // for adverbials like 'today', 'every day' etc.
-  // as well as adverbs (quickly, eventually)
-  case object SimpleAdverbial extends Adverbial
 
   // types of subordinate clause:
   //  - finite: because he didn't know what he was doing
@@ -387,10 +373,6 @@ object Predication {
   //  - ??? bare: lest he be scolded for his actions. very rare / archaic(?)
   //  - xxx infinitive: because him to know what he was doing .. no
   // only finite
-  case class SubordinateClause(
-    subordinator: Subordinator,
-    clause: FiniteClause
-  ) extends Adverbial
 
   // types of subordinate clause:
   //  - gerund: when knowing what he was doing?, while walking away
@@ -402,51 +384,16 @@ object Predication {
   //  - infinitive: in order to know what he was doing
   //    are there any others that look like this?
   // only finite
-  case class SubordinateOpenClause(
-    subordinator: Subordinator,
-    complement: Subordinable
-  ) extends Adverbial
 
   // participial modifiers:
   //  - present participial (the bomb exploded, destroying the building.) // covered by gerund
   //  - passive/past participial (worried by the news, she called the hospital.)
   //  - perfect participial (having gotten dressed, he slowly went downstairs.)
-  case class PerfectParticipial(verb: VoicedVerbPhrase) extends Subordinable
-  case class PassiveParticipial(verb: VerbPhrase) extends Subordinable
 
   // DONE?
   // maybe do something with internal gapping (e.g., 'he felt taken advantage of')
   //  - actually no: this is fine. the 'gap' was already moved to subj position.
   //  - 'non-subj' gaps or whatever may only be a problem in actual relative clauses
-  // TODO:
-  // verb/clause rendering
-  // gapping
-  // rendering questions, filling gaps, adding rich info to errors
-  // relative clauses, free relatives, embedded questions
-
-  // @JsonCodec @Lenses case class TAN(
-  //   tense: Tense,
-  //   isPerfect: Boolean,
-  //   isProgressive: Boolean,
-  //   isNegated: Boolean
-  // ) {
-  //   def getVerbPrefixAndForm(
-  //     isPassive: Boolean,
-  //     subjectPresent: Boolean
-  //   ): (List[LowerCaseString], VerbForm) = {
-  //     val dummyFrame = Frame(
-  //       ArgStructure(DependentMap.empty[ArgumentSlot.Aux, Id], isPassive),
-  //       InflectedForms.generic, this)
-  //     val initVerbStack = dummyFrame.getVerbStack
-  //     val verbStack = if(subjectPresent) {
-  //       dummyFrame.splitVerbStackIfNecessary(initVerbStack)
-  //     } else initVerbStack
-  //     val verbPrefix = verbStack.init.map(_.lowerCase)
-  //     val verbForm = dummyFrame.getVerbConjugation(subjectPresent)
-  //     verbPrefix -> verbForm
-  //   }
-  // }
-  // object TAN
 
 
 }
