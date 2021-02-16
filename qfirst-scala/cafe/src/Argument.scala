@@ -62,6 +62,7 @@ sealed trait Predication {
 object Predication {
   case class Preposition(form: LowerCaseString)
   case class Complementizer(form: LowerCaseString)
+  case class InfinitiveComplementizer(form: LowerCaseString)
   case class Subordinator(form: LowerCaseString)
   case class Adjective(form: LowerCaseString)
   case class Verb(forms: InflectedForms)
@@ -110,8 +111,11 @@ object Predication {
   // anything right side of adjective
   sealed trait NonNominalPredication extends Predication
 
+  // includes adverbs ('quickly', 'happily' etc.), obliques (PPs),
+  // adjective phrases (as they can act predicatively),
   sealed trait Adverbial extends NonNominalPredication
-  sealed trait Oblique extends Adverbial with NonVerbalPredication
+  // gerunds and participials which may appear after subordinators
+  sealed trait Subordinable extends Adverbial
 
   // anything that can appear as subject. includes:
   //  - infinitives (to err is human)
@@ -225,13 +229,12 @@ object Predication {
   // argument: 'he helped (me/*_) be the man i wanted to be.'
   // verbs: help, make (make him do his hw), go (go swim).
   // not included in NonNominalPredication bc can't appear as an adjective argument (?)
-  // not Verbal because can't be used directly to form useful clauses (see below)
-  sealed trait VoicedVerbPhrase extends Predication
+  sealed trait VoicedVerbPhrase extends VerbalPredication with Subordinable
   case class Active(verb: VerbPhrase) extends VoicedVerbPhrase
   case class Passive(verb: VerbPhrase) extends VoicedVerbPhrase
   case class Copula(predicate: NonVerbalPredication) extends VoicedVerbPhrase
 
-  // nominal: I gave killing flies to him. ...?
+  // nominal?: I gave killing flies to him. ...?
   // can appear:
   //  - anywhere a noun can
   //  - argument of a verb: 'he loves doing yardwork' / having done yardwork / having been doing yw
@@ -239,14 +242,15 @@ object Predication {
   //  - adverbial of a verb: 'he is perfectly happy keeping to himself'/having gone only once
   case class Gerund(
     verb: VoicedVerbPhrase // TODO aspect
-  ) extends Nominal with VerbalPredication with NonNominalPredication
+  ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
+
   // can appear as:
   //  - subject of finite clause: to err is human
   //  - open complement of verb: he wants to help
   //  - open complement of adjective: he is happy to help
   case class Infinitive(
     verb: VoicedVerbPhrase
-  ) extends VerbalPredication with NonNominalPredication with RelaxedNominal
+  ) extends RelaxedNominal with VerbalPredication with NonNominalPredication
 
   // many types of clause:
   //  - active 'he go to the store': any use? no? helped him go to the store. 2 args
@@ -262,24 +266,23 @@ object Predication {
   //   -- TODO: aspectual possibilities
   //  - infinitive: 'he to go to the store': again 2 args.
 
-  case class BareComplement(
-    complementizer: Complementizer,
-    subject: Nominal,
-    verbPhrase: VoicedVerbPhrase
-  ) extends NonNominalPredication
+  // case class BareComplement(
+  //   complementizer: Complementizer,
+  //   subject: Nominal,
+  //   verbPhrase: VoicedVerbPhrase
+  // ) extends NonNominalPredication
 
   // for-np-to-vp
   case class InfinitiveComplement(
     complementizer: InfinitiveComplementizer,
-    subject: Nominal,
+    subject: RelaxedNominal,
     infinitive: Infinitive
-  ) extends RelaxedNominal
+  ) extends RelaxedNominal with NonNominalPredication
 
   case class GerundiveClause(
     subject: Nominal,
     gerund: Gerund
-  ) extends Nominal
-
+  ) extends Nominal with Adverbial
 
   // TODO more features for rendering
   case class FiniteClause(
@@ -290,7 +293,7 @@ object Predication {
   case class FiniteComplement(
     complementizer: Complementizer,
     clause: FiniteClause
-  ) extends NonNominalPredication with RelaxedNominal
+  ) extends RelaxedNominal with NonNominalPredication
 
   // for adverbials like 'today', 'every day' etc.
   // as well as adverbs (quickly, eventually)
@@ -298,24 +301,36 @@ object Predication {
 
   // types of subordinate clause:
   //  - finite: because he didn't know what he was doing
-  //  - xxx gerund?: because knowing what he was doing? no
+  //  - --- gerund: despite him knowing what he was doing --- can model as PP
   //  - ??? bare: lest he be scolded for his actions. very rare / archaic(?)
+  //  - xxx infinitive: because him to know what he was doing .. no
+  // only finite
   case class SubordinateClause(
     subordinator: Subordinator,
-    clause: Clause
+    clause: FiniteClause
   ) extends Adverbial
 
+  // types of subordinate clause:
+  //  - gerund: when knowing what he was doing?, while walking away
+  //    - although, though, while, since, after, as soon as, whenever, when, until
+  //  - both kinds of participial
+  //    - although (worried by the news / having talked through tears)
+  //    - while (worried by the news / having talked through tears)
+  //  - be: lest be scolded for his actions. no
+  //  - infinitive: in order to know what he was doing
+  //    are there any others that look like this?
+  // only finite
   case class SubordinateOpenClause(
     subordinator: Subordinator,
-    clause: Clause
+    complement: Subordinable
   ) extends Adverbial
 
   // participial modifiers:
   //  - present participial (the bomb exploded, destroying the building.) // covered by gerund
-  //  - past participial (worried by the news, she called the hospital.)
+  //  - passive/past participial (worried by the news, she called the hospital.)
   //  - perfect participial (having gotten dressed, he slowly went downstairs.)
-  case class PerfectParticipial(verb: VoicedVerbPhrase) extends Adverbial
-  case class PassiveParticipial(verb: VerbPhrase) extends Adverbial
+  case class PerfectParticipial(verb: VoicedVerbPhrase) extends Subordinable
+  case class PassiveParticipial(verb: VerbPhrase) extends Subordinable
 
   // DONE?
   // maybe do something with internal gapping (e.g., 'he felt taken advantage of')
