@@ -6,7 +6,7 @@ import $ivy.`com.lihaoyi::mill-contrib-bloop:$MILL_VERSION`
 
 import ammonite.ops._
 
-val thisScalaVersion = "2.12.13"
+val thisScalaVersion = "2.12.12"
 val thisScalaJSVersion = "1.4.0"
 
 // locally published lib
@@ -18,6 +18,8 @@ val qasrlVersion = "0.3.0"
 // val qasrlBankVersion = "0.3.0"
 // val spacroVersion = "0.4.0"
 val freelogVersion = "0.1.0"
+
+val mouseVersion = "0.26.2"
 
 // compiler plugins
 val macroParadiseVersion = "2.1.1"
@@ -90,8 +92,9 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
   override def ivyDeps = Agg(
     ivy"org.julianmichael::jjm-core::$jjmVersion",
     ivy"org.julianmichael::jjm-io::$jjmVersion",
-    // ivy"org.typelevel::alleycats-core::$catsVersion",
+    ivy"org.typelevel::mouse::$mouseVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
+    // ivy"org.typelevel::alleycats-core::$catsVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank-service::$qasrlVersion",
