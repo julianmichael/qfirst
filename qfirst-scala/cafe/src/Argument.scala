@@ -60,6 +60,7 @@ sealed trait Predication {
     Validated.invalid(NonEmptyChain.one(Predication.Error(this, msg)))
 }
 object Predication {
+  case class Expletive(form: LowerCaseString) // it, there
   case class Preposition(form: LowerCaseString)
   case class Complementizer(form: LowerCaseString)
   case class InfinitiveComplementizer(form: LowerCaseString)
@@ -106,8 +107,6 @@ object Predication {
   // anything that can be combined with a subject to produce a clause
   // (finite or non-finite)
   sealed trait VerbalPredication extends Predication
-  // anything right-side of copula
-  sealed trait NonVerbalPredication extends Predication
   // anything right side of adjective
   sealed trait NonNominalPredication extends Predication
 
@@ -121,11 +120,73 @@ object Predication {
   //  - infinitives (to err is human)
   //  - that-comps (That he's still smoking distresses me greatly.)
   //  - for-np-to-vp (For him to stop would [be a momentous shift] / [thrill me].)
-  sealed trait RelaxedNominal extends NonVerbalPredication
+  sealed trait RelaxedNominal extends Predication
   // anything that can be object of a preposition,
   // i.e., nouns and gerunds, gerunds with subject
   // (not represented at all: gerunds with possessive subject)
   sealed trait Nominal extends RelaxedNominal
+
+  // just nouns or obliques, to help with defining copulas
+  sealed trait NounOrOblique extends Predication
+
+  // sealed trait Noun extends NounOrOblique
+
+  // predicate structure
+  sealed trait Predication {
+    def subject: Option[Subject]
+  }
+  // argument structure (with slots etc.)
+  sealed trait Argument {
+  }
+  sealed trait Subject extends Argument {
+    def animate: Option[Boolean]
+    def person: Option[Person]
+    def number: Option[Number]
+  }
+  sealed trait NonSubjectArgument extends Argument
+  sealed trait NonNominalArgument extends NonSubjectArgument
+  sealed trait Complement extends NonNominalArgument
+  sealed trait NounOrOblique extends Argument
+  sealed trait Nominal extends NominalOrOblique {
+    def animate: Option[Boolean]
+  }
+  // for adverbials like 'today', 'every day' etc.
+  // as well as adverbs (quickly, eventually)
+  case object SimpleAdverbial extends NonNominalArgument
+  case class Gerund(
+    pred: Predication, includeSubject: Boolean
+  ) extends Subject with Nominal {
+    def animate = Some(false)
+    def person = Some(Person.Third)
+    def number = Some(Number.Singular)
+  }
+  case class Infinitive(
+    pred: Predication, includeSubject: Boolean) extends Complement with Subject
+
+  case class PresentParticipial(
+    pred: Predication, includeSubject: Boolean) extends Complement
+
+  case class PassiveParticipial(
+    pred: Predication, includeSubject: Boolean) extends Complement
+
+  case class FiniteClause(
+    pred: Predication) extends Complement
+
+  case class ComplementClause(
+    pred: Predication, complementizer: Complementizer) extends Complement with Subject
+
+  case class SubordinateClause(
+    subordinator: Subordinator, clause: Complement) extends NonNominalArgument
+
+  case class ExpletiveNoun(expletive: Expletive) extends Subject {
+    def typ = None
+    def animate = Some(false)
+    def person = Some(Person.Third)
+    def number = Some(Number.Singular)
+    override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
+      Validated.valid(LabeledTree.leaves("noun[expl]" -> expletive.form.toString))
+    }
+  }
 
   case class NounRealization(
     form: String,
@@ -133,10 +194,10 @@ object Predication {
     number: Option[Number]
   )
 
-  case class Noun(
+  case class NounPhrase(
     realization: Option[NounRealization],
-    animate: Option[Boolean]
-  ) extends Nominal {
+    val animate: Option[Boolean]
+  ) extends Subject with Nominal {
     override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
       def validLeaf(x: String) = Validated.valid(LabeledTree.leaves("noun" -> x))
       realization.map(_.form).map(validLeaf)
@@ -160,10 +221,11 @@ object Predication {
     preposition: Preposition, // TODO NonEmptyList of prepositions?
     obj: PrepObjRealization
   )
+
   case class Oblique(
     typ: Option[ObliqueType],
     prepPhrase: Option[PrepPhrase]
-  ) extends NonVerbalPredication with Adverbial {
+  ) extends NounOrOblique with NonObjectArgument {
     override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
       def validTree(x: LabeledTreeChild[String, String]) =
         Validated.valid(LabeledTree("pp" -> x))
@@ -187,20 +249,26 @@ object Predication {
       }
     }
   }
-  case class AdjectivePhrase(
-    typ: Option[PhraseType],
+
+  case class Copular(
+    subject: Option[Subject],
+    predicate: NounOrOblique,
+    complements: Vector[NonObjectArgument]
+  ) extends Predication
+
+  case class Adjectival(
+    subject: Option[Subject],
     adjective: Option[Adjective],
     arguments: Vector[NonNominalPredication]
-    // obliques: Vector[Oblique],
-    // adverbials: Vector[Adverbial]
-  ) extends NonVerbalPredication {
+  ) extends Predication {
     override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
       def validLeaf(x: String) =
         Validated.valid(LabeledTree.leaves("adjp" -> x))
       def validTree(x: LabeledTreeChild[String, String]) =
         Validated.valid(LabeledTree("adjp" -> x))
       adjective match {
-        case None => typ.flatMap(_.placeholderOpt).fold(invalid())(p => validLeaf(p.toString))
+        case None => invalid()
+          // typ.flatMap(_.placeholderOpt).fold(invalid())(p => validLeaf(p.toString))
         case Some(adjective) =>
           arguments.traverse(_.render).map { args =>
             LabeledTree(
@@ -213,35 +281,37 @@ object Predication {
     }
   }
 
-  case class VerbPhrase(
-    verb: Verb,
-    arguments: Vector[Predication]
-    // particle: Option[Preposition],
-    // objects: Vector[Nominal],
-    // obliques: Vector[Oblique],
-    // adverbials: Vector[Adverbial]
-  ) {
-    // def renderArgs
-  }
+  sealed trait ClauseType
+  // active verb, be + passive verb, copula,
+  // be + progressive, have + perfect, have been + progressive,
+  // have been + passive, have been + copula
+  // 
+  case class Bare(
+    verb: VerbStructure
+  ) extends ClauseType
+  case object Participle extends ClauseType
+  case object Progressive extends ClauseType
+  case object Infinitive extends ClauseType
+  case object Finite extends ClauseType
 
   // argument: 'he helped (me/_) do the laundry / finish the homework.'
   // argument: 'he helped (me/*_) be designated as leader.'
   // argument: 'he helped (me/*_) be the man i wanted to be.'
   // verbs: help, make (make him do his hw), go (go swim).
   // not included in NonNominalPredication bc can't appear as an adjective argument (?)
-  sealed trait VoicedVerbPhrase extends VerbalPredication with Subordinable
+  // sealed trait VoicedVerbPhrase extends VerbalPredication with Subordinable
 
   // aspects: unmarked (go), perfect (have gone), progressive (be going),
   // perfect progressive (have been going)
-  case class Active(verb: VerbPhrase) extends VoicedVerbPhrase
+  // case class Active(verb: VerbPhrase) extends VoicedVerbPhrase
 
   // aspects: unmarked (be broken), perfect (have been broken), progressive (being broken),
   // no perfect progressive? (having been being broken?)
-  case class Passive(verb: VerbPhrase) extends VoicedVerbPhrase
+  // case class Passive(verb: VerbPhrase) extends VoicedVerbPhrase
 
   // aspects: unmarked (be happy), perfect (have been happy), progressive (being happy),
   // no perfect progressive? (having been being happy?)
-  case class Copula(predicate: NonVerbalPredication) extends VoicedVerbPhrase
+  // case class Copula(predicate: NonVerbalPredication) extends VoicedVerbPhrase
 
   // nominal?: I gave killing flies to him. ...?
   // can appear:
@@ -252,17 +322,17 @@ object Predication {
   // aspects (active): unmarked (going), perfect (having gone), perfect progressive (having been going)
   // aspects (passive): unmarked (being broken), perfect (having been broken)
   // aspects (passive): unmarked (being broken), perfect (having been broken)
-  case class Gerund(
-    verb: VoicedVerbPhrase // TODO aspect
-  ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
+  // case class Gerund(
+  //   verb: VoicedVerbPhrase // TODO aspect
+  // ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
 
   // can appear as:
   //  - subject of finite clause: to err is human
   //  - open complement of verb: he wants to help
   //  - open complement of adjective: he is happy to help
-  case class Infinitive(
-    verb: VoicedVerbPhrase
-  ) extends RelaxedNominal with VerbalPredication with NonNominalPredication
+  // case class Infinitive(
+  //   verb: VoicedVerbPhrase
+  // ) extends RelaxedNominal with VerbalPredication with NonNominalPredication
 
   // many types of clause:
   //  - active 'he go to the store': any use? no? helped him go to the store. 2 args
