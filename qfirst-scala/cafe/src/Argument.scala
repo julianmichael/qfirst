@@ -230,8 +230,17 @@ object Predication {
   // verbs: help, make (make him do his hw), go (go swim).
   // not included in NonNominalPredication bc can't appear as an adjective argument (?)
   sealed trait VoicedVerbPhrase extends VerbalPredication with Subordinable
+
+  // aspects: unmarked (go), perfect (have gone), progressive (be going),
+  // perfect progressive (have been going)
   case class Active(verb: VerbPhrase) extends VoicedVerbPhrase
+
+  // aspects: unmarked (be broken), perfect (have been broken), progressive (being broken),
+  // no perfect progressive? (having been being broken?)
   case class Passive(verb: VerbPhrase) extends VoicedVerbPhrase
+
+  // aspects: unmarked (be happy), perfect (have been happy), progressive (being happy),
+  // no perfect progressive? (having been being happy?)
   case class Copula(predicate: NonVerbalPredication) extends VoicedVerbPhrase
 
   // nominal?: I gave killing flies to him. ...?
@@ -240,6 +249,9 @@ object Predication {
   //  - argument of a verb: 'he loves doing yardwork' / having done yardwork / having been doing yw
   //  - adverbial of a verb: 'he walked to the store carrying his suitcase'/having done bad stuff/etc
   //  - adverbial of a verb: 'he is perfectly happy keeping to himself'/having gone only once
+  // aspects (active): unmarked (going), perfect (having gone), perfect progressive (having been going)
+  // aspects (passive): unmarked (being broken), perfect (having been broken)
+  // aspects (passive): unmarked (being broken), perfect (having been broken)
   case class Gerund(
     verb: VoicedVerbPhrase // TODO aspect
   ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
