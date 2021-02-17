@@ -9,6 +9,7 @@ import cats.data.ValidatedNec
 import cats.data.NonEmptyChain
 import cats.implicits._
 import mouse.all._
+import cats.kernel.Monoid
 
 // S4: Simple Surrogate Syntactic Semantics
 
@@ -30,7 +31,10 @@ sealed trait PhraseType {
   def placeholderOpt: Option[LowerCaseString]
 }
 object PhraseType {
-  sealed trait NominalType extends PhraseType
+  sealed trait NominalType extends PhraseType {
+    final def placeholderOpt: Some[LowerCaseString] = Some(placeholder)
+    def placeholder: LowerCaseString
+  }
   sealed trait AdverbialType extends PhraseType
 
   object What extends NominalType {
@@ -43,7 +47,7 @@ object PhraseType {
   }
   object Where extends AdverbialType {
     def wh = "where".lowerCase
-    def placeholder = "somewhere".lowerCase
+    def placeholderOpt = Some("somewhere".lowerCase)
   }
 }
 
@@ -60,15 +64,32 @@ object Number {
   case object Plural extends Number
 }
 
+sealed trait Component {
+  protected[Component] def leaf(label: String, content: String) = {
+    Validated.valid(LabeledTree.leaves(label -> content))
+  }
+  protected[Component] def error(msg: String) = Component.RenderError(this, msg)
+  protected[Component] def invalid(
+    msg: String = "Incomplete component."
+  ): Component.RenderResult =
+    Validated.invalid(NonEmptyChain.one(error(msg)))
+}
+object Component {
+  case class RenderError(component: Component, msg: String)
+  type RenderResult = ValidatedNec[RenderError, LabeledTree[String, String]]
+}
+
 // argument structure (with slots etc.)
-sealed trait Argument {
+sealed trait Argument extends Component {
+  def render: Component.RenderResult
 }
 object Argument {
+  import Component._
   import Lexicon._
   import PhraseType._
   // can appear as subject
   sealed trait Subject extends Argument {
-    def animate: Option[Boolean]
+    // def animate: Option[Boolean]
     def person: Option[Person]
     def number: Option[Number]
   }
@@ -83,38 +104,85 @@ object Argument {
   sealed trait NounOrOblique extends NonSubjectArgument
   // can appear as the object of a preposition
   sealed trait Nominal extends NonSubjectArgument {
-    def animate: Option[Boolean]
+    // def animate: Option[Boolean]
   }
   // for adverbials like 'today', 'every day' etc.
   // as well as adverbs (quickly, eventually)
-  case object SimpleAdverbial extends NonNominalArgument
+  case class Adverbial(
+    form: Option[String]
+  ) extends NonNominalArgument {
+    override def render: Component.RenderResult = {
+      form.fold(invalid("Missing adverbial form."))(leaf("adv", _))
+    }
+  }
   // nominal use of gerund/progressive; can be object of prep or subject
   case class Gerund(
     pred: Predication, includeSubject: Boolean
+      // TODO possessive subject option
   ) extends Subject with Nominal {
-    def animate = Some(false)
+
+    override def render: Component.RenderResult =
+      pred.render(ClauseType.Progressive, includeSubject)
+
+    // def animate = Some(false)
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
   }
   // various possible forms of complements:
   // may be specific to a predicate's (or subordinator's!) subcat frame.
   case class Infinitive(
-    pred: Predication, includeSubject: Boolean) extends Complement with Subject
+    pred: Predication, includeSubject: Boolean
+  ) extends Complement with Subject {
+
+    def person = Some(Person.Third)
+    def number = Some(Number.Singular)
+
+    def render: Component.RenderResult =
+      pred.render(ClauseType.Infinitive, includeSubject)
+  }
 
   case class Progressive(
-    pred: Predication, includeSubject: Boolean) extends Complement
+    pred: Predication, includeSubject: Boolean
+  ) extends Complement {
+    def render: Component.RenderResult =
+      pred.render(ClauseType.Progressive, includeSubject)
+  }
 
   case class Attributive(
-    pred: Predication.NonCopular, includeSubject: Boolean) extends Complement
+    pred: Predication.NonCopular, includeSubject: Boolean
+  ) extends Complement {
+    def render: Component.RenderResult =
+      pred.render(ClauseType.Attributive, includeSubject)
+  }
 
-  case class FiniteClause(
-    pred: Predication) extends Complement
+  case class Finite(
+    pred: Predication
+  ) extends Complement {
+    def render: Component.RenderResult =
+      pred.render(ClauseType.Finite, true)
+  }
 
-  case class ComplementClause(
-    pred: Predication, complementizer: Complementizer) extends Complement with Subject
+  case class FiniteComplement(
+    pred: Predication, complementizer: Complementizer
+  ) extends Complement with Subject {
+
+    def person = Some(Person.Third)
+    def number = Some(Number.Singular)
+
+    def render: Component.RenderResult = List(
+      Validated.valid(LabeledTree.leaves("comp" -> complementizer.form.toString)),
+      pred.render(ClauseType.Finite, true)
+    ).foldA
+  }
 
   case class SubordinateClause(
-    subordinator: Subordinator, clause: Complement) extends NonNominalArgument
+    subordinator: Subordinator, clause: Complement
+  ) extends NonNominalArgument {
+    def render: Component.RenderResult = List(
+      Validated.valid(LabeledTree.leaves("sub" -> subordinator.form.toString)),
+      clause.render
+    ).foldA
+  }
 
   // expletive 'it' or 'there'; can only appear as subject
   case class ExpletiveNoun(expletive: Expletive) extends Subject {
@@ -122,7 +190,7 @@ object Argument {
     def animate = Some(false)
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
-    override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
+    override def render: RenderResult = {
       Validated.valid(LabeledTree.leaves("noun[expl]" -> expletive.form.toString))
     }
   }
@@ -137,7 +205,7 @@ object Argument {
     realization: Option[NounRealization],
     val animate: Option[Boolean]
   ) extends Subject with Nominal {
-    override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
+    override def render: RenderResult = {
       def validLeaf(x: String) = Validated.valid(LabeledTree.leaves("noun" -> x))
       realization.map(_.form).map(validLeaf)
         .orElse(animate.map(_.fold("someone", "something")).map(validLeaf(_)))
@@ -165,7 +233,7 @@ object Argument {
     typ: Option[AdverbialType],
     prepPhrase: Option[PrepPhrase]
   ) extends NounOrOblique with NonNominalArgument {
-    override def render: ValidatedNec[Error, LabeledTree[String, String]] = {
+    override def render: RenderResult = {
       def validTree(x: LabeledTreeChild[String, String]) =
         Validated.valid(LabeledTree("pp" -> x))
       def validLeaf(x: String) =
@@ -200,11 +268,10 @@ object ClauseType {
   case object Finite extends VerbalClauseType
 }
 
-sealed trait Predication {
+sealed trait Predication extends Component {
   def subject: Option[Argument.Subject]
-  def render(clauseType: ClauseType, includeSubject: Boolean): ValidatedNec[
-    Predication.Error, LabeledTree[String, String]
-  ]
+  def render(clauseType: ClauseType, includeSubject: Boolean): Component.RenderResult
+  def tan: TAN
 
   def renderSubject(includeSubject: Boolean) = {
     if(!includeSubject) {
@@ -214,26 +281,20 @@ sealed trait Predication {
       case Some(subj) => subj.render
     }
   }
-
-  protected[Predication] def error(msg: String) = Predication.Error(this, msg)
-  protected[Predication] def invalid(
-    msg: String = "Incomplete predication."
-  ): ValidatedNec[Predication.Error, LabeledTree[String, String]] =
-    Validated.invalid(NonEmptyChain.one(error(msg)))
 }
 object Predication {
+  import Component._
   import Lexicon._
   import PhraseType._
   import Argument._
 
-  case class Error(predication: Predication, msg: String)
-  type RenderResult = ValidatedNec[Error, LabeledTree[String, String]]
-
   case class Copular(
     subject: Option[Subject],
     mainArgument: NounOrOblique,
-    otherArguments: Vector[NonNominalArgument]
+    otherArguments: Vector[NonNominalArgument],
+    tan: TAN
   ) extends Predication {
+
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
       val subj = renderSubject(includeSubject)
       val arguments = mainArgument +: otherArguments
@@ -242,7 +303,9 @@ object Predication {
         case ClauseType.Attributive =>
           invalid("Cannot construct attributive clause from a copula.")
         case otherType: ClauseType.VerbalClauseType =>
-          val aux = tan.getCopulaAuxChain(otherType, subject)
+          val aux = Validated.fromEither(
+            tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
+          ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
           List(subj, aux, args).foldA
       }
     }
@@ -253,17 +316,20 @@ object Predication {
   case class Adjectival(
     subject: Option[Subject],
     adjective: Adjective,
-    arguments: Vector[NonNominalArgument]
+    arguments: Vector[NonNominalArgument],
+    tan: TAN
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
-      val adj = Validated.valid(LabeledTree.leaves("adj" -> adjective.form))
+      val adj = Validated.valid(LabeledTree.leaves("adj" -> adjective.form.toString))
       val subj = renderSubject(includeSubject)
       val args = arguments.foldMapA(_.render)
       clauseType match {
         case ClauseType.Attributive =>
           List(subj, adj, args).foldA
         case otherType: ClauseType.VerbalClauseType =>
-          val aux = tan.getCopulaAuxChain(otherType, subject)
+          val aux = Validated.fromEither(
+            tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
+          ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
           List(subj, aux, adj, args).foldA
       }
     }
@@ -274,29 +340,41 @@ object Predication {
     verb: Verb,
     isPassive: Boolean,
     arguments: Vector[NonSubjectArgument],
+    tan: TAN
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
       val subj = renderSubject(includeSubject)
       val args = arguments.foldMapA(_.render)
+      def pastParticiple = Validated.valid(
+        LabeledTree.leaves("verb" -> verb.forms.pastParticiple.toString)
+      )
       clauseType match {
         case ClauseType.Attributive =>
           if(!isPassive) {
             invalid("Cannot construct attributive clause from active form.")
-          } else {
-            val vb = Validated.valid(
-              LabeledTree.leaves("verb" -> verb.forms.pastParticiple)
-            )
-            List(subj, vb, args).foldA
-          }
+          } else List(subj, pastParticiple, args).foldA
         case otherType: ClauseType.VerbalClauseType =>
-          val vb = tan.getAuxChain(verb.forms, isPassive, otherType, subject)
-          List(subj, vb, args).foldA
+          if(isPassive) {
+            val aux = Validated.fromEither(
+              tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
+            ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
+            List(subj, aux, pastParticiple, args).foldA
+          } else {
+            val verbChain = Validated.fromEither(
+              tan.getAuxChain(verb.forms, otherType, subject).left.map(_.map(error(_)))
+            ).map { chain =>
+              val vb = LabeledTree.leaves("verb" -> chain.last)
+              val auxChain = chain.init
+              if(auxChain.isEmpty) vb
+              else LabeledTree.leaves("aux" -> auxChain.toList.mkString(" ")) |+| vb
+            }
+            List(subj, verbChain, args).foldA
+          }
       }
     }
   }
 
   // TODO:
-  // clause rendering (add tan to clause, probably)
   // gapping
   // rendering questions, filling gaps, adding rich info to errors
   // using rich errors to feed back into filling in slots
