@@ -106,15 +106,91 @@ object Argument {
   sealed trait Nominal extends NonSubjectArgument {
     // def animate: Option[Boolean]
   }
-  // for adverbials like 'today', 'every day' etc.
-  // as well as adverbs (quickly, eventually)
-  case class Adverbial(
-    form: Option[String]
-  ) extends NonNominalArgument {
-    override def render: Component.RenderResult = {
-      form.fold(invalid("Missing adverbial form."))(leaf("adv", _))
+
+  // TODO: RenderContext:
+  // tells us whether we are rendering an argument...
+  // -- in subject position (for nom/accus, preventing in-context subj use of complements)
+  // -- in an answer (for bare vp answers to 'what..to do' questions
+  // -- in an argument position?
+
+
+  // expletive 'it' or 'there'; can only appear as subject
+  case class ExpletiveNoun(expletive: Expletive) extends Subject {
+    def typ = None
+    def animate = Some(false)
+    def person = Some(Person.Third)
+    def number = Some(Number.Singular)
+    override def render: RenderResult = {
+      leaf("noun[expl]", expletive.form.toString)
     }
   }
+
+  case class NounRealization(
+    form: String,
+    person: Option[Person],
+    number: Option[Number]
+  )
+
+  case class NounPhrase(
+    realization: Option[NounRealization],
+    animate: Option[Boolean]
+  ) extends Subject with Nominal {
+    override def render: RenderResult = {
+      def validLeaf(x: String) = Validated.valid(LabeledTree.leaves("noun" -> x))
+      realization.map(_.form).map(validLeaf)
+        .orElse(animate.map(_.fold("someone", "something")).map(validLeaf(_)))
+        .getOrElse(invalid())
+    }
+    def typ: Option[NominalType] = animate.map(_.fold(Who, What))
+    def person = realization.map(_.person)
+      .getOrElse(animate.map(_ => Person.Third))
+    def number: Option[Number] = realization.map(_.number)
+      .getOrElse(animate.map(_ => Number.Singular))
+  }
+  object NounPhrase {
+    val something = NounPhrase(None, Some(false))
+    val someone = NounPhrase(None, Some(true))
+  }
+  import NounPhrase._
+
+  sealed trait PrepObjRealization
+  // prep should not take an object, i.e., is a particle
+  case object NoPrepObject extends PrepObjRealization
+  // prep should take an object, which may not be specified
+  case class PrepObject(obj: Option[Nominal]) extends PrepObjRealization
+
+  case class PrepPhrase(
+    preposition: Preposition, // TODO NonEmptyList of prepositions?
+    obj: PrepObjRealization
+  )
+
+  case class Oblique(
+    typ: Option[AdverbialType],
+    prepPhrase: Option[PrepPhrase]
+  ) extends NounOrOblique with NonNominalArgument {
+    override def render: RenderResult = {
+      def validTree(x: LabeledTreeChild[String, String]) =
+        Validated.valid(LabeledTree("pp" -> x))
+      prepPhrase match {
+        case None => typ.flatMap(_.placeholderOpt).fold(invalid())(p => leaf("pp", p.toString))
+        case Some(PrepPhrase(prep, obj)) => obj match {
+          case NoPrepObject => validTree(LabeledTree.leaves("prt" -> prep.toString))
+          case PrepObject(None) => invalid()
+          case PrepObject(Some(nominal)) =>
+            nominal.render.map(nominal =>
+              LabeledTree(
+                "pp" -> LabeledTree(
+                  "prep" -> LabeledTree.leaf(prep.toString),
+                  "pobj" -> nominal
+                )
+              )
+            )
+        }
+      }
+    }
+  }
+
+
   // nominal use of gerund/progressive; can be object of prep or subject
   case class Gerund(
     pred: Predication, includeSubject: Boolean
@@ -157,7 +233,7 @@ object Argument {
 
   case class Finite(
     pred: Predication
-  ) extends Complement {
+  ) extends Complement { // with Subject? but cannot appear in subj except as an answer
     def render: Component.RenderResult =
       pred.render(ClauseType.Finite, true)
   }
@@ -175,6 +251,7 @@ object Argument {
     ).foldA
   }
 
+  // TODO: add predication structure to subordinators/adverbials
   case class SubordinateClause(
     subordinator: Subordinator, clause: Complement
   ) extends NonNominalArgument {
@@ -184,77 +261,25 @@ object Argument {
     ).foldA
   }
 
-  // expletive 'it' or 'there'; can only appear as subject
-  case class ExpletiveNoun(expletive: Expletive) extends Subject {
-    def typ = None
-    def animate = Some(false)
-    def person = Some(Person.Third)
-    def number = Some(Number.Singular)
-    override def render: RenderResult = {
-      Validated.valid(LabeledTree.leaves("noun[expl]" -> expletive.form.toString))
+  // for adverbials like 'today', 'every day' etc.
+  // as well as adverbs (quickly, eventually)
+  case class Adverbial(
+    form: Option[String]
+  ) extends NonNominalArgument {
+    override def render: Component.RenderResult = {
+      form.fold(invalid("Missing adverbial form."))(leaf("adv", _))
     }
   }
 
-  case class NounRealization(
-    form: String,
-    person: Option[Person],
-    number: Option[Number]
-  )
-
-  case class NounPhrase(
-    realization: Option[NounRealization],
-    val animate: Option[Boolean]
-  ) extends Subject with Nominal {
-    override def render: RenderResult = {
-      def validLeaf(x: String) = Validated.valid(LabeledTree.leaves("noun" -> x))
-      realization.map(_.form).map(validLeaf)
-        .orElse(animate.map(_.fold("someone", "something")).map(validLeaf(_)))
-        .getOrElse(invalid())
-    }
-    def typ: Option[NominalType] = animate.map(_.fold(Who, What))
-    def person = realization.map(_.person)
-      .getOrElse(animate.map(_ => Person.Third))
-    def number: Option[Number] = realization.map(_.number)
-      .getOrElse(animate.map(_ => Number.Singular))
-  }
-
-  sealed trait PrepObjRealization
-  // prep should not take an object, i.e., is a particle
-  case object NoPrepObject extends PrepObjRealization
-  // prep should take an object, which may not be specified
-  case class PrepObject(obj: Option[Nominal]) extends PrepObjRealization
-
-  case class PrepPhrase(
-    preposition: Preposition, // TODO NonEmptyList of prepositions?
-    obj: PrepObjRealization
-  )
-
-  case class Oblique(
-    typ: Option[AdverbialType],
-    prepPhrase: Option[PrepPhrase]
-  ) extends NounOrOblique with NonNominalArgument {
-    override def render: RenderResult = {
-      def validTree(x: LabeledTreeChild[String, String]) =
-        Validated.valid(LabeledTree("pp" -> x))
-      def validLeaf(x: String) =
-        Validated.valid(LabeledTree.leaves("pp" -> x))
-      prepPhrase match {
-        case None => typ.flatMap(_.placeholderOpt).fold(invalid())(p => validLeaf(p.toString))
-        case Some(PrepPhrase(prep, obj)) => obj match {
-          case NoPrepObject => validTree(LabeledTree.leaves("prt" -> prep.toString))
-          case PrepObject(None) => invalid()
-          case PrepObject(Some(nominal)) =>
-            nominal.render.map(nominal =>
-              LabeledTree(
-                "pp" -> LabeledTree(
-                  "prep" -> LabeledTree.leaf(prep.toString),
-                  "pobj" -> nominal
-                )
-              )
-            )
-        }
-      }
-    }
+  // only used in 'do' pro-form.
+  case class StandinBareVerbPhrase(
+    pred: Option[Predication]
+  ) extends Argument {
+    def render: Component.RenderResult =
+      pred.fold(someone.render)(
+        // TODO: only allow in answer. otherwise, perhaps error asking for resolution.
+        _.render(ClauseType.Bare, includeSubject = false)
+      )
   }
 }
 
@@ -263,6 +288,7 @@ object ClauseType {
  // past participle form --- passive/adjective
   case object Attributive extends ClauseType
   sealed trait VerbalClauseType extends ClauseType
+  case object Bare extends VerbalClauseType
   case object Infinitive extends VerbalClauseType
   case object Progressive extends VerbalClauseType
   case object Finite extends VerbalClauseType
@@ -288,16 +314,41 @@ object Predication {
   import PhraseType._
   import Argument._
 
+  // 'someone does something'
+  // not sure if i should keep this in as a general predication.
+  // can it appear everywhere?
+  // maybe it should be an argument instead.
+  case class ActiveDoProForm(
+    subject: Option[Subject],
+    argument: StandinBareVerbPhrase, // standin just for this purpose; has 'what' and 'something'
+    modifiers: Vector[NonNominalArgument],
+    tan: TAN
+  )
+  // maybe also add a copular pro-form? already handled for Copula
+  // but missing for adjective and passive. not sure how gapping should work with it.
+
+  // 'something is done'.
+  // maybe can add this in later.
+  // case class PassiveProForm(
+  //   subject: Subject, --- seems too general; maybe not best to use as pro-form?
+  //   arguments: Vector[NonSubjectArgument] = Noun()
+  //   tan: TAN
+  // ) {
+  //   // verb: Verb = Verb(InflectedForms.doForms)
+  // }
+  // maybe also 'what happened _?' type of pro-form?
+  // not as necessary since it isn't needed for constructing questions in existing framework
+
   case class Copular(
     subject: Option[Subject],
-    mainArgument: NounOrOblique,
-    otherArguments: Vector[NonNominalArgument],
+    argument: NounOrOblique,
+    modifiers: Vector[NonNominalArgument],
     tan: TAN
   ) extends Predication {
 
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
       val subj = renderSubject(includeSubject)
-      val arguments = mainArgument +: otherArguments
+      val arguments = argument +: modifiers
       val args = arguments.foldMapA(_.render)
       clauseType match {
         case ClauseType.Attributive =>

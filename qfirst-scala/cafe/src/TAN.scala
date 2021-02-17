@@ -43,6 +43,8 @@ import cats.Parallel
     clauseType: ClauseType.VerbalClauseType,
     subject: Option[Argument.Subject]
   ): AuxChainResult[NonEmptyList[String]] = clauseType match {
+    case ClauseType.Bare =>
+      Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
     case ClauseType.Infinitive =>
       Tense.NonFinite.To.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
     case ClauseType.Progressive =>
