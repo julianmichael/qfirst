@@ -26,7 +26,7 @@ object ClauseType {
   case object Finite extends VerbalClauseType
 }
 
-trait ArgumentPosition[A <: Argument] {
+trait ArgumentPosition[+A <: Argument] {
 
   def pro: Option[ArgumentProForm[A]]
   def arg: Option[A]
@@ -60,13 +60,13 @@ object ArgumentPosition {
       .orElse(pro.flatMap(_.placeholder).flatMap(_.number))
   }
   case class NonSubject(
-    val pro: Option[ArgumentProForm[Argument.NonSubjectArgument]],
-    val arg: Option[Argument.NonSubjectArgument]
-  ) extends ArgumentPosition[Argument.NonSubjectArgument]
+    val pro: Option[ArgumentProForm[Argument.NonSubject]],
+    val arg: Option[Argument.NonSubject]
+  ) extends ArgumentPosition[Argument.NonSubject]
 }
 
-// TODO consider adding a type param for refining the corresponding arg type
-sealed trait ArgumentProForm[A <: Argument] {
+sealed trait ArgumentProForm[+A <: Argument] {
+  // TODO: instead of Option, have each of these take a context and return a RenderResult
   def wh: Option[LowerCaseString]
   def placeholder: Option[A]
   // def isNominal: Boolean
@@ -121,26 +121,47 @@ object ArgumentProForm {
 
   // TODO rest of adverbials
 
+  case class GerundiveDoingSomething(
+    includeSubject: Boolean, // TODO add possessive version
+    subject: ArgumentPosition.Subject,
+    modifiers: Vector[ArgumentPosition[Argument.NonNominal]],
+    tan: TAN
+  ) extends ArgumentProForm[Argument.Gerund] {
+    // TODO: need to be able to render the 'gap'
+    def wh = Some("what".lowerCase)
+    def placeholder = {
+      val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
+      Some(Argument.Gerund(includeSubject, Some(pred)))
+    }
+  }
+
   // 'someone does something'
-  // not sure if i should keep this in as a general predication.
-  // can it appear everywhere?
-  // maybe it should be an argument instead.
   case class DoSomething(
     clauseType: ClauseType,
-    subject: ArgumentPosition[Argument.Subject],
-    modifiers: Vector[ArgumentPosition[Argument.NonNominalArgument]],
+    includeSubject: Boolean,
+    subject: ArgumentPosition.Subject,
+    modifiers: Vector[ArgumentPosition[Argument.NonNominal]],
     tan: TAN
   ) extends ArgumentProForm[Argument.Complement] {
+    // TODO: need to be able to render the 'gap'
     def wh = Some("what".lowerCase)
-    import ClauseType._
-    def placeholder = ??? // TODO
-    // def placeholder = clauseType match {
-    //   case Attributive => Argument.Attributive()
-    //   case Bare => Argument.Bare()
-    //   case Infinitive => Argument.Infinitive()
-    //   case Progressive => Argument.Progressive()
-    //   case Finite => Argument.Finite()
-    // }
+    def placeholder = {
+      val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
+      import ClauseType._
+      clauseType match {
+        case Attributive =>
+          if(includeSubject) None // not allowed for attributives
+          else Some(Argument.Attributive(Some(pred)))
+        case Infinitive => Some(Argument.Infinitive(includeSubject, Some(pred)))
+        case Progressive => Some(Argument.Progressive(includeSubject, Some(pred)))
+        case Finite =>
+          if(includeSubject) Some(Argument.Finite(Some(pred)))
+          else None // need subject for finite complements
+        case Bare =>
+          if(includeSubject) None // not allowed for bare verbs; no 'small clauses'
+          else Some(Argument.Bare(Some(pred)))
+      }
+    }
   }
   // maybe also add a copular pro-form? already handled for Copula
   // but missing for adjective and passive. not sure how gapping should work with it.
@@ -185,18 +206,18 @@ object Argument {
     def number: Option[Number]
   }
   // can appear as non-subject argument of a verb
-  sealed trait NonSubjectArgument extends Argument
+  sealed trait NonSubject extends Argument
   // can appear as argument/adjunct of an adjective or adjunct of a copula
   // (includes obliques, complements, and adverbials)
-  sealed trait NonNominalArgument extends NonSubjectArgument
+  sealed trait NonNominal extends NonSubject
   // can be turned into a subordinate clause
-  sealed trait Complement extends NonNominalArgument
+  sealed trait Complement extends NonNominal
   // can be used predicatively with a copula (is not verb or adjective)
-  sealed trait NounOrOblique extends NonSubjectArgument
+  sealed trait NounOrOblique extends NonSubject
   // can appear as the object of a preposition
-  sealed trait Nominal extends NonSubjectArgument
+  sealed trait Nominal extends NonSubject
   // can appear with an adverbial wh-word: excludes full complements from NonNominal
-  // sealed trait Adverbial extends NonNominalArgument
+  // sealed trait Adverbial extends NonNominal
 
   // TODO: RenderContext:
   // tells us whether we are rendering an argument...
@@ -242,7 +263,7 @@ object Argument {
 
   case class Oblique(
     pred: Option[Predication.Oblique]
-  ) extends NounOrOblique with NonNominalArgument {
+  ) extends NounOrOblique with NonNominal {
     def symbol = "pp"
     override def render: RenderResult = {
       pred match {
@@ -251,13 +272,10 @@ object Argument {
           leafBranch("prt" -> prep.toString)
         case Some(Predication.Prepositional(prep, obj)) => obj match {
           case None => invalid()
-          case Some(nominal) =>
-            nominal.render.map(nominal =>
-              LabeledTree(
-                "prep" -> LabeledTree.leaf(prep.toString),
-                "pobj" -> nominal
-              )
-            )
+          case Some(nominal) => List(
+            leafBranch("prep" -> prep.toString),
+            nominal.render
+          ).foldA
         }
       }
     }
@@ -270,7 +288,6 @@ object Argument {
     pred: Option[Predication]
       // TODO possessive subject option
   ) extends Subject with Nominal {
-    // val pro = What
     def symbol = if(includeSubject) "s[g]" else "vp[g]"
 
     override def render: Component.RenderResult =
@@ -282,6 +299,18 @@ object Argument {
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
   }
+
+  case class Bare(
+    // includeSubject: Boolean,
+    pred: Option[Predication.NonCopular]
+  ) extends Complement {
+    def symbol = "vp[b]"
+    def render =
+      pred.map(_.render(ClauseType.Bare, false))
+        .getOrElse(invalid())
+        // .orElse(pro.map(_.render.map(p => LabeledTree.leaves(symbol -> p))))
+  }
+
   // various possible forms of complements:
   // may be specific to a predicate's (or subordinator's!) subcat frame.
   case class Infinitive(
@@ -365,7 +394,7 @@ object Argument {
   case class SubordinateClause(
     subordinator: Subordinator,
     clause: ArgumentPosition[Complement]
-  ) extends NonNominalArgument {
+  ) extends NonNominal {
     def symbol = "advcl"
     def render = List(
       Validated.valid(LabeledTree.leaves("sub" -> subordinator.form.toString)),
@@ -377,7 +406,7 @@ object Argument {
   // as well as adverbs (quickly, eventually)
   case class Adverbial(
     form: Option[String]
-  ) extends NonNominalArgument {
+  ) extends NonNominal {
     def symbol = "adv"
     override def render = {
       form.map(leaf).getOrElse(invalid("Missing adverbial form."))
@@ -431,7 +460,7 @@ object Predication {
   // maybe can add this in later.
   // case class PassiveProForm(
   //   subject: Subject, --- seems too general; maybe not best to use as pro-form?
-  //   arguments: Vector[NonSubjectArgument] = Noun()
+  //   arguments: Vector[NonSubject] = Noun()
   //   tan: TAN
   // ) {
   //   // verb: Verb = Verb(InflectedForms.doForms)
@@ -442,7 +471,7 @@ object Predication {
   case class Copular(
     subject: ArgumentPosition.Subject,
     argument: ArgumentPosition[NounOrOblique],
-    modifiers: Vector[ArgumentPosition[NonNominalArgument]],
+    modifiers: Vector[ArgumentPosition[NonNominal]],
     tan: TAN
   ) extends Predication {
 
@@ -467,7 +496,7 @@ object Predication {
   case class Adjectival(
     subject: ArgumentPosition.Subject,
     adjective: Adjective,
-    arguments: Vector[ArgumentPosition[NonNominalArgument]],
+    arguments: Vector[ArgumentPosition[NonNominal]],
     tan: TAN
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
@@ -490,7 +519,7 @@ object Predication {
     subject: ArgumentPosition.Subject,
     verb: Verb,
     isPassive: Boolean,
-    arguments: Vector[ArgumentPosition[NonSubjectArgument]],
+    arguments: Vector[ArgumentPosition[NonSubject]],
     tan: TAN
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
@@ -523,6 +552,17 @@ object Predication {
           }
       }
     }
+  }
+  object Verbal {
+    def doSomething(
+      subject: ArgumentPosition.Subject,
+      modifiers: Vector[ArgumentPosition[NonNominal]],
+      tan: TAN
+    ) = Verbal(
+      subject, Verb(InflectedForms.doForms), false,
+      ArgumentPosition.NonSubject(Some(ArgumentProForm.what), None) +: modifiers,
+      tan
+    )
   }
 
   // TODO:
