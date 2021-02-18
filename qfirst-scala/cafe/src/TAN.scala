@@ -33,7 +33,7 @@ import cats.Parallel
 
   def getCopulaAuxChain(
     clauseType: ClauseType.VerbalClauseType,
-    subject: Option[Argument.Subject]
+    subject: ArgumentPosition[Argument.Subject]
   ): AuxChainResult[NonEmptyList[String]] = {
     getAuxChain(InflectedForms.beSingularForms, clauseType, subject)
   }
@@ -41,7 +41,7 @@ import cats.Parallel
   def getAuxChain(
     forms: InflectedForms,
     clauseType: ClauseType.VerbalClauseType,
-    subject: Option[Argument.Subject]
+    subject: ArgumentPosition[Argument.Subject]
   ): AuxChainResult[NonEmptyList[String]] = clauseType match {
     case ClauseType.Bare =>
       Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
@@ -50,14 +50,11 @@ import cats.Parallel
     case ClauseType.Progressive =>
       Tense.NonFinite.Gerund.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
     case ClauseType.Finite => for {
-      (tense, subj) <- Parallel.parProduct(
-        tense.toRight(NonEmptyChain.one("Finite clause needs a determined tense")),
-        subject.toRight(NonEmptyChain.one("Finite clause needs a subject to determine agreement"))
-      )
+      tense <- tense.toRight(NonEmptyChain.one("Finite clause needs a determined tense"))
       (person, number) <- Parallel.parProduct(
-        subj.person.toRight(
+        subject.person.toRight(
           NonEmptyChain.one("Subject of a finite clause needs person feature for agreement")),
-        subj.number.toRight(
+        subject.number.toRight(
           NonEmptyChain.one("Subject of a finite clause needs number feature for agreement"))
       )
     } yield fixAgreement(getVerbStack(forms, tense), forms, person, number)
