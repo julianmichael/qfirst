@@ -28,9 +28,11 @@ class CafeTests extends CatsEffectSuite {
   val rendered = for {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
-  } yield (clauseType, includeSubject, doPro.render(clauseType, includeSubject))
+  } yield (doPro.render(clauseType, includeSubject), (clauseType, includeSubject))
 
   test("view rendered") {
-    rendered.foreach(println)
+    rendered.mapFirst(_.map(LabeledTree.showGloss(_) + "\n"))
+      .foreach(_._1.foreach(println))
+      // .foreach(println)
   }
 }
