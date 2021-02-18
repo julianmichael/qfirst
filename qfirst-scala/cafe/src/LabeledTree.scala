@@ -12,10 +12,17 @@ sealed trait LabeledTree[+Label, A] {
   import LabeledTree.{Leaf, Node}
   import LabeledTree.{PrintStats}
 
-  def depth: Int = this match {
-    case Leaf(_) => 0
-    case Node(children) => children.map(_._2.depth).maximumOption.getOrElse(1)
+  def cata[B](
+    leaf: A => B)(
+    node: Vector[(Label, B)] => B
+  ): B = this match {
+    case Leaf(a) => leaf(a)
+    case Node(bs) => node(bs.mapSecond(_.cata(leaf)(node)))
   }
+
+  def depth: Int = cata(
+    _ => 0)(
+    _.map(_._2).maximumOption.getOrElse(1))
 
 }
 
@@ -78,7 +85,7 @@ object LabeledTree {
   }
 
   private[this] def stringToWidth(x: String, width: Int) = {
-    // require(width >= x.length)
+    require(width >= x.length)
     val extraSpace = width - x.length
     val rightSpace = extraSpace / 2
     val leftSpace = extraSpace - rightSpace
@@ -127,5 +134,4 @@ object LabeledTree {
   def showGloss[L: Show, V: Show](
     tree: LabeledTree[L, V]
   ): String = gloss(tree, Show[L].show, Show[V].show)
-  // ): String = gloss(tree, Show[L].show, (v: V) => "~~~(" + Show[V].show(v) + ")~~~")
 }

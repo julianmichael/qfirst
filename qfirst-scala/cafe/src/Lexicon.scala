@@ -21,7 +21,13 @@ object Lexicon {
   case class Particle(form: LowerCaseString)
   case class Preposition(form: LowerCaseString)
   case class Complementizer(form: LowerCaseString)
+  object Complementizer {
+    val that = Complementizer("that".lowerCase)
+  }
   case class InfinitiveComplementizer(form: LowerCaseString)
+  object InfinitiveComplementizer {
+    val `for` = InfinitiveComplementizer("for".lowerCase)
+  }
   case class Subordinator(form: LowerCaseString)
   case class Adjective(form: LowerCaseString)
   case class Verb(forms: InflectedForms)

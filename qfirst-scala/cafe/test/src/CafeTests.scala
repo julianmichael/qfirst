@@ -9,6 +9,8 @@ import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
 import munit.CatsEffectSuite
+import cats.data.Validated
+import qasrl.Tense
 
 class CafeTests extends CatsEffectSuite {
 
@@ -20,19 +22,29 @@ class CafeTests extends CatsEffectSuite {
     presentParticiple = "eating".lowerCase
   )
 
-  val doPro = Predication.Verbal.doSomething(
-    subject = ArgumentPosition(Some(ArgumentProForm.what), None),
-    Vector(), TAN(None, false, false, false)
+  def doPro(clauseType: ClauseType, includeSubject: Boolean) =
+    ArgumentProForm.DoSomething(
+      clauseType, includeSubject,
+      subject = ArgumentPosition(Some(ArgumentProForm.what), None),
+      modifiers = Vector(),
+      tan = TAN(Some(Tense.Finite.Present), false, false, false)
   )
 
   val rendered = for {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
-  } yield (doPro.render(clauseType, includeSubject), (clauseType, includeSubject))
+  } yield (doPro(clauseType, includeSubject).render, (clauseType, includeSubject))
 
   test("view rendered") {
-    rendered.mapFirst(_.map(LabeledTree.showGloss(_) + "\n"))
-      .foreach(_._1.foreach(println))
-      // .foreach(println)
+    rendered.foreach {
+      case (res, (clauseType, inclSubj)) =>
+        val inclSubjStr = if(inclSubj) " (with subject)" else ""
+        println(s"\n$clauseType$inclSubjStr")
+        res match {
+          case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+          case Validated.Invalid(errs) =>
+            errs.toList.foreach(err => println("\t" + err.toString))
+        }
+    }
   }
 }

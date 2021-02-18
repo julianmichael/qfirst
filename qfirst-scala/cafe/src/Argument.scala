@@ -28,48 +28,45 @@ object ClauseType {
   val all = List(Attributive, Bare, Infinitive, Progressive, Finite)
 }
 
+sealed trait RenderContext
+object RenderContext {
+  // normal argument position (accusative if nominal)
+  case object Arg extends RenderContext
+  // for nominative case with subjects
+  case object Subj extends RenderContext
+  // for wh-words/phrases
+  case object Focus extends RenderContext
+  // for extraction gaps
+  case object Gap extends RenderContext
+}
+
 case class ArgumentPosition[+A <: Argument](
   val pro: Option[ArgumentProForm[A]],
   val arg: Option[A]
-) {
+) extends Component {
 
   def symbol = {
-    val proSym = pro.flatMap(_.wh).foldMap(wh => s"{$wh}")
+    val proSym = pro.flatMap(_.render(RenderContext.Focus).toOption).foldMap(wh => s"{$wh}")
     val argSym = arg.foldMap(a => s"${a.symbol}")
     s"$argSym $proSym".trim
   }
-  def render: Component.RenderResult = {
-    def noArg = Validated.invalid(
-      NonEmptyChain.one(
-        Component.RenderError(???, "No argument information present.")
-      )
-    )
+  def render(ctx: RenderContext): Component.RenderResult = {
+    def noArg = invalid("No argument information present.")
     // TODO: maybe fall back from arg errors to render pro-form? idk.
     // maybe also choose between them using some kind of more comprehensive policy...
-    arg.map(_.render).orElse(pro.map(_.render)).map { res =>
+    arg.map(_.render).orElse(pro.map(_.render(ctx))).map { res =>
       res.map(tree => LabeledTree.Node(symbol -> tree))
     }.getOrElse(noArg)
   }
   def person(implicit ev: A <:< Argument.Subject): Option[Person] = arg.flatMap(_.person)
-    .orElse(pro.flatMap(_.placeholder).flatMap(_.person))
+    .orElse(pro.flatMap(_.arg).flatMap(_.person))
   def number(implicit ev: A <:< Argument.Subject): Option[Number] = arg.flatMap(_.number)
-    .orElse(pro.flatMap(_.placeholder).flatMap(_.number))
+    .orElse(pro.flatMap(_.arg).flatMap(_.number))
 }
 
-sealed trait ArgumentProForm[+A <: Argument] {
-  // TODO: instead of Option, have each of these take a context and return a RenderResult
-  def wh: Option[LowerCaseString]
-  def placeholder: Option[A]
-  // def isNominal: Boolean
-  def render: Component.RenderResultOf[LabeledTree[String, String]] = {
-    placeholder.map(_.render).getOrElse(
-      Validated.invalid(
-        NonEmptyChain.one(
-          Component.RenderError(???, "No placeholder for pro-form.")
-        )
-      )
-    )
-  }
+sealed trait ArgumentProForm[+A <: Argument] extends Component{
+  def arg: Option[A]
+  def render(ctx: RenderContext): Component.RenderResultOf[LabeledTree[String, String]]
 }
 object ArgumentProForm {
   sealed trait Expletive extends ArgumentProForm[Argument.Expletive]
@@ -81,33 +78,63 @@ object ArgumentProForm {
   sealed trait IndefiniteAdverbial extends ArgumentProForm[Argument.Adverbial]
 
   object it extends Expletive {
-    def wh = None
-    def placeholder = Some(Argument.Expletive.there)
+    // def wh = None
+    def arg = Some(Argument.Expletive.it)
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Subj => Argument.Expletive.it.render
+      case other => invalid("Can only render expletives in subject position.")
+    }
   }
 
   object there extends Expletive {
-    def wh = None
-    def placeholder = Some(Argument.Expletive.there)
+    def arg = Some(Argument.Expletive.there)
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Subj => Argument.Expletive.there.render
+      case other => invalid("Can only render expletives in subject position.")
+    }
   }
 
   object what extends IndefinitePronoun {
-    def wh = Some("what".lowerCase)
-    def placeholder = Some(Argument.NounPhrase.something)
+    def arg = Some(Argument.NounPhrase.something)
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Subj | Arg => Argument.NounPhrase.something.render
+      case Focus => leaf("what".lowerCase)
+      case Gap => leaf("".lowerCase)
+    }
   }
 
   object who extends IndefinitePronoun {
-    def wh = Some("who".lowerCase)
-    def placeholder = Some(Argument.NounPhrase.someone)
+    def arg = Some(Argument.NounPhrase.someone)
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Subj | Arg => Argument.NounPhrase.someone.render
+      case Focus => leaf("who".lowerCase)
+      case Gap => leaf("".lowerCase)
+    }
   }
 
   object where extends IndefiniteAdverbial {
-    def wh = Some("where".lowerCase)
-    def placeholder = Some(Argument.Adverbial.somewhere)
+    def arg = None
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Arg => leaf("somewhere".lowerCase)
+      case Subj => invalid("Locatives cannot appear in subject position.")
+      case Focus => leaf("where".lowerCase)
+      case Gap => leaf("".lowerCase)
+    }
   }
 
   object why extends IndefiniteAdverbial {
-    def wh = Some("why".lowerCase)
-    def placeholder = None
+    def arg = None
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      case Arg | Subj => invalid("No placeholder available for 'why'.")
+      case Focus => leaf("why".lowerCase)
+      case Gap => leaf("".lowerCase)
+    }
   }
 
   // TODO rest of adverbials
@@ -119,10 +146,18 @@ object ArgumentProForm {
     tan: TAN
   ) extends ArgumentProForm[Argument.Gerund] {
     // TODO: need to be able to render the 'gap'
-    def wh = Some("what".lowerCase)
-    def placeholder = {
+    // def wh = Some("what".lowerCase)
+    def clause = {
       val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
-      Some(Argument.Gerund(includeSubject, Some(pred)))
+      Argument.Gerund(includeSubject, Some(pred))
+    }
+    def arg = Some(clause)
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      // TODO: maybe disallow in subject position?
+      case Arg | Subj => clause.render
+      case Focus => leaf("what".lowerCase)
+      case Gap => ??? // clause.render(???) // TODO: propagate gap down
     }
   }
 
@@ -134,24 +169,32 @@ object ArgumentProForm {
     modifiers: Vector[ArgumentPosition[Argument.NonNominal]],
     tan: TAN
   ) extends ArgumentProForm[Argument.Complement] {
-    // TODO: need to be able to render the 'gap'
-    def wh = Some("what".lowerCase)
-    def placeholder = {
+    def clause = {
       val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
       import ClauseType._
       clauseType match {
         case Attributive =>
-          if(includeSubject) None // not allowed for attributives
-          else Some(Argument.Attributive(Some(pred)))
-        case Infinitive => Some(Argument.Infinitive(includeSubject, Some(pred)))
-        case Progressive => Some(Argument.Progressive(includeSubject, Some(pred)))
+          if(includeSubject) invalid("Attributives cannot appear with a subject.")
+          else Validated.valid(Argument.Attributive(Some(pred)))
+        case Infinitive =>
+          Validated.valid(Argument.Infinitive(includeSubject, Some(pred)))
+        case Progressive =>
+          Validated.valid(Argument.Progressive(includeSubject, Some(pred)))
         case Finite =>
-          if(includeSubject) Some(Argument.Finite(Some(pred)))
-          else None // need subject for finite complements
+          if(includeSubject) Validated.valid(Argument.Finite(Some(pred)))
+          else invalid("Finite complements require a subject.")
         case Bare =>
-          if(includeSubject) None // not allowed for bare verbs; no 'small clauses'
-          else Some(Argument.Bare(Some(pred)))
+          if(includeSubject) invalid("Bare do-clauses cannot appear with a subject.")
+          else Validated.valid(Argument.Bare(Some(pred)))
       }
+    }
+    def arg = clause.toOption
+    import RenderContext._
+    def render(ctx: RenderContext) = ctx match {
+      // TODO: maybe disallow in subject position?
+      case Arg | Subj => clause.toEither.flatMap(_.render.toEither).toValidated
+      case Focus => leaf("what".lowerCase)
+      case Gap => ??? // clause.render(???) // TODO: propagate gap down
     }
   }
   // maybe also add a copular pro-form? already handled for Copula
@@ -311,16 +354,19 @@ object Argument {
     // pro: Option[IndefiniteProForm],
     pred: Option[Predication]
   ) extends Complement with Subject {
-    // TODO add for-complementizer
     def symbol = if(includeSubject) "s[to]" else "vp[to]"
+    def complementizer: InfinitiveComplementizer = Lexicon.InfinitiveComplementizer.`for`
 
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
 
     def render =
-      pred.map(_.render(ClauseType.Infinitive, includeSubject))
-        .getOrElse(invalid())
-        // .orElse(pro.map(_.render.map(p => LabeledTree.leaves(symbol -> p))))
+      pred.map(p =>
+        List(
+          leafBranch("comp" -> complementizer.form.toString),
+          p.render(ClauseType.Infinitive, includeSubject)
+        ).foldA
+      ).getOrElse(invalid())
   }
 
   case class Progressive(
@@ -362,8 +408,8 @@ object Argument {
   }
 
   // is this always necessarily 'that'? maybe remove complementizer slot?
+  // TODO add 'that'
   case class FiniteComplement(
-    complementizer: Complementizer,
     pred: Option[Predication],
   ) extends Complement with Subject {
 
@@ -372,6 +418,8 @@ object Argument {
 
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
+
+    def complementizer: Complementizer = Lexicon.Complementizer.that
 
     def render =
       pred.map(p =>
