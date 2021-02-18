@@ -17,22 +17,24 @@ import cats.kernel.Monoid
 
 sealed trait ClauseType
 object ClauseType {
- // past participle form --- passive/adjective
+  // past participle form --- passive/adjective
   case object Attributive extends ClauseType
   sealed trait VerbalClauseType extends ClauseType
   case object Bare extends VerbalClauseType
   case object Infinitive extends VerbalClauseType
   case object Progressive extends VerbalClauseType
   case object Finite extends VerbalClauseType
+
+  val all = List(Attributive, Bare, Infinitive, Progressive, Finite)
 }
 
-trait ArgumentPosition[+A <: Argument] {
-
-  def pro: Option[ArgumentProForm[A]]
-  def arg: Option[A]
+case class ArgumentPosition[+A <: Argument](
+  val pro: Option[ArgumentProForm[A]],
+  val arg: Option[A]
+) {
 
   def symbol = {
-    val proSym = pro.foldMap(p => s"{${p.wh}}")
+    val proSym = pro.flatMap(_.wh).foldMap(wh => s"{$wh}")
     val argSym = arg.foldMap(a => s"${a.symbol}")
     s"$argSym $proSym".trim
   }
@@ -48,21 +50,10 @@ trait ArgumentPosition[+A <: Argument] {
       res.map(tree => LabeledTree(symbol -> tree))
     }.getOrElse(noArg)
   }
-}
-object ArgumentPosition {
-  case class Subject(
-    val pro: Option[ArgumentProForm[Argument.Subject]],
-    val arg: Option[Argument.Subject]
-  ) extends ArgumentPosition[Argument.Subject] {
-    def person: Option[Person] = arg.flatMap(_.person)
-      .orElse(pro.flatMap(_.placeholder).flatMap(_.person))
-    def number: Option[Number] = arg.flatMap(_.number)
-      .orElse(pro.flatMap(_.placeholder).flatMap(_.number))
-  }
-  case class NonSubject(
-    val pro: Option[ArgumentProForm[Argument.NonSubject]],
-    val arg: Option[Argument.NonSubject]
-  ) extends ArgumentPosition[Argument.NonSubject]
+  def person(implicit ev: A <:< Argument.Subject): Option[Person] = arg.flatMap(_.person)
+    .orElse(pro.flatMap(_.placeholder).flatMap(_.person))
+  def number(implicit ev: A <:< Argument.Subject): Option[Number] = arg.flatMap(_.number)
+    .orElse(pro.flatMap(_.placeholder).flatMap(_.number))
 }
 
 sealed trait ArgumentProForm[+A <: Argument] {
@@ -123,7 +114,7 @@ object ArgumentProForm {
 
   case class GerundiveDoingSomething(
     includeSubject: Boolean, // TODO add possessive version
-    subject: ArgumentPosition.Subject,
+    subject: ArgumentPosition[Argument.Subject],
     modifiers: Vector[ArgumentPosition[Argument.NonNominal]],
     tan: TAN
   ) extends ArgumentProForm[Argument.Gerund] {
@@ -139,7 +130,7 @@ object ArgumentProForm {
   case class DoSomething(
     clauseType: ClauseType,
     includeSubject: Boolean,
-    subject: ArgumentPosition.Subject,
+    subject: ArgumentPosition[Argument.Subject],
     modifiers: Vector[ArgumentPosition[Argument.NonNominal]],
     tan: TAN
   ) extends ArgumentProForm[Argument.Complement] {
@@ -168,6 +159,8 @@ object ArgumentProForm {
   // could also add a 'happen' pro-form
 }
 
+// TODO: probably break apart the hierarchy once I know what error reporting
+// will actually look like.
 sealed trait Component {
   protected[Component] def leafBranch(pair: (String, String)): Component.RenderResult = {
     Validated.valid(LabeledTree.leaves(pair))
@@ -215,7 +208,7 @@ object Argument {
   // can be used predicatively with a copula (is not verb or adjective)
   sealed trait NounOrOblique extends NonSubject
   // can appear as the object of a preposition
-  sealed trait Nominal extends NonSubject
+  sealed trait Nominal extends Subject with NonSubject
   // can appear with an adverbial wh-word: excludes full complements from NonNominal
   // sealed trait Adverbial extends NonNominal
 
@@ -242,7 +235,7 @@ object Argument {
   case class NounPhrase(
     pred: Option[Predication.Nominal]
     // animate: Option[Boolean]
-  ) extends Subject with Nominal {
+  ) extends Nominal {
     def symbol = "np"
     override def render = {
       // def validLeaf(x: String) = Validated.valid(LabeledTree.leaves("np" -> x))
@@ -287,7 +280,7 @@ object Argument {
     includeSubject: Boolean,
     pred: Option[Predication]
       // TODO possessive subject option
-  ) extends Subject with Nominal {
+  ) extends Nominal {
     def symbol = if(includeSubject) "s[g]" else "vp[g]"
 
     override def render: Component.RenderResult =
@@ -418,7 +411,7 @@ object Argument {
 }
 
 sealed trait Predication extends Component {
-  def subject: ArgumentPosition.Subject
+  def subject: ArgumentPosition[Argument.Subject]
   def render(clauseType: ClauseType, includeSubject: Boolean): Component.RenderResult
   def tan: TAN
 
@@ -469,7 +462,7 @@ object Predication {
   // not as necessary since it isn't needed for constructing questions in existing framework
 
   case class Copular(
-    subject: ArgumentPosition.Subject,
+    subject: ArgumentPosition[Argument.Subject],
     argument: ArgumentPosition[NounOrOblique],
     modifiers: Vector[ArgumentPosition[NonNominal]],
     tan: TAN
@@ -494,7 +487,7 @@ object Predication {
   sealed trait NonCopular extends Predication
 
   case class Adjectival(
-    subject: ArgumentPosition.Subject,
+    subject: ArgumentPosition[Argument.Subject],
     adjective: Adjective,
     arguments: Vector[ArgumentPosition[NonNominal]],
     tan: TAN
@@ -516,7 +509,7 @@ object Predication {
   }
 
   case class Verbal(
-    subject: ArgumentPosition.Subject,
+    subject: ArgumentPosition[Argument.Subject],
     verb: Verb,
     isPassive: Boolean,
     arguments: Vector[ArgumentPosition[NonSubject]],
@@ -555,12 +548,12 @@ object Predication {
   }
   object Verbal {
     def doSomething(
-      subject: ArgumentPosition.Subject,
+      subject: ArgumentPosition[Argument.Subject],
       modifiers: Vector[ArgumentPosition[NonNominal]],
       tan: TAN
     ) = Verbal(
       subject, Verb(InflectedForms.doForms), false,
-      ArgumentPosition.NonSubject(Some(ArgumentProForm.what), None) +: modifiers,
+      ArgumentPosition(Some(ArgumentProForm.what), None) +: modifiers,
       tan
     )
   }

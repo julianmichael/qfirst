@@ -180,7 +180,9 @@ object qfirst extends Module {
 
   object cafe extends Module {
     object js extends JsModule
-    object jvm extends JvmModule
+    object jvm extends JvmModule {
+      object test extends Tests
+    }
   }
 
   object `clause-ext` extends Module {
