@@ -47,7 +47,7 @@ case class ArgumentPosition[+A <: Argument](
     // TODO: maybe fall back from arg errors to render pro-form? idk.
     // maybe also choose between them using some kind of more comprehensive policy...
     arg.map(_.render).orElse(pro.map(_.render)).map { res =>
-      res.map(tree => LabeledTree(symbol -> tree))
+      res.map(tree => LabeledTree.Node(symbol -> tree))
     }.getOrElse(noArg)
   }
   def person(implicit ev: A <:< Argument.Subject): Option[Person] = arg.flatMap(_.person)
@@ -61,7 +61,7 @@ sealed trait ArgumentProForm[+A <: Argument] {
   def wh: Option[LowerCaseString]
   def placeholder: Option[A]
   // def isNominal: Boolean
-  def render: Component.RenderResultOf[LabeledTreeChild[String, String]] = {
+  def render: Component.RenderResultOf[LabeledTree[String, String]] = {
     placeholder.map(_.render).getOrElse(
       Validated.invalid(
         NonEmptyChain.one(
@@ -165,11 +165,11 @@ sealed trait Component {
   protected[Component] def leafBranch(pair: (String, String)): Component.RenderResult = {
     Validated.valid(LabeledTree.leaves(pair))
   }
-  protected[Component] def leaf(leaf: String): Component.RenderResultOf[LabeledTreeChild[String, String]] = {
-    Validated.valid(LabeledTreeLeaf(leaf))
+  protected[Component] def leaf(leaf: String): Component.RenderResultOf[LabeledTree[String, String]] = {
+    Validated.valid(LabeledTree.Leaf(leaf))
   }
   protected[Component] def branch(label: String, content: Component.RenderResult) = {
-    content.map(res => LabeledTree(label -> res))
+    content.map(res => LabeledTree.node(label -> res))
   }
   protected[Component] def error(msg: String) = Component.RenderError(this, msg)
   protected[Component] def invalid[A](
@@ -180,13 +180,13 @@ sealed trait Component {
 object Component {
   case class RenderError(component: Component, msg: String)
   type RenderResultOf[A] = ValidatedNec[RenderError, A]
-  type RenderResult = ValidatedNec[RenderError, LabeledTree[String, String]]
+  type RenderResult = ValidatedNec[RenderError, LabeledTree.Node[String, String]]
 }
 
 // argument structure (with slots etc.)
 sealed trait Argument extends Component {
   def symbol: String
-  def render: Component.RenderResultOf[LabeledTreeChild[String, String]]
+  def render: Component.RenderResultOf[LabeledTree[String, String]]
 }
 object Argument {
   import Component._
@@ -378,7 +378,7 @@ object Argument {
         List(
           leafBranch("comp" -> complementizer.form.toString),
           p.render(ClauseType.Finite, true)
-        ).foldA.map(children => LabeledTree(symbol -> children))
+        ).foldA.map(children => LabeledTree.Node(symbol -> children))
       ).getOrElse(invalid())
       // ).getOrElse(pro.render.map(p => LabeledTree.leaves(symbol -> p)))
   }
@@ -417,7 +417,7 @@ sealed trait Predication extends Component {
 
   def renderSubject(includeSubject: Boolean) = {
     if(!includeSubject) {
-      Validated.valid(Monoid[LabeledTree[String, String]].empty)
+      Validated.valid(Monoid[LabeledTree.Node[String, String]].empty)
     } else subject.render
   }
 }

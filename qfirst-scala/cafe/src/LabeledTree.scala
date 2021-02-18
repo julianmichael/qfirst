@@ -5,27 +5,35 @@ import cats.MonoidK
 
 import jjm.implicits._
 
-sealed trait LabeledTreeChild[+Label, +A]
-case class LabeledTree[+Label, +A](
-  branches: Vector[(Label, LabeledTreeChild[Label, A])]
-) extends LabeledTreeChild[Label, A]
-case class LabeledTreeLeaf[+A](value: A) extends LabeledTreeChild[Nothing, A]
+sealed trait LabeledTree[+Label, +A]
+
 object LabeledTree {
-  def apply[Label, A](branches: (Label, LabeledTreeChild[Label, A])*): LabeledTree[Label, A] =
-    LabeledTree(branches.toVector)
 
-  def leaf[A](value: A) =
-    LabeledTreeLeaf(value)
+  case class Leaf[+A](value: A) extends LabeledTree[Nothing, A]
 
-  def leaves[Label, A](leaves: (Label, A)*) =
-    LabeledTree(leaves.toVector.mapSecond(leaf[A](_)))
+  case class Node[+Label, +A](
+    branches: Vector[(Label, LabeledTree[Label, A])]
+  ) extends LabeledTree[Label, A]
+  object Node {
+    def apply[Label, A](branches: (Label, LabeledTree[Label, A])*): Node[Label, A] =
+      Node(branches.toVector)
+  }
 
-  implicit def labeledTreeMonoidK[Label]: MonoidK[LabeledTree[Label, *]] =
-    new MonoidK[LabeledTree[Label, *]] {
-      def empty[A]: LabeledTree[Label, A] = LabeledTree[Label, A]()
-      def combineK[A](x: LabeledTree[Label, A], y: LabeledTree[Label, A]): LabeledTree[Label, A] =
-        LabeledTree(x.branches ++ y.branches)
+  def node[Label, A](branches: (Label, LabeledTree[Label, A])*): LabeledTree[Label, A] =
+    Node(branches.toVector)
+
+  def leaf[A](value: A): LabeledTree[Nothing, A] =
+    Leaf(value)
+
+  def leaves[Label, A](leaves: (Label, A)*): Node[Label, A] =
+    Node(leaves.toVector.mapSecond(leaf[A](_)))
+
+  implicit def labeledTreeNodeMonoidK[Label]: MonoidK[Node[Label, *]] =
+    new MonoidK[Node[Label, *]] {
+      def empty[A]: Node[Label, A] = Node[Label, A](Vector())
+      def combineK[A](x: Node[Label, A], y: Node[Label, A]): Node[Label, A] =
+        Node(x.branches ++ y.branches)
     }
-  implicit def labeledTreeMonoid[Label, A]: Monoid[LabeledTree[Label, A]] =
-    labeledTreeMonoidK[Label].algebra[A]
+  implicit def labeledTreeNodeMonoid[Label, A]: Monoid[Node[Label, A]] =
+    labeledTreeNodeMonoidK[Label].algebra[A]
 }
