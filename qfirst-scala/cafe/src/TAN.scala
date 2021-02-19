@@ -33,7 +33,7 @@ import cats.Parallel
 
   def getCopulaAuxChain(
     clauseType: ClauseType.VerbalClauseType,
-    subject: ArgumentPosition[Argument.Subject]
+    subject: Argument.Subject
   ): AuxChainResult[NonEmptyList[String]] = {
     getAuxChain(InflectedForms.beSingularForms, clauseType, subject)
   }
@@ -41,7 +41,7 @@ import cats.Parallel
   def getAuxChain(
     forms: InflectedForms,
     clauseType: ClauseType.VerbalClauseType,
-    subject: ArgumentPosition[Argument.Subject]
+    subject: Argument.Subject
   ): AuxChainResult[NonEmptyList[String]] = clauseType match {
     case ClauseType.Bare =>
       Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))

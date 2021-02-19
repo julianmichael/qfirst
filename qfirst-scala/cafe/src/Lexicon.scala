@@ -31,4 +31,23 @@ object Lexicon {
   case class Subordinator(form: LowerCaseString)
   case class Adjective(form: LowerCaseString)
   case class Verb(forms: InflectedForms)
+
+  sealed trait Wh {
+    def form: LowerCaseString
+  }
+  object Wh {
+    case class Noun(form: LowerCaseString) extends Wh
+    val who = Noun("who".lowerCase)
+    val what = Noun("what".lowerCase)
+    case class Adverb(form: LowerCaseString) extends Wh
+    val when = Adverb("when".lowerCase)
+    val where = Adverb("where".lowerCase)
+    val why = Adverb("why".lowerCase)
+    val how = Adverb("how".lowerCase)
+    // last two are in QA-SRL, but maybe questionable;
+    // could perhaps work them in as adjectives or something?
+    // need to look at the data.
+    val howMuch = Adverb("how much".lowerCase)
+    val howLong = Adverb("how long".lowerCase)
+  }
 }

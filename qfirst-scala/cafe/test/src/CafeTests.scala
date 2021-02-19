@@ -22,10 +22,10 @@ class CafeTests extends CatsEffectSuite {
     presentParticiple = "eating".lowerCase
   )
 
-  def doPro(clauseType: ClauseType, includeSubject: Boolean) =
-    ArgumentProForm.DoSomething(
-      clauseType, includeSubject,
-      subject = ArgumentPosition(Some(ArgumentProForm.what), None),
+  def doPro =
+    Predication.Verbal.doSomething(
+      // clauseType, includeSubject,
+      subject = Argument.NounPhrase.something,
       modifiers = Vector(),
       tan = TAN(Some(Tense.Finite.Present), false, false, false)
   )
@@ -34,7 +34,7 @@ class CafeTests extends CatsEffectSuite {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
   } yield (
-    doPro(clauseType, includeSubject).render(RenderContext.Arg),
+    doPro.render(clauseType, includeSubject),
     (clauseType, includeSubject)
   )
 
