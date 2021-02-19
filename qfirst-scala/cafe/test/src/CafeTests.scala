@@ -14,7 +14,7 @@ import qasrl.Tense
 
 class CafeTests extends CatsEffectSuite {
 
-  val eatForms = InflectedForms(
+  val eat = InflectedForms(
     stem = "eat".lowerCase,
     past = "ate".lowerCase,
     presentSingular3rd = "eats".lowerCase,
@@ -22,19 +22,36 @@ class CafeTests extends CatsEffectSuite {
     presentParticiple = "eating".lowerCase
   )
 
-  def doPro =
-    Predication.Verbal.doSomething(
-      // clauseType, includeSubject,
-      subject = Argument.NounPhrase.something,
-      modifiers = Vector(),
-      tan = TAN(Some(Tense.Finite.Present), false, false, false)
+  val want = InflectedForms(
+    stem = "want".lowerCase,
+    past = "wanted".lowerCase,
+    presentSingular3rd = "wants".lowerCase,
+    pastParticiple = "wanted".lowerCase,
+    presentParticiple = "wanting".lowerCase
+  )
+
+  val present = TAN(Some(Tense.Finite.Present), false, false, false)
+
+  val doPro = Predication.Verbal.doSomething(
+    // clauseType, includeSubject,
+    subject = Argument.ProForm.who,
+    modifiers = Vector(),
+    tan = present
+  )
+
+  val wantDo = Predication.Verbal(
+    subject = Argument.ProForm.who,
+    verb = Lexicon.Verb(want),
+    isPassive = false,
+    arguments = Vector(Argument.Infinitive(false, Some(doPro), Set())),
+    tan = TAN(Some(Tense.Finite.Present), false, false, false)
   )
 
   val rendered = for {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
   } yield (
-    doPro.render(clauseType, includeSubject),
+    wantDo.render(clauseType, includeSubject),
     (clauseType, includeSubject)
   )
 

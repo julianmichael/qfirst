@@ -22,7 +22,7 @@ sealed trait LabeledTree[+Label, A] {
 
   def depth: Int = cata(
     _ => 0)(
-    _.map(_._2).maximumOption.getOrElse(1))
+    _.map(_._2 + 1).maximumOption.getOrElse(1))
 
 }
 
@@ -77,7 +77,7 @@ object LabeledTree {
         val depth = newChild match {
           case Leaf(PrintStats(_, _, _)) => 1
           case Node(childChildren) =>
-            childChildren.map(_._1.depth).maximumOption.getOrElse(1)
+            childChildren.map(_._1.depth + 1).maximumOption.getOrElse(1)
         }
         PrintStats(width, depth, label) -> newChild
       }
@@ -92,6 +92,8 @@ object LabeledTree {
     (" " * leftSpace) + x + (" " * rightSpace)
   }
 
+  // returns a Vector of [depth+1] strings, each of length [width],
+  // to be stacked vertically in order.
   private[this] def glossyLayers[L, V](tree: LabeledTree[PrintStats[L], PrintStats[V]])(
     width: Int, depth: Int, renderLabel: L => String, renderValue: V => String
   ): Vector[String] = tree match {
