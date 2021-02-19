@@ -33,7 +33,10 @@ class CafeTests extends CatsEffectSuite {
   val rendered = for {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
-  } yield (doPro(clauseType, includeSubject).render, (clauseType, includeSubject))
+  } yield (
+    doPro(clauseType, includeSubject).render(RenderContext.Arg),
+    (clauseType, includeSubject)
+  )
 
   test("view rendered") {
     rendered.foreach {
@@ -43,7 +46,7 @@ class CafeTests extends CatsEffectSuite {
         res match {
           case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
           case Validated.Invalid(errs) =>
-            errs.toList.foreach(err => println("\t" + err.toString))
+            errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
         }
     }
   }
