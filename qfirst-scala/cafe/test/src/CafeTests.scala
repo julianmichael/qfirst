@@ -51,7 +51,7 @@ class CafeTests extends CatsEffectSuite {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
   } yield (
-    wantDo.render(clauseType, includeSubject),
+    wantDo.render(clauseType, includeSubject, None),
     (clauseType, includeSubject)
   )
 

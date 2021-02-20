@@ -51,6 +51,9 @@ object ExtractionPath {
   case class Descent(position: ArgPosition, next: ExtractionPath) extends ExtractionPath
   case object Focus extends ExtractionPath
   case class Extraction(next: ExtractionPath) extends ExtractionPath
+
+  def descend(path: Option[Descent], pos: ArgPosition): Option[ExtractionPath] =
+    path.collect { case Descent(`pos`, next) => next }
 }
 
 // Do-pro-forms.
@@ -344,9 +347,6 @@ object Argument {
   }
   object NounPhrase
 
-  def descend(path: Option[ExtractionPath.Descent], pos: ArgPosition): Option[ExtractionPath] =
-    path.collect { case ExtractionPath.Descent(`pos`, next) => next }
-
   case class Oblique(
     pred: Option[Predication.Oblique],
     adverbials: Set[ProForm.Adverb]
@@ -379,7 +379,7 @@ object Argument {
         case Some(Predication.Prepositional(prep, obj)) =>
           List(
             valid(WithExtraction(leaves("prep" -> prep.toString))),
-            obj.render(Arg(0), descend(path, Arg(0)))
+            obj.render(Arg(0), ExtractionPath.descend(path, Arg(0)))
           ).foldA
       }
     }
@@ -399,7 +399,7 @@ object Argument {
     import ArgPosition._, ExtractionPath.Descent
     override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(ClauseType.Progressive, includeSubject)) // TODO path
+      pred.map(_.render(ClauseType.Progressive, includeSubject, path))
         .getOrElse(invalid())
 
     def person = Some(Person.Third)
@@ -416,7 +416,7 @@ object Argument {
     import ArgPosition._, ExtractionPath.Descent
     override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(ClauseType.BareInfinitive, false)) // TODO path
+      pred.map(_.render(ClauseType.BareInfinitive, false, path))
         .getOrElse(invalid())
   }
 
@@ -445,7 +445,7 @@ object Argument {
         List( // TODO path
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
           else Validated.Valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
-          p.render(ClauseType.ToInfinitive, includeSubject)
+          p.render(ClauseType.ToInfinitive, includeSubject, path)
         ).foldA
       ).getOrElse(invalid())
   }
@@ -461,7 +461,7 @@ object Argument {
     import ArgPosition._, ExtractionPath.Descent
     override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(ClauseType.Progressive, includeSubject)) // TODO path
+      pred.map(_.render(ClauseType.Progressive, includeSubject, path))
         .getOrElse(invalid())
   }
 
@@ -479,7 +479,7 @@ object Argument {
     import ArgPosition._, ExtractionPath.Descent
     override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(ClauseType.Attributive, false)) // TODO path
+      pred.map(_.render(ClauseType.Attributive, false, path))
         .getOrElse(invalid())
   }
 
@@ -492,7 +492,7 @@ object Argument {
     import ArgPosition._, ExtractionPath.Descent
     override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(ClauseType.Finite, true)) // TODO path
+      pred.map(_.render(ClauseType.Finite, true, path))
         .getOrElse(invalid())
   }
 
@@ -517,7 +517,7 @@ object Argument {
       pred.map(p =>
         List(  // TODO path
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
-          p.render(ClauseType.Finite, true)
+          p.render(ClauseType.Finite, true, path)
         ).foldA.map(_.map(tree => LabeledTree.Node(symbol -> tree)))
       ).getOrElse(invalid())
   }
@@ -542,7 +542,7 @@ object Argument {
       subordinator.map(sub =>
         List(  // TODO path
           valid(WithExtraction(leaves("sub" -> sub.form.toString))),
-          clause.render(Arg(0), descend(path, Arg(0)))
+          clause.render(Arg(0), ExtractionPath.descend(path, Arg(0)))
         ).foldA.map(_.map(children => node(symbol -> children)))
       ).getOrElse(invalid())
   }
@@ -572,18 +572,49 @@ sealed trait Predication extends Component {
   def tan: TAN
   def arguments: Vector[Argument]
 
-  def render(clauseType: ClauseType, includeSubject: Boolean): Component.RenderResult
+  def renderPredicate(clauseType: ClauseType): Component.RenderResult
 
-  // TODO island constraints
-  def renderSubject(includeSubject: Boolean): Component.RenderResult = {
-    if(!includeSubject) {
-      Validated.valid(Monoid[Component.WithExtraction[LabeledTree.Node[String, String]]].empty)
-    } else subject.render(ArgPosition.Subj, None) // TODO pass in path
+  import Validated.valid
+
+  def render(
+    clauseType: ClauseType,
+    includeSubject: Boolean,
+    path: Option[ExtractionPath.Descent]
+  ): Component.RenderResult = {
+    validatePath(includeSubject, path) *> {
+      val subj = renderSubject(includeSubject, path)
+      val pred = renderPredicate(clauseType)
+      val args = renderArguments(path)
+      List(subj, pred, args).foldA.andThen(res =>
+        if(res.extractions.size > 1) {
+          invalid("Somehow produced multiple extractions.")
+        } else if((res.extractions.size == 1) != path.nonEmpty) {
+          invalid("Did not produce the correct number of extractions.")
+        } else valid(res)
+      )
+    }
   }
 
-  def renderArguments: Component.RenderResult = {
+  // TODO island constraints?
+  def validatePath(
+    includeSubject: Boolean,
+    path: Option[ExtractionPath.Descent]
+  ): ValidatedNec[Component.RenderError, Unit] = path.map(_.position) match {
+    case None => valid(())
+    case Some(ArgPosition.Subj) if includeSubject => valid(())
+    case Some(ArgPosition.Arg(i)) if arguments.size > i => valid(())
+    case Some(pos) => invalid(s"Cannot descent into argument position for extraction: $pos")
+  }
+
+  def renderSubject(includeSubject: Boolean, path: Option[ExtractionPath.Descent]): Component.RenderResult = {
+    if(!includeSubject) {
+      Validated.valid(Monoid[Component.WithExtraction[LabeledTree.Node[String, String]]].empty)
+    } else subject.render(ArgPosition.Subj, ExtractionPath.descend(path, ArgPosition.Subj))
+  }
+
+  def renderArguments(path: Option[ExtractionPath.Descent]): Component.RenderResult = {
     arguments.zipWithIndex.foldMapA { case (arg, index) =>
-      arg.render(ArgPosition.Arg(index), None) // TODO pass in path
+      arg.render(ArgPosition.Arg(index), ExtractionPath.descend(path, ArgPosition.Arg(index)))
     }
   }
 
@@ -650,17 +681,14 @@ object Predication {
   ) extends Predication {
     def arguments = argument +: modifiers
 
-    def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
+    def renderPredicate(clauseType: ClauseType): RenderResult = {
       clauseType match {
         case ClauseType.Attributive =>
           invalid("Cannot construct attributive clause from a copula.")
         case otherType: ClauseType.VerbalClauseType =>
-          val subj = renderSubject(includeSubject)
-          val aux = Validated.fromEither(
+          Validated.fromEither(
             tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
           ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-          val args = renderArguments
-          List(subj, aux, args).foldA
       }
     }
   }
@@ -673,18 +701,15 @@ object Predication {
     arguments: Vector[NonNominal],
     tan: TAN
   ) extends NonCopular {
-    def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
-      val subj = renderSubject(includeSubject)
+    def renderPredicate(clauseType: ClauseType): RenderResult = {
       val adj = Validated.valid(WithExtraction(LabeledTree.leaves("adj" -> adjective.form.toString)))
-      val args = renderArguments
       clauseType match {
-        case ClauseType.Attributive =>
-          List(subj, adj, args).foldA
+        case ClauseType.Attributive => adj
         case otherType: ClauseType.VerbalClauseType =>
           val aux = Validated.fromEither(
             tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
           ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-          List(subj, aux, adj, args).foldA
+          List(aux, adj).foldA
       }
     }
   }
@@ -696,9 +721,7 @@ object Predication {
     arguments: Vector[NonSubject],
     tan: TAN
   ) extends NonCopular {
-    def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
-      val subj = renderSubject(includeSubject)
-      val args = renderArguments
+    def renderPredicate(clauseType: ClauseType): RenderResult = {
       def pastParticiple = Validated.valid(
         WithExtraction(LabeledTree.leaves("verb" -> verb.forms.pastParticiple.toString))
       )
@@ -706,15 +729,15 @@ object Predication {
         case ClauseType.Attributive =>
           if(!isPassive) {
             invalid("Cannot construct attributive clause from active form.")
-          } else List(subj, pastParticiple, args).foldA
+          } else pastParticiple
         case otherType: ClauseType.VerbalClauseType =>
           if(isPassive) {
             val aux = Validated.fromEither(
               tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
             ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-            List(subj, aux, pastParticiple, args).foldA
+            List(aux, pastParticiple).foldA
           } else {
-            val verbChain = Validated.fromEither(
+            Validated.fromEither(
               tan.getAuxChain(verb.forms, otherType, subject).left.map(_.map(error(_)))
             ).map { chain =>
               val vb = LabeledTree.leaves("verb" -> chain.last)
@@ -722,7 +745,6 @@ object Predication {
               if(auxChain.isEmpty) vb
               else LabeledTree.leaves("aux" -> auxChain.toList.mkString(" ")) |+| vb
             }.map(WithExtraction(_))
-            List(subj, verbChain, args).foldA
           }
       }
     }
