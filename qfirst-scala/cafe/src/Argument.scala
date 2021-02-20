@@ -20,29 +20,37 @@ object ClauseType {
   // past participle form --- passive/adjective
   case object Attributive extends ClauseType
   sealed trait VerbalClauseType extends ClauseType
-  case object Bare extends VerbalClauseType
-  case object Infinitive extends VerbalClauseType
+  case object BareInfinitive extends VerbalClauseType
+  case object ToInfinitive extends VerbalClauseType
   case object Progressive extends VerbalClauseType
   case object Finite extends VerbalClauseType
 
-  val all = List(Attributive, Bare, Infinitive, Progressive, Finite)
+  val all = List(Attributive, BareInfinitive, ToInfinitive, Progressive, Finite)
 }
 
 
 // tells us whether we are rendering an argument...
 // TODO: in an answer (for bare vp answers to 'what..to do' questions
-sealed trait RenderContext
-object RenderContext {
+// TODO: 'Fronted' position? something for when extracted
+sealed trait ArgPosition
+object ArgPosition {
   // for wh-words/phrases
-  case object Focus extends RenderContext
+  // case object Focus extends RenderContext
   // for extraction gaps
-  case object Gap extends RenderContext
+  // case object Gap extends RenderContext
 
-  sealed trait InPlace extends RenderContext
+  // sealed trait InPlace extends RenderContext
   // normal argument position (accusative if nominal)
-  case object Arg extends InPlace
+  case class Arg(index: Int) extends ArgPosition
   // for nominative case with subjects
-  case object Subj extends InPlace
+  case object Subj extends ArgPosition
+}
+
+sealed trait ExtractionPath
+object ExtractionPath {
+  case class Descent(position: ArgPosition, next: ExtractionPath) extends ExtractionPath
+  case object Focus extends ExtractionPath
+  case class Extraction(next: ExtractionPath) extends ExtractionPath
 }
 
 // Do-pro-forms.
@@ -85,16 +93,16 @@ object RenderContext {
   //       case Attributive =>
   //         if(includeSubject) invalid("Attributives cannot appear with a subject.")
   //         else Validated.valid(Argument.Attributive(Some(pred)))
-  //       case Infinitive =>
-  //         Validated.valid(Argument.Infinitive(includeSubject, Some(pred)))
+  //       case ToInfinitive =>
+  //         Validated.valid(Argument.ToInfinitive(includeSubject, Some(pred)))
   //       case Progressive =>
   //         Validated.valid(Argument.Progressive(includeSubject, Some(pred)))
   //       case Finite =>
   //         if(includeSubject) Validated.valid(Argument.Finite(Some(pred)))
   //         else invalid("Finite complements require a subject.")
-  //       case Bare =>
-  //         if(includeSubject) invalid("Bare do-clauses cannot appear with a subject.")
-  //         else Validated.valid(Argument.Bare(Some(pred)))
+  //       case BareInfinitive =>
+  //         if(includeSubject) invalid("BareInfinitive do-clauses cannot appear with a subject.")
+  //         else Validated.valid(Argument.BareInfinitive(Some(pred)))
   //     }
   //   }
   //   def arg = clause.toOption
@@ -113,96 +121,153 @@ object RenderContext {
 // TODO: probably break apart the hierarchy once I know what error reporting
 // will actually look like.
 sealed trait Component extends Product with Serializable {
-  protected[Component] def leafBranch(pair: (String, String)): Component.RenderResult = {
-    Validated.valid(LabeledTree.leaves(pair))
-  }
-  protected[Component] def leaf(leaf: String): Component.RenderResultOf[LabeledTree[String, String]] = {
-    Validated.valid(LabeledTree.Leaf(leaf))
-  }
-  protected[Component] def branch(label: String, content: Component.RenderResult) = {
-    content.map(res => LabeledTree.node(label -> res))
-  }
+  // protected[Component] def leafBranch(
+  //   pair: (String, String)
+  // ): Component.RenderResultOf[LabeledTree[String, String]] = {
+  //   Validated.valid(LabeledTree.leaves(pair))
+  // }
+  // protected[Component] def leaf(leaf: String): Component.RenderResultOf[LabeledTree[String, String]] = {
+  //   Validated.valid(LabeledTree.Leaf(leaf))
+  // }
+  // protected[Component] def branch(label: String, content: Component.RenderResult) = {
+  //   content.map(res => LabeledTree.node(label -> res))
+  // }
   protected[Component] def error(msg: String) = Component.RenderError(this, msg)
   protected[Component] def invalid[A](
     msg: String = "Incomplete component."
-  ): Component.RenderResultOf[A] =
+  ): ValidatedNec[Component.RenderError, A] =
     Validated.invalid(NonEmptyChain.one(error(msg)))
 }
 object Component {
+  case class WithExtraction[+A](
+    value: A,
+    extractions: Vector[(Argument, ExtractionPath)] = Vector()
+  ) {
+    def map[B](f: A => B) = WithExtraction(f(value), extractions)
+  }
+  object WithExtraction {
+    implicit def withExtractionMonoid[A: Monoid] = new Monoid[WithExtraction[A]] {
+      def empty = WithExtraction(Monoid[A].empty)
+      def combine(x: WithExtraction[A], y: WithExtraction[A]): WithExtraction[A] = {
+        WithExtraction(x.value |+| y.value, x.extractions ++ y.extractions)
+      }
+    }
+  }
   case class RenderError(component: Component, msg: String)
   type RenderResultOf[A] = ValidatedNec[RenderError, A]
-  type RenderResult = ValidatedNec[RenderError, LabeledTree.Node[String, String]]
+  // type RenderResult = ValidatedNec[RenderError, LabeledTree.Node[String, String]]
+  type RenderResult = RenderResultOf[WithExtraction[LabeledTree.Node[String, String]]]
 }
 
 // argument structure (with slots etc.)
 sealed trait Argument extends Component {
-  def render(ctx: RenderContext): Component.RenderResult
+  def render(pos: ArgPosition, path: Option[ExtractionPath]): Component.RenderResult
+  def render(pos: ArgPosition): ValidatedNec[Component.RenderError, LabeledTree.Node[String, String]] =
+    render(pos, None).map(_.value) // assume there are no extractions
 }
 object Argument {
   import Component._
   import Lexicon._
+  import LabeledTree.{leaf, leaves, node}
+  import Validated.valid
 
   sealed trait Concrete extends Argument {
-    def symbol: String
+    def category: String
     def proForms: Set[Argument.ProForm]
-    def fullSymbol = {
-      val indefs = proForms.toList.sortBy(_.toString).mkString("/")
-      if(indefs.isEmpty) symbol
-      else s"$symbol {$indefs}"
+    // TODO might not need parameter
+    def allowExtraction(path: ExtractionPath): Boolean
+
+    final def symbol = {
+      val pros = proForms.map(_.wh(ArgPosition.Subj)).toList.sortBy(_.toString).mkString("/")
+      if(pros.isEmpty) category
+      else s"$category {$pros}"
     }
 
-    import RenderContext._
-    def render(ctx: RenderContext): Component.RenderResult = ctx match {
-      case Gap => leafBranch(fullSymbol -> "")
-      case Focus => invalid("Must have a pro-form in focus. (TODO: pied piping)")
-      case other: RenderContext.InPlace =>
-        renderStrict(other).map(tree => LabeledTree.Node(fullSymbol -> tree))
+    import ArgPosition._, ExtractionPath._
+    def render(pos: ArgPosition, path: Option[ExtractionPath]): RenderResult = path match {
+      case Some(Extraction(path)) =>
+        if(allowExtraction(path)) valid(
+          WithExtraction(
+            leaves(symbol -> ""),
+            Vector(this -> path)
+          )
+        ) else invalid("Extraction of argument not allowed.")
+      case Some(Focus) => invalid("Focal element must be a pro-form.")
+      case Some(d @ Descent(_, _)) =>
+        validateDescent(d) *>
+          renderStrict(pos, Some(d)).map(_.map(tree => node(symbol -> tree)))
+      case None =>
+        renderStrict(pos, None).map(_.map(tree => node(symbol -> tree)))
     }
 
-    def renderStrict(ctx: RenderContext.InPlace): Component.RenderResultOf[LabeledTree[String, String]]
+    def validateDescent(path: Descent): ValidatedNec[RenderError, Unit]
+
+    def renderStrict(
+      pos: ArgPosition, path: Option[Descent]
+    ): RenderResultOf[Component.WithExtraction[LabeledTree[String, String]]]
   }
 
   sealed trait ProForm extends Argument {
-    def wh: Lexicon.Wh
+    def wh(pos: ArgPosition): String
     def placeholder: Option[String]
 
-    def symbol = s"{${wh.form}}"
-    def indefinite = Some(this)
-    import RenderContext._
-    override def render(ctx: RenderContext) = ctx match {
-      case Gap => leafBranch(symbol -> "")
-      case Focus => leafBranch(symbol -> wh.form.toString)
-      case Subj | Arg => placeholder.map(p => leafBranch(symbol -> p))
-          .getOrElse(invalid("No placeholder for indefinite."))
+    def symbol = s"{${wh(ArgPosition.Subj)}}"
+    // def indefinite = Some(this)
+
+    import ArgPosition._, ExtractionPath._
+    def render(pos: ArgPosition, path: Option[ExtractionPath]): RenderResult = path match {
+      case Some(Extraction(path)) =>
+        valid(
+          WithExtraction(
+            leaves(symbol -> ""),
+            Vector(this -> path)
+          )
+        )
+      case Some(Focus) =>
+        valid(WithExtraction(leaves(symbol -> wh(pos))))
+      case Some(Descent(_, _)) => invalid("Cannot extract from inside a pro-form.")
+      case None => placeholder
+          .map(p => valid(WithExtraction(leaves(symbol -> p))))
+          .getOrElse(invalid("No placeholder exists for pro-form."))
     }
   }
   object ProForm {
     sealed trait Noun extends ProForm with Nominal with NounOrOblique {
-      def wh: Lexicon.Wh.Noun
+      // def wh: Lexicon.Wh.Noun
     }
     case object who extends Noun {
-      val wh = Wh.who; val placeholder = Some("someone")
+      def wh(pos: ArgPosition) = pos match {
+        case ArgPosition.Subj => "who"
+        case _ => "whom"
+      }
+      val placeholder = Some("someone")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
     }
     case object what extends Noun with Complement {
-      val wh = Wh.what; val placeholder = Some("something")
+      def wh(pos: ArgPosition) = "what"
+      val placeholder = Some("something")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
     }
     sealed trait Adverb extends ProForm with NonNominal with NounOrOblique {
-      def wh: Lexicon.Wh.Adverb
+      def wh(pos: ArgPosition) = whWord.form.toString
+      def whWord: Lexicon.Wh.Adverb
     }
     case object where extends Adverb {
-      val wh = Wh.where; val placeholder = Some("somewhere")
+      val whWord = Wh.where
+      val placeholder = Some("somewhere")
     }
     case object when extends Adverb {
-      val wh = Wh.when; val placeholder = None
+      val whWord = Wh.when
+      val placeholder = None
     }
     object Adverb {
-      def fromWh(wh: Lexicon.Wh.Adverb) = all.find(_.wh == wh).get
+      def fromWh(wh: Lexicon.Wh.Adverb) = all.find(_.whWord == wh).get
       def all = List(where, when)
     }
+    // TODO: consider adding 'do' as a pro-form, AFTER figuring out
+    // extraction, question formation, AND answer filling for the simple case.
   }
 
   // can appear as subject
@@ -227,14 +292,18 @@ object Argument {
 
   // expletive 'it' or 'there'; can only appear as subject
   case class Expletive(expletive: Lexicon.Expletive) extends Concrete with Subject {
+
+    def allowExtraction(path: ExtractionPath): Boolean = false
+    def category = s"np[${expletive.form}]"
     def proForms = Set()
-    def symbol = s"np[${expletive.form}]"
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj => leaf(expletive.form.toString)
-      case Arg => invalid("Can only render expletives in subject position.")
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] =
+      invalid[Unit]("Cannot extract from inside an expletive.")
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) = pos match {
+      case Subj => valid(WithExtraction(leaf(expletive.form.toString)))
+      case Arg(_) => invalid("Can only render expletives in subject position.")
     }
   }
   object Expletive {
@@ -242,10 +311,16 @@ object Argument {
     val there = Expletive(Lexicon.Expletive.there)
   }
 
+  // NOTE: predications are optional because we can use arguments
+  // to specify general syntactic subcategorization frames.
+
   case class NounPhrase(
     pred: Option[Predication.Nominal],
   ) extends Concrete with Nominal {
-    def symbol = "np"
+
+    override def allowExtraction(path: ExtractionPath): Boolean = true
+
+    def category = "np"
     // TODO: change to account for multiple possible animacies
     def proForms =
       animate.map(anim => if(anim) ProForm.who else ProForm.what)
@@ -255,39 +330,58 @@ object Argument {
     def person: Option[Person] = pred.flatMap(_.person)
     def number: Option[Number] = pred.flatMap(_.number)
 
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj => pred.map(_.getForm(Case.Nominative)).map(leaf).getOrElse(invalid())
-      case Arg => pred.map(_.getForm(Case.Accusative)).map(leaf).getOrElse(invalid())
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] =
+      invalid[Unit]("Cannot extract from inside a noun phrase.")
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) = pos match {
+      case Subj => pred.map(pred =>
+        valid(WithExtraction(leaf(pred.getForm(Case.Nominative)): LabeledTree[String, String]))
+      ).getOrElse(invalid())
+      case Arg(_) => pred.map(pred =>
+        valid(WithExtraction(leaf(pred.getForm(Case.Accusative)): LabeledTree[String, String]))
+      ).getOrElse(invalid())
     }
   }
-  object NounPhrase {
-    def something = NounPhrase(Some(Predication.NounPhrase.something))
-    def someone = NounPhrase(Some(Predication.NounPhrase.someone))
-  }
+  object NounPhrase
+
+  def descend(path: Option[ExtractionPath.Descent], pos: ArgPosition): Option[ExtractionPath] =
+    path.collect { case ExtractionPath.Descent(`pos`, next) => next }
 
   case class Oblique(
     pred: Option[Predication.Oblique],
     adverbials: Set[ProForm.Adverb]
   ) extends Concrete with NounOrOblique with NonNominal {
-    def symbol = "pp"
+
+    override def allowExtraction(path: ExtractionPath): Boolean = true
+
+    def category = "pp"
     def proForms = adverbials.map(x => x: ProForm)
-    // TODO: descend to gaps properly
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Arg => pred match {
+
+    // TODO maybe use a separate descent validation step
+
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] =
+      pred.map {
+        case Predication.Particulate(_) =>
+          invalid("Cannot extract from inside a particle.")
+        case Predication.Prepositional(_, _) =>
+          if(path.position != Arg(0)) {
+            invalid(s"Can't descend into argument for extraction from oblique: ${path.position}")
+          } else valid(())
+      }.getOrElse(valid(()))
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) = pos match {
+      // TODO: allowed in Fronted position
+      case Subj => invalid("Oblique argument cannot appear in subject position.")
+      case Arg(_) => pred match {
         case None => invalid()
         case Some(Predication.Particulate(prep)) =>
-          leafBranch("prt" -> prep.toString)
-        case Some(Predication.Prepositional(prep, obj)) => obj match {
-          case None => invalid()
-          case Some(nominal) => List(
-            leafBranch("prep" -> prep.toString),
-            nominal.render(RenderContext.Arg)
+          valid(WithExtraction(leaves("prt" -> prep.toString)))
+        case Some(Predication.Prepositional(prep, obj)) =>
+          List(
+            valid(WithExtraction(leaves("prep" -> prep.toString))),
+            obj.render(Arg(0), descend(path, Arg(0)))
           ).foldA
-        }
       }
-      case Subj => invalid("Oblique argument cannot appear in subject position.")
     }
   }
 
@@ -298,62 +392,62 @@ object Argument {
     pred: Option[Predication]
       // TODO possessive subject option
   ) extends Concrete with Nominal {
-    def symbol = if(includeSubject) "s[g]" else "vp[g]"
+    def category = if(includeSubject) "s[g]" else "vp[g]"
     def proForms = Set(ProForm.what)
+    override def allowExtraction(path: ExtractionPath) = true
 
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => pred.map(_.render(ClauseType.Progressive, includeSubject))
-          .getOrElse(invalid())
-      case other => invalid("Need to work on wh-words for complements.")
-    }
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(_.render(ClauseType.Progressive, includeSubject)) // TODO path
+        .getOrElse(invalid())
+
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
   }
 
-  case class Bare(
+  case class BareInfinitive(
     // includeSubject: Boolean,
     pred: Option[Predication.NonCopular]
   ) extends Concrete with Complement {
-    def symbol = "vp[b]"
-    def proForms = Set()
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => pred.map(_.render(ClauseType.Bare, false))
-          .getOrElse(invalid())
-      case _ => invalid("Cannot extract bare clauses on their own.")
-    }
+    override def category = "vp[b]"
+    override def proForms = Set()
+    override def allowExtraction(path: ExtractionPath) = false
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(_.render(ClauseType.BareInfinitive, false)) // TODO path
+        .getOrElse(invalid())
   }
 
   // various possible forms of complements:
   // may be specific to a predicate's (or subordinator's!) subcat frame.
   // TODO: fix up infinitives. all sorts of syntactic possibilities here.
   // Not sure what will be best.
-  case class Infinitive(
+  case class ToInfinitive(
     includeSubject: Boolean,
     // pro: Option[ProFormProForm],
     pred: Option[Predication],
     proForms: Set[ProForm]
   ) extends Concrete with Complement { // TODO: with Subject. or, just add a new argument type for subj inf?
-    def symbol = if(includeSubject) "s[for-to]" else "vp[to]"
+    def category = if(includeSubject) "s[for-to]" else "vp[to]"
     // def indefinite = if(includeSubject) ProForm.what else ...
     def complementizer: InfinitiveComplementizer = Lexicon.InfinitiveComplementizer.`for`
+    override def allowExtraction(path: ExtractionPath) = false
 
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
 
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg =>
-        pred.map(p =>
-          List(
-            if(includeSubject) leafBranch("comp" -> complementizer.form.toString)
-            else Validated.Valid(LabeledTree.Node[String, String](Vector())),
-            p.render(ClauseType.Infinitive, includeSubject)
-          ).foldA
-        ).getOrElse(invalid())
-      case _ => invalid("TODO: Need to work out wh-words for infinitival complements.")
-    }
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(p =>
+        List( // TODO path
+          if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
+          else Validated.Valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
+          p.render(ClauseType.ToInfinitive, includeSubject)
+        ).foldA
+      ).getOrElse(invalid())
   }
 
   case class Progressive(
@@ -361,14 +455,14 @@ object Argument {
     pred: Option[Predication],
     adverbials: Set[ProForm.Adverb]
   ) extends Concrete with Complement {
-    def symbol = if(includeSubject) "s[ng]" else "vp[ng]"
-    def proForms = adverbials.map(x => x: ProForm)
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => pred.map(_.render(ClauseType.Progressive, includeSubject))
-          .getOrElse(invalid())
-      case _ => invalid("Need wh-word specified for progressive participials.")
-    }
+    override def category = if(includeSubject) "s[ng]" else "vp[ng]"
+    override def proForms = adverbials.map(x => x: ProForm)
+    override def allowExtraction(path: ExtractionPath) = false
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(_.render(ClauseType.Progressive, includeSubject)) // TODO path
+        .getOrElse(invalid())
   }
 
   // NOTE: maybe 'how' is the only acceptable pro-form here?
@@ -379,27 +473,27 @@ object Argument {
     // pro: Option[ProFormProForm],
     proForms: Set[ProForm]
   ) extends Concrete with Complement {
-    // def symbol = if(includeSubject) "s[pt]" else "vp[pt]"
-    def symbol = "vp[pt]"
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => pred.map(_.render(ClauseType.Attributive, false))
-          .getOrElse(invalid())
-      case _ => invalid("Need wh-word specified for attributives.")
-    }
+    // def category = if(includeSubject) "s[pt]" else "vp[pt]"
+    override def category = "vp[pt]"
+    override def allowExtraction(path: ExtractionPath) = false
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(_.render(ClauseType.Attributive, false)) // TODO path
+        .getOrElse(invalid())
   }
 
   case class Finite(
     pred: Option[Predication]
   ) extends Concrete with Complement { // with Subject? but cannot appear in subj except as an answer
-    def symbol = "s[dcl]"
-    def proForms = Set(ProForm.what)
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => pred.map(_.render(ClauseType.Finite, true))
-          .getOrElse(invalid())
-      case _ => invalid("Need wh-word specified for finite clauses.")
-    }
+    override def category = "s[dcl]"
+    override def proForms = Set(ProForm.what)
+    override def allowExtraction(path: ExtractionPath) = false
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(_.render(ClauseType.Finite, true)) // TODO path
+        .getOrElse(invalid())
   }
 
   // is this always necessarily 'that'? maybe remove complementizer slot?
@@ -408,44 +502,49 @@ object Argument {
     pred: Option[Predication],
   ) extends Concrete with Complement with Subject {
 
-    def symbol = "s[comp]"
-    def proForms = Set(ProForm.what)
+    override def category = "s[comp]"
+    override def proForms = Set(ProForm.what)
+    override def allowExtraction(path: ExtractionPath) = false
 
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
 
     def complementizer: Complementizer = Lexicon.Complementizer.that
 
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg =>
-        pred.map(p =>
-          List(
-            leafBranch("comp" -> complementizer.form.toString),
-            p.render(ClauseType.Finite, true)
-          ).foldA.map(children => LabeledTree.Node(symbol -> children))
-        ).getOrElse(invalid())
-      case _ => invalid("Need wh-word specified for finite complements.")
-    }
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] = valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      pred.map(p =>
+        List(  // TODO path
+          valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
+          p.render(ClauseType.Finite, true)
+        ).foldA.map(_.map(tree => LabeledTree.Node(symbol -> tree)))
+      ).getOrElse(invalid())
   }
 
+  // TODO: island constraints
   // TODO: add predication structure to subordinators/adverbials
   case class SubordinateClause(
-    subordinator: Subordinator,
+    subordinator: Option[Subordinator],
     clause: Complement,
     adverbials: Set[ProForm.Adverb]
   ) extends Concrete with NonNominal {
-    def symbol = "advcl"
-    def proForms = adverbials.map(x => x: ProForm)
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg =>
-        List(
-          Validated.valid(LabeledTree.leaves("sub" -> subordinator.form.toString)),
-          clause.render(???)
-        ).foldA
-      case _ => invalid("Need wh-word specified for subordinate clauses.")
-    }
+    override def category = "adv[comp]"
+    override def proForms = adverbials.map(x => x: ProForm)
+    // TODO might depend on the predicate?
+    override def allowExtraction(path: ExtractionPath) = true
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] =
+      if(path.position != Arg(0)) {
+        invalid(s"Can't descend for extraction from subordinate clause: ${path.position}")
+      } else valid(())
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      subordinator.map(sub =>
+        List(  // TODO path
+          valid(WithExtraction(leaves("sub" -> sub.form.toString))),
+          clause.render(Arg(0), descend(path, Arg(0)))
+        ).foldA.map(_.map(children => node(symbol -> children)))
+      ).getOrElse(invalid())
   }
 
   // for adverbials like 'today', 'every day' etc.
@@ -454,26 +553,40 @@ object Argument {
     form: Option[String],
     adverbials: Set[ProForm.Adverb]
   ) extends Concrete with NonNominal {
-    def symbol = "adv"
-    def proForms = adverbials.map(x => x: ProForm)
-    import RenderContext._
-    override def renderStrict(ctx: RenderContext.InPlace) = ctx match {
-      case Subj | Arg => form.map(leaf).getOrElse(invalid("Missing adverbial form."))
-    }
+    override def category = "adv"
+    override def proForms = adverbials.map(x => x: ProForm)
+    override def allowExtraction(path: ExtractionPath) = false
+    import ArgPosition._, ExtractionPath.Descent
+
+    import ArgPosition._, ExtractionPath.Descent
+    override def validateDescent(path: Descent): ValidatedNec[RenderError, Unit] =
+      invalid[Unit]("Cannot extract from inside an adverbial.")
+    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+      form.map(form => valid(WithExtraction(leaf(form)))).getOrElse(invalid())
   }
 
 }
 
 sealed trait Predication extends Component {
   def subject: Argument.Subject
-  def render(clauseType: ClauseType, includeSubject: Boolean): Component.RenderResult
   def tan: TAN
+  def arguments: Vector[Argument]
 
-  def renderSubject(includeSubject: Boolean) = {
+  def render(clauseType: ClauseType, includeSubject: Boolean): Component.RenderResult
+
+  // TODO island constraints
+  def renderSubject(includeSubject: Boolean): Component.RenderResult = {
     if(!includeSubject) {
-      Validated.valid(Monoid[LabeledTree.Node[String, String]].empty)
-    } else subject.render(RenderContext.Subj)
+      Validated.valid(Monoid[Component.WithExtraction[LabeledTree.Node[String, String]]].empty)
+    } else subject.render(ArgPosition.Subj, None) // TODO pass in path
   }
+
+  def renderArguments: Component.RenderResult = {
+    arguments.zipWithIndex.foldMapA { case (arg, index) =>
+      arg.render(ArgPosition.Arg(index), None) // TODO pass in path
+    }
+  }
+
 }
 object Predication {
   import Component._
@@ -488,6 +601,8 @@ object Predication {
     def animate: Option[Boolean]
     def person: Option[Person]
     def number: Option[Number]
+
+    def arguments = Vector()
   }
   case class NounPhrase(
     form: String,
@@ -500,20 +615,21 @@ object Predication {
       case _ => form
     }
   }
-  object NounPhrase {
-    val something = NounPhrase("something", Some(false), Some(Person.Third), Some(Number.Singular))
-    val someone = NounPhrase("someone", Some(true), Some(Person.Third), Some(Number.Singular))
-  }
+  object NounPhrase
   // TODO: add definite pronouns
 
   sealed trait Oblique
   // prep should not take an object, i.e., is a particle
-  case class Particulate(form: Particle) extends Oblique
+  case class Particulate(form: Particle) extends Oblique {
+    def arguments = Vector()
+  }
   // prep should take an object, which may not be specified
   case class Prepositional(
     prep: Preposition,
-    obj: Option[Argument.Nominal]
-  ) extends Oblique
+    obj: Argument.Nominal
+  ) extends Oblique {
+    def arguments = Vector(obj)
+  }
 
   // 'something is done'.
   // maybe can add this in later.
@@ -524,7 +640,6 @@ object Predication {
   // ) {
   //   // verb: Verb = Verb(InflectedForms.doForms)
   // }
-  // maybe also 'what happened _?' type of pro-form?
   // not as necessary since it isn't needed for constructing questions in existing framework
 
   case class Copular(
@@ -533,18 +648,18 @@ object Predication {
     modifiers: Vector[NonNominal],
     tan: TAN
   ) extends Predication {
+    def arguments = argument +: modifiers
 
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
-      val subj = renderSubject(includeSubject)
-      val arguments = argument +: modifiers
-      val args = arguments.foldMapA(_.render(RenderContext.Arg))
       clauseType match {
         case ClauseType.Attributive =>
           invalid("Cannot construct attributive clause from a copula.")
         case otherType: ClauseType.VerbalClauseType =>
+          val subj = renderSubject(includeSubject)
           val aux = Validated.fromEither(
             tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-          ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
+          ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
+          val args = renderArguments
           List(subj, aux, args).foldA
       }
     }
@@ -559,16 +674,16 @@ object Predication {
     tan: TAN
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
-      val adj = Validated.valid(LabeledTree.leaves("adj" -> adjective.form.toString))
       val subj = renderSubject(includeSubject)
-      val args = arguments.foldMapA(_.render(RenderContext.Arg))
+      val adj = Validated.valid(WithExtraction(LabeledTree.leaves("adj" -> adjective.form.toString)))
+      val args = renderArguments
       clauseType match {
         case ClauseType.Attributive =>
           List(subj, adj, args).foldA
         case otherType: ClauseType.VerbalClauseType =>
           val aux = Validated.fromEither(
             tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-          ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
+          ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
           List(subj, aux, adj, args).foldA
       }
     }
@@ -583,9 +698,9 @@ object Predication {
   ) extends NonCopular {
     def render(clauseType: ClauseType, includeSubject: Boolean): RenderResult = {
       val subj = renderSubject(includeSubject)
-      val args = arguments.foldMapA(_.render(RenderContext.Arg))
+      val args = renderArguments
       def pastParticiple = Validated.valid(
-        LabeledTree.leaves("verb" -> verb.forms.pastParticiple.toString)
+        WithExtraction(LabeledTree.leaves("verb" -> verb.forms.pastParticiple.toString))
       )
       clauseType match {
         case ClauseType.Attributive =>
@@ -596,7 +711,7 @@ object Predication {
           if(isPassive) {
             val aux = Validated.fromEither(
               tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-            ).map(auxes => LabeledTree.leaves("aux" -> auxes.toList.mkString(" ")))
+            ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
             List(subj, aux, pastParticiple, args).foldA
           } else {
             val verbChain = Validated.fromEither(
@@ -606,13 +721,15 @@ object Predication {
               val auxChain = chain.init
               if(auxChain.isEmpty) vb
               else LabeledTree.leaves("aux" -> auxChain.toList.mkString(" ")) |+| vb
-            }
+            }.map(WithExtraction(_))
             List(subj, verbChain, args).foldA
           }
       }
     }
   }
   object Verbal {
+    // maybe also 'what happened _?' type of pro-form?
+    // XXX change to a pro-form
     def doSomething(
       subject: Argument.Subject,
       modifiers: Vector[NonNominal],
@@ -669,7 +786,7 @@ object Predication {
   //  - subject of finite clause: to err is human
   //  - open complement of verb: he wants to help
   //  - open complement of adjective: he is happy to help
-  // case class Infinitive(
+  // case class ToInfinitive(
   //   verb: VoicedVerbPhrase
   // ) extends RelaxedNominal with VerbalPredication with NonNominalPredication
 

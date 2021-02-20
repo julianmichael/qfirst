@@ -40,10 +40,10 @@ object LabeledTree {
       Node(branches.toVector)
   }
 
-  def node[Label, A](branches: (Label, LabeledTree[Label, A])*): LabeledTree[Label, A] =
+  def node[Label, A](branches: (Label, LabeledTree[Label, A])*): Node[Label, A] =
     Node(branches.toVector)
 
-  def leaf[A](value: A): LabeledTree[Nothing, A] =
+  def leaf[A](value: A): Leaf[A] =
     Leaf(value)
 
   def leaves[Label, A](leaves: (Label, A)*): Node[Label, A] =

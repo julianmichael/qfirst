@@ -19,7 +19,6 @@ import monocle.macros._
 import io.circe.generic.JsonCodec
 
 import qasrl.Tense
-import qfirst.cafe.ClauseType.Infinitive
 import cats.Parallel
 
 @JsonCodec @Lenses case class TAN(
@@ -43,9 +42,9 @@ import cats.Parallel
     clauseType: ClauseType.VerbalClauseType,
     subject: Argument.Subject
   ): AuxChainResult[NonEmptyList[String]] = clauseType match {
-    case ClauseType.Bare =>
+    case ClauseType.BareInfinitive =>
       Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
-    case ClauseType.Infinitive =>
+    case ClauseType.ToInfinitive =>
       Tense.NonFinite.To.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
     case ClauseType.Progressive =>
       Tense.NonFinite.Gerund.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))

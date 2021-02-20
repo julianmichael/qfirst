@@ -43,7 +43,7 @@ class CafeTests extends CatsEffectSuite {
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
-    arguments = Vector(Argument.Infinitive(false, Some(doPro), Set())),
+    arguments = Vector(Argument.ToInfinitive(false, Some(doPro), Set())),
     tan = TAN(Some(Tense.Finite.Present), false, false, false)
   )
 
@@ -61,7 +61,7 @@ class CafeTests extends CatsEffectSuite {
         val inclSubjStr = if(inclSubj) " (with subject)" else ""
         println(s"\n$clauseType$inclSubjStr")
         res match {
-          case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+          case Validated.Valid(tree) => println(LabeledTree.showGloss(tree.value))
           case Validated.Invalid(errs) =>
             errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
         }
