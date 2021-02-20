@@ -43,7 +43,7 @@ class CafeTests extends CatsEffectSuite {
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
-    arguments = Vector(Argument.ToInfinitive(false, Some(doPro), Set())),
+    arguments = Vector(Argument.ToInfinitive(Some(doPro), false, Set())),
     tan = TAN(Some(Tense.Finite.Present), false, false, false)
   )
 
