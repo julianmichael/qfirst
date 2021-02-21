@@ -72,7 +72,7 @@ class CafeTests extends CatsEffectSuite {
     val somePaths = None :: wantDo.argumentPaths.toList.map(Some(_))
     somePaths.foreach { path =>
       val question = wantDo.renderQuestion(path)
-      println("\n" + path)
+      println("\n" + path.fold("N/A")(_.show))
       question match {
         case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
         case Validated.Invalid(errs) =>

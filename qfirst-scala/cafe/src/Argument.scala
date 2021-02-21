@@ -11,6 +11,7 @@ import cats.implicits._
 import mouse.all._
 import cats.kernel.Monoid
 import cats.data.NonEmptyList
+import cats.Show
 
 // S4: Simple Surrogate Syntactic Semantics
 
@@ -87,12 +88,18 @@ object ArgumentPath {
       case ExtractionDescent(`pos`, next) => next
       case FocalDescent(`pos`, next) => next
     }
-  // def descend[A](path: Option[Descent[A]], pos: ArgPosition): Option[A] =
-  //   path.collect {
-  //     case ExtractionDescent(`pos`, next) => next
-  //   }
-  // def descend(path: Option[FocalDescent], pos: ArgPosition): Option[FocalPath] =
-  //   path.collect { case Descent(`pos`, next) => next }
+
+  implicit val argumentPathShow = new Show[ArgumentPath] {
+    def show(path: ArgumentPath): String = path match {
+      case ExtractionDescent(position, next) => s"${position} ~> ${show(next)}"
+      case FocalDescent(position, next) => s"${position} -> ${show(next)}"
+      case Extraction(next) => s"{${show(next)}}"
+      case Focus => "*"
+    }
+  }
+
+  // NOTE: shouldn't this be unnecessary bc of contravariance?
+  implicit val descentShow = argumentPathShow.contramap[Descent](x => x: ArgumentPath)
 }
 
 // Do-pro-forms.
