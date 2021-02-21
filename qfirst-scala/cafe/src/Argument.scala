@@ -10,6 +10,7 @@ import cats.data.NonEmptyChain
 import cats.implicits._
 import mouse.all._
 import cats.kernel.Monoid
+import cats.data.NonEmptyList
 
 // S4: Simple Surrogate Syntactic Semantics
 
@@ -24,8 +25,9 @@ object ClauseType {
   case object ToInfinitive extends VerbalClauseType
   case object Progressive extends VerbalClauseType
   case object Finite extends VerbalClauseType
+  case object Inverted extends VerbalClauseType
 
-  val all = List(Attributive, BareInfinitive, ToInfinitive, Progressive, Finite)
+  val all = List(Attributive, BareInfinitive, ToInfinitive, Progressive, Finite, Inverted)
 }
 
 
@@ -471,6 +473,7 @@ object Argument {
   // NOTE: maybe 'how' is the only acceptable pro-form here?
   // i guess 'what' appears for adjectives...
   // can subjects appear? she wants Ben happy. What does she want? Ben happy. idk.
+  // TODO: probably add subjects back in. maybe be lenient.
   // includeSubject: Boolean,
   case class Attributive(
     pred: Option[Predication.NonCopular],
@@ -479,7 +482,7 @@ object Argument {
     override def clauseType = ClauseType.Attributive
     override def includeSubject = false
     // def category = if(includeSubject) "s[pt]" else "vp[pt]"
-    override def category = "vp[pt]"
+    override def category = "vp[adj/pt]"
     override def allowExtraction(path: ExtractionPath) = false
   }
 
@@ -528,24 +531,68 @@ sealed trait Predication extends Component {
   def tan: TAN
   def arguments: Vector[Argument]
 
-  def renderPredicate(clauseType: ClauseType): Component.RenderResult
+  def predPOS: String
+  // TODO: change this to 1) take a param to possibly ensure
+  // do-support, and 2) return a NonEmptyList verb chain instead.
+  // this will allow us to do auxiliary flip.
+  def renderVerbChain(
+    clauseType: ClauseType,
+    needsFlippable: Boolean
+  ): Either[NonEmptyChain[String], NonEmptyList[String]]
+  // tan.getCopulaAuxChain(otherType, subject)
+          // LabeledTree.leaves("aux" -> verbChain.init.mkString(" ")) |+|
+          //   LabeledTree.leaves("verb" -> verbChain.last)
 
   import Validated.valid
+  import LabeledTree.{leaf, leaves, node}
+  import Component.WithExtraction
 
   def render(
     clauseType: ClauseType,
     includeSubject: Boolean,
-    path: Option[ExtractionPath.Descent]
+  ): Component.RenderResultOf[LabeledTree[String, String]] = {
+    render(clauseType, includeSubject, None).map(_.value)
+  }
+
+  def render(
+    clauseType: ClauseType,
+    includeSubject: Boolean,
+    path: Option[ExtractionPath.Descent],
   ): Component.RenderResult = {
+    val frontAuxiliary = clauseType == ClauseType.Inverted
     validatePath(includeSubject, path) *> {
-      val subj = renderSubject(includeSubject, path)
-      val pred = renderPredicate(clauseType)
+      val flipAuxiliary = frontAuxiliary && includeSubject
       val args = renderArguments(path)
-      List(subj, pred, args).foldA.andThen(res =>
+      val subj = renderSubject(includeSubject, path)
+      def makeVerbTree(chain: NonEmptyList[String]) = {
+        if(chain.size == 1) leaves(predPOS -> chain.head)
+        else leaves(
+          "aux" -> chain.init.mkString(" "),
+          predPOS -> chain.last
+        )
+      }
+      Validated.fromEither(
+        renderVerbChain(clauseType, flipAuxiliary).left.map(_.map(error(_)))
+      ).andThen { verbChain =>
+        if(flipAuxiliary) { // aux flip
+          val aux = valid(WithExtraction(leaves("aux" -> verbChain.head)))
+          NonEmptyList.fromList(verbChain.tail) match {
+            case None =>
+              List(aux, subj, args).foldA
+            case Some(verbTail) =>
+              val verb = valid(WithExtraction(makeVerbTree(verbTail)))
+              List(aux, subj, verb, args).foldA
+          }
+        } else {
+          val verb = valid(WithExtraction(makeVerbTree(verbChain)))
+          if(includeSubject) List(subj, verb, args).foldA
+          else List(verb, args).foldA
+        }
+      }.andThen(res =>
         if(res.extractions.size > 1) {
           invalid("Somehow produced multiple extractions.")
-        } else if((res.extractions.size == 1) != path.nonEmpty) {
-          invalid("Did not produce the correct number of extractions.")
+        } else if(res.extractions.nonEmpty && path.isEmpty) {
+          invalid("Produced spurious extractions.")
         } else valid(res)
       )
     }
@@ -602,15 +649,6 @@ object Predication {
     }
   }
 
-  case class Adverbial(form: String) extends Component {
-    def render(
-      path: Option[ExtractionPath.Descent]
-    ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
-      case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
-      case None => valid(WithExtraction(leaf(form)))
-    }
-  }
-
   case class NounPhrase(
     form: String,
     animate: Option[Boolean],
@@ -657,34 +695,12 @@ object Predication {
     }
   }
 
-  // 'something is done'.
-  // maybe can add this in later.
-  // case class PassiveProForm(
-  //   subject: Subject, --- seems too general; maybe not best to use as pro-form?
-  //   arguments: Vector[NonSubject] = Noun()
-  //   tan: TAN
-  // ) {
-  //   // verb: Verb = Verb(InflectedForms.doForms)
-  // }
-  // not as necessary since it isn't needed for constructing questions in existing framework
-
-  case class Copular(
-    subject: Argument.Subject,
-    argument: NounOrOblique,
-    modifiers: Vector[NonNominal],
-    tan: TAN
-  ) extends Predication {
-    def arguments = argument +: modifiers
-
-    def renderPredicate(clauseType: ClauseType): RenderResult = {
-      clauseType match {
-        case ClauseType.Attributive =>
-          invalid("Cannot construct attributive clause from a copula.")
-        case otherType: ClauseType.VerbalClauseType =>
-          Validated.fromEither(
-            tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-          ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-      }
+  case class Adverbial(form: String) extends Component {
+    def render(
+      path: Option[ExtractionPath.Descent]
+    ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
+      case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
+      case None => valid(WithExtraction(leaf(form)))
     }
   }
 
@@ -705,6 +721,39 @@ object Predication {
     }
   }
 
+  // 'something is done'.
+  // maybe can add this in later.
+  // case class PassiveProForm(
+  //   subject: Subject, --- seems too general; maybe not best to use as pro-form?
+  //   arguments: Vector[NonSubject] = Noun()
+  //   tan: TAN
+  // ) {
+  //   // verb: Verb = Verb(InflectedForms.doForms)
+  // }
+  // not as necessary since it isn't needed for constructing questions in existing framework
+
+  case class Copular(
+    subject: Argument.Subject,
+    argument: NounOrOblique,
+    modifiers: Vector[NonNominal],
+    tan: TAN
+  ) extends Predication {
+    def arguments = argument +: modifiers
+    def predPOS = "be"
+
+    override def renderVerbChain(
+      clauseType: ClauseType,
+      needsFlippable: Boolean
+    ): Either[NonEmptyChain[String], NonEmptyList[String]] = clauseType match {
+      case ClauseType.Attributive =>
+        Left(NonEmptyChain.one("Cannot construct attributive clause from a copula."))
+      case otherType: ClauseType.VerbalClauseType =>
+        tan.getCopulaAuxChain(otherType, subject)
+          // .left.map(_.map(error(_)))
+          // .map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
+    }
+  }
+
   sealed trait NonCopular extends Predication
 
   case class Adjectival(
@@ -713,15 +762,14 @@ object Predication {
     arguments: Vector[NonNominal],
     tan: TAN
   ) extends NonCopular {
-    def renderPredicate(clauseType: ClauseType): RenderResult = {
-      val adj = valid(WithExtraction(LabeledTree.leaves("adj" -> adjective.form.toString)))
+    override def predPOS = "adj"
+    override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
+      val adj = adjective.form.toString
       clauseType match {
-        case ClauseType.Attributive => adj
+        case ClauseType.Attributive => Right(NonEmptyList.of(adj))
         case otherType: ClauseType.VerbalClauseType =>
-          val aux = Validated.fromEither(
-            tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-          ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-          List(aux, adj).foldA
+          val aux = tan.getCopulaAuxChain(otherType, subject)
+          aux.map(_.append(adj))
       }
     }
   }
@@ -733,30 +781,23 @@ object Predication {
     arguments: Vector[NonSubject],
     tan: TAN
   ) extends NonCopular {
-    def renderPredicate(clauseType: ClauseType): RenderResult = {
-      def pastParticiple = valid(
-        WithExtraction(LabeledTree.leaves("verb" -> verb.forms.pastParticiple.toString))
-      )
+    override def predPOS = "verb"
+    override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
+      def pastParticiple = verb.forms.pastParticiple.toString
       clauseType match {
         case ClauseType.Attributive =>
           if(!isPassive) {
-            invalid("Cannot construct attributive clause from active form.")
-          } else pastParticiple
+            Left(NonEmptyChain.one("Cannot construct attributive clause from active form."))
+          } else Right(NonEmptyList.of(pastParticiple))
         case otherType: ClauseType.VerbalClauseType =>
           if(isPassive) {
-            val aux = Validated.fromEither(
-              tan.getCopulaAuxChain(otherType, subject).left.map(_.map(error(_)))
-            ).map(auxes => WithExtraction(LabeledTree.leaves("aux" -> auxes.toList.mkString(" "))))
-            List(aux, pastParticiple).foldA
+            val aux = tan.getCopulaAuxChain(otherType, subject)
+            aux.map(_ append pastParticiple)
           } else {
-            Validated.fromEither(
-              tan.getAuxChain(verb.forms, otherType, subject).left.map(_.map(error(_)))
-            ).map { chain =>
-              val vb = LabeledTree.leaves("verb" -> chain.last)
-              val auxChain = chain.init
-              if(auxChain.isEmpty) vb
-              else LabeledTree.leaves("aux" -> auxChain.toList.mkString(" ")) |+| vb
-            }.map(WithExtraction(_))
+            tan.getAuxChain(
+              verb.forms, otherType, subject,
+              ensureDoSupport = needsFlippable
+            )
           }
       }
     }
@@ -776,7 +817,6 @@ object Predication {
   }
 
   // TODO:
-  // gapping
   // rendering questions, filling gaps, adding rich info to errors
   // using rich errors to feed back into filling in slots
   // aligning to QA-SRL questions

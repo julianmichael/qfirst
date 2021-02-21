@@ -32,23 +32,25 @@ import cats.Parallel
 
   def getCopulaAuxChain(
     clauseType: ClauseType.VerbalClauseType,
-    subject: Argument.Subject
+    subject: Argument.Subject,
   ): AuxChainResult[NonEmptyList[String]] = {
-    getAuxChain(InflectedForms.beSingularForms, clauseType, subject)
+    getAuxChain(InflectedForms.beSingularForms, clauseType, subject, false)
   }
 
+  import ClauseType._
   def getAuxChain(
     forms: InflectedForms,
-    clauseType: ClauseType.VerbalClauseType,
-    subject: Argument.Subject
+    clauseType: VerbalClauseType,
+    subject: Argument.Subject,
+    ensureDoSupport: Boolean
   ): AuxChainResult[NonEmptyList[String]] = clauseType match {
-    case ClauseType.BareInfinitive =>
-      Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
-    case ClauseType.ToInfinitive =>
-      Tense.NonFinite.To.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
-    case ClauseType.Progressive =>
-      Tense.NonFinite.Gerund.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _))
-    case ClauseType.Finite => for {
+    case BareInfinitive =>
+      Tense.NonFinite.Bare.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _, false))
+    case ToInfinitive =>
+      Tense.NonFinite.To.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _, false))
+    case Progressive =>
+      Tense.NonFinite.Gerund.asRight[NonEmptyChain[String]].map(getVerbStack(forms, _, false))
+    case Finite | Inverted => for {
       tense <- tense.toRight(NonEmptyChain.one("Finite clause needs a determined tense"))
       (person, number) <- Parallel.parProduct(
         subject.person.toRight(
@@ -56,7 +58,10 @@ import cats.Parallel
         subject.number.toRight(
           NonEmptyChain.one("Subject of a finite clause needs number feature for agreement"))
       )
-    } yield fixAgreement(getVerbStack(forms, tense), forms, person, number)
+    } yield fixAgreement(
+      getVerbStack(forms, tense, ensureDoSupport), // && clauseType == Inverted
+      forms, person, number
+    )
   }
 
   def fixAgreement(
@@ -110,7 +115,7 @@ import cats.Parallel
     modTop(w => getForms(w.lowerCase, forms).fold(w)(_(form)))
   private[this] def pass = State.pure[NonEmptyList[String], Unit](())
 
-  def getVerbStack(forms: InflectedForms, tense: Tense) = {
+  def getInitVerbStack(forms: InflectedForms, tense: Tense) = {
     val stackState = if(tense == Tense.NonFinite.Gerund && isProgressive && !isPerfect) {
       // avoid e.g. "being swimming"
       modForm(PresentParticiple, forms) >> (if (isNegated) push("not") else pass)
@@ -146,17 +151,21 @@ import cats.Parallel
     stackState.runS(NonEmptyList.of(forms.stem.toString)).value
   }
 
-  // def splitVerbStackIfNecessary(verbStack: NonEmptyList[String], forms: InflectedForms) = {
-  //   if (verbStack.size > 1) {
-  //     verbStack
-  //   } else
-  //     tense match {
-  //       case Tense.Finite.Past     => (modForm(Stem, forms) >> push("did")).runS(verbStack).value
-  //       case Tense.Finite.Present  => (modForm(Stem, forms) >> push("does")).runS(verbStack).value
-  //       case Tense.Finite.Modal(_) => verbStack // should never happen, since a modal adds another token
-  //       case _ => verbStack // Non-finite case, where splitting cannot occur
-  //     }
-  // }
+  def getVerbStack(forms: InflectedForms, tense: Tense, ensureDoSupport: Boolean) = {
+    val stack = getInitVerbStack(forms, tense)
+    if(ensureDoSupport) addDoSupportIfNecessary(stack, forms)
+    else stack
+  }
+
+  def addDoSupportIfNecessary(verbStack: NonEmptyList[String], forms: InflectedForms) = {
+    if (verbStack.size > 1) {
+      verbStack
+    } else tense.map {
+      case Tense.Finite.Past     => (modForm(Stem, forms) >> push("did")).runS(verbStack).value
+      case Tense.Finite.Present  => (modForm(Stem, forms) >> push("does")).runS(verbStack).value
+      case Tense.Finite.Modal(_) => verbStack // should never happen, since a modal adds another token
+    }.getOrElse(verbStack)
+  }
 
   // should always agree with what's produced on the verb stack.
   // ideally they would share code somehow but this is easiest for now and probably works.
