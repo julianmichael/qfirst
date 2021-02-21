@@ -44,7 +44,7 @@ class CafeTests extends CatsEffectSuite {
     verb = Lexicon.Verb(want),
     isPassive = false,
     arguments = Vector(Argument.ToInfinitive(Some(doPro), false, Set())),
-    tan = TAN(Some(Tense.Finite.Present), true, true, false)
+    tan = TAN(Some(Tense.Finite.Present), true, false, false)
   )
 
   val rendered = for {
@@ -69,13 +69,13 @@ class CafeTests extends CatsEffectSuite {
   }
 
   val paths = {
-    import ExtractionPath._, ArgPosition._
+    import ArgumentPath._, ArgPosition._
     List(
-      Descent(Subj, Extraction(Focus)),
-      Descent(Subj, Focus),
-      Descent(Arg(0), Descent(Subj, Extraction(Focus))),
-      Descent(Arg(0), Descent(Arg(0), Extraction(Focus))),
-      Descent(Arg(0), Descent(Arg(0), Focus))
+      ExtractionDescent(Subj, Extraction(Focus)),
+      FocalDescent(Subj, Focus),
+      ExtractionDescent(Arg(0), ExtractionDescent(Subj, Extraction(Focus))),
+      ExtractionDescent(Arg(0), ExtractionDescent(Arg(0), Extraction(Focus))),
+      FocalDescent(Arg(0), FocalDescent(Arg(0), Focus))
     )
   }
 
