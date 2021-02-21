@@ -68,22 +68,11 @@ class CafeTests extends CatsEffectSuite {
     }
   }
 
-  val paths = {
-    import ArgumentPath._, ArgPosition._
-    List(
-      ExtractionDescent(Subj, Extraction(Focus)),
-      FocalDescent(Subj, Focus),
-      ExtractionDescent(Arg(0), ExtractionDescent(Subj, Extraction(Focus))),
-      ExtractionDescent(Arg(0), ExtractionDescent(Arg(0), Extraction(Focus))),
-      FocalDescent(Arg(0), FocalDescent(Arg(0), Focus))
-    )
-  }
-
   test("ask questions") {
-    val somePaths = None :: paths.map(Some(_))
+    val somePaths = None :: wantDo.argumentPaths.toList.map(Some(_))
     somePaths.foreach { path =>
       val question = wantDo.renderQuestion(path)
-      println(path)
+      println("\n" + path)
       question match {
         case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
         case Validated.Invalid(errs) =>
@@ -91,4 +80,10 @@ class CafeTests extends CatsEffectSuite {
       }
     }
   }
+
+  // TODO
+  // test("argument extraction paths are always valid") {
+  // }
+  // test("predication extraction paths are always valid") {
+  // }
 }
