@@ -44,7 +44,7 @@ class CafeTests extends CatsEffectSuite {
     verb = Lexicon.Verb(want),
     isPassive = false,
     arguments = Vector(Argument.ToInfinitive(Some(doPro), false, Set())),
-    tan = TAN(Some(Tense.Finite.Present), false, false, false)
+    tan = TAN(Some(Tense.Finite.Present), true, true, false)
   )
 
   val rendered = for {
@@ -65,6 +65,30 @@ class CafeTests extends CatsEffectSuite {
           case Validated.Invalid(errs) =>
             errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
         }
+    }
+  }
+
+  val paths = {
+    import ExtractionPath._, ArgPosition._
+    List(
+      Descent(Subj, Extraction(Focus)),
+      Descent(Subj, Focus),
+      Descent(Arg(0), Descent(Subj, Extraction(Focus))),
+      Descent(Arg(0), Descent(Arg(0), Extraction(Focus))),
+      Descent(Arg(0), Descent(Arg(0), Focus))
+    )
+  }
+
+  test("ask questions") {
+    val somePaths = None :: paths.map(Some(_))
+    somePaths.foreach { path =>
+      val question = wantDo.renderQuestion(path)
+      println(path)
+      question match {
+        case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+        case Validated.Invalid(errs) =>
+          errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
+      }
     }
   }
 }

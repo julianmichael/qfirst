@@ -24,6 +24,7 @@ sealed trait LabeledTree[+Label, A] {
     _ => 0)(
     _.map(_._2 + 1).maximumOption.getOrElse(1))
 
+  def nonEmpty: Boolean = cata(_ => true)(_.nonEmpty)
 }
 
 object LabeledTree {

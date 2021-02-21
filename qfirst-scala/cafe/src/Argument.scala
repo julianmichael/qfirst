@@ -48,7 +48,14 @@ object ArgPosition {
   case object Subj extends ArgPosition
 }
 
-sealed trait ExtractionPath
+sealed trait ExtractionPath {
+  import ExtractionPath._
+  def hasExtraction: Boolean = this match {
+    case Descent(_, next) => next.hasExtraction
+    case Focus => false
+    case Extraction(_) => true
+  }
+}
 object ExtractionPath {
   case class Descent(position: ArgPosition, next: ExtractionPath) extends ExtractionPath
   case object Focus extends ExtractionPath
@@ -208,7 +215,8 @@ object Argument {
       case Some(Extraction(path)) =>
         valid(
           WithExtraction(
-            leaves(symbol -> ""),
+            // leaves(symbol -> ""),
+            leaves(),
             Vector(this -> path)
           )
         )
@@ -547,6 +555,26 @@ sealed trait Predication extends Component {
   import LabeledTree.{leaf, leaves, node}
   import Component.WithExtraction
 
+  def renderQuestion(
+    path: Option[ExtractionPath.Descent]
+  ): Component.RenderResultOf[LabeledTree[String, String]] = {
+    val clauseType =
+      if(path.forall(_.hasExtraction)) ClauseType.Inverted
+      else ClauseType.Finite
+    render(clauseType, includeSubject = true, path = path).andThen {
+      case WithExtraction(tree, extractions) =>
+        extractions.headOption match {
+          case None => valid(tree)
+          case Some((arg, path)) =>
+            arg.render(ArgPosition.Subj, Some(path)).andThen {
+              case WithExtraction(argTree, argExtractions) =>
+                if(argExtractions.nonEmpty) invalid("Should not have a nested extraction.")
+                else valid(argTree |+| tree)
+            }
+        }
+    }
+  }
+
   def render(
     clauseType: ClauseType,
     includeSubject: Boolean,
@@ -561,40 +589,44 @@ sealed trait Predication extends Component {
   ): Component.RenderResult = {
     val frontAuxiliary = clauseType == ClauseType.Inverted
     validatePath(includeSubject, path) *> {
-      val flipAuxiliary = frontAuxiliary && includeSubject
-      val args = renderArguments(path)
-      val subj = renderSubject(includeSubject, path)
-      def makeVerbTree(chain: NonEmptyList[String]) = {
-        if(chain.size == 1) leaves(predPOS -> chain.head)
-        else leaves(
-          "aux" -> chain.init.mkString(" "),
-          predPOS -> chain.last
+      renderSubject(includeSubject, path).andThen { subjValue =>
+        val flipAuxiliary = frontAuxiliary && subjValue.value.nonEmpty
+        val subj = valid(subjValue)
+        val args = renderArguments(path)
+        def makeVerbTree(chain: NonEmptyList[String]) = {
+          if(chain.size == 1) leaves(predPOS -> chain.head)
+          else leaves(
+            "aux" -> chain.init.mkString(" "),
+            predPOS -> chain.last
+          )
+        }
+        // TODO: consider result of rendering subj (i.e., if it's a gap)
+        // when deciding whether to invert the auxiliary
+        Validated.fromEither(
+          renderVerbChain(clauseType, flipAuxiliary).left.map(_.map(error(_)))
+        ).andThen { verbChain =>
+          if(flipAuxiliary) { // aux flip
+            val aux = valid(WithExtraction(leaves("aux" -> verbChain.head)))
+            NonEmptyList.fromList(verbChain.tail) match {
+              case None =>
+                List(aux, subj, args).foldA
+              case Some(verbTail) =>
+                val verb = valid(WithExtraction(makeVerbTree(verbTail)))
+                List(aux, subj, verb, args).foldA
+            }
+          } else {
+            val verb = valid(WithExtraction(makeVerbTree(verbChain)))
+            if(includeSubject) List(subj, verb, args).foldA
+            else List(verb, args).foldA
+          }
+        }.andThen(res =>
+          if(res.extractions.size > 1) {
+            invalid("Somehow produced multiple extractions.")
+          } else if(res.extractions.nonEmpty && path.isEmpty) {
+            invalid("Produced spurious extractions.")
+          } else valid(res)
         )
       }
-      Validated.fromEither(
-        renderVerbChain(clauseType, flipAuxiliary).left.map(_.map(error(_)))
-      ).andThen { verbChain =>
-        if(flipAuxiliary) { // aux flip
-          val aux = valid(WithExtraction(leaves("aux" -> verbChain.head)))
-          NonEmptyList.fromList(verbChain.tail) match {
-            case None =>
-              List(aux, subj, args).foldA
-            case Some(verbTail) =>
-              val verb = valid(WithExtraction(makeVerbTree(verbTail)))
-              List(aux, subj, verb, args).foldA
-          }
-        } else {
-          val verb = valid(WithExtraction(makeVerbTree(verbChain)))
-          if(includeSubject) List(subj, verb, args).foldA
-          else List(verb, args).foldA
-        }
-      }.andThen(res =>
-        if(res.extractions.size > 1) {
-          invalid("Somehow produced multiple extractions.")
-        } else if(res.extractions.nonEmpty && path.isEmpty) {
-          invalid("Produced spurious extractions.")
-        } else valid(res)
-      )
     }
   }
 
@@ -902,11 +934,6 @@ object Predication {
   //  - present participial (the bomb exploded, destroying the building.) // covered by gerund
   //  - passive/past participial (worried by the news, she called the hospital.)
   //  - perfect participial (having gotten dressed, he slowly went downstairs.)
-
-  // DONE?
-  // maybe do something with internal gapping (e.g., 'he felt taken advantage of')
-  //  - actually no: this is fine. the 'gap' was already moved to subj position.
-  //  - 'non-subj' gaps or whatever may only be a problem in actual relative clauses
 
 
 }
