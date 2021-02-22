@@ -1,17 +1,19 @@
 package qfirst.cafe
 
+import jjm.Dot
 import jjm.LowerCaseString
 import jjm.ling.en.InflectedForms
 import jjm.implicits._
 
+import cats.Id
+import cats.Show
 import cats.data.Validated
 import cats.data.ValidatedNec
 import cats.data.NonEmptyChain
+import cats.data.NonEmptyList
+import cats.kernel.Monoid
 import cats.implicits._
 import mouse.all._
-import cats.kernel.Monoid
-import cats.data.NonEmptyList
-import cats.Show
 
 // S4: Simple Surrogate Syntactic Semantics
 
@@ -49,58 +51,112 @@ object ArgPosition {
   case object Subj extends ArgPosition
 }
 
-sealed trait ArgumentPath extends Product with Serializable {
+sealed trait ArgumentPath[A] extends Product with Serializable {
   import ArgumentPath._
-  def isExtraction: Boolean = this match {
-    case ExtractionDescent(_, _) => true
-    case Extraction(_) => true
-    case FocalDescent(_, _) => false
-    case Focus => false
+  // def isExtraction: Boolean = this match {
+  //   case ExtractionDescent(_, _) => true
+  //   case Extraction(_) => true
+  //   case FocalDescent(_, _) => false
+  //   case Focus => false
+  // }
+  def ascend(position: ArgPosition): Descent[A] = Descent(position, this)
+  def descent: Option[Descent[A]] = this match {
+    case d: Descent[A] => Some(d)
+    case _ => None
   }
-  def ascend(position: ArgPosition): ArgumentPath.Descent
 }
-sealed trait FocalPath extends ArgumentPath {
-  import ArgumentPath._
-  def ascend(position: ArgPosition): FocalDescent = FocalDescent(position, this)
-}
-sealed trait ExtractionPath extends ArgumentPath {
-  import ArgumentPath._
-  def ascend(position: ArgPosition): ExtractionDescent = ExtractionDescent(position, this)
-}
+
+
 object ArgumentPath {
 
-  sealed trait Descent extends ArgumentPath {
-    def position: ArgPosition
+  case class Descent[A](
+    position: ArgPosition,
+    next: ArgumentPath[A]
+  ) extends ArgumentPath[A]
+  case class End[A](processor: Processor[A]) extends ArgumentPath[A]
+
+  sealed trait Processor[A] {
+    def process(arg: Argument, position: ArgPosition): Component.RenderResultOf[
+      (LabeledTree.Node[String, String], A)
+    ]
   }
 
-  case class ExtractionDescent(
-    position: ArgPosition, next: ExtractionPath
-  ) extends ExtractionPath with Descent //[ExtractionPath]
-  case class Extraction(next: FocalPath) extends ExtractionPath
-
-  case class FocalDescent(
-    position: ArgPosition, next: FocalPath
-  ) extends FocalPath with Descent //[FocalPath]
-  case object Focus extends FocalPath
-
-  def descend(path: Option[Descent], pos: ArgPosition): Option[ArgumentPath] =
-    path.collect {
-      case ExtractionDescent(`pos`, next) => next
-      case FocalDescent(`pos`, next) => next
+  // case class Extraction[A](arg: Argument, innerPath: ArgumentPath[A])
+  // extractions pull out arguments and provide a nested path to a focus inside.
+  import LabeledTree.{leaves}
+  import Validated.valid
+  import Component.WithExtraction
+  type Extraction = (Argument, ArgumentPath[Argument.ProForm])
+  case class Extract(
+    innerPath: ArgumentPath[Argument.ProForm]
+  ) extends Processor[Extraction] {
+    def process(arg: Argument, pos: ArgPosition): Component.RenderResultOf[
+      (LabeledTree.Node[String, String], Extraction)
+    ] = arg match {
+      case pro: Argument.ProForm =>
+        valid(leaves() -> (pro -> innerPath))
+      case arg: Argument.Expletive =>
+        arg.invalid("Cannot extract an expletive.")
+      case arg: Argument.Semantic =>
+        if(arg.allowPiedPiping(innerPath)) {
+          valid(leaves() -> (arg -> innerPath))
+        } else arg.invalid("Extraction of concrete argument not allowed.")
     }
+  }
 
-  implicit val argumentPathShow = new Show[ArgumentPath] {
-    def show(path: ArgumentPath): String = path match {
-      case ExtractionDescent(position, next) => s"${position} ~> ${show(next)}"
-      case FocalDescent(position, next) => s"${position} -> ${show(next)}"
-      case Extraction(next) => s"{${show(next)}}"
-      case Focus => "*"
+  type Focus = Focus.type
+  case object Focus extends Processor[(Argument.ProForm)] {
+    def process(arg: Argument, pos: ArgPosition): Component.RenderResultOf[
+      (LabeledTree.Node[String, String], Argument.ProForm)
+    ] = arg match {
+      case pro: Argument.ProForm =>
+        valid(leaves(pro.symbol -> pro.wh(pos)), pro)
+      case arg: Argument.Concrete =>
+        arg.invalid("Focal element must be a pro-form.")
+    }
+  }
+
+  // type Get = Get.type
+  // case object Get extends Processor[Argument] {
+  //   def process(arg: Argument): Component.RenderResultOf[
+  //     (LabeledTree[String, String], Argument)
+  //   ] = ???
+  // }
+
+  object Processor {
+    implicit def processorShow[A]: Show[Processor[A]] = new Show[Processor[A]] {
+      def show(p: Processor[A]) = p match {
+        case Extract(innerPath) => s"{${argumentPathShow.show(innerPath)}}"
+        case Focus => "*"
+      }
+    }
+  }
+
+  // case class ExtractionDescent(
+  //   position: ArgPosition, next: ExtractionPath
+  // ) extends ExtractionPath with Descent //[ExtractionPath]
+  // case class Extraction(next: FocalPath) extends ExtractionPath
+
+  // case class FocalDescent(
+  //   position: ArgPosition, next: FocalPath
+  // ) extends FocalPath with Descent //[FocalPath]
+  // case object Focus extends FocalPath
+
+  def descend[A](path: Option[Descent[A]], pos: ArgPosition): Option[ArgumentPath[A]] =
+    path.collect { case Descent(`pos`, next) => next }
+
+  implicit def argumentPathShow[A]: Show[ArgumentPath[A]] = new Show[ArgumentPath[A]] {
+    def show(path: ArgumentPath[A]): String = path match {
+      case Descent(position, next) => s"${position} -> ${show(next)}"
+      case End(a) => Processor.processorShow.show(a)
     }
   }
 
   // NOTE: shouldn't this be unnecessary bc of contravariance?
-  implicit val descentShow = argumentPathShow.contramap[Descent](x => x: ArgumentPath)
+  implicit def descentShow[A: Show] = argumentPathShow[A]
+    .contramap[Descent[A]](x => x: ArgumentPath[A])
 }
+
 
 // Do-pro-forms.
 // work these in by tying frames together.
@@ -181,23 +237,26 @@ sealed trait Component extends Product with Serializable {
   // protected[Component] def branch(label: String, content: Component.RenderResult) = {
   //   content.map(res => LabeledTree.node(label -> res))
   // }
-  protected[Component] def error(msg: String) = Component.RenderError(this, msg)
-  protected[Component] def invalid[A](
+  def error(msg: String) = Component.RenderError(this, msg)
+  def invalid[A](
     msg: String = "Incomplete component."
   ): ValidatedNec[Component.RenderError, A] =
     Validated.invalid(NonEmptyChain.one(error(msg)))
 }
 object Component {
-  case class WithExtraction[+A](
+  type Branches = LabeledTree.Node[String, String]
+  type Tree = LabeledTree[String, String]
+  // TODO improve API so an Option is provided
+  case class WithExtraction[+A, +Extraction](
     value: A,
-    extractions: Vector[(Argument, FocalPath)] = Vector()
+    extractions: Vector[Extraction] = Vector()
   ) {
     def map[B](f: A => B) = WithExtraction(f(value), extractions)
   }
   object WithExtraction {
-    implicit def withExtractionMonoid[A: Monoid] = new Monoid[WithExtraction[A]] {
+    implicit def withExtractionMonoid[A: Monoid, E] = new Monoid[WithExtraction[A, E]] {
       def empty = WithExtraction(Monoid[A].empty)
-      def combine(x: WithExtraction[A], y: WithExtraction[A]): WithExtraction[A] = {
+      def combine(x: WithExtraction[A, E], y: WithExtraction[A, E]): WithExtraction[A, E] = {
         WithExtraction(x.value |+| y.value, x.extractions ++ y.extractions)
       }
     }
@@ -205,16 +264,60 @@ object Component {
   case class RenderError(component: Component, msg: String)
   type RenderResultOf[A] = ValidatedNec[RenderError, A]
   // type RenderResult = ValidatedNec[RenderError, LabeledTree.Node[String, String]]
-  type RenderResult = RenderResultOf[WithExtraction[LabeledTree.Node[String, String]]]
+  type RenderTree[A] = RenderResultOf[WithExtraction[Tree, A]]
+  type RenderBranches[A] = RenderResultOf[WithExtraction[Branches, A]]
 }
 
 // argument structure (with slots etc.)
 sealed trait Argument extends Component {
-  def render(pos: ArgPosition, path: Option[ArgumentPath]): Component.RenderResult
-  def render(pos: ArgPosition): ValidatedNec[Component.RenderError, LabeledTree.Node[String, String]] =
-    render(pos, None).map(_.value) // assume there are no extractions
+  import Component._
+  import LabeledTree.{leaf,leaves,node}
 
-  def argumentPaths: Set[ArgumentPath]
+  def symbol: String
+
+  def renderLax[A](pos: ArgPosition, path: Option[ArgumentPath.Descent[A]]): RenderTree[A]
+
+  import ArgumentPath._
+  def renderLaxWithPath[A](pos: ArgPosition, path: Option[ArgumentPath[A]]): RenderBranches[A] = {
+    path match {
+      case Some(End(pathEnd)) =>
+        pathEnd.process(this, pos).andThen { case (tree, res) =>
+          Validated.valid(WithExtraction(tree, Vector(res)))
+        }
+      case Some(d: Descent[A]) =>
+        renderLax(pos, Some(d))
+          .map(_.map(tree => node(symbol -> tree)))
+      case None =>
+        renderLax(pos, None: Option[ArgumentPath.Descent[A]])
+          .map(_.map(tree => node(symbol -> tree)))
+    }
+  }
+
+  def render[A](
+    pos: ArgPosition,
+    path: Option[ArgumentPath[A]]
+  ): RenderResultOf[(Branches, Option[A])] =
+    renderLaxWithPath(pos, path).map { case WithExtraction(tree, items) =>
+      require(
+        (path.isEmpty && items.isEmpty) ||
+          (path.nonEmpty && items.size == 1)
+      ) // require correct number of extractions
+      tree -> items.headOption
+    }
+
+  def render[A](pos: ArgPosition, path: ArgumentPath[A]): RenderResultOf[(Branches, A)] =
+    render(pos, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
+
+  def render(pos: ArgPosition): RenderResultOf[Branches] = {
+    // ascribe a type to the None to help out type inference
+    render(pos, None: Option[ArgumentPath[Argument.ProForm]]).map { case (tree, itemOpt) =>
+      require(itemOpt.isEmpty) // require no extractions
+      tree
+    }
+  }
+
+  def argumentPaths: Set[ArgumentPath[Argument.ProForm]]
+  def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]]
 }
 object Argument {
 
@@ -251,24 +354,19 @@ object Argument {
     // def indefinite = Some(this)
 
     import ArgPosition._, ArgumentPath._
-    def render(pos: ArgPosition, path: Option[ArgumentPath]): RenderResult = path match {
-      case Some(Extraction(path)) =>
-        valid(
-          WithExtraction(
-            // leaves(symbol -> ""),
-            leaves(),
-            Vector(this -> path)
-          )
-        )
-      case Some(Focus) =>
-        valid(WithExtraction(leaves(symbol -> wh(pos))))
+    def renderLax[A](
+      pos: ArgPosition,
+      path: Option[ArgumentPath.Descent[A]]
+    ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot extract from inside a pro-form.")
       case None => placeholder
-          .map(p => valid(WithExtraction(leaves(symbol -> p))))
+          .map(p => valid(WithExtraction(leaf(p))))
           .getOrElse(invalid("No placeholder exists for pro-form."))
     }
 
-    def argumentPaths: Set[ArgumentPath] = Set(Extraction(Focus), Focus)
+    // def argumentPaths: Set[ArgumentPath] = Set(Extraction(Focus), Focus)
+    def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = Set(End(Focus))
+    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = Set(End(Extract(End(Focus))))
 
     def instances: Set[Semantic]
   }
@@ -345,41 +443,12 @@ object Argument {
   sealed trait Concrete extends Argument {
     def category: String
     def proForms: Set[Argument.ProForm]
-    // parameter allows us to selectively determine which nested args we pied-pipe with
-    def allowPiedPiping(path: FocalPath): Boolean = false
-
-    def descentPaths: Set[ArgumentPath.Descent]
 
     final def symbol = {
       val pros = proForms.map(_.wh(ArgPosition.Subj)).toList.sortBy(_.toString).mkString("/")
       if(pros.isEmpty) category
       else s"$category {$pros}"
     }
-
-    import ArgPosition._, ArgumentPath._
-    def render(pos: ArgPosition, path: Option[ArgumentPath]): RenderResult = path match {
-      case Some(Extraction(path)) =>
-        if(allowPiedPiping(path)) valid(
-          WithExtraction(
-            leaves(symbol -> ""),
-            Vector(this -> path)
-          )
-        ) else invalid("Extraction of argument not allowed.")
-      case Some(Focus) => invalid("Focal element must be a pro-form.")
-      case Some(d: Descent) =>
-        renderStrict(pos, Some(d)).map(_.map(tree => node(symbol -> tree)))
-      case None =>
-        renderStrict(pos, None).map(_.map(tree => node(symbol -> tree)))
-    }
-
-    def renderStrict(
-      pos: ArgPosition, path: Option[Descent]
-    ): RenderResultOf[Component.WithExtraction[LabeledTree[String, String]]]
-
-    def argumentPaths: Set[ArgumentPath] =
-      descentPaths ++ descentPaths.collect {
-        case fp: FocalPath if allowPiedPiping(fp) => Extraction(fp)
-      }
   }
 
   // expletive 'it' or 'there'; can only appear as subject
@@ -389,14 +458,16 @@ object Argument {
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) = path match {
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) = path match {
       case Some(_) => invalid("Cannot focus or descend into an expletive.")
       case None => pos match {
         case Subj => valid(WithExtraction(leaf(expletive.form.toString)))
         case Arg(_) => invalid("Can only render expletives in subject position.")
       }
     }
-    def descentPaths: Set[ArgumentPath.Descent] = Set()
+
+    def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = Set()
+    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = Set()
   }
   object Expletive {
     val it = Expletive(Lexicon.Expletive.it)
@@ -405,7 +476,22 @@ object Argument {
 
   sealed trait Semantic extends Concrete {
     def pred: Option[Predication]
-    def descentPaths: Set[ArgumentPath.Descent] = pred.unorderedFoldMap(_.argumentPaths)
+
+    // determine which nested args we pied-pipe with
+    def allowPiedPiping(path: ArgumentPath[ProForm]): Boolean = false
+    // enforce island constraints
+    def blockExtraction(path: ArgumentPath[ArgumentPath.Extraction]): Boolean = false
+
+    import ArgumentPath._
+    def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = {
+      // widening to deal with invariance of Set
+      pred.unorderedFoldMap(_.argumentPaths.map(p => p: ArgumentPath[Argument.ProForm]))
+    }
+    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = {
+      argumentPaths.collect {
+        case path if allowPiedPiping(path) => End(Extract(path)): ArgumentPath[ArgumentPath.Extraction]
+      } ++ pred.unorderedFoldMap(_.extractionPaths.filterNot(blockExtraction))
+    }
   }
 
   // NOTE: predications are optional because we can use arguments
@@ -416,7 +502,7 @@ object Argument {
     animacyConstraint: Option[Boolean]
   ) extends Semantic with Nominal {
 
-    override def allowPiedPiping(path: FocalPath): Boolean = true
+    override def allowPiedPiping(path: ArgumentPath[ProForm]): Boolean = true
 
     def category = "np"
     // TODO: change to account for multiple possible animacies
@@ -429,7 +515,7 @@ object Argument {
     def number: Option[Number] = pred.flatMap(_.number)
 
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) = {
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) = {
       val c = pos match {
         case Subj => Case.Nominative
         case Arg(_) => Case.Accusative
@@ -445,7 +531,7 @@ object Argument {
     adverbials: Set[ProForm.Adverb]
   ) extends Semantic with NounOrOblique with NonNominal {
 
-    override def allowPiedPiping(path: FocalPath): Boolean = true
+    override def allowPiedPiping(path: ArgumentPath[ProForm]): Boolean = true
 
     def category = "pp"
     def proForms = adverbials.map(x => x: ProForm)
@@ -454,8 +540,8 @@ object Argument {
       // case Subj => invalid("Oblique argument cannot appear in subject position.")
       // case Arg(_) =>
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(path)).getOrElse(invalid())
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+      pred.map(_.render((), path)).getOrElse(invalid())
   }
 
   // TODO: island constraints
@@ -466,10 +552,10 @@ object Argument {
     override def category = "adv[comp]"
     override def proForms = adverbials.map(x => x: ProForm)
     // TODO might depend on the predicate?
-    override def allowPiedPiping(path: FocalPath) = true
+    override def allowPiedPiping(path: ArgumentPath[ProForm]) = true
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(path)).getOrElse(invalid())
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+      pred.map(_.render((), path)).getOrElse(invalid())
   }
 
   // for adverbials like 'today', 'every day' etc.
@@ -481,8 +567,8 @@ object Argument {
     override def category = "adv"
     override def proForms = adverbials.map(x => x: ProForm)
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(path)).getOrElse(invalid())
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+      pred.map(_.render((), path)).getOrElse(invalid())
   }
 
   sealed trait Clausal extends Semantic {
@@ -490,13 +576,20 @@ object Argument {
     def clauseType: ClauseType
     def includeSubject: Boolean
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
-      pred.map(_.render(clauseType, includeSubject, path))
-        .getOrElse(invalid())
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+      pred.map(
+        _.render(Predication.ClauseFeats(clauseType, includeSubject), path)
+      ).getOrElse(invalid())
+
     // filter out subject extractions in case our subject is not included
-    override def descentPaths: Set[ArgumentPath.Descent] = pred
-      .unorderedFoldMap(_.argumentPaths)
-      .filter(x => includeSubject || x.position != ArgPosition.Subj)
+    override def argumentPaths: Set[ArgumentPath[Argument.ProForm]] =
+      super.argumentPaths.filter(x =>
+        includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
+      )//.map(x => x: ArgumentPath[Argument.ProForm])
+    override def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] =
+      super.extractionPaths.filter(x =>
+        includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
+      )//.map(x => x: ArgumentPath[ArgumentPath.Extraction])
   }
 
   // nominal use of gerund/progressive; can be object of prep or subject
@@ -509,7 +602,7 @@ object Argument {
     override def category = if(includeSubject) "s[g]" else "vp[g]"
     override def proForms = Set(ProForm.what)
     // TODO should allow with 'whose' on subject?
-    override def allowPiedPiping(path: FocalPath) = false
+    override def allowPiedPiping(path: ArgumentPath[ProForm]) = false
     override def person = Some(Person.Third)
     override def number = Some(Number.Singular)
   }
@@ -546,12 +639,12 @@ object Argument {
     // TODO clausal override not that useful here. maybe separate out versions
     // with and without subject? idk
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
       pred.map(p =>
-        List(
+        List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
-          else Validated.Valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
-          p.render(ClauseType.ToInfinitive, includeSubject, path)
+          else valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
+          p.render(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), path)
         ).foldA
       ).getOrElse(invalid())
   }
@@ -609,21 +702,34 @@ object Argument {
 
     // not sure if Clausal override is useful here
     import ArgPosition._, ArgumentPath.Descent
-    override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
+    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
       pred.map(p =>
-        List(
+        List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
-          p.render(clauseType, includeSubject, path)
-        ).foldA.map(_.map(tree => LabeledTree.Node(symbol -> tree)))
+          p.render(Predication.ClauseFeats(clauseType, includeSubject), path)
+        ).foldA
       ).getOrElse(invalid())
   }
 }
 
 sealed trait Predication extends Component {
+  type GramFeats // grammatical features
+
+  import Component._
+
+  def render[A](
+    features: GramFeats,
+    path: Option[ArgumentPath.Descent[A]]
+  ): RenderTree[A]
+
   def arguments: Vector[Argument]
-  def argumentPaths: Set[ArgumentPath.Descent] =
+  def argumentPaths: Set[ArgumentPath.Descent[Argument.ProForm]] =
     arguments.zipWithIndex.flatMap { case (arg, index) =>
       arg.argumentPaths.map(_.ascend(ArgPosition.Arg(index)))
+    }.toSet
+  def extractionPaths: Set[ArgumentPath.Descent[ArgumentPath.Extraction]] =
+    arguments.zipWithIndex.flatMap { case (arg, index) =>
+      arg.extractionPaths.map(_.ascend(ArgPosition.Arg(index)))
     }.toSet
 }
 object Predication {
@@ -637,19 +743,29 @@ object Predication {
   // in the future, with proper nominal predicates, might use it this way.
   // but it would be a separate (non-clausal) type of predication.
   sealed trait Nominal extends Predication {
+    type GramFeats = Case
+
     def animate: Option[Boolean]
     def person: Option[Person]
     def number: Option[Number]
     def arguments = Vector()
 
-    def getForm(`case`: Case): String
+    def getForm(c: Case): String
 
-    def render(
-      `case`: Case,
-      path: Option[ArgumentPath.Descent]
-    ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
+    // override def render(
+    //   `case`: Case,
+    //   path: Option[ArgumentPath.Descent]
+    // ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
+    //   case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
+    //   case None => valid(WithExtraction(leaf(getForm(`case`))))
+    // }
+
+    def render[A](
+      features: Case,
+      path: Option[ArgumentPath.Descent[A]]
+    ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
-      case None => valid(WithExtraction(leaf(getForm(`case`))))
+      case None => valid(WithExtraction(leaf(getForm(features))))
     }
   }
 
@@ -668,14 +784,19 @@ object Predication {
   // TODO: add definite pronouns
 
   sealed trait Oblique extends Predication {
+    type GramFeats = Unit
     import ArgPosition._, ArgumentPath.Descent
-    def render(path: Option[Descent]): Component.RenderResult
   }
   // prep should not take an object, i.e., is a particle
   case class Particulate(form: Particle) extends Oblique {
     def arguments = Vector()
+
     import ArgPosition._, ArgumentPath.Descent
-    override def render(path: Option[Descent]): Component.RenderResult = path match {
+
+    override def render[A](
+      feats: Unit,
+      path: Option[Descent[A]]
+    ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot extract from inside a particle.")
       case None => valid(WithExtraction(leaves("prt" -> form.toString)))
     }
@@ -687,21 +808,28 @@ object Predication {
   ) extends Oblique {
     def arguments = Vector(obj)
     import ArgPosition._, ArgumentPath.Descent
-    override def render(path: Option[Descent]): Component.RenderResult = {
+    override def render[A](
+      feats: Unit,
+      path: Option[Descent[A]]
+    ): RenderTree[A] = {
       if(path.exists(_.position != Arg(0))) {
         invalid(s"Can't descend into argument for extraction from oblique: ${path.get}")
-      } else List(
+      } else List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
         valid(WithExtraction(leaves("prep" -> prep.toString))),
-        obj.render(Arg(0), ArgumentPath.descend(path, Arg(0)))
+        obj.renderLaxWithPath(Arg(0), ArgumentPath.descend(path, Arg(0)))
       ).foldA
     }
   }
 
   case class Adverbial(form: String) extends Predication {
+    type GramFeats = Unit
     def arguments = Vector()
-    def render(
-      path: Option[ArgumentPath.Descent]
-    ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
+
+    import ArgumentPath.Descent
+    override def render[A](
+      feats: Unit,
+      path: Option[Descent[A]]
+    ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
       case None => valid(WithExtraction(leaf(form)))
     }
@@ -711,15 +839,19 @@ object Predication {
     subordinator: Subordinator,
     clause: Argument.Complement
   ) extends Predication {
+    type GramFeats = Unit
     def arguments = Vector(clause)
     import ArgumentPath.Descent, ArgPosition._
-    def render(path: Option[Descent]): Component.RenderResult = {
+    override def render[A](
+      feats: Unit,
+      path: Option[Descent[A]]
+    ): RenderTree[A] = {
       path match {
         case Some(pos) if pos != Arg(0) =>
           invalid(s"Can't descend into argument for extraction from oblique: $pos")
-        case otherPath => List(
+        case otherPath => List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           valid(WithExtraction(leaves("sub" -> subordinator.form.toString))),
-          clause.render(Arg(0), ArgumentPath.descend(path, Arg(0)))
+          clause.renderLaxWithPath(Arg(0), ArgumentPath.descend(path, Arg(0)))
         ).foldA
       }
     }
@@ -736,7 +868,13 @@ object Predication {
   // }
   // not as necessary since it isn't needed for constructing questions in existing framework
 
+  case class ClauseFeats(
+    clauseType: ClauseType,
+    includeSubject: Boolean
+  )
+
   sealed trait Clausal extends Predication {
+    type GramFeats = ClauseFeats
     def subject: Argument.Subject
     def tan: TAN
     def arguments: Vector[Argument]
@@ -752,38 +890,40 @@ object Predication {
     import LabeledTree.{leaf, leaves, node}
     import Component.WithExtraction
 
-    def renderQuestion(
-      path: Option[ArgumentPath.Descent]
-    ): Component.RenderResultOf[LabeledTree[String, String]] = {
-      val clauseType =
-        if(path.forall(_.isExtraction)) ClauseType.Inverted
-        else ClauseType.Finite
-      render(clauseType, includeSubject = true, path = path).andThen {
-        case WithExtraction(tree, extractions) =>
-          extractions.headOption match {
-            case None => valid(tree)
-            case Some((arg, path)) =>
-              arg.render(ArgPosition.Subj, Some(path)).andThen {
-                case WithExtraction(argTree, argExtractions) =>
-                  if(argExtractions.nonEmpty) invalid("Should not have a nested extraction.")
-                  else valid(argTree |+| tree)
-              }
-          }
-      }
-    }
+    // def renderQuestion(
+    //   path: Option[ArgumentPath.Descent]
+    // ): Component.RenderResultOf[LabeledTree[String, String]] = {
+    //   val clauseType =
+    //     if(path.forall(_.isExtraction)) ClauseType.Inverted
+    //     else ClauseType.Finite
+    //   render(clauseType, includeSubject = true, path = path).andThen {
+    //     case WithExtraction(tree, extractions) =>
+    //       extractions.headOption match {
+    //         case None => valid(tree)
+    //         case Some((arg, path)) =>
+    //           arg.render(ArgPosition.Subj, Some(path)).andThen {
+    //             case WithExtraction(argTree, argExtractions) =>
+    //               if(argExtractions.nonEmpty) invalid("Should not have a nested extraction.")
+    //               else valid(argTree |+| tree)
+    //           }
+    //       }
+    //   }
+    // }
 
+    // TODO move out to supertype
     def render(
       clauseType: ClauseType,
       includeSubject: Boolean,
-    ): Component.RenderResultOf[LabeledTree[String, String]] = {
-      render(clauseType, includeSubject, None).map(_.value)
+    ): Component.RenderResultOf[Branches] = {
+      render(ClauseFeats(clauseType, includeSubject), None)
+        .map((x: WithExtraction[Branches, Nothing]) => x.value)
     }
 
-    def render(
-      clauseType: ClauseType,
-      includeSubject: Boolean,
-      path: Option[ArgumentPath.Descent],
-    ): Component.RenderResult = {
+    override def render[A](
+      feats: ClauseFeats,
+      path: Option[ArgumentPath.Descent[A]]
+    ): Component.RenderBranches[A] = {
+      import feats.{clauseType, includeSubject}
       val frontAuxiliary = clauseType == ClauseType.Inverted
       validatePath(includeSubject, path) *> {
         renderSubject(includeSubject, path).andThen { subjValue =>
@@ -804,15 +944,21 @@ object Predication {
               val aux = valid(WithExtraction(leaves("aux" -> verbChain.head)))
               NonEmptyList.fromList(verbChain.tail) match {
                 case None =>
-                  List(aux, subj, args).foldA
+                  List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
+                    aux, subj, args
+                  ).foldA
                 case Some(verbTail) =>
                   val verb = valid(WithExtraction(makeVerbTree(verbTail)))
-                  List(aux, subj, verb, args).foldA
+                  List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
+                    aux, subj, verb, args
+                  ).foldA
               }
             } else {
               val verb = valid(WithExtraction(makeVerbTree(verbChain)))
-              if(includeSubject) List(subj, verb, args).foldA
-              else List(verb, args).foldA
+              if(includeSubject) List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
+                subj, verb, args
+              ).foldA
+              else List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](verb, args).foldA
             }
           }.andThen(res =>
             if(res.extractions.size > 1) {
@@ -825,9 +971,9 @@ object Predication {
       }
     }
 
-    def validatePath(
+    def validatePath[A](
       includeSubject: Boolean,
-      path: Option[ArgumentPath.Descent]
+      path: Option[ArgumentPath.Descent[A]]
     ): ValidatedNec[Component.RenderError, Unit] = path.map(_.position) match {
       case None => valid(())
       case Some(ArgPosition.Subj) if includeSubject => valid(())
@@ -835,21 +981,25 @@ object Predication {
       case Some(pos) => invalid(s"Cannot descent into argument position for extraction: $pos")
     }
 
-    def renderSubject(
-      includeSubject: Boolean, path: Option[ArgumentPath.Descent]
-    ): Component.RenderResult = {
+    def renderSubject[A](
+      includeSubject: Boolean, path: Option[ArgumentPath.Descent[A]]
+    ): Component.RenderBranches[A] = {
       if(!includeSubject) {
-        Validated.valid(Monoid[Component.WithExtraction[LabeledTree.Node[String, String]]].empty)
-      } else subject.render(ArgPosition.Subj, ArgumentPath.descend(path, ArgPosition.Subj))
+        Validated.valid(Monoid[Component.WithExtraction[Branches, A]].empty)
+      } else subject.renderLaxWithPath(ArgPosition.Subj, ArgumentPath.descend(path, ArgPosition.Subj))
     }
 
-    def renderArguments(path: Option[ArgumentPath.Descent]): Component.RenderResult = {
-      arguments.zipWithIndex.foldMapA { case (arg, index) =>
-        arg.render(ArgPosition.Arg(index), ArgumentPath.descend(path, ArgPosition.Arg(index)))
+    def renderArguments[A](path: Option[ArgumentPath.Descent[A]]): Component.RenderBranches[A] = {
+      arguments.zipWithIndex.foldMapA[
+        ValidatedNec[RenderError, *], WithExtraction[Branches, A]
+      ] { case (arg, index) =>
+        arg.renderLaxWithPath(
+          ArgPosition.Arg(index), ArgumentPath.descend(path, ArgPosition.Arg(index))
+        )
       }
     }
 
-    override def argumentPaths: Set[ArgumentPath.Descent] = {
+    override def argumentPaths: Set[ArgumentPath.Descent[Argument.ProForm]] = {
       import ArgPosition._
       subject.argumentPaths.map(_.ascend(Subj)) ++ super.argumentPaths
       // arguments.zipWithIndex.flatMap { case (arg, index) =>

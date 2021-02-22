@@ -67,7 +67,7 @@ class CafeTests extends CatsEffectSuite {
     clauseType <- ClauseType.all
     includeSubject <- List(false, true)
   } yield (
-    wantDo.render(clauseType, includeSubject, None),
+    wantDo.render(Predication.ClauseFeats(clauseType, includeSubject), None),
     (clauseType, includeSubject)
   )
 
@@ -84,39 +84,35 @@ class CafeTests extends CatsEffectSuite {
     }
   }
 
-  test("ask questions") {
-    val somePaths = None :: wantEat.argumentPaths.toList.map(Some(_))
-    somePaths.foreach { path =>
-      val question = wantEat.renderQuestion(path)
-      println("\n" + path.fold("N/A")(_.show))
-      question match {
-        case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
-        case Validated.Invalid(errs) =>
-          errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
-      }
-    }
-  }
+  // test("ask questions") {
+  //   val somePaths = None :: wantEat.argumentPaths.toList.map(Some(_))
+  //   somePaths.foreach { path =>
+  //     val question = wantEat.renderQuestion(path)
+  //     println("\n" + path.fold("N/A")(_.show))
+  //     question match {
+  //       case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+  //       case Validated.Invalid(errs) =>
+  //         errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
+  //     }
+  //   }
+  // }
 
   // TODO: for each path, extract the corresponding pronoun,
   // get its possible filler templates,
   // unify them with all possible predications in the context
   test("produce answer candidates/templates") {
-    wantEat.argumentPaths
-      .collect { case ex: ExtractionPath => ex }
+    wantEat.extractionPaths
       .map { extractionPath =>
         wantEat.render(
-          ClauseType.Inverted,
-          includeSubject = true,
+          Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true),
           path = Some(extractionPath)
         ).andThen {
           case Component.WithExtraction(questionClauseTree, extractions) =>
             require(extractions.size == 1)
             val (arg, focusPath) = extractions.head
-            arg.render(ArgPosition.Subj, Some(focusPath)).andThen {
-              case Component.WithExtraction(focusedArgTree, answerExtractions) =>
-                require(answerExtractions.size == 0)
-                val answerProForm: Argument.ProForm = ??? // should recover from extraction
-                val answerTemplates = answerProForm.instances
+            arg.render(ArgPosition.Subj, focusPath).andThen {
+              case (focusedArgTree, pro) =>
+                val answerTemplates = pro.instances
                 Validated.valid((focusedArgTree |+| questionClauseTree) -> answerTemplates)
             }
         }
