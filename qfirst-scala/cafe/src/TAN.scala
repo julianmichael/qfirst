@@ -64,26 +64,28 @@ import cats.Parallel
     )
   }
 
-  def fixAgreement(
+  private def fixAgreement(
     verbStack: NonEmptyList[String],
     forms: InflectedForms,
     person: Person,
     number: Number
   ): NonEmptyList[String] = {
     modTop { top =>
-      val theseForms = getForms(top.lowerCase, forms).get
-      val form = theseForms.getForm(top.lowerCase)
-      if(theseForms == InflectedForms.beSingularForms) {
-        import Person._, Number._
-        ((person, number), top) match {
-          case ((First, Singular), "is") => "am"
-          case ((Second, Singular) | (_, Plural), "is") => "are"
-          case ((Second, Singular) | (_, Plural), "was") => "were"
-          case _ => top // already third person singular, or 1st person singular past
-        }
-      } else if(top == forms.presentSingular3rd.toString && number == Number.Plural) {
-        forms.stem.toString
-      } else top
+      // not present means we have a modal on top; no need to change
+      getForms(top.lowerCase, forms).fold(top) { theseForms =>
+        val form = theseForms.getForm(top.lowerCase)
+        if(theseForms == InflectedForms.beSingularForms) {
+          import Person._, Number._
+          ((person, number), top) match {
+            case ((First, Singular), "is") => "am"
+            case ((Second, Singular) | (_, Plural), "is") => "are"
+            case ((Second, Singular) | (_, Plural), "was") => "were"
+            case _ => top // already third person singular, or 1st person singular past
+          }
+        } else if(top == forms.presentSingular3rd.toString && number == Number.Plural) {
+          forms.stem.toString
+        } else top
+      }
     }.runS(verbStack).value
   }
 

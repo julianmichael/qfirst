@@ -37,7 +37,7 @@ object ClauseType {
 // tells us whether we are rendering an argument...
 // TODO: in an answer (for bare vp answers to 'what..to do' questions
 // TODO: 'Fronted' position? something for when extracted
-sealed trait ArgPosition
+sealed trait ArgPosition extends Product with Serializable
 object ArgPosition {
   // for wh-words/phrases
   // case object Focus extends RenderContext
@@ -520,7 +520,7 @@ object Argument {
         case Subj => Case.Nominative
         case Arg(_) => Case.Accusative
       }
-      pred.map(_.render(c, path)).getOrElse(invalid())
+      pred.map(_.renderLax(c, path)).getOrElse(invalid())
     }
 
   }
@@ -528,7 +528,7 @@ object Argument {
 
   case class Oblique(
     pred: Option[Predication.Oblique],
-    adverbials: Set[ProForm.Adverb]
+    adverbials: Set[ProForm.Adverb] = Set()
   ) extends Semantic with NounOrOblique with NonNominal {
 
     override def allowPiedPiping(path: ArgumentPath[ProForm]): Boolean = true
@@ -541,7 +541,7 @@ object Argument {
       // case Arg(_) =>
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.render((), path)).getOrElse(invalid())
+      pred.map(_.renderLax((), path)).getOrElse(invalid())
   }
 
   // TODO: island constraints
@@ -555,7 +555,7 @@ object Argument {
     override def allowPiedPiping(path: ArgumentPath[ProForm]) = true
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.render((), path)).getOrElse(invalid())
+      pred.map(_.renderLax((), path)).getOrElse(invalid())
   }
 
   // for adverbials like 'today', 'every day' etc.
@@ -568,7 +568,7 @@ object Argument {
     override def proForms = adverbials.map(x => x: ProForm)
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.render((), path)).getOrElse(invalid())
+      pred.map(_.renderLax((), path)).getOrElse(invalid())
   }
 
   sealed trait Clausal extends Semantic {
@@ -578,7 +578,7 @@ object Argument {
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
       pred.map(
-        _.render(Predication.ClauseFeats(clauseType, includeSubject), path)
+        _.renderLax(Predication.ClauseFeats(clauseType, includeSubject), path)
       ).getOrElse(invalid())
 
     // filter out subject extractions in case our subject is not included
@@ -644,7 +644,7 @@ object Argument {
         List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
           else valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
-          p.render(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), path)
+          p.renderLax(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), path)
         ).foldA
       ).getOrElse(invalid())
   }
@@ -706,7 +706,7 @@ object Argument {
       pred.map(p =>
         List(
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
-          p.render(Predication.ClauseFeats(clauseType, includeSubject), path)
+          p.renderLax(Predication.ClauseFeats(clauseType, includeSubject), path)
         ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, A]]
       ).getOrElse(invalid())
   }
@@ -717,12 +717,38 @@ sealed trait Predication extends Component {
 
   import Component._
 
-  def render[A](
+  type Out <: Tree
+
+  def renderLax[A](
     features: GramFeats,
     path: Option[ArgumentPath.Descent[A]]
-  ): RenderTree[A]
+  ): RenderResultOf[WithExtraction[Out, A]]
 
   def arguments: Vector[Argument]
+
+  final def render[A](
+    feats: GramFeats,
+    path: Option[ArgumentPath.Descent[A]]
+  ): RenderResultOf[(Out, Option[A])] =
+    renderLax(feats, path).map { case WithExtraction(tree, items) =>
+      require(
+        (path.isEmpty && items.isEmpty) ||
+          (path.nonEmpty && items.size == 1)
+      ) // require correct number of extractions
+      tree -> items.headOption
+    }
+
+  final def render[A](feats: GramFeats, path: ArgumentPath.Descent[A]): RenderResultOf[(Out, A)] =
+    render(feats, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
+
+  final def render(feats: GramFeats): RenderResultOf[Out] = {
+    // ascribe a type to the None to help out type inference
+    render(feats, None: Option[ArgumentPath.Descent[Argument.ProForm]]).map { case (tree, itemOpt) =>
+      require(itemOpt.isEmpty) // require no extractions
+      tree
+    }
+  }
+
   def argumentPaths: Set[ArgumentPath.Descent[Argument.ProForm]] =
     arguments.zipWithIndex.flatMap { case (arg, index) =>
       arg.argumentPaths.map(_.ascend(ArgPosition.Arg(index)))
@@ -743,6 +769,7 @@ object Predication {
   // in the future, with proper nominal predicates, might use it this way.
   // but it would be a separate (non-clausal) type of predication.
   sealed trait Nominal extends Predication {
+    type Out = Tree
     type GramFeats = Case
 
     def animate: Option[Boolean]
@@ -760,7 +787,7 @@ object Predication {
     //   case None => valid(WithExtraction(leaf(getForm(`case`))))
     // }
 
-    def render[A](
+    def renderLax[A](
       features: Case,
       path: Option[ArgumentPath.Descent[A]]
     ): RenderTree[A] = path match {
@@ -784,49 +811,51 @@ object Predication {
   // TODO: add definite pronouns
 
   sealed trait Oblique extends Predication {
+    type Out = Tree
     type GramFeats = Unit
     import ArgPosition._, ArgumentPath.Descent
   }
   // prep should not take an object, i.e., is a particle
-  case class Particulate(form: Particle) extends Oblique {
+  case class Particulate(prts: NonEmptyList[Particle]) extends Oblique {
     def arguments = Vector()
 
     import ArgPosition._, ArgumentPath.Descent
 
-    override def render[A](
+    override def renderLax[A](
       feats: Unit,
       path: Option[Descent[A]]
     ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot extract from inside a particle.")
-      case None => valid(WithExtraction(leaves("prt" -> form.toString)))
+      case None => valid(WithExtraction(leaves("prt" -> prts.map(_.form).toList.mkString(" "))))
     }
   }
 
   case class Prepositional(
-    prep: Preposition,
+    preps: NonEmptyList[Preposition],
     obj: Argument.Nominal
   ) extends Oblique {
     def arguments = Vector(obj)
     import ArgPosition._, ArgumentPath.Descent
-    override def render[A](
+    override def renderLax[A](
       feats: Unit,
       path: Option[Descent[A]]
     ): RenderTree[A] = {
       if(path.exists(_.position != Arg(0))) {
         invalid(s"Can't descend into argument for extraction from oblique: ${path.get}")
       } else List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
-        valid(WithExtraction(leaves("prep" -> prep.toString))),
+        valid(WithExtraction(leaves("prep" -> preps.map(_.form).toList.mkString(" ")))),
         obj.renderLaxWithPath(Arg(0), ArgumentPath.descend(path, Arg(0)))
       ).foldA
     }
   }
 
   case class Adverbial(form: String) extends Predication {
+    type Out = Tree
     type GramFeats = Unit
     def arguments = Vector()
 
     import ArgumentPath.Descent
-    override def render[A](
+    override def renderLax[A](
       feats: Unit,
       path: Option[Descent[A]]
     ): RenderTree[A] = path match {
@@ -839,10 +868,11 @@ object Predication {
     subordinator: Subordinator,
     clause: Argument.Complement
   ) extends Predication {
+    type Out = Tree
     type GramFeats = Unit
     def arguments = Vector(clause)
     import ArgumentPath.Descent, ArgPosition._
-    override def render[A](
+    override def renderLax[A](
       feats: Unit,
       path: Option[Descent[A]]
     ): RenderTree[A] = {
@@ -874,6 +904,7 @@ object Predication {
   )
 
   sealed trait Clausal extends Predication {
+    override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
     def tan: TAN
@@ -911,15 +942,15 @@ object Predication {
     // }
 
     // TODO move out to supertype
-    def render(
-      clauseType: ClauseType,
-      includeSubject: Boolean,
-    ): Component.RenderResultOf[Branches] = {
-      render(ClauseFeats(clauseType, includeSubject), None)
-        .map((x: WithExtraction[Branches, Nothing]) => x.value)
-    }
+    // def renderLax(
+    //   clauseType: ClauseType,
+    //   includeSubject: Boolean,
+    // ): Component.RenderResultOf[Branches] = {
+    //   render(ClauseFeats(clauseType, includeSubject), None)
+    //     .map((x: WithExtraction[Branches, Nothing]) => x.value)
+    // }
 
-    override def render[A](
+    override def renderLax[A](
       feats: ClauseFeats,
       path: Option[ArgumentPath.Descent[A]]
     ): Component.RenderBranches[A] = {
