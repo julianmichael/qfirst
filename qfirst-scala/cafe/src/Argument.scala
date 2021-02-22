@@ -269,6 +269,8 @@ object Argument {
     }
 
     def argumentPaths: Set[ArgumentPath] = Set(Extraction(Focus), Focus)
+
+    def instances: Set[Semantic]
   }
   object ProForm {
     sealed trait Noun extends ProForm with Nominal with NounOrOblique {
@@ -282,28 +284,59 @@ object Argument {
       val placeholder = Some("someone")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
+      val instances = Set(NounPhrase(None, Some(true)))
     }
     case object what extends Noun with Complement {
       def wh(pos: ArgPosition) = "what"
       val placeholder = Some("something")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
+      val instances = Set(
+        NounPhrase(None, Some(false)),
+        Gerund(None, false),
+        Gerund(None, true),
+        ToInfinitive(None, false, Set(what)),
+        ToInfinitive(None, true, Set(what)),
+        Attributive(None, Set(what)),
+        Finite(None),
+        FiniteComplement(None)
+      )
     }
     sealed trait Adverb extends ProForm with NonNominal with NounOrOblique {
       def wh(pos: ArgPosition) = whWord.form.toString
       def whWord: Lexicon.Wh.Adverb
-    }
-    case object where extends Adverb {
-      val whWord = Wh.where
-      val placeholder = Some("somewhere")
+      val instances = Set(
+        Oblique(None, Set(this)),
+        Subordinate(None, Set(this)),
+        Adverbial(None, Set(this)),
+        ToInfinitive(None, false, Set(this)),
+        ToInfinitive(None, true, Set(this)),
+        Progressive(None, false, Set(this)),
+        Progressive(None, true, Set(this)),
+        Attributive(None, Set(this))
+      )
     }
     case object when extends Adverb {
       val whWord = Wh.when
       val placeholder = None
     }
+    case object where extends Adverb {
+      val whWord = Wh.where
+      val placeholder = Some("somewhere")
+    }
+    case object how extends Adverb {
+      val whWord = Wh.how
+      val placeholder = None
+    }
+    case object why extends Adverb {
+      val whWord = Wh.why
+      val placeholder = None
+    }
+    // TODO: how long, how much etc.: should use pied piping
+    // or whatever other general facility I can come up with
     object Adverb {
       def fromWh(wh: Lexicon.Wh.Adverb) = all.find(_.whWord == wh).get
-      def all = List(where, when)
+      def all = List(when, where, how, why)
     }
     // TODO: consider adding 'do' as a pro-form, AFTER figuring out
     // extraction, question formation, AND answer filling for the simple case.
@@ -380,6 +413,7 @@ object Argument {
 
   case class NounPhrase(
     pred: Option[Predication.Nominal],
+    animacyConstraint: Option[Boolean]
   ) extends Semantic with Nominal {
 
     override def allowPiedPiping(path: FocalPath): Boolean = true
@@ -390,7 +424,7 @@ object Argument {
       animate.map(anim => if(anim) ProForm.who else ProForm.what)
         .toSet
 
-    def animate: Option[Boolean] = pred.flatMap(_.animate)
+    def animate: Option[Boolean] = pred.flatMap(_.animate).orElse(animacyConstraint)
     def person: Option[Person] = pred.flatMap(_.person)
     def number: Option[Number] = pred.flatMap(_.number)
 
@@ -514,7 +548,7 @@ object Argument {
     import ArgPosition._, ArgumentPath.Descent
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
       pred.map(p =>
-        List( // TODO path
+        List(
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
           else Validated.Valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
           p.render(ClauseType.ToInfinitive, includeSubject, path)
@@ -911,12 +945,6 @@ object Predication {
       tan
     )
   }
-
-  // TODO:
-  // filling gaps, adding rich info to errors
-  // using rich errors to feed back into filling in slots
-  // aligning to QA-SRL questions
-  // relative clauses, free relatives, embedded questions
 
   // ---------------------------------------------------------------
 
