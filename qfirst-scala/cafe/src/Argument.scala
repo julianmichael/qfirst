@@ -611,7 +611,7 @@ object Argument {
     import ArgPosition._, ArgumentPath.Descent
     override def renderStrict(pos: ArgPosition, path: Option[Descent]) =
       pred.map(p =>
-        List(  // TODO path
+        List(
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
           p.render(clauseType, includeSubject, path)
         ).foldA.map(_.map(tree => LabeledTree.Node(symbol -> tree)))
@@ -620,7 +620,11 @@ object Argument {
 }
 
 sealed trait Predication extends Component {
-  def argumentPaths: Set[ArgumentPath.Descent]
+  def arguments: Vector[Argument]
+  def argumentPaths: Set[ArgumentPath.Descent] =
+    arguments.zipWithIndex.flatMap { case (arg, index) =>
+      arg.argumentPaths.map(_.ascend(ArgPosition.Arg(index)))
+    }.toSet
 }
 object Predication {
   import Component._
@@ -636,8 +640,7 @@ object Predication {
     def animate: Option[Boolean]
     def person: Option[Person]
     def number: Option[Number]
-
-    // def arguments = Vector()
+    def arguments = Vector()
 
     def getForm(`case`: Case): String
 
@@ -648,8 +651,6 @@ object Predication {
       case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
       case None => valid(WithExtraction(leaf(getForm(`case`))))
     }
-
-    def argumentPaths: Set[ArgumentPath.Descent] = Set()
   }
 
   case class NounPhrase(
@@ -672,20 +673,19 @@ object Predication {
   }
   // prep should not take an object, i.e., is a particle
   case class Particulate(form: Particle) extends Oblique {
-    // def arguments = Vector()
+    def arguments = Vector()
     import ArgPosition._, ArgumentPath.Descent
     override def render(path: Option[Descent]): Component.RenderResult = path match {
       case Some(_) => invalid("Cannot extract from inside a particle.")
       case None => valid(WithExtraction(leaves("prt" -> form.toString)))
     }
-    def argumentPaths: Set[ArgumentPath.Descent] = Set()
   }
 
   case class Prepositional(
     prep: Preposition,
     obj: Argument.Nominal
   ) extends Oblique {
-    // def arguments = Vector(obj)
+    def arguments = Vector(obj)
     import ArgPosition._, ArgumentPath.Descent
     override def render(path: Option[Descent]): Component.RenderResult = {
       if(path.exists(_.position != Arg(0))) {
@@ -695,23 +695,23 @@ object Predication {
         obj.render(Arg(0), ArgumentPath.descend(path, Arg(0)))
       ).foldA
     }
-    def argumentPaths: Set[ArgumentPath.Descent] = obj.argumentPaths.map(_.ascend(Arg(0)))
   }
 
   case class Adverbial(form: String) extends Predication {
+    def arguments = Vector()
     def render(
       path: Option[ArgumentPath.Descent]
     ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
       case None => valid(WithExtraction(leaf(form)))
     }
-    def argumentPaths: Set[ArgumentPath.Descent] = Set()
   }
 
   case class Subordinate(
     subordinator: Subordinator,
     clause: Argument.Complement
   ) extends Predication {
+    def arguments = Vector(clause)
     import ArgumentPath.Descent, ArgPosition._
     def render(path: Option[Descent]): Component.RenderResult = {
       path match {
@@ -723,7 +723,6 @@ object Predication {
         ).foldA
       }
     }
-    def argumentPaths: Set[ArgumentPath.Descent] = clause.argumentPaths.map(_.ascend(Arg(0)))
   }
 
   // 'something is done'.
@@ -743,16 +742,11 @@ object Predication {
     def arguments: Vector[Argument]
 
     def predPOS: String
-    // TODO: change this to 1) take a param to possibly ensure
-    // do-support, and 2) return a NonEmptyList verb chain instead.
-    // this will allow us to do auxiliary flip.
+
     def renderVerbChain(
       clauseType: ClauseType,
       needsFlippable: Boolean
     ): Either[NonEmptyChain[String], NonEmptyList[String]]
-    // tan.getCopulaAuxChain(otherType, subject)
-            // LabeledTree.leaves("aux" -> verbChain.init.mkString(" ")) |+|
-            //   LabeledTree.leaves("verb" -> verbChain.last)
 
     import Validated.valid
     import LabeledTree.{leaf, leaves, node}
@@ -855,12 +849,12 @@ object Predication {
       }
     }
 
-    def argumentPaths: Set[ArgumentPath.Descent] = {
+    override def argumentPaths: Set[ArgumentPath.Descent] = {
       import ArgPosition._
-      subject.argumentPaths.map(_.ascend(Subj)) ++
-        arguments.zipWithIndex.flatMap { case (arg, index) =>
-          arg.argumentPaths.map(_.ascend(Arg(index)))
-        }
+      subject.argumentPaths.map(_.ascend(Subj)) ++ super.argumentPaths
+      // arguments.zipWithIndex.flatMap { case (arg, index) =>
+      //   arg.argumentPaths.map(_.ascend(Arg(index)))
+      // }
     }
   }
 
@@ -976,7 +970,7 @@ object Predication {
   // aspects (passive): unmarked (being broken), perfect (having been broken)
   // aspects (passive): unmarked (being broken), perfect (having been broken)
   // case class Gerund(
-  //   verb: VoicedVerbPhrase // TODO aspect
+  //   verb: VoicedVerbPhrase
   // ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
 
   // can appear as:
@@ -998,7 +992,7 @@ object Predication {
   //     - active 'him swimming': nominal, NOT non-nominal
   //     - passive 'him being taken advantage of': nominal, NOT non-nominal
   //     - copula 'him being a leader in his field': nominal, NOT non-nominal
-  //   -- TODO: aspectual possibilities
+  //   -- aspectual possibilities
   //  - infinitive: 'he to go to the store': again 2 args.
 
   // for-np-to-vp

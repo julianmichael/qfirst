@@ -39,6 +39,22 @@ class CafeTests extends CatsEffectSuite {
     tan = present
   )
 
+  val eatPred = Predication.Verbal.apply(
+    subject = Argument.ProForm.who,
+    verb = Lexicon.Verb(eat),
+    isPassive = false,
+    arguments = Vector(Argument.ProForm.what),
+    tan = TAN(Some(Tense.Finite.Modal("might".lowerCase)), false, false, false)
+  )
+
+  val wantEat = Predication.Verbal(
+    subject = Argument.ProForm.who,
+    verb = Lexicon.Verb(want),
+    isPassive = false,
+    arguments = Vector(Argument.ToInfinitive(Some(eatPred), false, Set())),
+    tan = TAN(Some(Tense.Finite.Present), true, false, false)
+  )
+
   val wantDo = Predication.Verbal(
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
@@ -69,9 +85,9 @@ class CafeTests extends CatsEffectSuite {
   }
 
   test("ask questions") {
-    val somePaths = None :: wantDo.argumentPaths.toList.map(Some(_))
+    val somePaths = None :: wantEat.argumentPaths.toList.map(Some(_))
     somePaths.foreach { path =>
-      val question = wantDo.renderQuestion(path)
+      val question = wantEat.renderQuestion(path)
       println("\n" + path.fold("N/A")(_.show))
       question match {
         case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
@@ -80,6 +96,58 @@ class CafeTests extends CatsEffectSuite {
       }
     }
   }
+
+  // TODO: for each path, extract the corresponding pronoun,
+  // get its possible filler templates,
+  // unify them with all possible predications in the context
+  test("produce answer candidates/templates") {
+    wantEat.argumentPaths
+      .collect { case ex: ExtractionPath => ex }
+      .map { extractionPath =>
+        wantEat.render(
+          ClauseType.Inverted,
+          includeSubject = true,
+          path = Some(extractionPath)
+        ).andThen {
+          case Component.WithExtraction(questionClauseTree, extractions) =>
+            require(extractions.size == 1)
+            val (arg, focusPath) = extractions.head
+            arg.render(ArgPosition.Subj, Some(focusPath)).andThen {
+              case Component.WithExtraction(focusedArgTree, answerExtractions) =>
+                require(answerExtractions.size == 0)
+                val answerProForm: Argument.ProForm = ??? // should recover from extraction
+                val answerTemplates = answerProForm.instances
+                Validated.valid((focusedArgTree |+| questionClauseTree) -> answerTemplates)
+            }
+        }
+      }.foreach {
+        case Validated.Valid((question, answers)) =>
+          println("\n" + LabeledTree.showGloss(question))
+          answers.foreach(println)
+        case Validated.Invalid(err) =>
+          println(err)
+      }
+  }
+
+    // def renderQuestion(
+    //   path: Option[ArgumentPath.Descent]
+    // ): Component.RenderResultOf[LabeledTree[String, String]] = {
+    //   val clauseType =
+    //     if(path.forall(_.isExtraction)) ClauseType.Inverted
+    //     else ClauseType.Finite
+    //   render(clauseType, includeSubject = true, path = path).andThen {
+    //     case WithExtraction(tree, extractions) =>
+    //       extractions.headOption match {
+    //         case None => valid(tree)
+    //         case Some((arg, path)) =>
+    //           arg.render(ArgPosition.Subj, Some(path)).andThen {
+    //             case WithExtraction(argTree, argExtractions) =>
+    //               if(argExtractions.nonEmpty) invalid("Should not have a nested extraction.")
+    //               else valid(argTree |+| tree)
+    //           }
+    //       }
+    //   }
+    // }
 
   // TODO
   // test("argument extraction paths are always valid") {
