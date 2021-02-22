@@ -704,10 +704,10 @@ object Argument {
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
       pred.map(p =>
-        List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
+        List(
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
           p.render(Predication.ClauseFeats(clauseType, includeSubject), path)
-        ).foldA
+        ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, A]]
       ).getOrElse(invalid())
   }
 }
@@ -1006,7 +1006,10 @@ object Predication {
       //   arg.argumentPaths.map(_.ascend(Arg(index)))
       // }
     }
-  }
+    // TODO island constraints?
+    override def extractionPaths: Set[ArgumentPath.Descent[ArgumentPath.Extraction]] =
+      subject.extractionPaths.map(_.ascend(ArgPosition.Subj)) ++ super.extractionPaths
+    }
 
   case class Copular(
     subject: Argument.Subject,
