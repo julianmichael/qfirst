@@ -131,8 +131,10 @@ class CafeTests extends CatsEffectSuite {
       arg.render(ArgPosition.Subj, swap, focusPath).map {
         case (focusedArgTree, ProFormExtraction(pro, swap)) =>
           val answers = answerNPs
+            .map(Right(_))
             .map(swap.replace)
-            .map(_.andThen(_.render(finite)))
+            .map(_.map(_.render(finite)))
+            // .map(_.andThen(_.render(finite)))
           Validated.valid(
             (focusedArgTree |+| questionClauseTree)
           ) -> answers
@@ -143,8 +145,9 @@ class CafeTests extends CatsEffectSuite {
           case Validated.Invalid(err) => err.toString
         }
         val answers = answerVs.map {
-          case Validated.Valid(a) => LabeledTree.showGloss(a)
-          case Validated.Invalid(err) => err.toString
+          case Right(Validated.Valid(a)) => LabeledTree.showGloss(a)
+          case Right(Validated.Invalid(err)) => err.toString
+          case Left(err) => err.toString
         }
         question + "\n" + answers.mkString("\n")
     }
