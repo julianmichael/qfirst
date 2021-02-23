@@ -135,7 +135,8 @@ object ArgumentPath {
       (LabeledTree.Node[String, String], ProFormExtraction[A])
     ] = arg match {
       case pro: Argument.ProForm =>
-        valid(leaves(pro.symbol -> pro.wh(pos)), ProFormExtraction(pro, swap))
+        val newSwap = SwapOutArg(arg => swap.replace(arg.flatMap(pro.instantiate)))
+        valid(leaves(pro.symbol -> pro.wh(pos)) -> ProFormExtraction(pro, newSwap))
       case arg: Argument.Concrete =>
         arg.invalid("Focal element must be a pro-form.")
     }
@@ -343,7 +344,14 @@ object Argument {
     def argumentPaths: Set[ArgumentPath[ProFormExtraction]] = Set(End(Focus))
     def extractionPaths: Set[ArgumentPath[Extraction]] = Set(End(Extract(End(Focus))))
 
-    def instances: Set[Semantic]
+    def instantiateConcrete(arg: Concrete): Option[Concrete]
+
+    def instantiate(arg: Argument): Either[SubstitutionFailure, Argument] = arg match {
+      case pro: ProForm => Left(SubstitutionFailure(pro, End(Target)))
+      case concrete: Concrete => instantiateConcrete(concrete).toRight(
+        SubstitutionFailure(concrete, End(Target))
+      )
+    }
   }
   object ProForm {
     sealed trait Noun extends ProForm with Nominal with NounOrOblique {
@@ -357,37 +365,59 @@ object Argument {
       val placeholder = Some("someone")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
-      val instances = Set(NounPhrase(None, Some(true)))
+      // val instances = Set(NounPhrase(None, Some(true)))
+      def instantiateConcrete(arg: Concrete): Option[Concrete] = arg match {
+        case np @ NounPhrase(_, _) => Some(np)
+        case _ => None
+      }
     }
     case object what extends Noun with Complement {
       def wh(pos: ArgPosition) = "what"
       val placeholder = Some("something")
       val number = Some(Number.Singular)
       val person = Some(Person.Third)
-      val instances = Set(
-        NounPhrase(None, Some(false)),
-        Gerund(None, false),
-        Gerund(None, true),
-        ToInfinitive(None, false, Set(what)),
-        ToInfinitive(None, true, Set(what)),
-        Attributive(None, Set(what)),
-        Finite(None),
-        FiniteComplement(None)
-      )
+      // val instances = Set(
+      //   NounPhrase(None, Some(false)),
+      //   Gerund(None, false),
+      //   Gerund(None, true),
+      //   ToInfinitive(None, false, Set(what)),
+      //   ToInfinitive(None, true, Set(what)),
+      //   Attributive(None, Set(what)),
+      //   Finite(None),
+      //   FiniteComplement(None)
+      // )
+      def instantiateConcrete(arg: Concrete): Option[Concrete] = arg match {
+        case arg @ NounPhrase(_, _) => Some(arg)
+        case arg @ Gerund(_, _) => Some(arg)
+        case arg @ ToInfinitive(_, _, _) => Some(arg)
+        case arg @ Attributive(_, _) => Some(arg)
+        case arg @ Finite(_) => Some(arg)
+        case arg @ FiniteComplement(_) => Some(arg)
+        case _ => None
+      }
     }
     sealed trait Adverb extends ProForm with NonNominal with NounOrOblique {
       def wh(pos: ArgPosition) = whWord.form.toString
       def whWord: Lexicon.Wh.Adverb
-      val instances = Set(
-        Oblique(None, Set(this)),
-        Subordinate(None, Set(this)),
-        Adverbial(None, Set(this)),
-        ToInfinitive(None, false, Set(this)),
-        ToInfinitive(None, true, Set(this)),
-        Progressive(None, false, Set(this)),
-        Progressive(None, true, Set(this)),
-        Attributive(None, Set(this))
-      )
+      // val instances = Set(
+      //   Oblique(None, Set(this)),
+      //   Subordinate(None, Set(this)),
+      //   Adverbial(None, Set(this)),
+      //   ToInfinitive(None, false, Set(this)),
+      //   ToInfinitive(None, true, Set(this)),
+      //   Progressive(None, false, Set(this)),
+      //   Progressive(None, true, Set(this)),
+      //   Attributive(None, Set(this))
+      // )
+      def instantiateConcrete(arg: Concrete): Option[Concrete] = arg match {
+        case arg @ Oblique(_, _) => Some(arg)
+        case arg @ Subordinate(_, _) => Some(arg)
+        case arg @ Adverbial(_, _) => Some(arg)
+        case arg @ ToInfinitive(_, _, _) => Some(arg)
+        case arg @ Progressive(_, _, _) => Some(arg)
+        case arg @ Attributive(_, _) => Some(arg)
+        case _ => None
+      }
     }
     case object when extends Adverb {
       val whWord = Wh.when
