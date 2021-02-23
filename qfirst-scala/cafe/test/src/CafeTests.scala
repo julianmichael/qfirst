@@ -127,20 +127,27 @@ class CafeTests extends CatsEffectSuite {
     )
     val inverted = Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true)
     val finite = Predication.ClauseFeats(ClauseType.Finite, includeSubject = true)
-    println(pred)
-    println(path)
+    // println(pred)
+    // println(path.show)
     pred.render(
       inverted,
       path = path
     ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
+        // println("----------")
         // println("made it!")
         // println(LabeledTree.showGloss(questionClauseTree))
+        // println(focusPath.show)
+        // println(arg)
+        // println(swap.replace(Right(Argument.ProForm.who)))
+        // println("----------")
         arg.render(ArgPosition.Subj, swap, focusPath).map {
           case (focusedArgTree, ProFormExtraction(pro, swap)) =>
             val answers = answerNPs
               .map(Right(_))
               .map(swap.replace)
+              // .map(x => {println("\n~~~~~\n" + x + "\n~~~~~~\n"); x})
               .map(_.map(_.render(finite)))
+              // .map(x => {println("\nvvvvv\n" + x + "\n^^^^^^\n"); x})
             // .map(_.andThen(_.render(finite)))
             Validated.valid(
               (focusedArgTree |+| questionClauseTree)
@@ -319,14 +326,15 @@ class CafeTests extends CatsEffectSuite {
   test("align to QA-SRL") {
     val qasrlPath = Paths.get("../qasrl/data/qasrl-v2_1/orig/dev.jsonl.gz")
     IO.fromTry(Data.readQasrlDataset(qasrlPath)).flatMap { data =>
-      data.sentences.take(8).toList.traverse { case (sid, sentence) =>
+      data.sentences.take(30).toList.traverse { case (sid, sentence) =>
         IO {
           println("\n\n" + sid)
           println(Text.render(sentence.sentenceTokens))
           sentence.verbEntries.foreach { case (verbIndex, verb) =>
             println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
             verb.questionLabels
-              // .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
+              .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
+              // .filter(p => (p._1.endsWith("into?")))
               .foreach { case (qString, qLabel) =>
               val answerSpans = qLabel.answerJudgments
                 .flatMap(_.judgment.getAnswer)

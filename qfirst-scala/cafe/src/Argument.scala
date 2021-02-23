@@ -146,6 +146,7 @@ object ArgumentPath {
     def process[A](arg: Argument, pos: ArgPosition, swap: SwapOutArg[A]): Component.RenderResultOf[
       (LabeledTree.Node[String, String], ArgSnapshot[A])
     ] = arg.render(pos, swap).map(_ -> ArgSnapshot(arg, swap))
+    // ] = valid(leaves("brp" -> "woop") -> ArgSnapshot(arg, swap))
   }
 
   // type Get = Get.type
@@ -189,71 +190,6 @@ object ArgumentPath {
   implicit def descentShow[F[_]] = argumentPathShow[F]
     .contramap[Descent[F]](x => x: ArgumentPath[F])
 }
-
-// Do-pro-forms.
-// work these in by tying frames together.
-
-  // case class GerundiveDoingSomething(
-  //   includeSubject: Boolean, // TODO add possessive version
-  //   subject: Argument.Subject,
-  //   modifiers: Vector[Argument.NonNominal],
-  //   tan: TAN
-  // ) extends ArgumentProForm[Argument.Gerund] {
-  //   // TODO: need to be able to render the 'gap'
-  //   // def wh = Some("what".lowerCase)
-  //   def clause = {
-  //     val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
-  //     Argument.Gerund(includeSubject, Some(pred))
-  //   }
-  //   def arg = Some(clause)
-  //   import RenderContext._
-  //   def render(ctx: RenderContext) = ctx match {
-  //     // TODO: maybe disallow in subject position?
-  //     case Arg | Subj => clause.render(ctx)
-  //     case Focus => leaf("what".lowerCase)
-  //     case Gap => ??? // clause.render(???) // TODO: propagate gap down
-  //   }
-  // }
-
-  // // 'someone does something'
-  // case class DoSomething(
-  //   clauseType: ClauseType,
-  //   includeSubject: Boolean,
-  //   subject: Argument.Subject,
-  //   modifiers: Vector[Argument.NonNominal],
-  //   tan: TAN
-  // ) extends ArgumentProForm[Argument.Complement] {
-  //   def clause = {
-  //     val pred = Predication.Verbal.doSomething(subject, modifiers, tan)
-  //     import ClauseType._
-  //     clauseType match {
-  //       case Attributive =>
-  //         if(includeSubject) invalid("Attributives cannot appear with a subject.")
-  //         else Validated.valid(Argument.Attributive(Some(pred)))
-  //       case ToInfinitive =>
-  //         Validated.valid(Argument.ToInfinitive(includeSubject, Some(pred)))
-  //       case Progressive =>
-  //         Validated.valid(Argument.Progressive(includeSubject, Some(pred)))
-  //       case Finite =>
-  //         if(includeSubject) Validated.valid(Argument.Finite(Some(pred)))
-  //         else invalid("Finite complements require a subject.")
-  //       case BareInfinitive =>
-  //         if(includeSubject) invalid("BareInfinitive do-clauses cannot appear with a subject.")
-  //         else Validated.valid(Argument.BareInfinitive(Some(pred)))
-  //     }
-  //   }
-  //   def arg = clause.toOption
-  //   import RenderContext._
-  //   def render(ctx: RenderContext) = ctx match {
-  //     // TODO: maybe disallow in subject position?
-  //     case Arg | Subj => clause.toEither.flatMap(_.render(ctx).toEither).toValidated
-  //     case Focus => leaf("what".lowerCase)
-  //     case Gap => ??? // clause.render(???) // TODO: propagate gap down
-  //   }
-  // }
-  // // maybe also add a copular pro-form? already handled for Copula
-  // // but missing for adjective and passive. not sure how gapping should work with it.
-  // // could also add a 'happen' pro-form
 
 // TODO: probably break apart the hierarchy once I know what error reporting
 // will actually look like.
@@ -652,8 +588,11 @@ object Argument {
   }
 
   sealed trait Clausal extends Semantic {
-    def pred: Option[Predication.Clausal]
-    def withPred(p: Option[Predication.Clausal]): Clausal // for SwapOutPred
+    // TODO: this would probably be way easier to do with typeclasses lmao
+    type Self <: Clausal.Aux[Pred]
+    type Pred <: Predication.Clausal { type Self <: Pred }
+    def pred: Option[Pred]
+    def withPred(pred: Option[Pred]): Self // for SwapOutPred
     def clauseType: ClauseType
     def includeSubject: Boolean
     import ArgPosition._, ArgumentPath.Descent
@@ -662,7 +601,7 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred[Predication.Clausal, A] {
+      val swapOutPred = SwapOutPred[Pred, A] {
         case Right(pred) => swapOutArg.replace(Right(this.withPred(Some(pred))))
         case Left(arg) => swapOutArg.replace(Right(arg))
       }
@@ -678,11 +617,14 @@ object Argument {
     override def argumentPaths: Set[ArgumentPath[ProFormExtraction]] =
       super.argumentPaths.filter(x =>
         includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
-      )//.map(x => x: ArgumentPath[ProFormExtraction])
+      )
     override def extractionPaths: Set[ArgumentPath[Extraction]] =
       super.extractionPaths.filter(x =>
         includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
-      )//.map(x => x: ArgumentPath[Extraction])
+      )
+  }
+  object Clausal {
+    type Aux[A] = Clausal { type Pred = A }
   }
 
   // nominal use of gerund/progressive; can be object of prep or subject
@@ -691,7 +633,9 @@ object Argument {
     pred: Option[Predication.Clausal],
     includeSubject: Boolean
   ) extends Clausal with Nominal {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = Gerund
+    type Pred = Predication.Clausal
+    override def withPred(pred: Option[Predication.Clausal]) = this.copy(pred = pred)
     override def clauseType = ClauseType.Progressive
     override def category = if(includeSubject) "s[g]" else "vp[g]"
     override def proForms = Set(ProForm.what)
@@ -705,7 +649,9 @@ object Argument {
   case class BareInfinitive(
     pred: Option[Predication.NonCopular]
   ) extends Clausal with Complement {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = BareInfinitive
+    type Pred = Predication.NonCopular
+    override def withPred(pred: Option[Predication.NonCopular]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.BareInfinitive
     override def includeSubject = false
     override def category = "vp[b]"
@@ -722,7 +668,9 @@ object Argument {
     // pro: Option[ProFormProForm],
     proForms: Set[ProForm]
   ) extends Clausal with Complement {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = ToInfinitive
+    type Pred = Predication.Clausal
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
     // TODO: with Subject. or, just add a new argument type for subj inf?
     def complementizer: InfinitiveComplementizer = Lexicon.InfinitiveComplementizer.`for`
 
@@ -741,14 +689,22 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Clausal, A] {
-        case Right(pred) => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Right(pred) =>
+          println("- - - - Swapping out pred! - - - -")
+          println("new pred: " + pred)
+          println("old arg: " + this)
+          println("new arg: " + this.withPred(Some(pred)))
+          swapOutArg.replace(Right(this.withPred(Some(pred))))
         case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(p =>
         List(
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
           else valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
-          p.renderLax(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), swapOutPred, path)
+          p.renderLax(
+            Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject),
+            swapOutPred,
+            path)
         ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
       ).getOrElse(invalid())
     }
@@ -759,7 +715,9 @@ object Argument {
     includeSubject: Boolean,
     adverbials: Set[ProForm.Adverb]
   ) extends Clausal with Complement {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = Progressive
+    type Pred = Predication.Clausal
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.Progressive
     override def category = if(includeSubject) "s[ng]" else "vp[ng]"
     override def proForms = adverbials.map(x => x: ProForm)
@@ -774,7 +732,9 @@ object Argument {
     pred: Option[Predication.NonCopular],
     proForms: Set[ProForm]
   ) extends Clausal with Complement {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = Attributive
+    type Pred = Predication.NonCopular
+    def withPred(pred: Option[Predication.NonCopular]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.Attributive
     override def includeSubject = false
     // def category = if(includeSubject) "s[pt]" else "vp[pt]"
@@ -784,8 +744,10 @@ object Argument {
   case class Finite(
     pred: Option[Predication.Clausal]
   ) extends Clausal with Complement {
+    type Self = Finite
+    type Pred = Predication.Clausal
     // with Subject? but cannot appear in subj except as an answer
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.Finite
     override def includeSubject = true
     override def category = "s[dcl]"
@@ -797,7 +759,9 @@ object Argument {
   case class FiniteComplement(
     pred: Option[Predication.Clausal],
   ) extends Clausal with Complement with Subject {
-    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
+    type Self = FiniteComplement
+    type Pred = Predication.Clausal
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.Finite
     override def includeSubject = true
 
@@ -846,7 +810,7 @@ sealed trait Predication extends Component {
   type Self <: Predication
   def swapOutSelf: SwapOutPred[Self, Self] = SwapOutPred {
     case Right(pred) => Right(pred)
-    // TODO: maybe I can do something here for global sub of do? idk
+    // TODO: do something for 'do' pro-verb to get it to resolve out as root?
     case Left(arg) => Left(SubstitutionFailure(arg, ArgumentPath.End(ArgumentPath.Target)))
   }
   def proxy: Option[ProxyArgument[Self]]
@@ -1068,25 +1032,14 @@ object Predication {
     }
   }
 
-  // 'something is done'.
-  // maybe can add this in later.
-  // case class PassiveProForm(
-  //   subject: Subject, --- seems too general; maybe not best to use as pro-form?
-  //   arguments: Vector[NonSubject] = Noun()
-  //   tan: TAN
-  // ) {
-  //   // verb: Verb = Verb(InflectedForms.doForms)
-  // }
-  // not as necessary since it isn't needed for constructing questions in existing framework
-
   case class ClauseFeats(
     clauseType: ClauseType,
     includeSubject: Boolean
   )
 
   sealed trait Clausal extends Predication {
-    // type Self <: Clausal
-    type Self = Clausal
+    type Self <: Clausal
+    // type Self = Clausal
     override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
@@ -1105,40 +1058,16 @@ object Predication {
     import LabeledTree.{leaf, leaves, node}
     import Component.WithExtraction
 
-    // def renderQuestion(
-    //   path: Option[ArgumentPath.Descent]
-    // ): Component.RenderResultOf[LabeledTree[String, String]] = {
-    //   val clauseType =
-    //     if(path.forall(_.isExtraction)) ClauseType.Inverted
-    //     else ClauseType.Finite
-    //   render(clauseType, includeSubject = true, path = path).andThen {
-    //     case WithExtraction(tree, extractions) =>
-    //       extractions.headOption match {
-    //         case None => valid(tree)
-    //         case Some((arg, path)) =>
-    //           arg.render(ArgPosition.Subj, Some(path)).andThen {
-    //             case WithExtraction(argTree, argExtractions) =>
-    //               if(argExtractions.nonEmpty) invalid("Should not have a nested extraction.")
-    //               else valid(argTree |+| tree)
-    //           }
-    //       }
-    //   }
-    // }
-
-    // TODO move out to supertype
-    // def renderLax(
-    //   clauseType: ClauseType,
-    //   includeSubject: Boolean,
-    // ): Component.RenderResultOf[Branches] = {
-    //   render(ClauseFeats(clauseType, includeSubject), None)
-    //     .map((x: WithExtraction[Branches, Nothing]) => x.value)
-    // }
-
     override def renderLax[F[_], A](
       feats: ClauseFeats,
       swapOutPred: SwapOutPred[Self, A],
       path: Option[ArgumentPath.Descent[F]]
     ): Component.RenderBranches[F[A]] = {
+      // println("----##----")
+      // println(this)
+      // println(feats)
+      // println(path)
+      // println("----##----")
       import feats.{clauseType, includeSubject}
       val frontAuxiliary = clauseType == ClauseType.Inverted
       validatePath(includeSubject, path) *> {
@@ -1257,9 +1186,9 @@ object Predication {
     argument: NounOrOblique,
     modifiers: Vector[NonNominal],
     tan: TAN,
-    proxy: Option[ProxyArgument[Clausal]] = None
+    proxy: Option[ProxyArgument[Copular]] = None
   ) extends Clausal {
-    // type Self = Copular
+    type Self = Copular
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     def arguments = argument +: modifiers
     def predPOS = "be"
@@ -1290,7 +1219,7 @@ object Predication {
   }
 
   sealed trait NonCopular extends Clausal {
-    // type Self <: NonCopular
+    type Self <: NonCopular
   }
 
   case class Adjectival(
@@ -1298,8 +1227,9 @@ object Predication {
     adjective: Adjective,
     arguments: Vector[NonNominal],
     tan: TAN,
-    proxy: Option[ProxyArgument[Clausal]] = None
+    proxy: Option[ProxyArgument[Adjectival]] = None
   ) extends NonCopular {
+    type Self = Adjectival
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "adj"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1331,8 +1261,9 @@ object Predication {
     isPassive: Boolean,
     arguments: Vector[NonSubject],
     tan: TAN,
-    proxy: Option[ProxyArgument[Clausal]] = None
+    proxy: Option[ProxyArgument[Verbal]] = None
   ) extends NonCopular {
+    type Self = Verbal
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1358,6 +1289,11 @@ object Predication {
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
         case Right(arg: NonSubject) =>
+          println("--- --- Swapping in arg! --- ---")
+          println(this)
+          println(arg)
+          println(this.copy(arguments = arguments.updated(index, arg)))
+          // println("-- -- -- -- -- -- -- -- -- -- --")
           swapOutPred.replace(Right(this.copy(arguments = arguments.updated(index, arg))))
         case Right(otherArg) =>
           Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
@@ -1380,16 +1316,16 @@ object Predication {
       subject, Verb(InflectedForms.doForms), false,
       Vector(Argument.ProForm.what),// +: modifiers,
       tan,
-      Some(
-        ProxyArgument(
-          Descent(Arg(0), End(Target)),
-          arg => arg match {
-            case bare: Argument.BareInfinitive =>
-              bare.pred.map(Right(_))
-            case _ => None
-          }
-        )
-      )
+      // Some(
+      //   ProxyArgument(
+      //     Descent(Arg(0), End(Target)),
+      //     arg => arg match {
+      //       case bare: Argument.BareInfinitive =>
+      //         bare.pred.map(Right(_))
+      //       case _ => None
+      //     }
+      //   )
+      // )
     )
   }
 }
