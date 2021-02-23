@@ -95,7 +95,7 @@ class CafeTests extends CatsEffectSuite {
   test("produce answer candidates/templates") {
     wantEat.extractionPaths
       .map { extractionPath =>
-        renderQuestion(wantEat, extractionPath)
+        renderQA(wantEat, extractionPath, Vector())
       }.foreach {
         case Validated.Valid(out) =>
           println(out)
@@ -104,25 +104,49 @@ class CafeTests extends CatsEffectSuite {
       }
   }
 
-  def renderQuestion(
+  def renderQA(
     pred: Predication.Clausal,
-    path: ArgumentPath.Descent[Extraction]
+    path: ArgumentPath.Descent[Extraction],
+    answers: Vector[String]
   ) = {
+    val answerNPs = answers.map(ans =>
+      Argument.NounPhrase(
+        Some(
+          Predication.NounPhrase(
+            ans,
+            None,
+            Some(Person.Third),
+            Some(Number.Singular)
+          )
+        ),
+        None
+      )
+    )
+    val inverted = Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true)
+    val finite = Predication.ClauseFeats(ClauseType.Finite, includeSubject = true)
     pred.render(
-      Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true),
+      inverted,
       path = path
     ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
-      arg.render(ArgPosition.Subj, swap, focusPath).andThen {
-        case (focusedArgTree, pro) =>
-          // val answerTemplates = pro.instances
+      arg.render(ArgPosition.Subj, swap, focusPath).map {
+        case (focusedArgTree, ProFormExtraction(pro, swap)) =>
+          val answers = answerNPs
+            .map(swap.replace)
+            .map(_.andThen(_.render(finite)))
           Validated.valid(
-            (focusedArgTree |+| questionClauseTree)// -> answerTemplates
-          )
+            (focusedArgTree |+| questionClauseTree)
+          ) -> answers
       }
-    }.map { case question =>
-        LabeledTree.showGloss(question)
-          // + "\n" +
-          // answers.mkString("\n")
+    }.map { case (questionV, answerVs) =>
+        val question = questionV match {
+          case Validated.Valid(q) => LabeledTree.showGloss(q)
+          case Validated.Invalid(err) => err.toString
+        }
+        val answers = answerVs.map {
+          case Validated.Valid(a) => LabeledTree.showGloss(a)
+          case Validated.Invalid(err) => err.toString
+        }
+        question + "\n" + answers.mkString("\n")
     }
   }
 
@@ -281,9 +305,9 @@ class CafeTests extends CatsEffectSuite {
               val answerSpans = qLabel.answerJudgments
                 .flatMap(_.judgment.getAnswer)
                 .flatMap(_.spans.toSortedSet)
-              val answersString = answerSpans.toList.sorted
+              val answerStrings = answerSpans.toVector.sorted
                 .map(s => Text.renderSpan(sentence.sentenceTokens, s))
-                .mkString(" / ")
+              val answersString = answerStrings.mkString(" / ")
 
               val div = " ========== "
               println(div + qString + div)
@@ -296,7 +320,7 @@ class CafeTests extends CatsEffectSuite {
                     case Validated.Invalid(err) => println("\t" + err)
                   }
                   println
-                  renderQuestion(pred, path) match {
+                  renderQA(pred, path, answerStrings) match {
                     case Validated.Valid(res) => println(res)
                     case Validated.Invalid(err) => println(err)
                   }

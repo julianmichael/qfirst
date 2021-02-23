@@ -833,6 +833,9 @@ object Argument {
 sealed trait Predication extends Component {
   type GramFeats // grammatical features
 
+  type Self <: Predication
+  def swapOutSelf: SwapOutPred[Self]
+
   import Component._
 
   type Out <: Tree
@@ -848,8 +851,8 @@ sealed trait Predication extends Component {
   final def render[F[_]](
     feats: GramFeats,
     path: Option[ArgumentPath.Descent[F]]
-  ): RenderResultOf[(Out, Option[F[Predication]])] =
-    renderLax(feats, SwapOutPred(Validated.valid(_)), path)
+  ): RenderResultOf[(Out, Option[F[Self]])] =
+    renderLax(feats, swapOutSelf, path)
       .map { case WithExtraction(tree, items) =>
         require(
           (path.isEmpty && items.isEmpty) ||
@@ -860,7 +863,7 @@ sealed trait Predication extends Component {
 
   final def render[F[_]](
     feats: GramFeats, path: ArgumentPath.Descent[F]
-  ): RenderResultOf[(Out, F[Predication])] =
+  ): RenderResultOf[(Out, F[Self])] =
     render(feats, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
 
   final def render(feats: GramFeats): RenderResultOf[Out] = {
@@ -893,6 +896,7 @@ object Predication {
   sealed trait Nominal extends Predication {
     type Out = Tree
     type GramFeats = Case
+    type Self <: Nominal
 
     def animate: Option[Boolean]
     def person: Option[Person]
@@ -925,6 +929,11 @@ object Predication {
     person: Option[Person],
     number: Option[Number]
   ) extends Nominal {
+    type Self = NounPhrase
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.NounPhrase => valid(p)
+      case x => invalid("Must swap in a noun phrase.")
+    }
     def getForm(c: Case): String = c match {
       case Case.Genitive => form + "'s"
       case _ => form
@@ -934,12 +943,18 @@ object Predication {
   // TODO: add definite pronouns
 
   sealed trait Oblique extends Predication {
+    type Self <: Oblique
     type Out = Tree
     type GramFeats = Unit
     import ArgPosition._, ArgumentPath.Descent
   }
   // prep should not take an object, i.e., is a particle
   case class Particulate(prts: NonEmptyList[Particle]) extends Oblique {
+    type Self = Particulate
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Particulate => valid(p)
+      case x => invalid("Must swap in a particle.")
+    }
     def arguments = Vector()
 
     import ArgPosition._, ArgumentPath.Descent
@@ -958,6 +973,11 @@ object Predication {
     preps: NonEmptyList[Preposition],
     obj: Argument.Nominal
   ) extends Oblique {
+    type Self = Prepositional
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Prepositional => valid(p)
+      case x => invalid("Must swap in a prepositional phrase.")
+    }
     def arguments = Vector(obj)
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[F[_], A](
@@ -982,6 +1002,11 @@ object Predication {
   }
 
   case class Adverbial(form: String) extends Predication {
+    type Self = Adverbial
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Adverbial => valid(p)
+      case x => invalid("Must swap in an adverbial.")
+    }
     type Out = Tree
     type GramFeats = Unit
     def arguments = Vector()
@@ -1001,6 +1026,11 @@ object Predication {
     subordinator: Subordinator,
     clause: Argument.Complement
   ) extends Predication {
+    type Self = Subordinate
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Subordinate => valid(p)
+      case x => invalid("Must swap in a subordinate clause.")
+    }
     type Out = Tree
     type GramFeats = Unit
     def arguments = Vector(clause)
@@ -1045,6 +1075,7 @@ object Predication {
   )
 
   sealed trait Clausal extends Predication {
+    type Self <: Clausal
     override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
@@ -1212,6 +1243,11 @@ object Predication {
     modifiers: Vector[NonNominal],
     tan: TAN
   ) extends Clausal {
+    type Self = Copular
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Copular => valid(p)
+      case x => invalid("Must swap in a copula.")
+    }
     def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     def arguments = argument +: modifiers
     def predPOS = "be"
@@ -1234,7 +1270,9 @@ object Predication {
     }
   }
 
-  sealed trait NonCopular extends Clausal
+  sealed trait NonCopular extends Clausal {
+    type Self <: NonCopular
+  }
 
   case class Adjectival(
     subject: Argument.Subject,
@@ -1242,6 +1280,11 @@ object Predication {
     arguments: Vector[NonNominal],
     tan: TAN
   ) extends NonCopular {
+    type Self = Adjectival
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Adjectival => valid(p)
+      case x => invalid("Must swap in an adjective.")
+    }
     def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     override def predPOS = "adj"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1266,6 +1309,11 @@ object Predication {
     arguments: Vector[NonSubject],
     tan: TAN
   ) extends NonCopular {
+    type Self = Verbal
+    def swapOutSelf = SwapOutPred {
+      case p: Predication.Verbal => valid(p)
+      case x => invalid("Must swap in a verb.")
+    }
     def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
