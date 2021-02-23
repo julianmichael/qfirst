@@ -43,7 +43,7 @@ class CafeTests extends CatsEffectSuite {
   val doPro = Predication.Verbal.doSomething(
     // clauseType, includeSubject,
     subject = Argument.ProForm.who,
-    modifiers = Vector(),
+    // modifiers = Vector(),
     tan = present
   )
 
@@ -121,24 +121,31 @@ class CafeTests extends CatsEffectSuite {
         ),
         None
       )
+    ) ++ Vector(
+      Argument.BareInfinitive(Some(eatPred)),
+      Argument.ProForm.who
     )
     val inverted = Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true)
     val finite = Predication.ClauseFeats(ClauseType.Finite, includeSubject = true)
+    println(pred)
+    println(path)
     pred.render(
       inverted,
       path = path
     ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
-      arg.render(ArgPosition.Subj, swap, focusPath).map {
-        case (focusedArgTree, ProFormExtraction(pro, swap)) =>
-          val answers = answerNPs
-            .map(Right(_))
-            .map(swap.replace)
-            .map(_.map(_.render(finite)))
+        // println("made it!")
+        // println(LabeledTree.showGloss(questionClauseTree))
+        arg.render(ArgPosition.Subj, swap, focusPath).map {
+          case (focusedArgTree, ProFormExtraction(pro, swap)) =>
+            val answers = answerNPs
+              .map(Right(_))
+              .map(swap.replace)
+              .map(_.map(_.render(finite)))
             // .map(_.andThen(_.render(finite)))
-          Validated.valid(
-            (focusedArgTree |+| questionClauseTree)
-          ) -> answers
-      }
+            Validated.valid(
+              (focusedArgTree |+| questionClauseTree)
+            ) -> answers
+        }
     }.map { case (questionV, answerVs) =>
         val question = questionV match {
           case Validated.Valid(q) => LabeledTree.showGloss(q)
@@ -196,29 +203,41 @@ class CafeTests extends CatsEffectSuite {
             val (prepsOpt, doWordsOpt) = getPrepAndMiscPrefix(prepStr)
             doWordsOpt match {
               case Some(doWords) =>
+                // no object follows the preps, so must be particles
+                val prts = prepsOpt.foldMap(preps =>
+                  Vector(
+                    Argument.Oblique(
+                      Some(
+                        Predication.Particulate(
+                          NonEmptyList.fromList(
+                            preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
+                          ).get))))
+                )
+
                 // object must be 'something' if do-words are present
                 require(obj2Opt.exists(n => !n.isAnimate))
-                // TODO figure out how to create this pro-form
-                // for now, just omitting it
-                // val comp = doWords.toString match {
-                //   case "do" => // Argument.BareInfinitive()
-                //   case "to do" => // Argument.BareInfinitive()
-                //   case "doing" => // Argument.Gerund(false) // TODO participle?
-                //   case "to doing" => // Argument.Gerund(false) // TODO participle?
-                // }
+
                 // val prepChain = 
                 // TODO maybe consider the possibility of extraction from between the two
                 // which I think is ignored in frame resolution.
                 // but also it happens so rarely it might be fine for this particular purpose.
-                Vector(
-                  prepsOpt.foldMap(preps =>
-                    Vector(
-                      Argument.Oblique(
-                        Some(
-                          Predication.Particulate(
-                            NonEmptyList.fromList(
-                              preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
-                            ).get))))))
+
+                val doSomething = Predication.Verbal.doSomething(
+                  subject = Argument.ProForm.who,
+                  tan = present
+                )
+
+                doWords.toString match {
+                  case "do" => Vector(prts :+ Argument.BareInfinitive(Some(doSomething)))
+                  case "to do" => Vector(prts :+ Argument.ToInfinitive(Some(doSomething), false, Set()))
+                    // TODO: get all the right/possible combinations of preps, prts, gerunds, obj, etc.
+                  case _ => Vector() // zz. todo. vvv XXX
+                  // case "doing" => Vector(
+                  //   Argument.Gerund(false),
+                  //   Argument.Progressive(false)
+                  // )
+                  // case "to doing" => Argument.Gerund(false) // TODO participle?
+                }
               case None => prepsOpt match {
                 case None => Vector(obj2Opt.foldMap(n => Vector(getNounPro(n.isAnimate))))
                 case Some(preps) =>
@@ -259,7 +278,9 @@ class CafeTests extends CatsEffectSuite {
             require(trailingArgs.nonEmpty)
             val init = ArgPosition.Arg(args.size - 1) // no adv arg, so we're last
             trailingArgs.last match {
-              case Argument.Oblique(Some(Predication.Prepositional(_, _)), _) =>
+              case Argument.Oblique(Some(Predication.Prepositional(_, _, _)), _) =>
+                init :: ArgPosition.Arg(0) :: Nil
+              case _: Argument.Clausal => // do-phrase
                 init :: ArgPosition.Arg(0) :: Nil
               case _ =>
                 init :: Nil
@@ -298,13 +319,15 @@ class CafeTests extends CatsEffectSuite {
   test("align to QA-SRL") {
     val qasrlPath = Paths.get("../qasrl/data/qasrl-v2_1/orig/dev.jsonl.gz")
     IO.fromTry(Data.readQasrlDataset(qasrlPath)).flatMap { data =>
-      data.sentences.take(20).toList.traverse { case (sid, sentence) =>
+      data.sentences.take(8).toList.traverse { case (sid, sentence) =>
         IO {
           println("\n\n" + sid)
           println(Text.render(sentence.sentenceTokens))
           sentence.verbEntries.foreach { case (verbIndex, verb) =>
             println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
-            verb.questionLabels.foreach { case (qString, qLabel) =>
+            verb.questionLabels
+              // .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
+              .foreach { case (qString, qLabel) =>
               val answerSpans = qLabel.answerJudgments
                 .flatMap(_.judgment.getAnswer)
                 .flatMap(_.spans.toSortedSet)

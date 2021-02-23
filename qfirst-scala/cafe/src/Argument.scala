@@ -72,8 +72,9 @@ case class SwapOutArg[A](
   // replacementTemplates: Set[Argument],
   replace: Either[SubstitutionFailure, Argument] => Either[SubstitutionFailure, A]
 )
+// Left is for replacement arguments constructed via proxies
 case class SwapOutPred[-P <: Predication, A](
-  replace: P => Either[SubstitutionFailure, A]
+  replace: Either[Argument, P] => Either[SubstitutionFailure, A]
 )
 
 sealed trait ArgumentPath[F[_]] extends Product with Serializable {
@@ -567,7 +568,8 @@ object Argument {
         case Arg(_) => Case.Accusative
       }
       val swapOutPred = SwapOutPred[Predication.Nominal, A] {
-        case pred => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
           // TODO: perhaps consider erroring if there's a problem with animacy
         // case x => invalid(s"Trying to replace nominal pred of NP arg with: $x")
       }
@@ -597,7 +599,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Oblique, A] {
-        pred => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -619,7 +622,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Subordinate, A] {
-        pred => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -640,7 +644,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Adverbial, A] {
-        pred => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -658,7 +663,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Clausal, A] {
-        pred => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(
         _.renderLax(
@@ -735,7 +741,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Clausal, A] {
-        pred => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(p =>
         List(
@@ -810,7 +817,8 @@ object Argument {
       path: Option[Descent[F]]
     ) = {
       val swapOutPred = SwapOutPred[Predication.Clausal, A] {
-        pred => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Right(pred) => swapOutArg.replace(Right(this.withPred(Some(pred))))
+        case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(p =>
         List(
@@ -822,15 +830,26 @@ object Argument {
   }
 }
 
-// case class Proxy(
-//   path: ArgumentPath[ProFormExtraction]
-// )
+
+case class ProxyArgument[P <: Predication](
+  path: ArgumentPath[ArgSnapshot],
+  construct: Argument => Option[Either[Argument, P]]
+) {
+  def recover(failure: SubstitutionFailure): Option[Either[Argument, P]] = {
+    if(failure.path == path) construct(failure.arg) else None
+  }
+}
 
 sealed trait Predication extends Component {
   type GramFeats // grammatical features
 
   type Self <: Predication
-  def swapOutSelf: SwapOutPred[Self, Self] = SwapOutPred(x => Right(x))
+  def swapOutSelf: SwapOutPred[Self, Self] = SwapOutPred {
+    case Right(pred) => Right(pred)
+    // TODO: maybe I can do something here for global sub of do? idk
+    case Left(arg) => Left(SubstitutionFailure(arg, ArgumentPath.End(ArgumentPath.Target)))
+  }
+  def proxy: Option[ProxyArgument[Self]]
 
   import Component._
 
@@ -893,6 +912,7 @@ object Predication {
     type Out = Tree
     type GramFeats = Case
     type Self <: Nominal
+    override def proxy: Option[ProxyArgument[Self]] = None
 
     def animate: Option[Boolean]
     def person: Option[Person]
@@ -943,6 +963,7 @@ object Predication {
   // prep should not take an object, i.e., is a particle
   case class Particulate(prts: NonEmptyList[Particle]) extends Oblique {
     type Self = Particulate
+    override def proxy: Option[ProxyArgument[Self]] = None
     def arguments = Vector()
 
     import ArgPosition._, ArgumentPath.Descent
@@ -959,7 +980,8 @@ object Predication {
 
   case class Prepositional(
     preps: NonEmptyList[Preposition],
-    obj: Argument.Nominal
+    obj: Argument.Nominal,
+    proxy: Option[ProxyArgument[Prepositional]] = None
   ) extends Oblique {
     type Self = Prepositional
     def arguments = Vector(obj)
@@ -976,9 +998,12 @@ object Predication {
         obj.renderLaxWithPath(
           Arg(0),
           SwapOutArg {
-            case Right(arg: Argument.Nominal) => swapOutPred.replace(this.copy(obj = arg))
+            case Right(arg: Argument.Nominal) => swapOutPred.replace(Right(this.copy(obj = arg)))
             case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
-            case Left(failure) => Left(failure.ascend(Arg(0)))
+            case Left(failure) =>
+              proxy.flatMap(_.recover(failure))
+                .map(swapOutPred.replace)
+                .getOrElse(Left(failure.ascend(Arg(0))))
           },
           ArgumentPath.descend(path, Arg(0))
         )
@@ -988,6 +1013,7 @@ object Predication {
 
   case class Adverbial(form: String) extends Predication {
     type Self = Adverbial
+    override def proxy: Option[ProxyArgument[Self]] = None
     type Out = Tree
     type GramFeats = Unit
     def arguments = Vector()
@@ -1005,7 +1031,8 @@ object Predication {
 
   case class Subordinate(
     subordinator: Subordinator,
-    clause: Argument.Complement
+    clause: Argument.Complement,
+    proxy: Option[ProxyArgument[Subordinate]] = None
   ) extends Predication {
     type Self = Subordinate
     type Out = Tree
@@ -1025,9 +1052,14 @@ object Predication {
           clause.renderLaxWithPath(
             Arg(0),
             SwapOutArg {
-              case Right(arg: Argument.Complement) => swapOutPred.replace(this.copy(clause = arg))
-              case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
-              case Left(failure) => Left(failure.ascend(Arg(0)))
+              case Right(arg: Argument.Complement) =>
+                swapOutPred.replace(Right(this.copy(clause = arg)))
+              case Right(otherArg) =>
+                Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
+              case Left(failure) =>
+                proxy.flatMap(_.recover(failure))
+                  .map(swapOutPred.replace)
+                  .getOrElse(Left(failure.ascend(Arg(0))))
             },
             ArgumentPath.descend(path, Arg(0))
           )
@@ -1053,7 +1085,8 @@ object Predication {
   )
 
   sealed trait Clausal extends Predication {
-    type Self <: Clausal
+    // type Self <: Clausal
+    type Self = Clausal
     override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
@@ -1177,19 +1210,21 @@ object Predication {
       } else subject.renderLaxWithPath(
         Subj,
         SwapOutArg {
-          case Right(arg: Argument.Subject) => swapOutPred.replace(this.withSubject(arg))
-          case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Subj, End(Target))))
-          case Left(failure) => Left(failure.ascend(Subj))
+          case Right(arg: Argument.Subject) =>
+            swapOutPred.replace(Right(this.withSubject(arg)))
+          case Right(otherArg) =>
+            Left(SubstitutionFailure(otherArg, Descent(Subj, End(Target))))
+          case Left(failure) =>
+            proxy.flatMap(_.recover(failure))
+              .map(swapOutPred.replace)
+              .getOrElse(Left(failure.ascend(Subj)))
         },
         ArgumentPath.descend(path, Subj)
       )
     }
 
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A]
-          // SwapOutArg {
-          //   case arg => valid(this.copy(obj = arg))
-          //   // case x => invalid(s"Must swap out Nominal for prep object: $x")
-          // },
+
     def renderArguments[F[_], A](
       path: Option[ArgumentPath.Descent[F]],
       swapOutPred: SwapOutPred[Self, A]
@@ -1221,9 +1256,10 @@ object Predication {
     subject: Argument.Subject,
     argument: NounOrOblique,
     modifiers: Vector[NonNominal],
-    tan: TAN
+    tan: TAN,
+    proxy: Option[ProxyArgument[Clausal]] = None
   ) extends Clausal {
-    type Self = Copular
+    // type Self = Copular
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     def arguments = argument +: modifiers
     def predPOS = "be"
@@ -1241,25 +1277,29 @@ object Predication {
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
         case Right(arg: NounOrOblique) if index == 0 =>
-          swapOutPred.replace(this.copy(argument = arg))
+          swapOutPred.replace(Right(this.copy(argument = arg)))
         case Right(arg: NonNominal) if index > 0 =>
-          swapOutPred.replace(this.copy(modifiers = modifiers.updated(index, arg)))
-        case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
-        case Left(failure) => Left(failure.ascend(Arg(index)))
+          swapOutPred.replace(Right(this.copy(modifiers = modifiers.updated(index, arg))))
+        case Right(otherArg) =>
+          Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
+        case Left(failure) =>
+          proxy.flatMap(_.recover(failure))
+            .map(swapOutPred.replace)
+            .getOrElse(Left(failure.ascend(Arg(index))))
       }
   }
 
   sealed trait NonCopular extends Clausal {
-    type Self <: NonCopular
+    // type Self <: NonCopular
   }
 
   case class Adjectival(
     subject: Argument.Subject,
     adjective: Adjective,
     arguments: Vector[NonNominal],
-    tan: TAN
+    tan: TAN,
+    proxy: Option[ProxyArgument[Clausal]] = None
   ) extends NonCopular {
-    type Self = Adjectival
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "adj"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1275,9 +1315,13 @@ object Predication {
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
         case Right(arg: NonNominal) =>
-          swapOutPred.replace(this.copy(arguments = arguments.updated(index, arg)))
-        case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
-        case Left(failure) => Left(failure.ascend(Arg(index)))
+          swapOutPred.replace(Right(this.copy(arguments = arguments.updated(index, arg))))
+        case Right(otherArg) =>
+          Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
+        case Left(failure) =>
+          proxy.flatMap(_.recover(failure))
+            .map(swapOutPred.replace)
+            .getOrElse(Left(failure.ascend(Arg(index))))
       }
   }
 
@@ -1286,9 +1330,9 @@ object Predication {
     verb: Verb,
     isPassive: Boolean,
     arguments: Vector[NonSubject],
-    tan: TAN
+    tan: TAN,
+    proxy: Option[ProxyArgument[Clausal]] = None
   ) extends NonCopular {
-    type Self = Verbal
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1314,22 +1358,38 @@ object Predication {
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
         case Right(arg: NonSubject) =>
-          swapOutPred.replace(this.copy(arguments = arguments.updated(index, arg)))
-        case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
-        case Left(failure) => Left(failure.ascend(Arg(index)))
+          swapOutPred.replace(Right(this.copy(arguments = arguments.updated(index, arg))))
+        case Right(otherArg) =>
+          Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
+        case Left(failure) =>
+          proxy.flatMap(_.recover(failure))
+            .map(swapOutPred.replace)
+            .getOrElse(Left(failure.ascend(Arg(index))))
       }
   }
   object Verbal {
     // maybe also 'what happened _?' type of pro-form?
     // XXX change to a pro-form
+    import ArgumentPath._
+    import ArgPosition._
     def doSomething(
       subject: Argument.Subject,
-      modifiers: Vector[NonNominal],
+      // modifiers: Vector[NonNominal],
       tan: TAN
     ) = Verbal(
       subject, Verb(InflectedForms.doForms), false,
-      Argument.ProForm.what +: modifiers,
-      tan
+      Vector(Argument.ProForm.what),// +: modifiers,
+      tan,
+      Some(
+        ProxyArgument(
+          Descent(Arg(0), End(Target)),
+          arg => arg match {
+            case bare: Argument.BareInfinitive =>
+              bare.pred.map(Right(_))
+            case _ => None
+          }
+        )
+      )
     )
   }
 }
