@@ -39,22 +39,19 @@ object ClauseType {
 // TODO: 'Fronted' position? something for when extracted
 sealed trait ArgPosition extends Product with Serializable
 object ArgPosition {
-  // for wh-words/phrases
-  // case object Focus extends RenderContext
-  // for extraction gaps
-  // case object Gap extends RenderContext
-
-  // sealed trait InPlace extends RenderContext
-  // normal argument position (accusative if nominal)
+  // normal argument position (accusative if nominal). also used for answers
   case class Arg(index: Int) extends ArgPosition
-  // for nominative case with subjects
+  // for nominative case with subjects. also used for fronted items
   case object Subj extends ArgPosition
 }
 
-// case class Focus2(
-//   answerTemplates: Set[Argument],
-//   replace: Argument => ValidatedNec[Component.RenderError, Predication]
-// )
+// case class SubstitutionFailure(
+//   arg: Argument,
+//   path: ArgumentPath[ProFormExtraction]
+// ) {
+//   def ascend(pos: ArgPosition) = this.copy(path = path.ascend(pos))
+// }
+
 
 case class Extraction[A](
   extractee: Argument,
@@ -71,8 +68,8 @@ case class SwapOutArg[A](
   // replacementTemplates: Set[Argument],
   replace: Argument => ValidatedNec[Component.RenderError, A]
 )
-case class SwapOutPred[A](
-  replace: Predication => ValidatedNec[Component.RenderError, A]
+case class SwapOutPred[-P <: Predication, A](
+  replace: P => ValidatedNec[Component.RenderError, A]
 )
 
 sealed trait ArgumentPath[F[_]] extends Product with Serializable {
@@ -557,11 +554,10 @@ object Argument {
         case Subj => Case.Nominative
         case Arg(_) => Case.Accusative
       }
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Nominal =>
+      val swapOutPred = SwapOutPred[Predication.Nominal, A] {
+        case pred => swapOutArg.replace(this.copy(pred = Some(pred)))
           // TODO: perhaps consider erroring if there's a problem with animacy
-          swapOutArg.replace(this.copy(pred = Some(pred)))
-        case x => invalid(s"Trying to replace nominal pred of NP arg with: $x")
+        // case x => invalid(s"Trying to replace nominal pred of NP arg with: $x")
       }
       pred.map(_.renderLax(c, swapOutPred, path)).getOrElse(invalid())
     }
@@ -588,10 +584,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Oblique =>
-          swapOutArg.replace(this.copy(pred = Some(pred)))
-        case x => invalid(s"Trying to replace oblique pred of OBL arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Oblique, A] {
+        pred => swapOutArg.replace(this.copy(pred = Some(pred)))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -612,10 +606,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Subordinate =>
-          swapOutArg.replace(this.copy(pred = Some(pred)))
-        case x => invalid(s"Trying to replace subcl pred of subcl arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Subordinate, A] {
+        pred => swapOutArg.replace(this.copy(pred = Some(pred)))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -635,10 +627,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Adverbial  =>
-          swapOutArg.replace(this.copy(pred = Some(pred)))
-        case x => invalid(s"Trying to replace adverbial pred of adv arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Adverbial, A] {
+        pred => swapOutArg.replace(this.copy(pred = Some(pred)))
       }
       pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
     }
@@ -655,10 +645,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Clausal  =>
-          swapOutArg.replace(this.withPred(Some(pred)))
-        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Clausal, A] {
+        pred => swapOutArg.replace(this.withPred(Some(pred)))
       }
       pred.map(
         _.renderLax(
@@ -734,10 +722,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Clausal  =>
-          swapOutArg.replace(this.withPred(Some(pred)))
-        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Clausal, A] {
+        pred => swapOutArg.replace(this.withPred(Some(pred)))
       }
       pred.map(p =>
         List(
@@ -811,10 +797,8 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred {
-        case pred: Predication.Clausal  =>
-          swapOutArg.replace(this.withPred(Some(pred)))
-        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      val swapOutPred = SwapOutPred[Predication.Clausal, A] {
+        pred => swapOutArg.replace(this.withPred(Some(pred)))
       }
       pred.map(p =>
         List(
@@ -834,7 +818,7 @@ sealed trait Predication extends Component {
   type GramFeats // grammatical features
 
   type Self <: Predication
-  def swapOutSelf: SwapOutPred[Self]
+  def swapOutSelf: SwapOutPred[Self, Self] = SwapOutPred(x => Validated.valid(x))
 
   import Component._
 
@@ -842,7 +826,7 @@ sealed trait Predication extends Component {
 
   def renderLax[F[_], A](
     features: GramFeats,
-    swapOutPred: SwapOutPred[A],
+    swapOutPred: SwapOutPred[Self, A],
     path: Option[ArgumentPath.Descent[F]]
   ): RenderResultOf[WithExtraction[Out, F[A]]]
 
@@ -915,7 +899,7 @@ object Predication {
 
     override def renderLax[F[_], A](
       features: Case,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[ArgumentPath.Descent[F]]
     ): RenderTree[F[A]] = path match {
       case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
@@ -930,10 +914,6 @@ object Predication {
     number: Option[Number]
   ) extends Nominal {
     type Self = NounPhrase
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.NounPhrase => valid(p)
-      case x => invalid("Must swap in a noun phrase.")
-    }
     def getForm(c: Case): String = c match {
       case Case.Genitive => form + "'s"
       case _ => form
@@ -951,17 +931,13 @@ object Predication {
   // prep should not take an object, i.e., is a particle
   case class Particulate(prts: NonEmptyList[Particle]) extends Oblique {
     type Self = Particulate
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Particulate => valid(p)
-      case x => invalid("Must swap in a particle.")
-    }
     def arguments = Vector()
 
     import ArgPosition._, ArgumentPath.Descent
 
     override def renderLax[F[_], A](
       feats: Unit,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[Descent[F]]
     ): RenderTree[F[A]] = path match {
       case Some(_) => invalid("Cannot extract from inside a particle.")
@@ -974,15 +950,11 @@ object Predication {
     obj: Argument.Nominal
   ) extends Oblique {
     type Self = Prepositional
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Prepositional => valid(p)
-      case x => invalid("Must swap in a prepositional phrase.")
-    }
     def arguments = Vector(obj)
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[F[_], A](
       feats: Unit,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[Descent[F]]
     ): RenderTree[F[A]] = {
       if(path.exists(_.position != Arg(0))) {
@@ -1003,10 +975,6 @@ object Predication {
 
   case class Adverbial(form: String) extends Predication {
     type Self = Adverbial
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Adverbial => valid(p)
-      case x => invalid("Must swap in an adverbial.")
-    }
     type Out = Tree
     type GramFeats = Unit
     def arguments = Vector()
@@ -1014,7 +982,7 @@ object Predication {
     import ArgumentPath.Descent
     override def renderLax[F[_], A](
       feats: Unit,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[Descent[F]]
     ): RenderTree[F[A]] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
@@ -1027,17 +995,13 @@ object Predication {
     clause: Argument.Complement
   ) extends Predication {
     type Self = Subordinate
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Subordinate => valid(p)
-      case x => invalid("Must swap in a subordinate clause.")
-    }
     type Out = Tree
     type GramFeats = Unit
     def arguments = Vector(clause)
     import ArgumentPath.Descent, ArgPosition._
     override def renderLax[F[_], A](
       feats: Unit,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[Descent[F]]
     ): RenderTree[F[A]] = {
       path match {
@@ -1079,7 +1043,7 @@ object Predication {
     override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
-    def withSubject(subject: Argument.Subject): Clausal
+    def withSubject(subject: Argument.Subject): Self
     def tan: TAN
     def arguments: Vector[Argument]
 
@@ -1125,7 +1089,7 @@ object Predication {
 
     override def renderLax[F[_], A](
       feats: ClauseFeats,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[ArgumentPath.Descent[F]]
     ): Component.RenderBranches[F[A]] = {
       import feats.{clauseType, includeSubject}
@@ -1190,7 +1154,7 @@ object Predication {
 
     def renderSubject[F[_], A](
       includeSubject: Boolean,
-      swapOutPred: SwapOutPred[A],
+      swapOutPred: SwapOutPred[Self, A],
       path: Option[ArgumentPath.Descent[F]]
     ): Component.RenderBranches[F[A]] = {
       if(!includeSubject) {
@@ -1205,14 +1169,14 @@ object Predication {
       )
     }
 
-    def swapOutArg[A](swapOutPred: SwapOutPred[A], index: Int): SwapOutArg[A]
+    def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A]
           // SwapOutArg {
           //   case arg => valid(this.copy(obj = arg))
           //   // case x => invalid(s"Must swap out Nominal for prep object: $x")
           // },
     def renderArguments[F[_], A](
       path: Option[ArgumentPath.Descent[F]],
-      swapOutPred: SwapOutPred[A]
+      swapOutPred: SwapOutPred[Self, A]
     ): Component.RenderBranches[F[A]] = {
       arguments.zipWithIndex.foldMapA[
         ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]
@@ -1244,11 +1208,7 @@ object Predication {
     tan: TAN
   ) extends Clausal {
     type Self = Copular
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Copular => valid(p)
-      case x => invalid("Must swap in a copula.")
-    }
-    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
+    def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     def arguments = argument +: modifiers
     def predPOS = "be"
 
@@ -1261,7 +1221,7 @@ object Predication {
       case otherType: ClauseType.VerbalClauseType =>
         tan.getCopulaAuxChain(otherType, subject)
     }
-    def swapOutArg[A](swapOutPred: SwapOutPred[A], index: Int): SwapOutArg[A] = SwapOutArg {
+    def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] = SwapOutArg {
       case arg: NounOrOblique if index == 0 =>
         swapOutPred.replace(this.copy(argument = arg))
       case arg: NonNominal if index > 0 =>
@@ -1281,11 +1241,7 @@ object Predication {
     tan: TAN
   ) extends NonCopular {
     type Self = Adjectival
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Adjectival => valid(p)
-      case x => invalid("Must swap in an adjective.")
-    }
-    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
+    def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "adj"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
       val adj = adjective.form.toString
@@ -1296,7 +1252,7 @@ object Predication {
           aux.map(_.append(adj))
       }
     }
-    def swapOutArg[A](swapOutPred: SwapOutPred[A], index: Int): SwapOutArg[A] = SwapOutArg {
+    def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] = SwapOutArg {
       case arg: NonNominal => swapOutPred.replace(this.copy(arguments = arguments.updated(index, arg)))
       case x => invalid(s"Must swap out NonNominal for adj arg: $x")
     }
@@ -1310,11 +1266,7 @@ object Predication {
     tan: TAN
   ) extends NonCopular {
     type Self = Verbal
-    def swapOutSelf = SwapOutPred {
-      case p: Predication.Verbal => valid(p)
-      case x => invalid("Must swap in a verb.")
-    }
-    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
+    def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
       def pastParticiple = verb.forms.pastParticiple.toString
@@ -1335,7 +1287,7 @@ object Predication {
           }
       }
     }
-    def swapOutArg[A](swapOutPred: SwapOutPred[A], index: Int): SwapOutArg[A] = SwapOutArg {
+    def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] = SwapOutArg {
       case arg: NonSubject => swapOutPred.replace(this.copy(arguments = arguments.updated(index, arg)))
       case x => invalid(s"Must swap out NonSubject for verb arg: $x")
     }
