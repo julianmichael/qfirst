@@ -114,14 +114,15 @@ class CafeTests extends CatsEffectSuite {
     ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
       arg.render(ArgPosition.Subj, swap, focusPath).andThen {
         case (focusedArgTree, pro) =>
-          val answerTemplates = pro.instances
+          // val answerTemplates = pro.instances
           Validated.valid(
-            (focusedArgTree |+| questionClauseTree) -> answerTemplates
+            (focusedArgTree |+| questionClauseTree)// -> answerTemplates
           )
       }
-    }.map { case (question, answers) =>
-        LabeledTree.showGloss(question) + "\n" +
-          answers.mkString("\n")
+    }.map { case question =>
+        LabeledTree.showGloss(question)
+          // + "\n" +
+          // answers.mkString("\n")
     }
   }
 
@@ -294,6 +295,7 @@ class CafeTests extends CatsEffectSuite {
                     case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
                     case Validated.Invalid(err) => println("\t" + err)
                   }
+                  println
                   renderQuestion(pred, path) match {
                     case Validated.Valid(res) => println(res)
                     case Validated.Invalid(err) => println(err)
