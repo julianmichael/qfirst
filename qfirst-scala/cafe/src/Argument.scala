@@ -677,11 +677,11 @@ object Argument {
 
   // includeSubject: Boolean,
   case class BareInfinitive(
-    pred: Option[Predication.NonCopular]
+    pred: Option[Predication.Clausal]
   ) extends Clausal with Complement {
     type Self = BareInfinitive
-    type Pred = Predication.NonCopular
-    override def withPred(pred: Option[Predication.NonCopular]): Self = this.copy(pred = pred)
+    type Pred = Predication.Clausal
+    override def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
     override def clauseType = ClauseType.BareInfinitive
     override def includeSubject = false
     override def category = "vp[b]"
@@ -720,12 +720,9 @@ object Argument {
     ) = {
       val swapOutPred = SwapOutPred[Predication.Clausal, A] {
         case Right(pred) =>
-          println("- - - - Swapping out pred! - - - -")
-          println("new pred: " + pred)
-          println("old arg: " + this)
-          println("new arg: " + this.withPred(Some(pred)))
           swapOutArg.replace(Right(this.withPred(Some(pred))))
-        case Left(arg) => swapOutArg.replace(Right(arg))
+        case Left(arg) =>
+          swapOutArg.replace(Right(arg))
       }
       pred.map(p =>
         List(
@@ -763,8 +760,9 @@ object Argument {
     proForms: Set[ProForm]
   ) extends Clausal with Complement {
     type Self = Attributive
-    type Pred = Predication.NonCopular
-    def withPred(pred: Option[Predication.NonCopular]): Self = this.copy(pred = pred)
+    type Pred = Predication.Clausal
+    // TODO: add error case to this, or (preferably?) split out attributive predications
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred.asInstanceOf[Option[Predication.NonCopular]])
     override def clauseType = ClauseType.Attributive
     override def includeSubject = false
     // def category = if(includeSubject) "s[pt]" else "vp[pt]"
@@ -995,9 +993,10 @@ object Predication {
             case Right(arg: Argument.Nominal) => swapOutPred.replace(Right(this.copy(obj = arg)))
             case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
             case Left(failure) =>
-              proxy.flatMap(_.recover(failure))
+              val newFailure = failure.ascend(Arg(0))
+              proxy.flatMap(_.recover(newFailure))
                 .map(swapOutPred.replace)
-                .getOrElse(Left(failure.ascend(Arg(0))))
+                .getOrElse(Left(newFailure))
           },
           ArgumentPath.descend(path, Arg(0))
         )
@@ -1051,9 +1050,10 @@ object Predication {
               case Right(otherArg) =>
                 Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
               case Left(failure) =>
-                proxy.flatMap(_.recover(failure))
+                val newFailure = failure.ascend(Arg(0))
+                proxy.flatMap(_.recover(newFailure))
                   .map(swapOutPred.replace)
-                  .getOrElse(Left(failure.ascend(Arg(0))))
+                  .getOrElse(Left(newFailure))
             },
             ArgumentPath.descend(path, Arg(0))
           )
@@ -1093,11 +1093,6 @@ object Predication {
       swapOutPred: SwapOutPred[Self, A],
       path: Option[ArgumentPath.Descent[F]]
     ): Component.RenderBranches[F[A]] = {
-      // println("----##----")
-      // println(this)
-      // println(feats)
-      // println(path)
-      // println("----##----")
       import feats.{clauseType, includeSubject}
       val frontAuxiliary = clauseType == ClauseType.Inverted
       validatePath(includeSubject, path) *> {
@@ -1174,9 +1169,10 @@ object Predication {
           case Right(otherArg) =>
             Left(SubstitutionFailure(otherArg, Descent(Subj, End(Target))))
           case Left(failure) =>
-            proxy.flatMap(_.recover(failure))
+            val newFailure = failure.ascend(Subj)
+            proxy.flatMap(_.recover(newFailure))
               .map(swapOutPred.replace)
-              .getOrElse(Left(failure.ascend(Subj)))
+              .getOrElse(Left(newFailure))
         },
         ArgumentPath.descend(path, Subj)
       )
@@ -1242,14 +1238,15 @@ object Predication {
         case Right(otherArg) =>
           Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
         case Left(failure) =>
-          proxy.flatMap(_.recover(failure))
+          val newFailure = failure.ascend(Arg(index))
+          proxy.flatMap(_.recover(newFailure))
             .map(swapOutPred.replace)
-            .getOrElse(Left(failure.ascend(Arg(index))))
+            .getOrElse(Left(newFailure))
       }
   }
 
   sealed trait NonCopular extends Clausal {
-    type Self <: NonCopular
+    // type Self <: NonCopular
   }
 
   case class Adjectival(
@@ -1279,9 +1276,10 @@ object Predication {
         case Right(otherArg) =>
           Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
         case Left(failure) =>
-          proxy.flatMap(_.recover(failure))
+          val newFailure = failure.ascend(Arg(index))
+          proxy.flatMap(_.recover(newFailure))
             .map(swapOutPred.replace)
-            .getOrElse(Left(failure.ascend(Arg(index))))
+            .getOrElse(Left(newFailure))
       }
   }
 
@@ -1291,9 +1289,9 @@ object Predication {
     isPassive: Boolean,
     arguments: Vector[NonSubject],
     tan: TAN,
-    proxy: Option[ProxyArgument[Verbal]] = None
+    proxy: Option[ProxyArgument[Clausal]] = None
   ) extends NonCopular {
-    type Self = Verbal
+    type Self = Clausal
     def withSubject(subject: Argument.Subject): Self = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
@@ -1319,18 +1317,14 @@ object Predication {
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
         case Right(arg: NonSubject) =>
-          println("--- --- Swapping in arg! --- ---")
-          println(this)
-          println(arg)
-          println(this.copy(arguments = arguments.updated(index, arg)))
-          // println("-- -- -- -- -- -- -- -- -- -- --")
           swapOutPred.replace(Right(this.copy(arguments = arguments.updated(index, arg))))
         case Right(otherArg) =>
           Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
         case Left(failure) =>
-          proxy.flatMap(_.recover(failure))
+          val newFailure = failure.ascend(Arg(index))
+          proxy.flatMap(_.recover(newFailure))
             .map(swapOutPred.replace)
-            .getOrElse(Left(failure.ascend(Arg(index))))
+            .getOrElse(Left(newFailure))
       }
   }
   object Verbal {
@@ -1346,16 +1340,16 @@ object Predication {
       subject, Verb(InflectedForms.doForms), false,
       Vector(Argument.ProForm.what),// +: modifiers,
       tan,
-      // Some(
-      //   ProxyArgument(
-      //     Descent(Arg(0), End(Target)),
-      //     arg => arg match {
-      //       case bare: Argument.BareInfinitive =>
-      //         bare.pred.map(Right(_))
-      //       case _ => None
-      //     }
-      //   )
-      // )
+      Some(
+        ProxyArgument(
+          Descent(Arg(0), End(Target)),
+          arg => arg match {
+            case bare: Argument.BareInfinitive =>
+              bare.pred.map(Right(_))
+            case _ => None
+          }
+        )
+      )
     )
   }
 }
