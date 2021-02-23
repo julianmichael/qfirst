@@ -66,6 +66,24 @@ sealed trait ArgumentPath[A] extends Product with Serializable {
   }
 }
 
+// case class Focus2(
+//   answerTemplates: Set[Argument],
+//   replace: Argument => ValidatedNec[Component.RenderError, Predication]
+// )
+
+case class Extraction(
+  extractee: Argument,
+  innerPath: ArgumentPath[Argument.ProForm],
+  swapOut: SwapOutArg
+)
+
+case class SwapOutArg(
+  // replacementTemplates: Set[Argument],
+  replace: Argument => ValidatedNec[Component.RenderError, Predication]
+)
+case class SwapOutPred(
+  replace: Predication => ValidatedNec[Component.RenderError, Predication]
+)
 
 object ArgumentPath {
 
@@ -76,7 +94,7 @@ object ArgumentPath {
   case class End[A](processor: Processor[A]) extends ArgumentPath[A]
 
   sealed trait Processor[A] {
-    def process(arg: Argument, position: ArgPosition): Component.RenderResultOf[
+    def process(arg: Argument, position: ArgPosition, swap: SwapOutArg): Component.RenderResultOf[
       (LabeledTree.Node[String, String], A)
     ]
   }
@@ -86,27 +104,26 @@ object ArgumentPath {
   import LabeledTree.{leaves}
   import Validated.valid
   import Component.WithExtraction
-  type Extraction = (Argument, ArgumentPath[Argument.ProForm])
   case class Extract(
     innerPath: ArgumentPath[Argument.ProForm]
   ) extends Processor[Extraction] {
-    def process(arg: Argument, pos: ArgPosition): Component.RenderResultOf[
+    def process(arg: Argument, pos: ArgPosition, swap: SwapOutArg): Component.RenderResultOf[
       (LabeledTree.Node[String, String], Extraction)
     ] = arg match {
       case pro: Argument.ProForm =>
-        valid(leaves() -> (pro -> innerPath))
+        valid(leaves() -> Extraction(pro, innerPath, swap))
       case arg: Argument.Expletive =>
         arg.invalid("Cannot extract an expletive.")
       case arg: Argument.Semantic =>
         if(arg.allowPiedPiping(innerPath)) {
-          valid(leaves() -> (arg -> innerPath))
+          valid(leaves() -> Extraction(arg, innerPath, swap))
         } else arg.invalid("Extraction of concrete argument not allowed.")
     }
   }
 
   type Focus = Focus.type
   case object Focus extends Processor[(Argument.ProForm)] {
-    def process(arg: Argument, pos: ArgPosition): Component.RenderResultOf[
+    def process(arg: Argument, pos: ArgPosition, swap: SwapOutArg): Component.RenderResultOf[
       (LabeledTree.Node[String, String], Argument.ProForm)
     ] = arg match {
       case pro: Argument.ProForm =>
@@ -275,29 +292,39 @@ sealed trait Argument extends Component {
 
   def symbol: String
 
-  def renderLax[A](pos: ArgPosition, path: Option[ArgumentPath.Descent[A]]): RenderTree[A]
+  def renderLax[A](
+    pos: ArgPosition,
+    swapOutArg: SwapOutArg,
+    path: Option[ArgumentPath.Descent[A]]
+  ): RenderTree[A]
 
   import ArgumentPath._
-  def renderLaxWithPath[A](pos: ArgPosition, path: Option[ArgumentPath[A]]): RenderBranches[A] = {
+  def renderLaxWithPath[A](
+    pos: ArgPosition,
+    swapOutArg: SwapOutArg,
+    path: Option[ArgumentPath[A]]
+  ): RenderBranches[A] = {
     path match {
       case Some(End(pathEnd)) =>
-        pathEnd.process(this, pos).andThen { case (tree, res) =>
+        pathEnd.process(this, pos, swapOutArg).andThen { case (tree, res) =>
           Validated.valid(WithExtraction(tree, Vector(res)))
         }
       case Some(d: Descent[A]) =>
-        renderLax(pos, Some(d))
+        renderLax(pos, swapOutArg, Some(d))
           .map(_.map(tree => node(symbol -> tree)))
       case None =>
-        renderLax(pos, None: Option[ArgumentPath.Descent[A]])
+        renderLax(pos, swapOutArg, None: Option[ArgumentPath.Descent[A]])
           .map(_.map(tree => node(symbol -> tree)))
     }
   }
 
   def render[A](
     pos: ArgPosition,
+    swapOutArg: SwapOutArg,
     path: Option[ArgumentPath[A]]
   ): RenderResultOf[(Branches, Option[A])] =
-    renderLaxWithPath(pos, path).map { case WithExtraction(tree, items) =>
+    // TODO add swap out arg? or do something else?
+    renderLaxWithPath(pos, swapOutArg, path).map { case WithExtraction(tree, items) =>
       require(
         (path.isEmpty && items.isEmpty) ||
           (path.nonEmpty && items.size == 1)
@@ -305,19 +332,26 @@ sealed trait Argument extends Component {
       tree -> items.headOption
     }
 
-  def render[A](pos: ArgPosition, path: ArgumentPath[A]): RenderResultOf[(Branches, A)] =
-    render(pos, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
+  def render[A](
+    pos: ArgPosition,
+    swapOutArg: SwapOutArg,
+    path: ArgumentPath[A]
+  ): RenderResultOf[(Branches, A)] =
+    render(pos, swapOutArg, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
 
-  def render(pos: ArgPosition): RenderResultOf[Branches] = {
+  def render(
+    pos: ArgPosition,
+    swapOutArg: SwapOutArg
+  ): RenderResultOf[Branches] = {
     // ascribe a type to the None to help out type inference
-    render(pos, None: Option[ArgumentPath[Argument.ProForm]]).map { case (tree, itemOpt) =>
+    render(pos, swapOutArg, None: Option[ArgumentPath[Argument.ProForm]]).map { case (tree, itemOpt) =>
       require(itemOpt.isEmpty) // require no extractions
       tree
     }
   }
 
   def argumentPaths: Set[ArgumentPath[Argument.ProForm]]
-  def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]]
+  def extractionPaths: Set[ArgumentPath[Extraction]]
 }
 object Argument {
 
@@ -356,6 +390,7 @@ object Argument {
     import ArgPosition._, ArgumentPath._
     def renderLax[A](
       pos: ArgPosition,
+      swapOutArg: SwapOutArg,
       path: Option[ArgumentPath.Descent[A]]
     ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot extract from inside a pro-form.")
@@ -366,7 +401,7 @@ object Argument {
 
     // def argumentPaths: Set[ArgumentPath] = Set(Extraction(Focus), Focus)
     def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = Set(End(Focus))
-    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = Set(End(Extract(End(Focus))))
+    def extractionPaths: Set[ArgumentPath[Extraction]] = Set(End(Extract(End(Focus))))
 
     def instances: Set[Semantic]
   }
@@ -458,7 +493,11 @@ object Argument {
     def person = Some(Person.Third)
     def number = Some(Number.Singular)
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) = path match {
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = path match {
       case Some(_) => invalid("Cannot focus or descend into an expletive.")
       case None => pos match {
         case Subj => valid(WithExtraction(leaf(expletive.form.toString)))
@@ -467,7 +506,7 @@ object Argument {
     }
 
     def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = Set()
-    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = Set()
+    def extractionPaths: Set[ArgumentPath[Extraction]] = Set()
   }
   object Expletive {
     val it = Expletive(Lexicon.Expletive.it)
@@ -480,16 +519,16 @@ object Argument {
     // determine which nested args we pied-pipe with
     def allowPiedPiping(path: ArgumentPath[ProForm]): Boolean = false
     // enforce island constraints
-    def blockExtraction(path: ArgumentPath[ArgumentPath.Extraction]): Boolean = false
+    def blockExtraction(path: ArgumentPath[Extraction]): Boolean = false
 
     import ArgumentPath._
     def argumentPaths: Set[ArgumentPath[Argument.ProForm]] = {
       // widening to deal with invariance of Set
       pred.unorderedFoldMap(_.argumentPaths.map(p => p: ArgumentPath[Argument.ProForm]))
     }
-    def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] = {
+    def extractionPaths: Set[ArgumentPath[Extraction]] = {
       argumentPaths.collect {
-        case path if allowPiedPiping(path) => End(Extract(path)): ArgumentPath[ArgumentPath.Extraction]
+        case path if allowPiedPiping(path) => End(Extract(path)): ArgumentPath[Extraction]
       } ++ pred.unorderedFoldMap(_.extractionPaths.filterNot(blockExtraction))
     }
   }
@@ -515,12 +554,22 @@ object Argument {
     def number: Option[Number] = pred.flatMap(_.number)
 
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) = {
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
       val c = pos match {
         case Subj => Case.Nominative
         case Arg(_) => Case.Accusative
       }
-      pred.map(_.renderLax(c, path)).getOrElse(invalid())
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Nominal =>
+          // TODO: perhaps consider erroring if there's a problem with animacy
+          swapOutArg.replace(this.copy(pred = Some(pred)))
+        case x => invalid(s"Trying to replace nominal pred of NP arg with: $x")
+      }
+      pred.map(_.renderLax(c, swapOutPred, path)).getOrElse(invalid())
     }
 
   }
@@ -540,8 +589,18 @@ object Argument {
       // case Subj => invalid("Oblique argument cannot appear in subject position.")
       // case Arg(_) =>
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.renderLax((), path)).getOrElse(invalid())
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Oblique =>
+          swapOutArg.replace(this.copy(pred = Some(pred)))
+        case x => invalid(s"Trying to replace oblique pred of OBL arg with: $x")
+      }
+      pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
+    }
   }
 
   // TODO: island constraints
@@ -554,8 +613,18 @@ object Argument {
     // TODO might depend on the predicate?
     override def allowPiedPiping(path: ArgumentPath[ProForm]) = true
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.renderLax((), path)).getOrElse(invalid())
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Subordinate =>
+          swapOutArg.replace(this.copy(pred = Some(pred)))
+        case x => invalid(s"Trying to replace subcl pred of subcl arg with: $x")
+      }
+      pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
+    }
   }
 
   // for adverbials like 'today', 'every day' etc.
@@ -567,29 +636,53 @@ object Argument {
     override def category = "adv"
     override def proForms = adverbials.map(x => x: ProForm)
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
-      pred.map(_.renderLax((), path)).getOrElse(invalid())
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Adverbial  =>
+          swapOutArg.replace(this.copy(pred = Some(pred)))
+        case x => invalid(s"Trying to replace adverbial pred of adv arg with: $x")
+      }
+      pred.map(_.renderLax((), swapOutPred, path)).getOrElse(invalid())
+    }
   }
 
   sealed trait Clausal extends Semantic {
     def pred: Option[Predication.Clausal]
+    def withPred(p: Option[Predication.Clausal]): Clausal // for SwapOutPred
     def clauseType: ClauseType
     def includeSubject: Boolean
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Clausal  =>
+          swapOutArg.replace(this.withPred(Some(pred)))
+        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      }
       pred.map(
-        _.renderLax(Predication.ClauseFeats(clauseType, includeSubject), path)
+        _.renderLax(
+          Predication.ClauseFeats(clauseType, includeSubject),
+          swapOutPred,
+          path)
       ).getOrElse(invalid())
+    }
 
     // filter out subject extractions in case our subject is not included
     override def argumentPaths: Set[ArgumentPath[Argument.ProForm]] =
       super.argumentPaths.filter(x =>
         includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
       )//.map(x => x: ArgumentPath[Argument.ProForm])
-    override def extractionPaths: Set[ArgumentPath[ArgumentPath.Extraction]] =
+    override def extractionPaths: Set[ArgumentPath[Extraction]] =
       super.extractionPaths.filter(x =>
         includeSubject || x.descent.forall(_.position != ArgPosition.Subj)
-      )//.map(x => x: ArgumentPath[ArgumentPath.Extraction])
+      )//.map(x => x: ArgumentPath[Extraction])
   }
 
   // nominal use of gerund/progressive; can be object of prep or subject
@@ -598,6 +691,7 @@ object Argument {
     pred: Option[Predication.Clausal],
     includeSubject: Boolean
   ) extends Clausal with Nominal {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.Progressive
     override def category = if(includeSubject) "s[g]" else "vp[g]"
     override def proForms = Set(ProForm.what)
@@ -611,6 +705,7 @@ object Argument {
   case class BareInfinitive(
     pred: Option[Predication.NonCopular]
   ) extends Clausal with Complement {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.BareInfinitive
     override def includeSubject = false
     override def category = "vp[b]"
@@ -627,6 +722,7 @@ object Argument {
     // pro: Option[ProFormProForm],
     proForms: Set[ProForm]
   ) extends Clausal with Complement {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     // TODO: with Subject. or, just add a new argument type for subj inf?
     def complementizer: InfinitiveComplementizer = Lexicon.InfinitiveComplementizer.`for`
 
@@ -639,14 +735,24 @@ object Argument {
     // TODO clausal override not that useful here. maybe separate out versions
     // with and without subject? idk
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Clausal  =>
+          swapOutArg.replace(this.withPred(Some(pred)))
+        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      }
       pred.map(p =>
         List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           if(includeSubject) valid(WithExtraction(leaves("comp" -> complementizer.form.toString)))
           else valid(WithExtraction(LabeledTree.Node[String, String](Vector()))),
-          p.renderLax(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), path)
+          p.renderLax(Predication.ClauseFeats(ClauseType.ToInfinitive, includeSubject), swapOutPred, path)
         ).foldA
       ).getOrElse(invalid())
+    }
   }
 
   case class Progressive(
@@ -654,6 +760,7 @@ object Argument {
     includeSubject: Boolean,
     adverbials: Set[ProForm.Adverb]
   ) extends Clausal with Complement {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.Progressive
     override def category = if(includeSubject) "s[ng]" else "vp[ng]"
     override def proForms = adverbials.map(x => x: ProForm)
@@ -668,6 +775,7 @@ object Argument {
     pred: Option[Predication.NonCopular],
     proForms: Set[ProForm]
   ) extends Clausal with Complement {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.Attributive
     override def includeSubject = false
     // def category = if(includeSubject) "s[pt]" else "vp[pt]"
@@ -678,6 +786,7 @@ object Argument {
     pred: Option[Predication.Clausal]
   ) extends Clausal with Complement {
     // with Subject? but cannot appear in subj except as an answer
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.Finite
     override def includeSubject = true
     override def category = "s[dcl]"
@@ -689,6 +798,7 @@ object Argument {
   case class FiniteComplement(
     pred: Option[Predication.Clausal],
   ) extends Clausal with Complement with Subject {
+    def withPred(p: Option[Predication.Clausal]): Clausal = this.copy(pred = pred)
     override def clauseType = ClauseType.Finite
     override def includeSubject = true
 
@@ -702,15 +812,29 @@ object Argument {
 
     // not sure if Clausal override is useful here
     import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[A](pos: ArgPosition, path: Option[Descent[A]]) =
+    override def renderLax[A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg,
+      path: Option[Descent[A]]
+    ) = {
+      val swapOutPred = SwapOutPred {
+        case pred: Predication.Clausal  =>
+          swapOutArg.replace(this.withPred(Some(pred)))
+        case x => invalid(s"Trying to replace clausal pred of clausal arg with: $x")
+      }
       pred.map(p =>
         List(
           valid(WithExtraction(leaves("comp" -> complementizer.form.toString))),
-          p.renderLax(Predication.ClauseFeats(clauseType, includeSubject), path)
+          p.renderLax(Predication.ClauseFeats(clauseType, includeSubject), swapOutPred, path)
         ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, A]]
       ).getOrElse(invalid())
+    }
   }
 }
+
+case class Proxy(
+  path: ArgumentPath[Argument.ProForm]
+)
 
 sealed trait Predication extends Component {
   type GramFeats // grammatical features
@@ -721,6 +845,7 @@ sealed trait Predication extends Component {
 
   def renderLax[A](
     features: GramFeats,
+    swapOutPred: SwapOutPred,
     path: Option[ArgumentPath.Descent[A]]
   ): RenderResultOf[WithExtraction[Out, A]]
 
@@ -730,13 +855,14 @@ sealed trait Predication extends Component {
     feats: GramFeats,
     path: Option[ArgumentPath.Descent[A]]
   ): RenderResultOf[(Out, Option[A])] =
-    renderLax(feats, path).map { case WithExtraction(tree, items) =>
-      require(
-        (path.isEmpty && items.isEmpty) ||
-          (path.nonEmpty && items.size == 1)
-      ) // require correct number of extractions
-      tree -> items.headOption
-    }
+    renderLax(feats, SwapOutPred(Validated.valid(_)), path)
+      .map { case WithExtraction(tree, items) =>
+        require(
+          (path.isEmpty && items.isEmpty) ||
+            (path.nonEmpty && items.size == 1)
+        ) // require correct number of extractions
+        tree -> items.headOption
+      }
 
   final def render[A](feats: GramFeats, path: ArgumentPath.Descent[A]): RenderResultOf[(Out, A)] =
     render(feats, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
@@ -753,7 +879,7 @@ sealed trait Predication extends Component {
     arguments.zipWithIndex.flatMap { case (arg, index) =>
       arg.argumentPaths.map(_.ascend(ArgPosition.Arg(index)))
     }.toSet
-  def extractionPaths: Set[ArgumentPath.Descent[ArgumentPath.Extraction]] =
+  def extractionPaths: Set[ArgumentPath.Descent[Extraction]] =
     arguments.zipWithIndex.flatMap { case (arg, index) =>
       arg.extractionPaths.map(_.ascend(ArgPosition.Arg(index)))
     }.toSet
@@ -789,6 +915,7 @@ object Predication {
 
     def renderLax[A](
       features: Case,
+      swapOutPred: SwapOutPred,
       path: Option[ArgumentPath.Descent[A]]
     ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
@@ -823,6 +950,7 @@ object Predication {
 
     override def renderLax[A](
       feats: Unit,
+      swapOutPred: SwapOutPred,
       path: Option[Descent[A]]
     ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot extract from inside a particle.")
@@ -838,13 +966,21 @@ object Predication {
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[A](
       feats: Unit,
+      swapOutPred: SwapOutPred,
       path: Option[Descent[A]]
     ): RenderTree[A] = {
       if(path.exists(_.position != Arg(0))) {
         invalid(s"Can't descend into argument for extraction from oblique: ${path.get}")
       } else List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
         valid(WithExtraction(leaves("prep" -> preps.map(_.form).toList.mkString(" ")))),
-        obj.renderLaxWithPath(Arg(0), ArgumentPath.descend(path, Arg(0)))
+        obj.renderLaxWithPath(
+          Arg(0),
+          SwapOutArg {
+            case arg: Argument.Nominal => valid(this.copy(obj = arg))
+            case x => invalid(s"Must swap out Nominal for prep object: $x")
+          },
+          ArgumentPath.descend(path, Arg(0))
+        )
       ).foldA
     }
   }
@@ -857,6 +993,7 @@ object Predication {
     import ArgumentPath.Descent
     override def renderLax[A](
       feats: Unit,
+      swapOutPred: SwapOutPred,
       path: Option[Descent[A]]
     ): RenderTree[A] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
@@ -874,6 +1011,7 @@ object Predication {
     import ArgumentPath.Descent, ArgPosition._
     override def renderLax[A](
       feats: Unit,
+      swapOutPred: SwapOutPred,
       path: Option[Descent[A]]
     ): RenderTree[A] = {
       path match {
@@ -881,7 +1019,14 @@ object Predication {
           invalid(s"Can't descend into argument for extraction from oblique: $pos")
         case otherPath => List[ValidatedNec[RenderError, WithExtraction[Branches, A]]](
           valid(WithExtraction(leaves("sub" -> subordinator.form.toString))),
-          clause.renderLaxWithPath(Arg(0), ArgumentPath.descend(path, Arg(0)))
+          clause.renderLaxWithPath(
+            Arg(0),
+            SwapOutArg {
+              case arg: Argument.Complement => valid(this.copy(clause = arg))
+              case x => invalid(s"Must swap out Complement for subord arg: $x")
+            },
+            ArgumentPath.descend(path, Arg(0))
+          )
         ).foldA
       }
     }
@@ -907,6 +1052,7 @@ object Predication {
     override type Out = Branches
     type GramFeats = ClauseFeats
     def subject: Argument.Subject
+    def withSubject(subject: Argument.Subject): Clausal
     def tan: TAN
     def arguments: Vector[Argument]
 
@@ -952,15 +1098,16 @@ object Predication {
 
     override def renderLax[A](
       feats: ClauseFeats,
+      swapOutPred: SwapOutPred,
       path: Option[ArgumentPath.Descent[A]]
     ): Component.RenderBranches[A] = {
       import feats.{clauseType, includeSubject}
       val frontAuxiliary = clauseType == ClauseType.Inverted
       validatePath(includeSubject, path) *> {
-        renderSubject(includeSubject, path).andThen { subjValue =>
+        renderSubject(includeSubject, swapOutPred, path).andThen { subjValue =>
           val flipAuxiliary = frontAuxiliary && subjValue.value.nonEmpty
           val subj = valid(subjValue)
-          val args = renderArguments(path)
+          val args = renderArguments(path, swapOutPred)
           def makeVerbTree(chain: NonEmptyList[String]) = {
             if(chain.size == 1) leaves(predPOS -> chain.head)
             else leaves(
@@ -1013,19 +1160,38 @@ object Predication {
     }
 
     def renderSubject[A](
-      includeSubject: Boolean, path: Option[ArgumentPath.Descent[A]]
+      includeSubject: Boolean,
+      swapOutPred: SwapOutPred,
+      path: Option[ArgumentPath.Descent[A]]
     ): Component.RenderBranches[A] = {
       if(!includeSubject) {
         Validated.valid(Monoid[Component.WithExtraction[Branches, A]].empty)
-      } else subject.renderLaxWithPath(ArgPosition.Subj, ArgumentPath.descend(path, ArgPosition.Subj))
+      } else subject.renderLaxWithPath(
+        ArgPosition.Subj,
+        SwapOutArg {
+          case arg: Argument.Subject => valid(this.withSubject(arg))
+          case x => invalid(s"Must swap out Subject compatible arg for clause subj position: $x")
+        },
+        ArgumentPath.descend(path, ArgPosition.Subj)
+      )
     }
 
-    def renderArguments[A](path: Option[ArgumentPath.Descent[A]]): Component.RenderBranches[A] = {
+    def swapOutArg(index: Int): SwapOutArg
+          // SwapOutArg {
+          //   case arg => valid(this.copy(obj = arg))
+          //   // case x => invalid(s"Must swap out Nominal for prep object: $x")
+          // },
+    def renderArguments[A](
+      path: Option[ArgumentPath.Descent[A]],
+      swapOutPred: SwapOutPred
+    ): Component.RenderBranches[A] = {
       arguments.zipWithIndex.foldMapA[
         ValidatedNec[RenderError, *], WithExtraction[Branches, A]
       ] { case (arg, index) =>
         arg.renderLaxWithPath(
-          ArgPosition.Arg(index), ArgumentPath.descend(path, ArgPosition.Arg(index))
+          ArgPosition.Arg(index),
+          swapOutArg(index),
+          ArgumentPath.descend(path, ArgPosition.Arg(index))
         )
       }
     }
@@ -1038,7 +1204,7 @@ object Predication {
       // }
     }
     // TODO island constraints?
-    override def extractionPaths: Set[ArgumentPath.Descent[ArgumentPath.Extraction]] =
+    override def extractionPaths: Set[ArgumentPath.Descent[Extraction]] =
       subject.extractionPaths.map(_.ascend(ArgPosition.Subj)) ++ super.extractionPaths
     }
 
@@ -1048,6 +1214,7 @@ object Predication {
     modifiers: Vector[NonNominal],
     tan: TAN
   ) extends Clausal {
+    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     def arguments = argument +: modifiers
     def predPOS = "be"
 
@@ -1060,6 +1227,13 @@ object Predication {
       case otherType: ClauseType.VerbalClauseType =>
         tan.getCopulaAuxChain(otherType, subject)
     }
+    def swapOutArg(index: Int): SwapOutArg = SwapOutArg {
+      case arg: NounOrOblique if index == 0 =>
+        valid(this.copy(argument = arg))
+      case arg: NonNominal if index > 0 =>
+        valid(this.copy(modifiers = modifiers.updated(index, arg)))
+      case x => invalid(s"Inappropriate arg for position $index of copula: $x")
+    }
   }
 
   sealed trait NonCopular extends Clausal
@@ -1070,6 +1244,7 @@ object Predication {
     arguments: Vector[NonNominal],
     tan: TAN
   ) extends NonCopular {
+    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     override def predPOS = "adj"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
       val adj = adjective.form.toString
@@ -1080,6 +1255,10 @@ object Predication {
           aux.map(_.append(adj))
       }
     }
+    def swapOutArg(index: Int): SwapOutArg = SwapOutArg {
+      case arg: NonNominal => valid(this.copy(arguments = arguments.updated(index, arg)))
+      case x => invalid(s"Must swap out NonNominal for adj arg: $x")
+    }
   }
 
   case class Verbal(
@@ -1089,6 +1268,7 @@ object Predication {
     arguments: Vector[NonSubject],
     tan: TAN
   ) extends NonCopular {
+    def withSubject(subject: Argument.Subject): Clausal = this.copy(subject = subject)
     override def predPOS = "verb"
     override def renderVerbChain(clauseType: ClauseType, needsFlippable: Boolean) = {
       def pastParticiple = verb.forms.pastParticiple.toString
@@ -1109,6 +1289,10 @@ object Predication {
           }
       }
     }
+    def swapOutArg(index: Int): SwapOutArg = SwapOutArg {
+      case arg: NonSubject => valid(this.copy(arguments = arguments.updated(index, arg)))
+      case x => invalid(s"Must swap out NonSubject for verb arg: $x")
+    }
   }
   object Verbal {
     // maybe also 'what happened _?' type of pro-form?
@@ -1123,86 +1307,4 @@ object Predication {
       tan
     )
   }
-
-  // ---------------------------------------------------------------
-
-  // argument: 'he helped (me/_) do the laundry / finish the homework.'
-  // argument: 'he helped (me/*_) be designated as leader.'
-  // argument: 'he helped (me/*_) be the man i wanted to be.'
-  // verbs: help, make (make him do his hw), go (go swim).
-  // not included in NonNominalPredication bc can't appear as an adjective argument (?)
-
-  // aspects: unmarked (go), perfect (have gone), progressive (be going),
-  // perfect progressive (have been going)
-  // case class Active(verb: VerbPhrase) extends VoicedVerbPhrase
-
-  // aspects: unmarked (be broken), perfect (have been broken), progressive (being broken),
-  // no perfect progressive? (having been being broken?)
-  // case class Passive(verb: VerbPhrase) extends VoicedVerbPhrase
-
-  // aspects: unmarked (be happy), perfect (have been happy), progressive (being happy),
-  // no perfect progressive? (having been being happy?)
-  // case class Copula(predicate: NonVerbalPredication) extends VoicedVerbPhrase
-
-  // nominal?: I gave killing flies to him. ...?
-  // can appear:
-  //  - anywhere a noun can
-  //  - argument of a verb: 'he loves doing yardwork' / having done yardwork / having been doing yw
-  //  - adverbial of a verb: 'he walked to the store carrying his suitcase'/having done bad stuff/etc
-  //  - adverbial of a verb: 'he is perfectly happy keeping to himself'/having gone only once
-  // aspects (active): unmarked (going), perfect (having gone), perfect progressive (having been going)
-  // aspects (passive): unmarked (being broken), perfect (having been broken)
-  // aspects (passive): unmarked (being broken), perfect (having been broken)
-  // case class Gerund(
-  //   verb: VoicedVerbPhrase
-  // ) extends Nominal with VerbalPredication with NonNominalPredication with Subordinable
-
-  // can appear as:
-  //  - subject of finite clause: to err is human
-  //  - open complement of verb: he wants to help
-  //  - open complement of adjective: he is happy to help
-  // case class ToInfinitive(
-  //   verb: VoicedVerbPhrase
-  // ) extends RelaxedNominal with VerbalPredication with NonNominalPredication
-
-  // many types of clause:
-  //  - active 'he go to the store': any use? no? helped him go to the store. 2 args
-  //    - complement: that he go to the store
-  //  - passive 'him be taken advantage of': made me be taken advantage of. 2 args
-  //    - complement: that he be taken advantage of
-  //  - copula 'me be happy': he helped me be happy. 2 args. all the same.
-  //    - complement: that he be happy
-  //  - gerund
-  //     - active 'him swimming': nominal, NOT non-nominal
-  //     - passive 'him being taken advantage of': nominal, NOT non-nominal
-  //     - copula 'him being a leader in his field': nominal, NOT non-nominal
-  //   -- aspectual possibilities
-  //  - infinitive: 'he to go to the store': again 2 args.
-
-  // for-np-to-vp
-
-  // types of subordinate clause:
-  //  - finite: because he didn't know what he was doing
-  //  - --- gerund: despite him knowing what he was doing --- can model as PP
-  //  - ??? bare: lest he be scolded for his actions. very rare / archaic(?)
-  //  - xxx infinitive: because him to know what he was doing .. no
-  // only finite
-
-  // types of subordinate clause:
-  //  - gerund: when knowing what he was doing?, while walking away
-  //    - although, though, while, since, after, as soon as, whenever, when, until
-  //  - both kinds of participial
-  //    - although (worried by the news / having talked through tears)
-  //    - while (worried by the news / having talked through tears)
-  //  - be: lest be scolded for his actions. no
-  //  - infinitive: in order to know what he was doing
-  //    are there any others that look like this?
-  // only finite
-
-  // participial modifiers:
-  //  - present participial (the bomb exploded, destroying the building.) // covered by gerund
-  //  - passive/past participial (worried by the news, she called the hospital.)
-  //  - perfect participial (having gotten dressed, he slowly went downstairs.)
-
-
 }

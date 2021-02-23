@@ -92,43 +92,6 @@ class CafeTests extends CatsEffectSuite {
     }
   }
 
-  // test("ask questions") {
-  //   val somePaths = None :: wantEat.argumentPaths.toList.map(Some(_))
-  //   somePaths.foreach { path =>
-  //     val question = wantEat.renderQuestion(path)
-  //     println("\n" + path.fold("N/A")(_.show))
-  //     question match {
-  //       case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
-  //       case Validated.Invalid(errs) =>
-  //         errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
-  //     }
-  //   }
-  // }
-
-  def renderQuestion(
-    pred: Predication.Clausal,
-    path: ArgumentPath.Descent[ArgumentPath.Extraction]
-  ) = {
-    pred.render(
-      Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true),
-      path = path
-    ).andThen { case (questionClauseTree, (arg, focusPath)) =>
-      arg.render(ArgPosition.Subj, focusPath).andThen {
-        case (focusedArgTree, pro) =>
-          val answerTemplates = pro.instances
-          Validated.valid(
-            (focusedArgTree |+| questionClauseTree) -> answerTemplates
-          )
-      }
-    }.map { case (question, answers) =>
-        LabeledTree.showGloss(question) + "\n" +
-          answers.mkString("\n")
-    }
-  }
-
-  // TODO: for each path, extract the corresponding pronoun,
-  // get its possible filler templates,
-  // unify them with all possible predications in the context
   test("produce answer candidates/templates") {
     wantEat.extractionPaths
       .map { extractionPath =>
@@ -139,6 +102,27 @@ class CafeTests extends CatsEffectSuite {
         case Validated.Invalid(err) =>
           println(err)
       }
+  }
+
+  def renderQuestion(
+    pred: Predication.Clausal,
+    path: ArgumentPath.Descent[Extraction]
+  ) = {
+    pred.render(
+      Predication.ClauseFeats(ClauseType.Inverted, includeSubject = true),
+      path = path
+    ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
+      arg.render(ArgPosition.Subj, swap, focusPath).andThen {
+        case (focusedArgTree, pro) =>
+          val answerTemplates = pro.instances
+          Validated.valid(
+            (focusedArgTree |+| questionClauseTree) -> answerTemplates
+          )
+      }
+    }.map { case (question, answers) =>
+        LabeledTree.showGloss(question) + "\n" +
+          answers.mkString("\n")
+    }
   }
 
   import qasrl.bank.Data
@@ -164,7 +148,7 @@ class CafeTests extends CatsEffectSuite {
 
   def getAlignedPredications(
     verb: InflectedForms, question: QuestionLabel
-  ): Set[(Predication.Clausal, ArgumentPath.Descent[ArgumentPath.Extraction])] = {
+  ): Set[(Predication.Clausal, ArgumentPath.Descent[Extraction])] = {
     val frames = ClauseResolution.getFramesWithAnswerSlots(
       verb, question.questionSlots
     ).filterNot { case (frame, slot) =>
@@ -321,6 +305,18 @@ class CafeTests extends CatsEffectSuite {
       }
     }
   }
+
+  // predication: Predication
+  // innerPath: ArgumentPath[ProForm]
+  // set of allowable answers
+  // procedure to incorporate answer back into the original.
+  // origPath: ArgumentPath[?] -- points to extracted element
+  //
+  // FIRST: normal pied piping.
+  // I want: 
+  //
+  // I want: tree, arg, inner path, list of answer types, for each one ???
+
 
   // TODO
   // test("argument extraction paths are always valid") {
