@@ -1,5 +1,7 @@
 import mill._, mill.scalalib._, mill.scalalib.publish._, mill.scalajslib._
 import mill.scalalib.scalafmt._
+import mill.api.DummyInputStream
+import mill.eval.Result
 import coursier.maven.MavenRepository
 
 import $ivy.`com.lihaoyi::mill-contrib-bloop:$MILL_VERSION`
@@ -13,8 +15,8 @@ val thisScalaJSVersion = "1.4.0"
 val evilplotVersion = "0.8.1-SNAPSHOT"
 
 // my libs
-val jjmVersion = "0.2.0"
-val qasrlVersion = "0.3.0"
+val jjmVersion = "0.2.1-SNAPSHOT"
+val qasrlVersion = "0.3.1-SNAPSHOT"
 // val qasrlBankVersion = "0.3.0"
 // val spacroVersion = "0.4.0"
 val freelogVersion = "0.1.0"
@@ -182,6 +184,35 @@ object qfirst extends Module {
     object js extends JsModule
     object jvm extends JvmModule {
       object test extends Tests
+    }
+  }
+
+  object `cafe-browse` extends Module {
+
+    def serve(args: String*) = T.command {
+      if (T.ctx().log.inStream == DummyInputStream){
+        Result.Failure("server needs to be run with the -i/--interactive flag")
+      } else {
+        val runMain = jvm.runMainFn()
+        runMain(
+          "qfirst.cafe.browse.Serve", Seq(
+            "--js",        js.fastOpt().path.toString,
+            "--jsDeps",    js.aggregatedJSDeps().path.toString
+          ) ++ args
+        )
+      }
+    }
+
+    object jvm extends FullJvmModule {
+      def moduleDeps = Seq(cafe.jvm)
+      override def ivyDeps = super.ivyDeps() ++ Agg(
+        ivy"com.lihaoyi::scalatags:$scalatagsVersion"
+      )
+      object test extends Tests
+    }
+    object js extends FullJsModule {
+      def moduleDeps = Seq(cafe.js)
+      def mainClass = T(Some("qfirst.cafe.browse.Main"))
     }
   }
 
