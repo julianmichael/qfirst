@@ -59,6 +59,7 @@ object Conversion {
                     Argument.Oblique(
                       Some(
                         Predication.Particulate(
+                          None,
                           NonEmptyList.fromList(
                             preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
                           ).get))))
@@ -94,7 +95,7 @@ object Conversion {
                   val prtStrings = NonEmptyList.fromList(
                     preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
                   ).get
-                  val prtObl = Argument.Oblique(Some(Predication.Particulate(prtStrings)))
+                  val prtObl = Argument.Oblique(Some(Predication.Particulate(None, prtStrings)))
                   obj2Opt match {
                     case None => Vector(Vector(prtObl))
                     case Some(obj) =>
@@ -102,7 +103,7 @@ object Conversion {
                         preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Preposition)
                       ).get
                       val nounPro = getNounPro(obj.isAnimate)
-                      val pp = Predication.Prepositional(prepStrings, nounPro)
+                      val pp = Predication.Prepositional(None, prepStrings, nounPro)
                       val ppObl = Argument.Oblique(Some(pp))
                       Vector(Vector(prtObl, nounPro), Vector(ppObl))
                   }
@@ -128,7 +129,7 @@ object Conversion {
             require(trailingArgs.nonEmpty)
             val init = ArgPosition.Arg(args.size - 1) // no adv arg, so we're last
             trailingArgs.last match {
-              case Argument.Oblique(Some(Predication.Prepositional(_, _, _)), _) =>
+              case Argument.Oblique(Some(Predication.Prepositional(_, _, _, _)), _) =>
                 init :: ArgPosition.Arg(0) :: Nil
               case _: Argument.Clausal => // do-phrase
                 init :: ArgPosition.Arg(0) :: Nil
@@ -150,6 +151,7 @@ object Conversion {
             None
         }
         val pred = Predication.Verbal(
+          None,
           subject = subj,
           verb = Lexicon.Verb(verb),
           isPassive = frame.isPassive,

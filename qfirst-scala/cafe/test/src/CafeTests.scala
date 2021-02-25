@@ -48,6 +48,7 @@ class CafeTests extends CatsEffectSuite {
   )
 
   val eatPred = Predication.Verbal.apply(
+    None,
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(eat),
     isPassive = false,
@@ -56,6 +57,7 @@ class CafeTests extends CatsEffectSuite {
   )
 
   val wantEat = Predication.Verbal(
+    None,
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
@@ -64,6 +66,7 @@ class CafeTests extends CatsEffectSuite {
   )
 
   val wantDo = Predication.Verbal(
+    None,
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
@@ -113,6 +116,7 @@ class CafeTests extends CatsEffectSuite {
       Argument.NounPhrase(
         Some(
           Predication.NounPhrase(
+            None,
             ans,
             None,
             Some(Person.Third),

@@ -19,21 +19,6 @@ import mouse.all._
 
 // SASS: Semantic Annotation via Surrogate Syntax
 
-sealed trait ClauseType
-object ClauseType {
-  // past participle form --- passive/adjective
-  case object Attributive extends ClauseType
-  sealed trait VerbalClauseType extends ClauseType
-  case object BareInfinitive extends VerbalClauseType
-  case object ToInfinitive extends VerbalClauseType
-  case object Progressive extends VerbalClauseType
-  case object Finite extends VerbalClauseType
-  case object Inverted extends VerbalClauseType
-
-  val all = List(Attributive, BareInfinitive, ToInfinitive, Progressive, Finite, Inverted)
-}
-
-
 // tells us whether we are rendering an argument...
 // TODO: in an answer (for bare vp answers to 'what..to do' questions
 // TODO: 'Fronted' position? something for when extracted
@@ -147,15 +132,7 @@ object ArgumentPath {
     def process[A](arg: Argument, pos: ArgPosition, swap: SwapOutArg[A]): Component.RenderResultOf[
       (LabeledTree.Node[String, String], ArgSnapshot[A])
     ] = arg.render(pos, swap).map(_ -> ArgSnapshot(arg, swap))
-    // ] = valid(leaves("brp" -> "woop") -> ArgSnapshot(arg, swap))
   }
-
-  // type Get = Get.type
-  // case object Get extends Processor[Argument] {
-  //   def process(arg: Argument): Component.RenderResultOf[
-  //     (LabeledTree[String, String], Argument)
-  //   ] = ???
-  // }
 
   object Processor {
     implicit def processorShow[F[_]]: Show[Processor[F]] = new Show[Processor[F]] {
@@ -166,16 +143,6 @@ object ArgumentPath {
       }
     }
   }
-
-  // case class ExtractionDescent(
-  //   position: ArgPosition, next: ExtractionPath
-  // ) extends ExtractionPath with Descent //[ExtractionPath]
-  // case class Extraction(next: FocalPath) extends ExtractionPath
-
-  // case class FocalDescent(
-  //   position: ArgPosition, next: FocalPath
-  // ) extends FocalPath with Descent //[FocalPath]
-  // case object Focus extends FocalPath
 
   def descend[F[_]](path: Option[Descent[F]], pos: ArgPosition): Option[ArgumentPath[F]] =
     path.collect { case Descent(`pos`, next) => next }
@@ -204,7 +171,6 @@ sealed trait Component extends Product with Serializable {
 object Component {
   type Branches = LabeledTree.Node[String, String]
   type Tree = LabeledTree[String, String]
-  // TODO improve API so an Option is provided
   case class WithExtraction[+A, +Extraction](
     value: A,
     extractions: Vector[Extraction] = Vector()
@@ -555,9 +521,6 @@ object Argument {
     def category = "pp"
     def proForms = adverbials.map(x => x: ProForm)
 
-      // TODO: allowed in Fronted position. should we put this back in? idk
-      // case Subj => invalid("Oblique argument cannot appear in subject position.")
-      // case Arg(_) =>
     import ArgPosition._, ArgumentPath.Descent
     override def renderLax[F[_], A](
       pos: ArgPosition,
@@ -832,10 +795,15 @@ case class ProxyArgument[P <: Predication](
   }
 }
 
+sealed trait PredicationId
+case class SpanId(value: String) extends PredicationId
+case class PredicateId(value: String) extends PredicationId
+
 sealed trait Predication extends Component {
-  type GramFeats // grammatical features
+  def id: Option[PredicationId]
 
   type Self <: Predication
+
   def swapOutSelf: SwapOutPred[Self, Self] = SwapOutPred {
     case Right(pred) => Right(pred)
     // TODO: do something for 'do' pro-verb to get it to resolve out as root?
@@ -845,6 +813,7 @@ sealed trait Predication extends Component {
 
   import Component._
 
+  type GramFeats // grammatical features
   type Out <: Tree
 
   def renderLax[F[_], A](
@@ -901,6 +870,8 @@ object Predication {
   // in the future, with proper nominal predicates, might use it this way.
   // but it would be a separate (non-clausal) type of predication.
   sealed trait Nominal extends Predication {
+    def id: Option[SpanId]
+
     type Out = Tree
     type GramFeats = Case
     type Self <: Nominal
@@ -913,14 +884,6 @@ object Predication {
 
     def getForm(c: Case): String
 
-    // override def render(
-    //   `case`: Case,
-    //   path: Option[ArgumentPath.Descent]
-    // ): Component.RenderResultOf[WithExtraction[LabeledTree[String, String]]] = path match {
-    //   case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
-    //   case None => valid(WithExtraction(leaf(getForm(`case`))))
-    // }
-
     override def renderLax[F[_], A](
       features: Case,
       swapOutPred: SwapOutPred[Self, A],
@@ -932,6 +895,7 @@ object Predication {
   }
 
   case class NounPhrase(
+    id: Option[SpanId],
     form: String,
     animate: Option[Boolean],
     person: Option[Person],
@@ -953,7 +917,10 @@ object Predication {
     import ArgPosition._, ArgumentPath.Descent
   }
   // prep should not take an object, i.e., is a particle
-  case class Particulate(prts: NonEmptyList[Particle]) extends Oblique {
+  case class Particulate(
+    id: Option[SpanId],
+    prts: NonEmptyList[Particle]
+  ) extends Oblique {
     type Self = Particulate
     override def proxy: Option[ProxyArgument[Self]] = None
     def arguments = Vector()
@@ -971,6 +938,7 @@ object Predication {
   }
 
   case class Prepositional(
+    id: Option[SpanId],
     preps: NonEmptyList[Preposition],
     obj: Argument.Nominal,
     proxy: Option[ProxyArgument[Prepositional]] = None
@@ -1004,7 +972,10 @@ object Predication {
     }
   }
 
-  case class Adverbial(form: String) extends Predication {
+  case class Adverbial(
+    id: Option[SpanId],
+    form: String
+  ) extends Predication {
     type Self = Adverbial
     override def proxy: Option[ProxyArgument[Self]] = None
     type Out = Tree
@@ -1023,6 +994,7 @@ object Predication {
   }
 
   case class Subordinate(
+    id: Option[PredicateId],
     subordinator: Subordinator,
     clause: Argument.Complement,
     proxy: Option[ProxyArgument[Subordinate]] = None
@@ -1068,6 +1040,7 @@ object Predication {
   )
 
   sealed trait Clausal extends Predication {
+    def id: Option[PredicateId]
     type Self <: Clausal
     // type Self = Clausal
     override type Out = Branches
@@ -1208,6 +1181,7 @@ object Predication {
   }
 
   case class Copular(
+    id: Option[PredicateId],
     subject: Argument.Subject,
     argument: NounOrOblique,
     modifiers: Vector[NonNominal],
@@ -1250,6 +1224,7 @@ object Predication {
   }
 
   case class Adjectival(
+    id: Option[PredicateId],
     subject: Argument.Subject,
     adjective: Adjective,
     arguments: Vector[NonNominal],
@@ -1284,6 +1259,7 @@ object Predication {
   }
 
   case class Verbal(
+    id: Option[PredicateId],
     subject: Argument.Subject,
     verb: Verb,
     isPassive: Boolean,
@@ -1337,6 +1313,7 @@ object Predication {
       // modifiers: Vector[NonNominal],
       tan: TAN
     ) = Verbal(
+      None,
       subject, Verb(InflectedForms.doForms), false,
       Vector(Argument.ProForm.what),// +: modifiers,
       tan,
