@@ -22,13 +22,13 @@ import cats.kernel.Semigroup
 // SASS: Semantic Annotation via Surrogate Syntax
 
 case class ArgText(
-  text: Option[String] = None,
+  text: String,
   pos: Option[String] = None
 )
 object ArgText {
   // def gap = ArgText(None, None)
-  def apply(text: String): ArgText = ArgText(Some(text))
-  def apply(text: String, pos: Option[String]): ArgText = ArgText(Some(text), pos)
+  // def apply(text: String): ArgText = ArgText(Some(text))
+  // def apply(text: String, pos: Option[String]): ArgText = ArgText(Some(text), pos)
 }
 
 // tells us whether we are rendering an argument...
@@ -112,12 +112,12 @@ object ArgumentPath {
       (SyntaxTree[Argument, ArgText], Extraction[A])
     ] = arg match {
       case pro: Argument.ProForm =>
-        valid(node(arg, NonEmptyList.of(leaf(ArgText()))) -> Extraction(pro, innerPath, swap))
+        valid(node(arg, Vector()) -> Extraction(pro, innerPath, swap))
       case arg: Argument.Expletive =>
         arg.invalid("Cannot extract an expletive.")
       case arg: Argument.Semantic =>
         if(arg.allowPiedPiping(innerPath)) {
-          valid(node(arg, NonEmptyList.of(leaf(ArgText()))) -> Extraction(arg, innerPath, swap))
+          valid(node(arg, Vector()) -> Extraction(arg, innerPath, swap))
         } else arg.invalid("Extraction of concrete argument not allowed.")
     }
   }
@@ -129,7 +129,7 @@ object ArgumentPath {
     ] = arg match {
       case pro: Argument.ProForm =>
         val newSwap = SwapOutArg(arg => swap.replace(arg.flatMap(pro.instantiate)))
-        valid(node(arg, NonEmptyList.of(leaf(ArgText(pro.wh(pos))))) ->
+        valid(node(arg, Vector(leaf(ArgText(pro.wh(pos))))) ->
                 ProFormExtraction(pro, newSwap))
       case arg: Argument.Concrete =>
         arg.invalid("Focal element must be a pro-form.")
@@ -140,7 +140,7 @@ object ArgumentPath {
   case object Target extends Processor[ArgSnapshot] {
     def process[A](arg: Argument, pos: ArgPosition, swap: SwapOutArg[A]): Component.RenderResultOf[
       (SyntaxTree[Argument, ArgText], ArgSnapshot[A])
-    ] = arg.render(pos, swap).map(_ -> ArgSnapshot(arg, swap))
+    ] = arg.render(pos).map(_ -> ArgSnapshot(arg, swap))
   }
 
   object Processor {
@@ -178,7 +178,7 @@ sealed trait Component extends Product with Serializable {
     Validated.invalid(NonEmptyChain.one(error(msg)))
 }
 object Component {
-  type Branches = NonEmptyList[SyntaxTree[Argument, ArgText]]
+  type Branches = Vector[SyntaxTree[Argument, ArgText]]
   type Tree = SyntaxTree[Argument, ArgText]
   case class WithExtraction[+A, +Extraction](
     value: A,
@@ -187,8 +187,8 @@ object Component {
     def map[B](f: A => B) = WithExtraction(f(value), extractions)
   }
   object WithExtraction {
-    implicit def withExtractionSemigroup[A: Semigroup, E] = new Semigroup[WithExtraction[A, E]] {
-      // def empty = WithExtraction(Monoid[A].empty)
+    implicit def withExtractionMonoid[A: Monoid, E] = new Monoid[WithExtraction[A, E]] {
+      def empty = WithExtraction(Monoid[A].empty)
       def combine(x: WithExtraction[A, E], y: WithExtraction[A, E]): WithExtraction[A, E] = {
         WithExtraction(x.value |+| y.value, x.extractions ++ y.extractions)
       }
@@ -204,6 +204,11 @@ object Component {
 sealed trait Argument extends Component {
   import Component._
   import SyntaxTree.{leaf,node}
+
+  def swapOutSelf: SwapOutArg[Argument] = SwapOutArg {
+    case Right(arg) => Right(arg)
+    case Left(err) => Left(err)
+  }
 
   def symbol: String
 
@@ -247,6 +252,12 @@ sealed trait Argument extends Component {
       tree -> items.headOption
     }
 
+  def render[F[_]](
+    pos: ArgPosition,
+    path: Option[ArgumentPath[F]]
+  ): RenderResultOf[(Tree, Option[F[Argument]])] =
+    render(pos, swapOutSelf, path)
+
   def render[F[_], A](
     pos: ArgPosition,
     swapOutArg: SwapOutArg[A],
@@ -254,14 +265,20 @@ sealed trait Argument extends Component {
   ): RenderResultOf[(Tree, F[A])] =
     render(pos, swapOutArg, Some(path)).map { case (x, y) => x -> y.get } // require 1 extraction
 
+  def render[F[_]](
+    pos: ArgPosition,
+    path: ArgumentPath[F]
+  ): RenderResultOf[(Tree, F[Argument])] =
+    render(pos, swapOutSelf, path)
+
   def render[A](
     pos: ArgPosition,
-    swapOutArg: SwapOutArg[A]
   ): RenderResultOf[Tree] = {
     // ascribe a type to the None to help out type inference
-    render(pos, swapOutArg, None: Option[ArgumentPath[ProFormExtraction]]).map { case (tree, itemOpt) =>
-      require(itemOpt.isEmpty) // require no extractions
-      tree
+    render(pos, swapOutSelf, None: Option[ArgumentPath[ProFormExtraction]]).map {
+      case (tree, itemOpt) =>
+        require(itemOpt.isEmpty) // require no extractions
+        tree
     }
   }
 
@@ -308,10 +325,10 @@ object Argument {
       pos: ArgPosition,
       swapOutArg: SwapOutArg[A],
       path: Option[ArgumentPath.Descent[F]]
-    ): RenderTree[F[A]] = path match {
+    ): RenderBranches[F[A]] = path match {
       case Some(_) => invalid("Cannot extract from inside a pro-form.")
       case None => placeholder
-          .map(p => valid(WithExtraction(leaf(ArgText(p)))))
+          .map(p => valid(WithExtraction(Vector(leaf(ArgText(p))))))
           .getOrElse(invalid("No placeholder exists for pro-form."))
     }
 
@@ -445,7 +462,7 @@ object Argument {
     ) = path match {
       case Some(_) => invalid("Cannot focus or descend into an expletive.")
       case None => pos match {
-        case Subj => valid(WithExtraction(NonEmptyList.of(leaf(ArgText(expletive.form.toString)))))
+        case Subj => valid(WithExtraction(Vector(leaf(ArgText(expletive.form.toString)))))
         case Arg(_) => invalid("Can only render expletives in subject position.")
       }
     }
@@ -631,6 +648,53 @@ object Argument {
     type Aux[A] = Clausal { type Pred = A }
   }
 
+  case class FiniteQuestion(
+    pred: Option[Predication.Clausal],
+    whItemPath: Option[ArgumentPath.Descent[Extraction]]
+  ) extends Clausal {
+    type Self = FiniteQuestion
+    type Pred = Predication.Clausal
+    // with Subject? but cannot appear in subj except as an answer
+    def withPred(pred: Option[Predication.Clausal]): Self = this.copy(pred = pred)
+    override def clauseType = ClauseType.Inverted
+    override def includeSubject = true
+    override def category = "s[q]"
+    override def proForms = Set()
+
+    import ArgPosition._, ArgumentPath.Descent
+    override def renderLax[F[_], A](
+      pos: ArgPosition,
+      swapOutArg: SwapOutArg[A],
+      path: Option[Descent[F]]
+    ) = {
+      // TODO: could change rendering to take multiple paths but only allow one extraction.
+      if(path.nonEmpty) invalid("Cannot descend into a question") else {
+        super.renderLax(pos, swapOutArg, whItemPath).andThen {
+          case wext @ WithExtraction(branches, extractions) =>
+            if(whItemPath.isEmpty) {
+              require(extractions.size == 0)
+              valid(WithExtraction(branches))
+            } else {
+              require(extractions.size == 1)
+              val Extraction(arg, focusPath, swap) = extractions.head
+              // TODO can change to another arg position later maybe. Spec?
+              arg.render(ArgPosition.Subj, swap, focusPath).map {
+                case (whItemTree, ProFormExtraction(pro, swap)) =>
+                  WithExtraction(whItemTree +: branches)
+              }
+            }
+        }
+      }
+    }
+
+    // blocks extraction.
+    override def extractionPaths: Set[ArgumentPath[Extraction]] = Set()
+  }
+
+  // TODO infinitive embedded question, finite embedded question, free relative clause.
+  // these may be weird due to corresponding to multiple possible argument types.
+  // but maybe they aren't weird. idk. might be fine.
+
   // nominal use of gerund/progressive; can be object of prep or subject
   // TODO possessive subject option
   case class Gerund(
@@ -706,10 +770,10 @@ object Argument {
         val branches = if(!includeSubject) predBranches else {
           val comp = valid(
             WithExtraction(
-              NonEmptyList.of(leaf(ArgText(complementizer.form.toString, pos = Some("comp"))))
+              Vector(leaf(ArgText(complementizer.form.toString, pos = Some("comp"))))
             )
           )
-          NonEmptyList.of(comp, predBranches).reduceA[
+          Vector(comp, predBranches).foldA[
             ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]
           ]
           // (comp, predBranches).mapN(_ |+| _)
@@ -803,14 +867,14 @@ object Argument {
         case Left(arg) => swapOutArg.replace(Right(arg))
       }
       pred.map(p =>
-        NonEmptyList.of(
+        Vector(
           valid(
             WithExtraction(
-              NonEmptyList.of(leaf(ArgText(complementizer.form.toString, pos = Some("comp"))))
+              Vector(leaf(ArgText(complementizer.form.toString, pos = Some("comp"))))
             )
           ),
           p.renderLax(Predication.ClauseFeats(clauseType, includeSubject), swapOutPred, path)
-        ).reduceA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+        ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
       ).getOrElse(invalid())
     }
   }
@@ -913,7 +977,7 @@ object Predication {
       path: Option[ArgumentPath.Descent[F]]
     ): RenderBranches[F[A]] = path match {
       case Some(_) => invalid("Cannot descend into a nominal predication for extraction (for now).")
-      case None => valid(WithExtraction(NonEmptyList.of(leaf(ArgText(getForm(features))))))
+      case None => valid(WithExtraction(Vector(leaf(ArgText(getForm(features))))))
     }
   }
 
@@ -957,7 +1021,7 @@ object Predication {
       case Some(_) => invalid("Cannot extract from inside a particle.")
       case None => valid(
         WithExtraction(
-          NonEmptyList.of(leaf(ArgText(prts.map(_.form).toList.mkString(" "), pos = Some("prt"))))
+          Vector(leaf(ArgText(prts.map(_.form).toList.mkString(" "), pos = Some("prt"))))
         )
       )
     }
@@ -979,7 +1043,7 @@ object Predication {
     ): RenderBranches[F[A]] = {
       if(path.exists(_.position != Arg(0))) {
         invalid(s"Can't descend into argument for extraction from oblique: ${path.get}")
-      } else NonEmptyList.of(
+      } else Vector(
         valid(
           WithExtraction(
             leaf(ArgText(preps.map(_.form).toList.mkString(" "), pos = Some("prep")))
@@ -998,8 +1062,8 @@ object Predication {
           },
           ArgumentPath.descend(path, Arg(0))
         )
-      ).map(_.map(_.map(x => NonEmptyList.of(x))))
-        .reduceA
+      ).map(_.map(_.map(x => Vector(x))))
+        .foldA
         // .nonEmptySequence[ValidatedNec[RenderError, *], WithExtraction[Tree, F[A]]]
         
         // .sequenceA
@@ -1022,7 +1086,7 @@ object Predication {
       path: Option[Descent[F]]
     ): RenderBranches[F[A]] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
-      case None => valid(WithExtraction(NonEmptyList.of(leaf(ArgText(form)))))
+      case None => valid(WithExtraction(Vector(leaf(ArgText(form)))))
     }
   }
 
@@ -1044,7 +1108,7 @@ object Predication {
       path match {
         case Some(pos) if pos != Arg(0) =>
           invalid(s"Can't descend into argument for extraction from subordinate: $pos")
-        case otherPath => NonEmptyList.of(
+        case otherPath => Vector(
           valid(WithExtraction(leaf(ArgText(subordinator.form.toString, pos = Some("sub"))))),
           clause.renderLaxWithPath(
             Arg(0),
@@ -1061,7 +1125,7 @@ object Predication {
             },
             ArgumentPath.descend(path, Arg(0))
           )
-        ).map(_.map(_.map(x => NonEmptyList.of(x)))).reduceA
+        ).map(_.map(_.map(x => Vector(x)))).foldA
             // .foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
       }
     }
@@ -1104,44 +1168,42 @@ object Predication {
       validatePath(includeSubject, path) *> {
         val args: RenderBranches[F[A]] = renderArguments(path, swapOutPred)
         def makeVerbTree(chain: NonEmptyList[String]) = {
-          if(chain.size == 1) NonEmptyList.of(
+          if(chain.size == 1) Vector(
             leaf(ArgText(chain.head, pos = Some(predPOS)))
-          ) else NonEmptyList.of(
+          ) else Vector(
             leaf(ArgText(chain.init.mkString(" "), pos = Some("aux"))),
             leaf(ArgText(chain.last, pos = Some(predPOS)))
           )
         }
         if(includeSubject) {
           renderSubject(includeSubject, swapOutPred, path).andThen { subjValue =>
-            val flipAuxiliary = frontAuxiliary && subjValue.value
-              .reduceMap(_.text.combineAll)
-              .nonEmpty
+            val flipAuxiliary = frontAuxiliary && subjValue.value.foldMap(_.text).nonEmpty
               // .foldMap(_.text.combineAll)
             Validated.fromEither(
               renderVerbChain(clauseType, flipAuxiliary).left.map(_.map(error(_)))
             ).andThen { verbChain =>
-              val subj: RenderBranches[F[A]] = valid(subjValue.map(x => NonEmptyList.of(x)))
+              val subj: RenderBranches[F[A]] = valid(subjValue.map(x => Vector(x)))
               if(flipAuxiliary) { // aux flip
                 val aux: RenderBranches[F[A]] = valid(
                   WithExtraction(
-                    NonEmptyList.of(leaf(ArgText(verbChain.head, pos = Some("aux"))))))
+                    Vector(leaf(ArgText(verbChain.head, pos = Some("aux"))))))
                 NonEmptyList.fromList(verbChain.tail) match {
                   case None =>
-                    NonEmptyList.of(
+                    Vector(
                       aux, subj, args
-                    ).reduceA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+                    ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
                   case Some(verbTail) =>
                     val verb = valid(WithExtraction(makeVerbTree(verbTail)))
-                    NonEmptyList.of(
+                    Vector(
                       aux, subj, verb, args
-                    ).reduceA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+                    ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
                       // .foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
                 }
               } else {
                 val verb: RenderBranches[F[A]] = valid(WithExtraction(makeVerbTree(verbChain)))
-                NonEmptyList.of(
+                Vector(
                   subj, verb, args
-                ).reduceA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+                ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
               }
             }
           }
@@ -1150,9 +1212,9 @@ object Predication {
             renderVerbChain(clauseType, false).left.map(_.map(error(_)))
           ).andThen { verbChain =>
             val verb: RenderBranches[F[A]] = valid(WithExtraction(makeVerbTree(verbChain)))
-            NonEmptyList.of(
+            Vector(
               verb, args
-            ).reduceA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+            ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
           }
           // [ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
           // .foldA
@@ -1204,17 +1266,15 @@ object Predication {
     def renderArguments[F[_], A](
       path: Option[ArgumentPath.Descent[F]],
       swapOutPred: SwapOutPred[Self, A]
-    ): Component.RenderResultOf[WithExtraction[Vector[SyntaxTree[Argument, ArgText]], F[A]]] = {
+    ): Component.RenderBranches[F[A]] = {
       arguments.zipWithIndex.foldMapA[
         ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]
       ] { case (arg, index) =>
-          Vector(
-            arg.renderLaxWithPath(
-              ArgPosition.Arg(index),
-              swapOutArg(swapOutPred, index),
-              ArgumentPath.descend(path, ArgPosition.Arg(index))
-            )
-          )
+        arg.renderLaxWithPath(
+          ArgPosition.Arg(index),
+          swapOutArg(swapOutPred, index),
+          ArgumentPath.descend(path, ArgPosition.Arg(index))
+        ).map(_.map(Vector(_)))
       }
     }
 

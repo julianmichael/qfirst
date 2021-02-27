@@ -82,29 +82,24 @@ class CafeTests extends CatsEffectSuite {
     (clauseType, includeSubject)
   )
 
-  test("view rendered") {
-    rendered.foreach {
-      case (res, (clauseType, inclSubj)) =>
-        val inclSubjStr = if(inclSubj) " (with subject)" else ""
-        println(s"\n$clauseType$inclSubjStr")
-        res match {
-          case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
-          case Validated.Invalid(errs) =>
-            errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
-        }
-    }
-  }
+  // test("view rendered") {
+  //   rendered.foreach {
+  //     case (res, (clauseType, inclSubj)) =>
+  //       val inclSubjStr = if(inclSubj) " (with subject)" else ""
+  //       println(s"\n$clauseType$inclSubjStr")
+  //       res match {
+  //         case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+  //         case Validated.Invalid(errs) =>
+  //           errs.toList.foreach(err => println("\t" + err.msg + "\n\t" + err.component.toString))
+  //       }
+  //   }
+  // }
 
   test("produce answer candidates/templates") {
     wantEat.extractionPaths
       .map { extractionPath =>
         renderQA(wantEat, extractionPath, Vector())
-      }.foreach {
-        case Validated.Valid(out) =>
-          println(out)
-        case Validated.Invalid(err) =>
-          println(err)
-      }
+      }.foreach(println)
   }
 
   def renderQA(
@@ -133,42 +128,36 @@ class CafeTests extends CatsEffectSuite {
     val finite = Predication.ClauseFeats(ClauseType.Finite, includeSubject = true)
     // println(pred)
     // println(path.show)
-    pred.render(
-      inverted,
-      path = path
-    ).andThen { case (questionClauseTree, Extraction(arg, focusPath, swap)) =>
-        // println("----------")
-        // println("made it!")
-        // println(LabeledTree.showGloss(questionClauseTree))
-        // println(focusPath.show)
-        // println(arg)
-        // println(swap.replace(Right(Argument.ProForm.who)))
-        // println("----------")
+    val question = Argument.FiniteQuestion(Some(pred), Some(path))
+      .render(ArgPosition.Arg(0))
+    val answerReplacements = Argument.Finite(Some(pred))
+      .render(ArgPosition.Arg(0), path = path)
+      .andThen {
+      case (_, Extraction(arg, focusPath, swap)) =>
         arg.render(ArgPosition.Subj, swap, focusPath).map {
           case (focusedArgTree, ProFormExtraction(pro, swap)) =>
-            val answers = answerNPs
+            answerNPs
               .map(Right(_))
               .map(swap.replace)
               // .map(x => {println("\n~~~~~\n" + x + "\n~~~~~~\n"); x})
-              .map(_.map(_.render(finite)))
-              // .map(x => {println("\nvvvvv\n" + x + "\n^^^^^^\n"); x})
-            // .map(_.andThen(_.render(finite)))
-            Validated.valid(
-              (focusedArgTree |+| questionClauseTree)
-            ) -> answers
+              .map(_.map(_.render(ArgPosition.Arg(0))))
         }
-    }.map { case (questionV, answerVs) =>
-        val question = questionV match {
-          case Validated.Valid(q) => LabeledTree.showGloss(q)
+    }
+    val questionStr = question match {
+      case Validated.Valid(q) => SyntaxTree.gloss[Argument, ArgText](q, _.symbol, _.text)
+      case Validated.Invalid(err) => err.toString
+    }
+    val answerStr = answerReplacements match {
+      case Validated.Valid(answers) => answers.map {
+        case Left(err) => err.toString
+        case Right(res) => res match {
+          case Validated.Valid(sub) => SyntaxTree.gloss[Argument, ArgText](sub, _.symbol, _.text)
           case Validated.Invalid(err) => err.toString
         }
-        val answers = answerVs.map {
-          case Right(Validated.Valid(a)) => LabeledTree.showGloss(a)
-          case Right(Validated.Invalid(err)) => err.toString
-          case Left(err) => err.toString
-        }
-        question + "\n" + answers.mkString("\n")
+      }.mkString("\n")
+      case Validated.Invalid(err) => err.toString
     }
+    questionStr + "\n\n" + answerStr
   }
 
   import qasrl.bank.Data
@@ -200,15 +189,14 @@ class CafeTests extends CatsEffectSuite {
 
               Conversion.getAlignedPredications(verb.verbInflectedForms, qLabel).foreach {
                 case (pred, path) =>
-                  pred.render(ClauseFeats(ClauseType.Finite, true)) match {
-                    case Validated.Valid(tree) => println(LabeledTree.showGloss(tree))
+                  Argument.Finite(Some(pred)).render(ArgPosition.Arg(0)) match {
+                    case Validated.Valid(tree) => println(
+                      SyntaxTree.gloss[Argument, ArgText](tree, _.symbol, _.text)
+                    )
                     case Validated.Invalid(err) => println("\t" + err)
                   }
                   println
-                  renderQA(pred, path, answerStrings) match {
-                    case Validated.Valid(res) => println(res)
-                    case Validated.Invalid(err) => println(err)
-                  }
+                  println(renderQA(pred, path, answerStrings))
               }
             }
           }
