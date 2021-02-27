@@ -56,6 +56,7 @@ import qasrl.data.InvalidQuestion
 import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 import qasrl.data.QuestionLabel
+import jjm.ling.en.InflectedForms
 
 object Syntactilizer {
 
@@ -70,28 +71,105 @@ object Syntactilizer {
     path: ArgumentPath.Descent[Extraction]
   )
 
-
   case class QAStructure(
     questionPreds: Set[QuestionStructure],
-    answerArgs: Set[Argument]
+    answerSpans: Set[ESpan]
   )
+  object QAStructure {
+    def fromQA(verb: InflectedForms, q: QuestionLabel) = {
+      val spans = q.answerJudgments
+        .flatMap(_.judgment.getAnswer)
+        .flatMap(_.spans.toList)
+      QAStructure(
+        Conversion.getAlignedPredications(verb, q)
+          .map(Function.tupled(QuestionStructure(_, _))),
+        spans
+      )
+    }
+  }
+
+  case class VerbStructure(
+    qaStructures: Map[String, QAStructure]
+  )
+  object VerbStructure {
+    def fromVerb(verb: VerbEntry) = {
+      VerbStructure(
+        verb.questionLabels
+          .mapVals(q => QAStructure.fromQA(verb.verbInflectedForms, q))
+      )
+    }
+  }
 
   case class State(
-    qaStructures: Map[String, QAStructure] = Map()
+    // spans: Map[SpanId, ESpan],
+    // predicates: Map[PredicateId, Int],
+    // verbStructures: Map[Int, VerbStructure]
   )
   object State {
-    // def fromQuestion(q: QuestionLabel) = {
-    // }
+    def fromSentence(sent: ConsolidatedSentence): State = {
+      State()
+      // State(Map(), Map(), Map())
+    }
   }
 
   class Backend(scope: BackendScope[Props, State]) {
-    def render(props: Props, state: State) = <.div()
+    def render(props: Props, state: State) = {
+      val S = BrowserStyles
+      val V = View
+      import props.sentence
+
+      <.div(
+        <.div(S.sentenceTextContainer)(
+          <.span(S.sentenceText)(
+            V.Spans.renderHighlightedPassage(
+              sentence.sentenceTokens,
+              Nil, Map()
+              // answerSpansWithColors.toList,
+              // verbColorMap.collect { case (verbIndex, color) =>
+              //   verbIndex -> (
+              //     (v: VdomTag) => <.a(
+              //       S.verbAnchorLink,
+              //       ^.href := s"#verb-$verbIndex",
+              //       v(
+              //         ^.color := color.copy(a = 1.0).toColorStyleString,
+              //         ^.fontWeight := "bold",
+              //         ^.onMouseMove --> (
+              //           if(highlightedVerbIndex.value == Some(verbIndex)) {
+              //             Callback.empty
+              //           } else highlightedVerbIndex.setState(Some(verbIndex))
+              //         ),
+              //         ^.onMouseOut --> highlightedVerbIndex.setState(None)
+              //       )
+              //     )
+              //   )
+              // }
+            )
+          )
+        ),
+        <.div(S.verbEntriesContainer)(
+          props.sentence.verbEntries.toList.toVdomArray { case (verbIndex, verb) =>
+            <.div(S.verbEntryDisplay)(
+              <.div(S.verbHeading)(
+                <.span(S.verbHeadingText)(
+                  // ^.color := color.copy(a = 1.0).toColorStyleString,
+                  sentence.sentenceTokens(verbIndex)
+                )
+              ),
+              <.table(S.verbQAsTable)()
+            )
+          }
+        )
+      )
+    }
   }
 
   val Component = ScalaComponent.builder[Props]("Syntactilizer")
-    .initialState(State())
+    .initialStateFromProps(p => State.fromSentence(p.sentence))
     .renderBackend[Backend]
     .build
 
-  def make(sentence: ConsolidatedSentence) = Component(Props(sentence))
+  def make(
+    sentence: ConsolidatedSentence
+  ) = Component(Props(sentence)
+  )
 }
