@@ -54,15 +54,11 @@ object Conversion {
             doWordsOpt match {
               case Some(doWords) =>
                 // no object follows the preps, so must be particles
-                val prts = prepsOpt.foldMap(preps =>
-                  Vector(
-                    Argument.Oblique(
-                      Some(
-                        Predication.Particulate(
-                          None,
-                          NonEmptyList.fromList(
-                            preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
-                          ).get))))
+                val prts: Vector[Argument.Oblique] = prepsOpt.foldMap(preps =>
+                  preps.split(" ").toVector
+                    .map(_.lowerCase)
+                    .map(Lexicon.Particle)
+                    .map(prt => Argument.Oblique(Some(Predication.Particulate(None, prt))))
                 )
 
                 // object must be 'something' if do-words are present
@@ -92,20 +88,26 @@ object Conversion {
               case None => prepsOpt match {
                 case None => Vector(obj2Opt.foldMap(n => Vector(getNounPro(n.isAnimate))))
                 case Some(preps) =>
-                  val prtStrings = NonEmptyList.fromList(
-                    preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Particle)
-                  ).get
-                  val prtObl = Argument.Oblique(Some(Predication.Particulate(None, prtStrings)))
+                  val prepStrs = preps.split(" ").toVector.map(_.lowerCase)
+                  val prts = prepStrs
+                    .map(Lexicon.Particle)
+                    .map(Predication.Particulate(None, _))
+                    .map(prt => Argument.Oblique(Some(prt)))
                   obj2Opt match {
-                    case None => Vector(Vector(prtObl))
+                    case None => Vector(prts)
                     case Some(obj) =>
-                      val prepStrings = NonEmptyList.fromList(
-                        preps.split(" ").toList.map(_.lowerCase).map(Lexicon.Preposition)
-                      ).get
+                      val remPrts = prts.init
                       val nounPro = getNounPro(obj.isAnimate)
-                      val pp = Predication.Prepositional(None, prepStrings, nounPro)
-                      val ppObl = Argument.Oblique(Some(pp))
-                      Vector(Vector(prtObl, nounPro), Vector(ppObl))
+                      val prep = Argument.Oblique(
+                        Some(
+                          Predication.Prepositional(
+                            None,
+                            Lexicon.Preposition(prepStrs.last),
+                            nounPro
+                          )
+                        )
+                      )
+                      Vector(prts :+ nounPro, remPrts :+ prep)
                   }
               }
             }

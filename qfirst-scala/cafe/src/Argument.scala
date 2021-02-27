@@ -14,7 +14,7 @@ import cats.data.NonEmptyList
 import cats.kernel.Monoid
 import cats.implicits._
 import mouse.all._
-import jjm.ling.Span
+import jjm.ling.ESpan
 import cats.kernel.Semigroup
 
 // S4: Simple Surrogate Syntactic Semantics
@@ -982,7 +982,7 @@ object Predication {
   }
 
   case class NounPhrase(
-    span: Option[Span],
+    span: Option[ESpan],
     form: String,
     animate: Option[Boolean],
     person: Option[Person],
@@ -1004,8 +1004,8 @@ object Predication {
   }
   // prep should not take an object, i.e., is a particle
   case class Particulate(
-    span: Option[Span],
-    prts: NonEmptyList[Particle]
+    index: Option[Int],
+    prt: Particle
   ) extends Oblique {
     type Self = Particulate
     override def proxy: Option[ProxyArgument[Self]] = None
@@ -1021,15 +1021,15 @@ object Predication {
       case Some(_) => invalid("Cannot extract from inside a particle.")
       case None => valid(
         WithExtraction(
-          Vector(leaf(ArgText(prts.map(_.form).toList.mkString(" "), pos = Some("prt"))))
+          Vector(leaf(ArgText(prt.form, pos = Some("prt"))))
         )
       )
     }
   }
 
   case class Prepositional(
-    span: Option[Span],
-    preps: NonEmptyList[Preposition],
+    index: Option[Int],
+    prep: Preposition,
     obj: Argument.Nominal,
     proxy: Option[ProxyArgument[Prepositional]] = None
   ) extends Oblique {
@@ -1046,7 +1046,7 @@ object Predication {
       } else Vector(
         valid(
           WithExtraction(
-            leaf(ArgText(preps.map(_.form).toList.mkString(" "), pos = Some("prep")))
+            leaf(ArgText(prep.form, pos = Some("prep")))
           )
         ),
         obj.renderLaxWithPath(
@@ -1071,7 +1071,7 @@ object Predication {
   }
 
   case class Adverbial(
-    span: Option[Span],
+    span: Option[ESpan],
     form: String
   ) extends Predication {
     type Self = Adverbial

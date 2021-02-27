@@ -66,39 +66,39 @@ object Syntactilizer {
     sentence: ConsolidatedSentence
   )
 
-  case class QuestionStructure(
-    pred: Predication.Clausal,
-    path: ArgumentPath.Descent[Extraction]
-  )
+  // case class QuestionStructure(
+  //   pred: Predication.Clausal,
+  //   path: ArgumentPath.Descent[Extraction]
+  // )
 
-  case class QAStructure(
-    questionPreds: Set[QuestionStructure],
-    answerSpans: Set[ESpan]
-  )
-  object QAStructure {
-    def fromQA(verb: InflectedForms, q: QuestionLabel) = {
-      val spans = q.answerJudgments
-        .flatMap(_.judgment.getAnswer)
-        .flatMap(_.spans.toList)
-      QAStructure(
-        Conversion.getAlignedPredications(verb, q)
-          .map(Function.tupled(QuestionStructure(_, _))),
-        spans
-      )
-    }
-  }
+  // case class QAStructure(
+  //   questionPreds: Set[QuestionStructure],
+  //   answerSpans: Set[ESpan]
+  // )
+  // object QAStructure {
+  //   def fromQA(verb: InflectedForms, q: QuestionLabel) = {
+  //     val spans = q.answerJudgments
+  //       .flatMap(_.judgment.getAnswer)
+  //       .flatMap(_.spans.toList)
+  //     QAStructure(
+  //       Conversion.getAlignedPredications(verb, q)
+  //         .map(Function.tupled(QuestionStructure(_, _))),
+  //       spans
+  //     )
+  //   }
+  // }
 
-  case class VerbStructure(
-    qaStructures: Map[String, QAStructure]
-  )
-  object VerbStructure {
-    def fromVerb(verb: VerbEntry) = {
-      VerbStructure(
-        verb.questionLabels
-          .mapVals(q => QAStructure.fromQA(verb.verbInflectedForms, q))
-      )
-    }
-  }
+  // case class VerbStructure(
+  //   qaStructures: Map[String, QAStructure]
+  // )
+  // object VerbStructure {
+  //   def fromVerb(verb: VerbEntry) = {
+  //     VerbStructure(
+  //       verb.questionLabels
+  //         .mapVals(q => QAStructure.fromQA(verb.verbInflectedForms, q))
+  //     )
+  //   }
+  // }
 
   case class State(
     // spans: Map[SpanId, ESpan],
