@@ -57,10 +57,67 @@ import qasrl.data.Sentence
 import qasrl.data.VerbEntry
 import qasrl.data.QuestionLabel
 import jjm.ling.en.InflectedForms
+import scala.collection.immutable.SortedMap
+import japgolly.scalajs.react.vdom.TagOf
+import cats.data.Validated
+import qasrl.Tense
 
 object Syntactilizer {
 
+  val S = BrowserStyles
+  val V = View
+
   import qfirst.cafe._
+
+  def treeEltAux(
+    tree: SyntaxTree[Argument, ArgContent],
+    widthOffset: Int,
+    curDepth: Int,
+    maxDepth: Int
+  ): Vector[TagOf[html.Div]] = tree match {
+    case SyntaxTree.Leaf(content) => Vector(
+      <.div(S.treeGridItem)(
+        ^.gridColumn := s"$widthOffset",
+        ^.gridRowStart := s"$curDepth",
+        ^.gridRowEnd := s"${maxDepth + 1}",
+      ),
+      <.div(S.treeGridItemContent)(
+        ^.gridColumn := s"$widthOffset",
+        ^.gridRowStart := s"$maxDepth",
+        ^.gridRowEnd := s"${maxDepth + 1}",
+        content.text
+      )
+    )
+    case node @ SyntaxTree.Node(arg, children) =>
+      val nodeWidth = node.cata(_ => 1)((_, children) => math.max(1, children.sum))
+      <.div(S.treeGridItem)(
+        ^.gridColumnStart := s"$widthOffset",
+        ^.gridColumnEnd := s"${widthOffset + nodeWidth}",
+        ^.gridRow := s"$curDepth",
+        <.div(S.treeGridItemContent)(
+          arg.symbol
+        )
+      ) +: children.foldLeft((Vector[TagOf[html.Div]](), widthOffset)) {
+        case ((prev, offset), child) =>
+          val cur = prev ++ treeEltAux(child, offset, curDepth + 1, maxDepth)
+          val childWidth = child.cata(_ => 1)((_, children) => math.max(1, children.sum))
+          (cur, offset + childWidth)
+      }._1
+  }
+
+  def argTreeElt(tree: SyntaxTree[Argument, ArgContent]) = {
+    val depth = tree.depth
+    val width = tree.cata(_ => 1)((_, children) => math.max(1, children.sum))
+    <.div(
+      ^.display.grid,
+      ^.gridTemplateColumns := s"repeat($width, 1fr)",
+      ^.gridTemplateRows := s"repeat($depth, 1fr) 2fr",
+      ^.width := "50%",
+      ^.gridGap := "5px",
+      treeEltAux(tree, 1, 1, depth + 1).toVdomArray // TODO keys
+    )
+  }
+
 
   case class Props(
     sentence: ConsolidatedSentence
@@ -100,72 +157,135 @@ object Syntactilizer {
   //   }
   // }
 
-  case class State(
+  @Lenses case class State(
+    predsByIndex: Map[Int, Set[Predication]],
+    predsBySpan: Map[ESpan, Set[Predication]],
+    propsByVerbIndex: SortedMap[Int, Vector[Argument]]
     // spans: Map[SpanId, ESpan],
     // predicates: Map[PredicateId, Int],
     // verbStructures: Map[Int, VerbStructure]
   )
   object State {
     def fromSentence(sent: ConsolidatedSentence): State = {
-      State()
+      State(
+        Map(), Map(),
+        sent.verbEntries.map { case (k, v) => k -> Vector() }
+      )
       // State(Map(), Map(), Map())
     }
   }
 
-  class Backend(scope: BackendScope[Props, State]) {
-    def render(props: Props, state: State) = {
-      val S = BrowserStyles
-      val V = View
-      import props.sentence
+  val StateLocal = new LocalState[State]
+  val ArgLocal = new LocalState[Argument]
 
-      <.div(
-        <.div(S.sentenceTextContainer)(
-          <.span(S.sentenceText)(
-            V.Spans.renderHighlightedPassage(
-              sentence.sentenceTokens,
-              Nil, Map()
-              // answerSpansWithColors.toList,
-              // verbColorMap.collect { case (verbIndex, color) =>
-              //   verbIndex -> (
-              //     (v: VdomTag) => <.a(
-              //       S.verbAnchorLink,
-              //       ^.href := s"#verb-$verbIndex",
-              //       v(
-              //         ^.color := color.copy(a = 1.0).toColorStyleString,
-              //         ^.fontWeight := "bold",
-              //         ^.onMouseMove --> (
-              //           if(highlightedVerbIndex.value == Some(verbIndex)) {
-              //             Callback.empty
-              //           } else highlightedVerbIndex.setState(Some(verbIndex))
-              //         ),
-              //         ^.onMouseOut --> highlightedVerbIndex.setState(None)
-              //       )
-              //     )
-              //   )
-              // }
-            )
-          )
-        ),
-        <.div(S.verbEntriesContainer)(
-          props.sentence.verbEntries.toList.toVdomArray { case (verbIndex, verb) =>
-            <.div(S.verbEntryDisplay)(
-              <.div(S.verbHeading)(
-                <.span(S.verbHeadingText)(
-                  // ^.color := color.copy(a = 1.0).toColorStyleString,
-                  sentence.sentenceTokens(verbIndex)
-                )
-              ),
-              <.table(S.verbQAsTable)()
-            )
-          }
+  def unsafeOptionGet[A]: Lens[Option[A], A] = {
+    Lens[Option[A], A](_.get)(a => opt => Some(a))
+  }
+
+  def transitiveClause(index: Int, verbForms: InflectedForms) = {
+    Argument.Finite(
+      Some(
+        Predication.Verbal(
+          index = Some(index),
+          subject = Argument.ProForm.what,
+          verb = Lexicon.Verb(verbForms),
+          isPassive = false,
+          arguments = Vector(Argument.ProForm.what),
+          tan = TAN(Some(Tense.Finite.Present), false, false, false)
         )
       )
+    )
+  }
+
+  def clauseEditor(clause: StateSnapshot[Argument]) = {
+    clause.value.render(ArgPosition.Arg(0)) match {
+      case Validated.Valid(tree) => argTreeElt(tree)
+      case Validated.Invalid(err) => <.div(err.toString)
     }
   }
 
+  def verbPropEditor(
+    sentence: ConsolidatedSentence,
+    verbIndex: Int,
+    state: State,
+    verbState: StateSnapshot[Vector[Argument]]
+  ) = {
+    <.div(
+      verbState.value.indices.flatMap(index =>
+        verbState.zoomStateO(
+          Optics.index[Vector[Argument], Int, Argument](index)
+        )
+      ).toVdomArray(clauseEditor(_)),
+      ArgLocal.make(
+        transitiveClause(verbIndex, sentence.verbEntries(verbIndex).verbInflectedForms)
+      ) { clause =>
+        clauseEditor(clause)
+      }
+    )
+  }
+
+  def render(props: Props) = {
+    import props.sentence
+    <.div(
+      StateLocal.make(State.fromSentence(props.sentence)) { state =>
+        <.div(
+          <.div(S.sentenceTextContainer)(
+            <.span(S.sentenceText)(
+              V.Spans.renderHighlightedPassage(
+                sentence.sentenceTokens,
+                Nil, Map()
+                // answerSpansWithColors.toList,
+                // verbColorMap.collect { case (verbIndex, color) =>
+                //   verbIndex -> (
+                //     (v: VdomTag) => <.a(
+                //       S.verbAnchorLink,
+                //       ^.href := s"#verb-$verbIndex",
+                //       v(
+                //         ^.color := color.copy(a = 1.0).toColorStyleString,
+                //         ^.fontWeight := "bold",
+                //         ^.onMouseMove --> (
+                //           if(highlightedVerbIndex.value == Some(verbIndex)) {
+                //             Callback.empty
+                //           } else highlightedVerbIndex.setState(Some(verbIndex))
+                //         ),
+                //         ^.onMouseOut --> highlightedVerbIndex.setState(None)
+                //       )
+                //     )
+                //   )
+                // }
+              )
+            )
+          ),
+          <.div(S.verbEntriesContainer)(
+            props.sentence.verbEntries.toList.toVdomArray { case (verbIndex, verb) =>
+              <.div(S.verbEntryDisplay)(
+                <.div(S.verbHeading)(
+                  <.span(S.verbHeadingText)(
+                    // ^.color := color.copy(a = 1.0).toColorStyleString,
+                    sentence.sentenceTokens(verbIndex)
+                  )
+                ),
+
+                verbPropEditor(
+                  sentence,
+                  verbIndex,
+                  state.value,
+                  state.zoomStateL(
+                    State.propsByVerbIndex
+                      .composeLens(Optics.at(verbIndex))
+                      .composeLens(unsafeOptionGet[Vector[Argument]])
+                  )
+                )
+              )
+            }
+          )
+        )
+      }
+    )
+  }
+
   val Component = ScalaComponent.builder[Props]("Syntactilizer")
-    .initialStateFromProps(p => State.fromSentence(p.sentence))
-    .renderBackend[Backend]
+    .render_P(render)
     .build
 
   def make(

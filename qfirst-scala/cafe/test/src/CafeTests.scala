@@ -61,7 +61,7 @@ class CafeTests extends CatsEffectSuite {
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
-    arguments = Vector(Argument.ToInfinitive(Some(eatPred), false, Set())),
+    arguments = Vector(Argument.ToInfinitive(Some(eatPred), false)),
     tan = TAN(Some(Tense.Finite.Present), true, false, false)
   )
 
@@ -70,7 +70,7 @@ class CafeTests extends CatsEffectSuite {
     subject = Argument.ProForm.who,
     verb = Lexicon.Verb(want),
     isPassive = false,
-    arguments = Vector(Argument.ToInfinitive(Some(doPro), false, Set())),
+    arguments = Vector(Argument.ToInfinitive(Some(doPro), false)),
     tan = TAN(Some(Tense.Finite.Present), true, false, false)
   )
 
@@ -117,8 +117,7 @@ class CafeTests extends CatsEffectSuite {
             Some(Person.Third),
             Some(Number.Singular)
           )
-        ),
-        None
+        )
       )
     ) ++ Vector(
       Argument.BareInfinitive(Some(eatPred)),
@@ -144,14 +143,14 @@ class CafeTests extends CatsEffectSuite {
         }
     }
     val questionStr = question match {
-      case Validated.Valid(q) => SyntaxTree.gloss[Argument, ArgText](q, _.symbol, _.text)
+      case Validated.Valid(q) => SyntaxTree.gloss[Argument, ArgContent](q, _.symbol, _.text)
       case Validated.Invalid(err) => err.toString
     }
     val answerStr = answerReplacements match {
       case Validated.Valid(answers) => answers.map {
         case Left(err) => err.toString
         case Right(res) => res match {
-          case Validated.Valid(sub) => SyntaxTree.gloss[Argument, ArgText](sub, _.symbol, _.text)
+          case Validated.Valid(sub) => SyntaxTree.gloss[Argument, ArgContent](sub, _.symbol, _.text)
           case Validated.Invalid(err) => err.toString
         }
       }.mkString("\n")
@@ -191,7 +190,7 @@ class CafeTests extends CatsEffectSuite {
                 case (pred, path) =>
                   Argument.Finite(Some(pred)).render(ArgPosition.Arg(0)) match {
                     case Validated.Valid(tree) => println(
-                      SyntaxTree.gloss[Argument, ArgText](tree, _.symbol, _.text)
+                      SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
                     )
                     case Validated.Invalid(err) => println("\t" + err)
                   }

@@ -76,7 +76,7 @@ object Conversion {
 
                 doWords.toString match {
                   case "do" => Vector(prts :+ Argument.BareInfinitive(Some(doSomething)))
-                  case "to do" => Vector(prts :+ Argument.ToInfinitive(Some(doSomething), false, Set()))
+                  case "to do" => Vector(prts :+ Argument.ToInfinitive(Some(doSomething), false))
                     // TODO: get all the right/possible combinations of preps, prts, gerunds, obj, etc.
                   case _ => Vector() // zz. todo. vvv XXX
                   // case "doing" => Vector(

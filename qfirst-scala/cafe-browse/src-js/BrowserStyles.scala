@@ -3,9 +3,7 @@ package qfirst.cafe.browse
 import scalacss.DevDefaults._
 import scala.language.postfixOps
 
-import jjm.ui.View
-
-object BrowserStyles extends View.Styles {
+object BrowserStyles extends jjm.ui.View.Styles {
   import dsl._
 
   // color scheme
@@ -38,6 +36,16 @@ object BrowserStyles extends View.Styles {
     borderRightStyle.solid,
     borderLeftWidth(paneDivisionBorderWidth),
     borderRightWidth(paneDivisionBorderWidth)
+  )
+
+  // syntactilizer new stuff
+
+  val treeGridItem = style(
+    backgroundColor(headerBackgroundColor)
+  )
+  val treeGridItemContent = style(
+    verticalAlign.bottom,
+    textAlign.center
   )
 
   // styles
