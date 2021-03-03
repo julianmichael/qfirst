@@ -13,6 +13,10 @@ object SurfaceForm {
 
   case class Text(text: LowerCaseString) extends SurfaceForm
 
+  case class Preposition(
+    source: Option[Int], form: LowerCaseString
+  ) extends SurfaceForm
+
   case class Participial(
     source: Option[Int], form: LowerCaseString
   ) extends SurfaceForm

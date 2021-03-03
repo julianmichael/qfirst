@@ -326,12 +326,12 @@ object Argument {
   // can appear as argument/adjunct of an adjective or adjunct of a copula
   // (includes obliques, complements, and adverbials)
   sealed trait NonNominal extends NonSubject
-  // can be turned into a subordinate clause
-  sealed trait Complement extends NonNominal
+  // can appear as the complement of a preposition
+  sealed trait Complement extends NonSubject
   // can be used predicatively with a copula (is not verb or adjective)
-  sealed trait NounOrOblique extends NonSubject
+  sealed trait NounOrOblique extends Complement
   // can appear as the object of a preposition
-  sealed trait Nominal extends Subject with NonSubject
+  sealed trait Nominal extends Subject with Complement
   // can appear with an adverbial wh-word: excludes full complements from NonNominal
   // sealed trait Adverbial extends NonNominal
 
@@ -385,7 +385,7 @@ object Argument {
         case _ => None
       }
     }
-    case object what extends Noun with Complement {
+    case object what extends Noun {
       def wh(pos: ArgPosition) = "what"
       val placeholder = Some("something")
       // val instances = Set(
@@ -422,8 +422,7 @@ object Argument {
       //   Attributive(None, Set(this))
       // )
       def instantiateConcrete(arg: Concrete): Option[Concrete] = arg match {
-        case arg @ Oblique(_, _) => Some(arg)
-        case arg @ Subordinate(_, _) => Some(arg)
+        case arg @ Prepositional(_, _) => Some(arg)
         case arg @ Adverbial(_, _) => Some(arg)
         case arg @ ToInfinitive(_, _) => Some(arg)
         case arg @ Progressive(_, _, _) => Some(arg)
@@ -442,8 +441,7 @@ object Argument {
         case arg @ NounPhrase(_) => Some(arg)
         // case arg @ Gerund(_, _) => Some(arg)
         // case arg @ Attributive(_) => Some(arg)
-        case arg @ Oblique(_, _) => Some(arg)
-        // case arg @ Subordinate(_, _) => Some(arg)
+        case arg @ Prepositional(_, _) => Some(arg)
         case arg @ Adverbial(_, _) => Some(arg)
         // case arg @ ToInfinitive(_, _) => Some(arg)
         // case arg @ Progressive(_, _, _) => Some(arg)
@@ -596,8 +594,8 @@ object Argument {
     }
   }
 
-  case class Oblique(
-    pred: Option[Predication.Oblique],
+  case class Prepositional(
+    pred: Option[Predication.Prepositional],
     adverbials: Set[ProForm.Adverb] = Set()
   ) extends Semantic with NounOrOblique with NonNominal {
 
@@ -612,7 +610,7 @@ object Argument {
       swapOutArg: SwapOutArg[A],
       path: Option[Descent[F]]
     ) = {
-      val swapOutPred = SwapOutPred[Predication.Oblique, A] {
+      val swapOutPred = SwapOutPred[Predication.Prepositional, A] {
         case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
         case Left(arg) => swapOutArg.replace(Right(arg))
       }
@@ -621,29 +619,29 @@ object Argument {
     }
   }
 
-  // TODO: island constraints
-  case class Subordinate(
-    pred: Option[Predication.Subordinate],
-    adverbials: Set[ProForm.Adverb]
-  ) extends Semantic with NonNominal {
-    override def category = "adv[comp]"
-    // override def proForms = adverbials.map(x => x: ProForm)
-    // TODO might depend on the predicate?
-    override def allowPiedPiping(path: ArgumentPath[ProFormExtraction]) = false
-    import ArgPosition._, ArgumentPath.Descent
-    override def renderLax[F[_], A](
-      pos: ArgPosition,
-      swapOutArg: SwapOutArg[A],
-      path: Option[Descent[F]]
-    ) = {
-      val swapOutPred = SwapOutPred[Predication.Subordinate, A] {
-        case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
-        case Left(arg) => swapOutArg.replace(Right(arg))
-      }
-      pred.map(_.renderLax((), swapOutPred, path))
-        .getOrElse(valid(WithExtraction(Vector(leaf(ArgContent.blank)))))
-    }
-  }
+  // // TODO: island constraints
+  // case class Subordinate(
+  //   pred: Option[Predication.Subordinate],
+  //   adverbials: Set[ProForm.Adverb]
+  // ) extends Semantic with NonNominal {
+  //   override def category = "adv[comp]"
+  //   // override def proForms = adverbials.map(x => x: ProForm)
+  //   // TODO might depend on the predicate?
+  //   override def allowPiedPiping(path: ArgumentPath[ProFormExtraction]) = false
+  //   import ArgPosition._, ArgumentPath.Descent
+  //   override def renderLax[F[_], A](
+  //     pos: ArgPosition,
+  //     swapOutArg: SwapOutArg[A],
+  //     path: Option[Descent[F]]
+  //   ) = {
+  //     val swapOutPred = SwapOutPred[Predication.Subordinate, A] {
+  //       case Right(pred) => swapOutArg.replace(Right(this.copy(pred = Some(pred))))
+  //       case Left(arg) => swapOutArg.replace(Right(arg))
+  //     }
+  //     pred.map(_.renderLax((), swapOutPred, path))
+  //       .getOrElse(valid(WithExtraction(Vector(leaf(ArgContent.blank)))))
+  //   }
+  // }
 
   sealed trait Clausal extends Semantic {
     // TODO: this would probably be way easier to do with typeclasses lmao
@@ -992,9 +990,6 @@ object Predication {
   import Validated.valid
   import SyntaxTree.{node, leaf}
 
-  // doesn't extend Predication because we don't need to use it that way yet.
-  // in the future, with proper nominal predicates, might use it this way.
-  // but it would be a separate (non-clausal) type of predication.
   sealed trait Nominal extends Predication {
 
     type GramFeats = Case
@@ -1034,44 +1029,15 @@ object Predication {
   object NounPhrase
   // TODO: add definite pronouns
 
-  sealed trait Oblique extends Predication {
-    type Self <: Oblique
-    type GramFeats = Unit
-    import ArgPosition._, ArgumentPath.Descent
-  }
-  // prep should not take an object, i.e., is a particle
-  case class Particulate(
-    index: Option[Int],
-    prt: Particle
-  ) extends Oblique {
-    type Self = Particulate
-    override def proxy: Option[ProxyArgument[Self]] = None
-    def arguments = Vector()
-
-    import ArgPosition._, ArgumentPath.Descent
-
-    override def renderLax[F[_], A](
-      feats: Unit,
-      swapOutPred: SwapOutPred[Self, A],
-      path: Option[Descent[F]]
-    ): RenderBranches[F[A]] = path match {
-      case Some(_) => invalid("Cannot extract from inside a particle.")
-      case None => valid(
-        WithExtraction(
-          Vector(leaf(ArgContent.text(prt.form, pos = Some("prt"))))
-        )
-      )
-    }
-  }
-
   case class Prepositional(
     index: Option[Int],
     prep: Preposition,
-    obj: Argument.Nominal,
+    arg: Option[Argument.Complement],
     proxy: Option[ProxyArgument[Prepositional]] = None
-  ) extends Oblique {
+  ) extends Predication {
     type Self = Prepositional
-    def arguments = Vector(obj)
+    type GramFeats = Unit
+    def arguments = arg.toVector
     import ArgPosition._, ArgumentPath._
     override def renderLax[F[_], A](
       feats: Unit,
@@ -1081,28 +1047,33 @@ object Predication {
       if(path.exists(_.position != Arg(0))) {
         invalid(s"Can't descend into argument for extraction from oblique: ${path.get}")
       } else Vector(
-        valid(
-          WithExtraction(
-            leaf(ArgContent.text(prep.form, pos = Some("prep")))
+        Option(
+          valid(
+            WithExtraction(
+              leaf(ArgContent.text(prep.form, pos = Some("prep")))
+            )
           )
         ),
-        obj.renderLaxWithPath(
-          Arg(0),
-          SwapOutArg {
-            case Right(arg: Argument.Nominal) => swapOutPred.replace(Right(this.copy(obj = arg)))
-            case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
-            case Left(failure) =>
-              val newFailure = failure.ascend(Arg(0))
-              proxy.flatMap(_.recover(newFailure))
-                .map(swapOutPred.replace)
-                .getOrElse(Left(newFailure))
-          },
-          ArgumentPath.descend(path, Arg(0))
+        arg.map(
+          _.renderLaxWithPath(
+            Arg(0),
+            SwapOutArg {
+              case Right(arg: Argument.Complement) => swapOutPred.replace(
+                Right(this.copy(arg = Some(arg)))
+              )
+              case Right(otherArg) => Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
+              case Left(failure) =>
+                val newFailure = failure.ascend(Arg(0))
+                proxy.flatMap(_.recover(newFailure))
+                  .map(swapOutPred.replace)
+                  .getOrElse(Left(newFailure))
+            },
+            ArgumentPath.descend(path, Arg(0))
+          )
         )
-      ).map(_.map(_.map(x => Vector(x))))
+      ).flatten.map(_.map(_.map(x => Vector(x))))
         .foldA
         // .nonEmptySequence[ValidatedNec[RenderError, *], WithExtraction[Tree, F[A]]]
-        
         // .sequenceA
     }
   }
@@ -1124,47 +1095,6 @@ object Predication {
     ): RenderBranches[F[A]] = path match {
       case Some(_) => invalid("Cannot descend into an adverbial for extraction (for now).")
       case None => valid(WithExtraction(Vector(leaf(ArgContent.text(form)))))
-    }
-  }
-
-  case class Subordinate(
-    index: Option[Int],
-    subordinator: Subordinator,
-    clause: Argument.Complement,
-    proxy: Option[ProxyArgument[Subordinate]] = None
-  ) extends Predication {
-    type Self = Subordinate
-    type GramFeats = Unit
-    def arguments = Vector(clause)
-    import ArgumentPath._, ArgPosition._
-    override def renderLax[F[_], A](
-      feats: Unit,
-      swapOutPred: SwapOutPred[Self, A],
-      path: Option[Descent[F]]
-    ): RenderBranches[F[A]] = {
-      path match {
-        case Some(pos) if pos != Arg(0) =>
-          invalid(s"Can't descend into argument for extraction from subordinate: $pos")
-        case otherPath => Vector(
-          valid(WithExtraction(leaf(ArgContent.text(subordinator.form.toString, pos = Some("sub"))))),
-          clause.renderLaxWithPath(
-            Arg(0),
-            SwapOutArg {
-              case Right(arg: Argument.Complement) =>
-                swapOutPred.replace(Right(this.copy(clause = arg)))
-              case Right(otherArg) =>
-                Left(SubstitutionFailure(otherArg, Descent(Arg(0), End(Target))))
-              case Left(failure) =>
-                val newFailure = failure.ascend(Arg(0))
-                proxy.flatMap(_.recover(newFailure))
-                  .map(swapOutPred.replace)
-                  .getOrElse(Left(newFailure))
-            },
-            ArgumentPath.descend(path, Arg(0))
-          )
-        ).map(_.map(_.map(x => Vector(x)))).foldA
-            // .foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
-      }
     }
   }
 

@@ -191,8 +191,11 @@ object qfirst extends Module {
   }
 
   object cafe extends Module {
-    object js extends JsModule
+    object js extends JsModule {
+      def moduleDeps = Seq(parsing.js)
+    }
     object jvm extends JvmModule {
+      def moduleDeps = Seq(parsing.jvm)
       object test extends Tests
     }
   }

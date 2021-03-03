@@ -18,17 +18,45 @@ object Lexicon {
     val it = Expletive("it".lowerCase)
     val there = Expletive("there".lowerCase)
   }
-  case class Particle(form: LowerCaseString)
   case class Preposition(form: LowerCaseString)
+  object Preposition {
+    val mostCommonPrepositions = Set(
+      "by", "for", "with",
+      // "about", // too many spurious questions from this
+      "in", "from", "to", "as" // added my own on this line
+    ).map(_.lowerCase)
+
+    // TODO bigger list
+    val preps = Set(
+      "aboard", "about", "above", "across", "afore",
+      "after", "against", "ahead", "along", "alongside",
+      "amid", "amidst", "among", "amongst", "around",
+      "as", "aside", "astride", "at", "atop",
+      "before", "behind", "below", "beneath", "beside",
+      "besides", "between", "beyond", "by", "despite",
+      "down", "during", "except", "for", "from",
+      "given", "in", "inside", "into", "near",
+      "next", "of", "off", "on", "onto",
+      "opposite", "out", "outside", "over", "pace",
+      "per", "round", "since", "than", "through",
+      "throughout", "till", "times", "to", "toward",
+      "towards", "under", "underneath", "until", "unto",
+      "up", "upon", "versus", "via", "with",
+      "within", "without"
+    ).map(_.lowerCase)
+
+  }
   case class Complementizer(form: LowerCaseString)
   object Complementizer {
     val that = Complementizer("that".lowerCase)
+    // TODO maybe put separately for embedded-question complementizers?
+    // val whether = Complementizer("whether".lowerCase)
+    // val `if` = Complementizer("if".lowerCase)
   }
   case class InfinitiveComplementizer(form: LowerCaseString)
   object InfinitiveComplementizer {
     val `for` = InfinitiveComplementizer("for".lowerCase)
   }
-  case class Subordinator(form: LowerCaseString)
   case class Adjective(form: LowerCaseString)
   case class Verb(forms: InflectedForms)
 
