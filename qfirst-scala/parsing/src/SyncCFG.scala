@@ -27,16 +27,22 @@ object SyncCFGProductionSyntax {
   import syntax.std.tuple._
   import scala.language.implicitConversions
 
-  case class CFGProductionHelper[ChildSymbols <: HList, Children <: HList, Parent](
+  case class CFGProductionHelper[ChildSymbols <: HList, ChildrenTuple <: Product, Children <: HList, Parent](
     val children: ChildSymbols,
     val parent: ParseSymbol[Parent])(
-    implicit val comapped: Comapped.Aux[ChildSymbols, ParseSymbol, Children]) {
-    def using(construct: PartialFunction[Children, ScoredStream[Parent]]): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, construct)
-    def usingSingle(construct: PartialFunction[Children, Scored[Parent]]): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, construct andThen { case x => ScoredStream.unit(x) })
-    def usingSingleZ(construct: PartialFunction[Children, Parent]): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, construct andThen { case x => ScoredStream.unit(x) })
+    implicit val comapped: Comapped.Aux[ChildSymbols, ParseSymbol, Children],
+    gen: Generic.Aux[ChildrenTuple, Children]
+    ) {
+
+    def using(
+      construct: PartialFunction[ChildrenTuple, ScoredStream[Parent]])(
+    ): SyncCFGProduction[ChildSymbols, Children, Parent] =
+      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x))))
+
+    def usingSingle(construct: PartialFunction[ChildrenTuple, Scored[Parent]]): SyncCFGProduction[ChildSymbols, Children, Parent] =
+      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x)).map(ScoredStream.unit)))
+    def usingSingleZ(construct: PartialFunction[ChildrenTuple, Parent]): SyncCFGProduction[ChildSymbols, Children, Parent] =
+      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x)).map(ScoredStream.unit(_))))
   }
 
   // really only exists for nice syntax
@@ -64,13 +70,17 @@ object SyncCFGProductionSyntax {
   }
 
   implicit class tuple2Children[
-    ChildrenTuple <: Product,
+    ChildSymbolsTuple <: Product,
     ChildSymbols <: HList,
+    ChildrenTuple <: Product,
     Children <: HList](
-    childrenTuple: ChildrenTuple)(
-    implicit val gen: Generic.Aux[ChildrenTuple, ChildSymbols],
-    comapped: Comapped.Aux[ChildSymbols, ParseSymbol, Children]) {
-    def to[Parent](symb: ParseSymbol[Parent]) = CFGProductionHelper[ChildSymbols, Children, Parent](childrenTuple.productElements, symb)
+    childSymbolsTuple: ChildSymbolsTuple)(
+    implicit gen1: Generic.Aux[ChildSymbolsTuple, ChildSymbols],
+    comapped: Comapped.Aux[ChildSymbols, ParseSymbol, Children],
+    tupler: Tupler.Aux[Children, ChildrenTuple],
+    gen2: Generic.Aux[ChildrenTuple, Children],
+    ) {
+    def to[Parent](symb: ParseSymbol[Parent]) = CFGProductionHelper[ChildSymbols, ChildrenTuple, Children, Parent](childSymbolsTuple.productElements, symb)
   }
 
   implicit class symbol2Child[Child](childSymbol: ParseSymbol[Child]) {
@@ -85,8 +95,8 @@ object SyncCFGProductionSyntax {
     def t(args: Any*) = Terminal(sc.s(args: _*))
   }
 
-  implicit def cfgHelper2Production[ChildSymbols <: HList, Children <: HList, Parent](
-    helper: CFGProductionHelper[ChildSymbols, Children, Parent]): CFGProduction[ChildSymbols, ParseSymbol[Parent]] =
+  implicit def cfgHelper2Production[ChildSymbols <: HList, ChildrenTuple <: Product, Children <: HList, Parent](
+    helper: CFGProductionHelper[ChildSymbols, ChildrenTuple, Children, Parent]): CFGProduction[ChildSymbols, ParseSymbol[Parent]] =
     CFGProduction(helper.children, helper.parent)
 
   implicit def unaryCfgHelper2Production[Child, Parent](

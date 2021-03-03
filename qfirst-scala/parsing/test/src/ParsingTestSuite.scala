@@ -30,10 +30,10 @@ class ParsingTestSuite extends munit.CatsEffectSuite {
     case ExpStr(str) => Scored(ExpStr(s"($str)"), 1.0)
   }
   val prod2 = (IntSymb, StrSymb) to StrSymb2 using {
-    case ExpInt(i) :: ExpStr(str) :: HNil => ScoredStream.unit(Scored(ExpStr(s"${i * i}:$str"), 1.0))
+    case (ExpInt(i), ExpStr(str)) => ScoredStream.unit(Scored(ExpStr(s"${i * i}:$str"), 1.0))
   }
   val prod3 = (IntSymb, t"+", IntSymb) to IntSymb usingSingle {
-    case ExpInt(i) :: _ :: ExpInt(i2) :: HNil => Scored(ExpInt(i + i2), 1.0)
+    case (ExpInt(i), _, ExpInt(i2)) => Scored(ExpInt(i + i2), 1.0)
   }
   val prod4 = () to IntSymb usingSingle Scored(ExpInt(0), 1.0)
 
@@ -71,23 +71,22 @@ object Calculator {
     num merge term
   }
   val productions = {
-    val plus = (Num, Terminal("+"), Num) to Num using {
-      case i :: _ :: j :: HNil => ScoredStream.unit(Scored(i + j, 1.0))
+    val plus = (Num, t"+", Num) to Num usingSingle {
+      case (i, _, j) => Scored(i + j, 1.0)
     }
-    val minus = (Num, Terminal("-"), Num) to Num using {
-      case i :: _ :: j :: HNil => ScoredStream.unit(Scored(i - j, 1.0))
+    val minus = (Num, t"-", Num) to Num usingSingle {
+      case (i, _, j) => Scored(i - j, 1.0)
     }
-    val times = (Num, Terminal("*"), Num) to Num using {
-      case i :: _ :: j :: HNil => ScoredStream.unit(Scored(i * j, 1.0))
+    val times = (Num, t"*", Num) to Num usingSingle {
+      case (i, _, j) => Scored(i * j, 1.0)
     }
-    val div = (Num, Terminal("/"), Num) to Num using {
-      case i :: _ :: j :: HNil => ScoredStream.unit(Scored(i / j, 1.0))
+    val div = (Num, t"/", Num) to Num usingSingle {
+      case (i, _, j) => Scored(i / j, 1.0)
     }
-    val parens = (Terminal("("), Num, Terminal(")")) to Num using {
-      case _ :: i :: _ :: HNil => ScoredStream.unit(Scored(i, 1.0))
+    val parens = (t"(", Num, t")") to Num usingSingle {
+      case (_, i, _) => Scored(i, 1.0)
     }
     plus :: minus :: times :: div :: parens :: HNil
-    // ???
   }
   val grammar = SyncCFG(productions)
   val parser = AgendaBasedSyncCNFParser.buildFromSyncCFG(genlex, grammar)
