@@ -1,5 +1,8 @@
 package qfirst.parsing
 
+import cats.MonoidK
+import cats.kernel.Monoid
+
 // TODO FIX SERIOUS PROBLEM:
 // if you do a map/flatMap/collect
 // where f(a_i) < a_{i + 1} for all i,
@@ -364,6 +367,12 @@ trait ScoredStreamInstances {
   implicit def consOrdering[A]: Ordering[ScoredCons[A]] = new Ordering[ScoredCons[A]] {
     def compare(a: ScoredCons[A], b: ScoredCons[A]): Int = a.head.score.compare(b.head.score)
   }
+  implicit val scoredStreamMonoidK: MonoidK[ScoredStream] = new MonoidK[ScoredStream] {
+    def empty[A]: ScoredStream[A] = ScoredStream.empty[A]
+    def combineK[A](x: ScoredStream[A], y: ScoredStream[A]): ScoredStream[A] = x merge y
+  }
+
+  implicit def scoredStreamMonoid[A]: Monoid[ScoredStream[A]] = scoredStreamMonoidK.algebra[A]
 }
 
 object ScoredStreamExamples {

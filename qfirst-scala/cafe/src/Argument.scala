@@ -1098,6 +1098,210 @@ object Predication {
     }
   }
 
+  // import qasrl.Tense
+
+  // case class Aspect(
+  //   isPerfect: Boolean,
+  //   isProgressive: Boolean,
+  //   isNegated: Boolean
+  // )
+  // object Aspect {
+  //   def default = Aspect(false, false, false)
+  // }
+
+  // sealed trait VPForm {
+  //   def resolveAspect(aspect: Aspect): Option[Aspect] = Some(aspect)
+  // }
+  // object VPForm {
+
+  //   case object Predicative extends VPForm
+  //   case object BareInfinitive extends VPForm
+  //   case object ToInfinitive extends VPForm
+  //   case object Perfect extends VPForm {
+  //     override def resolveAspect(aspect: Aspect): Option[Aspect] =
+  //       if(aspect.isPerfect) None else Some(aspect.copy(isPerfect = true))
+  //   }
+  //   case object Progressive extends VPForm {
+  //     override def resolveAspect(aspect: Aspect): Option[Aspect] =
+  //       if(aspect.isProgressive) None else Some(aspect.copy(isProgressive = true))
+  //   }
+  //   case class Finite(
+  //     tense: Tense.Finite,
+  //     subjectNumber: Option[Number],
+  //     subjectPerson: Option[Person]
+  //   ) extends VPForm
+  // }
+
+  // // sealed trait SForm
+  // // object SForm {
+  // //   // NOTE: could include small clauses (bare inf) as well as inverted ones
+  // //   // e.g., "be he a rascal, ..."
+  // //   // case class BareInfinitive(aspect: Aspect) extends VPForm
+  // //   case class ForToInfinitive(aspect: Aspect) extends SForm
+  // //   case class Progressive(genitiveSubject: Boolean, aspect: Aspect) extends SForm
+  // //   case class Finite(
+  // //     tense: qasrl.Tense.Finite,
+  // //     aspect: Aspect,
+  // //   ) extends SForm
+  // //   case class FiniteComplement(
+  // //     complementizer: Lexicon.Complementizer,
+  // //     tense: Tense.Finite,
+  // //     aspect: Aspect,
+  // //   ) extends SForm
+  // //   case class Inverted(
+  // //     tense: Tense.Finite,
+  // //     aspect: Aspect
+  // //   )
+  // //   case class FiniteQuestion(
+  // //     tense: Tense.Finite,
+  // //     aspect: Aspect,
+  // //     path: Option[ArgumentPath[Extraction]]
+  // //   )
+  // // }
+
+  // sealed trait VerbLike extends Predication {
+  //   def index: Option[Int]
+  //   type Self <: Verbal
+  //   type GramFeats = VPForm
+  //   def predPOS: String
+
+  //   def renderVerbChain(
+  //     form: VPForm,
+  //     needsFlippable: Boolean
+  //   ): Either[NonEmptyChain[String], NonEmptyList[String]]
+
+  //   def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A]
+
+  //   import Validated.valid
+  //   // import LabeledTree.{leaf, leaves, node}
+  //   import SyntaxTree.{node, leaf}
+  //   import Component.WithExtraction
+
+  //   override def renderLax[F[_], A](
+  //     feats: VPForm,
+  //     swapOutPred: SwapOutPred[Self, A],
+  //     path: Option[ArgumentPath.Descent[F]]
+  //   ): Component.RenderBranches[F[A]] = {
+  //     validatePath(path) *> {
+  //       val args: RenderBranches[F[A]] = renderArguments(path, swapOutPred)
+  //       def makeVerbTree(chain: NonEmptyList[String]) = {
+  //         if(chain.size == 1) Vector(
+  //           leaf(ArgContent.text(chain.head, pos = Some(predPOS)))
+  //         ) else Vector(
+  //           leaf(ArgContent.text(chain.init.mkString(" "), pos = Some("aux"))),
+  //           leaf(ArgContent.text(chain.last, pos = Some(predPOS)))
+  //         )
+  //       }
+
+  //       Validated.fromEither(
+  //         renderVerbChain(feats, false).left.map(_.map(error(_)))
+  //       ).andThen { verbChain =>
+  //         val verb: RenderBranches[F[A]] = valid(WithExtraction(makeVerbTree(verbChain)))
+  //         Vector(
+  //           verb, args
+  //         ).foldA[ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+  //       }
+  //       // [ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]]
+  //       // .foldA
+  //     }
+  //   }
+
+  //   def validatePath[F[_]](
+  //     path: Option[ArgumentPath.Descent[F]]
+  //   ): ValidatedNec[Component.RenderError, Unit] = path.map(_.position) match {
+  //     case None => valid(())
+  //     case Some(ArgPosition.Subj) => invalid(s"Cannot descend into subject position for VP.")
+  //     case Some(ArgPosition.Arg(i)) if arguments.size > i => valid(())
+  //     case Some(pos) => invalid(s"Cannot descend into argument position for extraction: $pos")
+  //   }
+
+  //   def renderArguments[F[_], A](
+  //     path: Option[ArgumentPath.Descent[F]],
+  //     swapOutPred: SwapOutPred[Self, A]
+  //   ): Component.RenderBranches[F[A]] = {
+  //     arguments.zipWithIndex.foldMapA[
+  //       ValidatedNec[RenderError, *], WithExtraction[Branches, F[A]]
+  //     ] { case (arg, index) =>
+  //       arg.renderLaxWithPath(
+  //         ArgPosition.Arg(index),
+  //         swapOutArg(swapOutPred, index),
+  //         ArgumentPath.descend(path, ArgPosition.Arg(index))
+  //       ).map(_.map(Vector(_)))
+  //     }
+  //   }
+  // }
+
+  // sealed trait NonCopularVerbLike extends VerbLike
+
+  // case class Verbal(
+  //   index: Option[Int],
+  //   verb: Verb,
+  //   isPassive: Boolean,
+  //   arguments: Vector[NonSubject],
+  //   proxy: Option[ProxyArgument[Verbal]] = None
+  // ) extends NonCopularVerbLike {
+  //   type Self = Verbal
+  //   override def predPOS = "verb"
+  //   override def renderVerbChain(vpForm: VPForm, needsFlippable: Boolean) = {
+  //     def pastParticiple = verb.forms.pastParticiple.toString
+  //     clauseType match {
+  //       case ClauseType.Attributive =>
+  //         if(!isPassive) {
+  //           Left(NonEmptyChain.one("Cannot construct attributive clause from active form."))
+  //         } else Right(NonEmptyList.of(pastParticiple))
+  //       case otherType: ClauseType.VerbalClauseType =>
+  //         if(isPassive) {
+  //           val aux = tan.getCopulaAuxChain(otherType, subject)
+  //           aux.map(_ append pastParticiple)
+  //         } else {
+  //           tan.getAuxChain(
+  //             verb.forms, otherType, subject,
+  //             ensureDoSupport = needsFlippable
+  //           )
+  //         }
+  //     }
+  //   }
+  //   import ArgPosition._, ArgumentPath._
+  //   def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
+  //     SwapOutArg {
+  //       case Right(arg: NonSubject) =>
+  //         swapOutPred.replace(Right(this.copy(arguments = arguments.updated(index, arg))))
+  //       case Right(otherArg) =>
+  //         Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
+  //       case Left(failure) =>
+  //         val newFailure = failure.ascend(Arg(index))
+  //         proxy.flatMap(_.recover(newFailure))
+  //           .map(swapOutPred.replace)
+  //           .getOrElse(Left(newFailure))
+  //     }
+  // }
+  // object Verbal {
+  //   // maybe also 'what happened _?' type of pro-form?
+  //   // XXX change to a pro-form
+  //   import ArgumentPath._
+  //   import ArgPosition._
+  //   def doSomething(
+  //     subject: Argument.Subject,
+  //     // modifiers: Vector[NonNominal],
+  //     tan: TAN
+  //   ) = Verbal(
+  //     None,
+  //     subject, Verb(InflectedForms.doForms), false,
+  //     Vector(Argument.ProForm.what),// +: modifiers,
+  //     tan,
+  //     Some(
+  //       ProxyArgument(
+  //         Descent(Arg(0), End(Target)),
+  //         arg => arg match {
+  //           case bare: Argument.BareInfinitive =>
+  //             bare.pred.map(Right(_))
+  //           case _ => None
+  //         }
+  //       )
+  //     )
+  //   )
+  // }
+
   case class ClauseFeats(
     clauseType: ClauseType,
     includeSubject: Boolean
@@ -1406,4 +1610,5 @@ object Predication {
       )
     )
   }
+
 }
