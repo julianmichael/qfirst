@@ -18,38 +18,6 @@ import jjm.ling.en.VerbForm
 
 class Parsing(sentence: ConsolidatedSentence) {
 
-  case class Aspect(
-    isPerfect: Boolean,
-    isProgressive: Boolean,
-    isNegated: Boolean
-  )
-  object Aspect {
-    def default = Aspect(false, false, false)
-  }
-
-  sealed trait VPForm {
-    def resolveAspect(aspect: Aspect): Option[Aspect] = Some(aspect)
-  }
-  object VPForm {
-
-    case object Predicative extends VPForm
-    case object BareInfinitive extends VPForm
-    case object ToInfinitive extends VPForm
-    case object Perfect extends VPForm {
-      override def resolveAspect(aspect: Aspect): Option[Aspect] =
-        if(aspect.isPerfect) None else Some(aspect.copy(isPerfect = true))
-    }
-    case object Progressive extends VPForm {
-      override def resolveAspect(aspect: Aspect): Option[Aspect] =
-        if(aspect.isProgressive) None else Some(aspect.copy(isProgressive = true))
-    }
-    case class Finite(
-      tense: Tense.Finite,
-      subjectNumber: Option[Number],
-      subjectPerson: Option[Person]
-    ) extends VPForm
-  }
-
   def vpFormMapping(forms: InflectedForms): Map[String, Vector[VPForm]] = {
     import VPForm._
     List[(String, Vector[VPForm])](

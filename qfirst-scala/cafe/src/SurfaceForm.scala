@@ -18,18 +18,4 @@ object SurfaceForm {
     source: Option[Int],
     text: String
   ) extends SurfaceForm
-
-  // case class Preposition(
-  //   source: Option[Int], form: LowerCaseString
-  // ) extends SurfaceForm
-
-  // case class Participial(
-  //   source: Option[Int], form: LowerCaseString
-  // ) extends SurfaceForm
-
-  // case class Copula(feats: SimpleClauseForm) extends SurfaceForm
-
-  // case class Verb(
-  //   source: Option[Int], forms: InflectedForms, feats: SimpleClauseForm
-  // ) extends SurfaceForm
 }
