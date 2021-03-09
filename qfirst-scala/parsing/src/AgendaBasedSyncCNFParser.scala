@@ -101,21 +101,24 @@ class AgendaBasedSyncCNFParser[Token](
           case None => None
           case Some(headEdgeStream) => headEdgeStream match {
             case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
-              // if(span == Some(0 -> 1) || span.exists { case (b, e) => e - b > 2 }) {
-              // if(true) {
-              //   Thread.sleep(100)
-              //   println("===== ===== ===== =====")
-              //   println(score)
-              //   println(curDeriv.item)
-              //   println(curDeriv.treeGloss)
-              //   println(span)
-              //   println(evalBlocks.headOption)
-              // }
+              def debugPrint = {
+                Thread.sleep(100)
+                println("===== ===== ===== =====")
+                println(score)
+                println(curDeriv.item)
+                println(curDeriv.treeGloss)
+                println(span)
+                println(evalBlocks.headOption)
+              }
+              // if(true) debugPrint
+              // if(span == Some(0 -> 1) || span.exists { case (b, e) => e - b > 2 }) debugPrint
               // TODO change out for option? or remove entirely
               require {
                 val realWidth = curDeriv.tree.toVector.filter(_ != "_").size
                 val measuredWidth = span.foldMap(x => x._2 - x._1)
-                realWidth == measuredWidth
+                val res = realWidth == measuredWidth
+                if(!res) debugPrint
+                res
               }
               if(evalBlocks.headOption.exists(_.score < score + heuristic)) {
                 val res = evalBlocks.headOption.get

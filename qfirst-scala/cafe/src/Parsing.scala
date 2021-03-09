@@ -346,13 +346,11 @@ class Parsing(sentence: ConsolidatedSentence) {
           sentence.verbEntries.get(index).foldMap(verb =>
             makeVBars(verb.verbInflectedForms, text, sourceOpt)
           )
-        ).combineAll,
-        // TODO add back in
-        // .getOrElse(
-        //   extraVerbs.foldMap(forms =>
-        //     makeVBars(forms, text, None)
-        //   )
-        // ),
+        ).getOrElse(
+          extraVerbs.foldMap(forms =>
+            makeVBars(forms, text, None)
+          )
+        ),
         Option(text).filter(Preposition.preps.contains).foldMap(prep =>
           ScoredStream.unit(Derivation(Prep, Preposition(sourceOpt, text), text))
         ),
@@ -402,39 +400,45 @@ class Parsing(sentence: ConsolidatedSentence) {
         )
     }
     val vBarArg = (VBar, Arg) to VBar using {
-      case (vBarNode, argNode) => vBarNode.zipOpt(argNode).flatMap {
-        case Node(
-          (vp @ VerbPhrase(cop: Predication.Copular, _, _), newMod: Argument.NonNominal),
-          path
-        ) =>
-          Some(
-            Node(
-              vp.copy(pred = cop.copy(modifiers = cop.modifiers :+ newMod)),
-              ArgumentPath.ascend(path, ArgPosition.Arg(cop.modifiers.size))
-            )
-          )
-        case Node(
-          (vp @ VerbPhrase(adj: Predication.Adjectival, _, _), newArg: Argument.NonNominal),
-          path
-        ) =>
-          Some(
-            Node(
-              vp.copy(pred = adj.copy(arguments = adj.arguments :+ newArg)),
-              ArgumentPath.ascend(path, ArgPosition.Arg(adj.arguments.size))
-            )
-          )
-        case Node(
-          (vp @ VerbPhrase(verb: Predication.Verbal, _, _), newArg: Argument.NonSubject),
-          path
-        ) =>
-          Some(
-            Node(
-              vp.copy(pred = verb.copy(arguments = verb.arguments :+ newArg)),
-              ArgumentPath.ascend(path, ArgPosition.Arg(verb.arguments.size))
-            )
-          )
-        case _ => None
-      }.foldMap(ScoredStream.unit(_))
+      case (vBarNode, argNode) =>
+        onlyOneOf(
+          vBarNode.path,
+          ArgumentPath.ascend(argNode.path, ArgPosition.Arg(vBarNode.value.pred.arguments.size))
+        ).foldMap { path =>
+          (vBarNode.value, argNode.value) match {
+            case (
+              vp @ VerbPhrase(cop: Predication.Copular, _, _),
+              newMod: Argument.NonNominal
+            ) =>
+              ScoredStream.unit(
+                Node(
+                  vp.copy(pred = cop.copy(modifiers = cop.modifiers :+ newMod)),
+                  path
+                )
+              )
+            case (
+              vp @ VerbPhrase(adj: Predication.Adjectival, _, _),
+              newArg: Argument.NonNominal
+            ) =>
+              ScoredStream.unit(
+                Node(
+                  vp.copy(pred = adj.copy(arguments = adj.arguments :+ newArg)),
+                  path
+                )
+              )
+            case (
+              vp @ VerbPhrase(verb: Predication.Verbal, _, _),
+              newArg: Argument.NonSubject
+            ) =>
+              ScoredStream.unit(
+                Node(
+                  vp.copy(pred = verb.copy(arguments = verb.arguments :+ newArg)),
+                  path
+                )
+              )
+            case _ => ScoredStream.empty
+          }
+      }
     }
     val vp = VBar to VP usingSingleZ { case vbar => vbar }
     val auxVP = (Aux, VP) to VP using {
@@ -488,16 +492,15 @@ class Parsing(sentence: ConsolidatedSentence) {
         )
       case _ => ScoredStream.empty
     }
+    // NOTE: this prohibits any extraction from inside the subject,
+    // which I think is correct in English anyway.
     val vpToSInv = (Aux, Arg, VP) to S using {
       case (aux,
-            Node(subj: Argument.Subject, subjPath),
-            Node(VerbPhrase(pred, form, aspect), vpPath)
-      ) => onlyOneOf(
-        ArgumentPath.ascend(subjPath, ArgPosition.Subj),
-        vpPath
-      ).foldMap { path =>
-        aux.modify(form).collect {
-          case VPForm.Finite(tense, numAgr, persAgr) =>
+            Node(subj: Argument.Subject, None),
+            Node(vp, vpPath)
+      ) =>
+        aux.modifyVP(vp).collect {
+          case VerbPhrase(pred, VPForm.Finite(tense, numAgr, persAgr), aspect) =>
             val numGood = cats.data.Ior
               .fromOptions(numAgr, subj.number)
               .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
@@ -508,13 +511,11 @@ class Parsing(sentence: ConsolidatedSentence) {
               ScoredStream.unit(
                 Node(
                   Clause(Predication.Clausal(subj, pred), SForm.Inverted(tense), aspect),
-                  path
+                  vpPath
                 )
               )
             } else ScoredStream.empty[Node[Clause]]
         }.combineAll
-      }
-      case _ => ScoredStream.empty
     }
     val vpToForToS = (For, Arg, VP) to S using {
       case (_, subj, vp) =>
@@ -586,7 +587,7 @@ class Parsing(sentence: ConsolidatedSentence) {
     val gap = () to Arg using ScoredStream.fromIndexedSeq(
       Vector(
         Argument.NounPhrase(None),
-        // Argument.Adverbial(None, Set()),
+        Argument.Adverbial(None, Set()),
         // Argument.Prepositional(None, Set()),
         // Argument.Predicative(None),
         // Argument.Verbal.Gerund(None, Aspect.default),

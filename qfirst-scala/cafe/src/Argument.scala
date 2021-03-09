@@ -999,12 +999,26 @@ sealed trait Predication extends Component {
     path: Option[ArgumentPath.Descent[F]]
   ): RenderResultOf[(Branches, Option[F[Self]])] =
     renderLax(feats, swapOutSelf, path)
-      .map { case WithExtraction(tree, items) =>
-        require(
-          (path.isEmpty && items.isEmpty) ||
-            (path.nonEmpty && items.size == 1)
-        ) // require correct number of extractions
-        tree -> items.headOption
+      .map { case WithExtraction(trees, items) =>
+        // require correct number of extractions
+        val isValid = (path.isEmpty && items.isEmpty) ||
+          (path.nonEmpty && items.size == 1)
+        if(!isValid) {
+          println("Data:")
+          println(this)
+          println(feats)
+          println(path)
+          println("Branches:")
+          trees.foreach { tree =>
+            println(SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text))
+          }
+          println("Extractions:")
+          items.foreach { item =>
+            println(item)
+          }
+        }
+        require(isValid)
+        trees -> items.headOption
       }
 
   final def render[F[_]](
