@@ -29,7 +29,7 @@ sealed trait SForm {
     case Finite(tense) => VPForm.Finite(tense, subject.number, subject.person)
     case FiniteComplement(_, tense) => VPForm.Finite(tense, subject.number, subject.person)
     case Inverted(tense) => VPForm.Finite(tense, subject.number, subject.person)
-    case FiniteQuestion(tense, _) => VPForm.Finite(tense, subject.number, subject.person)
+    // case FiniteQuestion(tense, _) => VPForm.Finite(tense, subject.number, subject.person)
   }
   def getComplementizer: Option[String] = this match {
     case ForToInfinitive => Some("for")
@@ -55,10 +55,10 @@ object SForm {
   case class Inverted(
     tense: Tense.Finite
   ) extends SForm
-  case class FiniteQuestion(
-    tense: Tense.Finite,
-    path: Option[ArgumentPath[Extraction]]
-  ) extends SForm
+  // case class FiniteQuestion(
+  //   tense: Tense.Finite,
+  //   path: Option[ArgumentPath[Extraction]]
+  // ) extends SForm
 }
 
 sealed trait ArgContent {
@@ -149,14 +149,23 @@ sealed trait ArgumentPath[F[_]] extends Product with Serializable {
     case d: Descent[F] => Some(d)
     case _ => None
   }
+  def map[G[_]](f: Processor[F] => Processor[G]): ArgumentPath[G]
 }
 object ArgumentPath {
 
   case class Descent[F[_]](
     position: ArgPosition,
     next: ArgumentPath[F]
-  ) extends ArgumentPath[F]
-  case class End[F[_]](processor: Processor[F]) extends ArgumentPath[F]
+  ) extends ArgumentPath[F] {
+    def map[G[_]](f: Processor[F] => Processor[G]): Descent[G] = {
+      Descent(position, next.map(f))
+    }
+  }
+  case class End[F[_]](processor: Processor[F]) extends ArgumentPath[F] {
+    def map[G[_]](f: Processor[F] => Processor[G]): End[G] = {
+      End(f(processor))
+    }
+  }
 
   sealed trait Processor[F[_]] {
     def process[A](
@@ -862,6 +871,17 @@ object Argument {
       // override def proForms = Set(ProForm.what)
     }
 
+    case class Inverted(
+      pred: Option[Predication.Clausal],
+      override val form: SForm.Inverted,
+      aspect: Aspect
+    ) extends Clausal {
+      type Self = Inverted
+      type Form = SForm.Inverted
+      def withPred(pred: Predication.Clausal): Self = this.copy(pred = Some(pred))
+      override def category = "s[inv]"
+    }
+
     // is this always necessarily 'that'? maybe remove complementizer slot?
     // TODO add 'that'
     case class FiniteComplement(
@@ -879,52 +899,49 @@ object Argument {
       def complementizer: Complementizer = Lexicon.Complementizer.that
     }
 
-  // case class FiniteQuestion(
-  //   pred: Option[Predication.Clausal],
-  //   form: SForm.FiniteQuestion,
-  //   aspect: Aspect
-  // ) extends Clausal {
-  //   // whItemPath: Option[ArgumentPath.Descent[Extraction]]
-  //   type Self = FiniteQuestion
-  //   type Form = SForm.FiniteQuestion
-  //   type Pred = Predication.Clausal
-  //   // with Subject? but cannot appear in subj except as an answer
-  //   def withPred(pred: Predication.Clausal): Self = this.copy(pred = Some(pred))
-  //   // override def clauseType = ClauseType.Inverted
-  //   override def includeSubject = true
-  //   override def category = "s[q]"
-  //   // override def proForms = Set()
+    case class FiniteQuestion(
+      pred: Option[Predication.Clausal],
+      form: SForm.Inverted,
+      aspect: Aspect,
+      target: Option[ArgumentPath.Descent[Extraction]]
+    ) extends Clausal {
+      // whItemPath: Option[ArgumentPath.Descent[Extraction]]
+      type Self = FiniteQuestion
+      type Form = SForm.Inverted
+      override def category = "s[q]"
+      override def withPred(pred: Predication.Clausal): Self = this.copy(pred = Some(pred))
+      // override def clauseType = ClauseType.Inverted
+      // override def proForms = Set()
 
-  //   import ArgPosition._, ArgumentPath.Descent
-  //   override def renderLax[F[_], A](
-  //     pos: ArgPosition,
-  //     swapOutArg: SwapOutArg[A],
-  //     path: Option[Descent[F]]
-  //   ) = {
-  //     // TODO: could change rendering to take multiple paths but only allow one extraction.
-  //     if(path.nonEmpty) invalid("Cannot descend into a question") else {
-  //       super.renderLax(pos, swapOutArg, whItemPath).andThen {
-  //         case wext @ WithExtraction(branches, extractions) =>
-  //           if(whItemPath.isEmpty) {
-  //             require(extractions.size == 0)
-  //             valid(WithExtraction(branches))
-  //           } else {
-  //             require(extractions.size == 1)
-  //             val Extraction(arg, focusPath, swap) = extractions.head
-  //             // TODO can change to another arg position later maybe. Spec?
-  //             arg.render(ArgPosition.Subj, swap, focusPath).map {
-  //               case (whItemTree, ProFormExtraction(pro, swap)) =>
-  //                 WithExtraction(whItemTree +: branches)
-  //             }
-  //           }
-  //       }
-  //     }
-  //   }
+      import ArgPosition._, ArgumentPath.Descent
+      override def renderLax[F[_], A](
+        pos: ArgPosition,
+        swapOutArg: SwapOutArg[A],
+        path: Option[Descent[F]]
+      ) = {
+        // TODO: could change rendering to take multiple paths but only allow one extraction.
+        if(path.nonEmpty) invalid("Cannot descend into a question") else {
+          super.renderLax(pos, swapOutArg, target).andThen {
+            case wext @ WithExtraction(branches, extractions) =>
+              if(target.isEmpty) {
+                require(extractions.size == 0)
+                valid(WithExtraction(branches))
+              } else {
+                require(extractions.size == 1)
+                val Extraction(arg, focusPath, swap) = extractions.head
+                // TODO can change to another arg position later maybe. Spec?
+                arg.render(ArgPosition.Subj, swap, focusPath).map {
+                  case (whItemTree, ProFormExtraction(pro, swap)) =>
+                    WithExtraction(whItemTree +: branches)
+                }
+              }
+          }
+        }
+      }
 
-  //   // blocks extraction.
-  //   override def extractionPaths: Set[ArgumentPath[Extraction]] = Set()
-  // }
-
+      // blocks extraction.
+      override def extractionPaths: Set[ArgumentPath[Extraction]] = Set()
+    }
   }
 }
 
@@ -1326,7 +1343,6 @@ object Predication {
   }
 
   case class Clausal(
-    index: Option[Int],
     subject: Argument.Subject,
     predicate: VerbLike,
     proxy: Option[ProxyArgument[Clausal]] = None
@@ -1368,7 +1384,7 @@ object Predication {
           val flipAuxiliary = subjValue.value.exists(_.nonEmpty) && (
             sForm match {
               case SForm.Inverted(_) => true
-              case SForm.FiniteQuestion(_, _) => true
+              // case SForm.FiniteQuestion(_, _) => true
               case _ => false
             }
           )
