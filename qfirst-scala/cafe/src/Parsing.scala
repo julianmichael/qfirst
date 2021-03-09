@@ -292,7 +292,8 @@ class Parsing(sentence: ConsolidatedSentence) {
               form, Aspect.default
             ),
             None
-          )
+          ),
+          text
         )
       )
     )
@@ -304,44 +305,43 @@ class Parsing(sentence: ConsolidatedSentence) {
 
   val genlex = (s: SurfaceForm) => s match {
     case SurfaceForm.Excerpt(span, text) =>
-      ScoredStream.unit(Derivation(NP, Node(inferNPFromSpan(span), None))).merge(
-        ScoredStream.unit(Derivation(AdvP, inferAdvPFromSpan(span)))
+      ScoredStream.unit(Derivation(NP, Node(inferNPFromSpan(span), None), text)).merge(
+        ScoredStream.unit(Derivation(AdvP, inferAdvPFromSpan(span), text))
       )
     case SurfaceForm.Token(text, sourceOpt) =>
       import ArgumentPath.{End, Focus}
-      val txt = text.toString
       List(
-        whForms.get(txt).map(pro =>
-          Derivation(Arg, Node(pro, Some(Right(End(Focus)))))
+        whForms.get(text).map(pro =>
+          Derivation(Arg, Node(pro, Some(Right(End(Focus)))), text)
         ).foldMap(ScoredStream.unit(_)),
-        indefinitePronouns.get(txt).map(pro =>
-          Derivation(Arg, Node(pro, None))
+        indefinitePronouns.get(text).map(pro =>
+          Derivation(Arg, Node(pro, None), text)
         ).foldMap(ScoredStream.unit(_)),
-        Auxiliary.all.get(txt).foldMap(auxes =>
+        Auxiliary.all.get(text).foldMap(auxes =>
           auxes.foldMap(aux =>
-            ScoredStream.unit(Derivation(Aux, aux))
+            ScoredStream.unit(Derivation(Aux, aux, text))
           )
         ),
-        Copula.forms.get(txt).map(form =>
-          Derivation(Cop, Copula(sourceOpt, form))
+        Copula.forms.get(text).map(form =>
+          Derivation(Cop, Copula(sourceOpt, form), text)
         ).foldMap(ScoredStream.unit(_)),
         sourceOpt.map(index =>
           sentence.verbEntries.get(index).foldMap(verb =>
-            makeVBars(verb.verbInflectedForms, txt, sourceOpt)
+            makeVBars(verb.verbInflectedForms, text, sourceOpt)
           )
         ).getOrElse(
           extraVerbs.foldMap(forms =>
-            makeVBars(forms, txt, None)
+            makeVBars(forms, text, None)
           )
         ),
         Option(text).filter(Preposition.preps.contains).foldMap(prep =>
-          ScoredStream.unit(Derivation(Prep, Preposition(sourceOpt, text)))
+          ScoredStream.unit(Derivation(Prep, Preposition(sourceOpt, text), text))
         ),
         Option(text).filter(_ == "for").foldMap(_ =>
-          ScoredStream.unit(Derivation(For, ForComplementizer))
+          ScoredStream.unit(Derivation(For, ForComplementizer, text))
         ),
         Option(text).filter(Complementizer.all.contains).foldMap(comp =>
-          ScoredStream.unit(Derivation(Comp, Complementizer(comp)))
+          ScoredStream.unit(Derivation(Comp, Complementizer(comp), text))
         )
           // TODO: handle adjectives somehow. later.
       ).combineAll
@@ -548,10 +548,11 @@ class Parsing(sentence: ConsolidatedSentence) {
     val advpToArg = AdvP to Arg usingSingleZ { case advp => Node(advp, None) }
     prtp :: pp ::
       copulaVBar ::
-      // preInvertedCopulaVBar ::
+      preInvertedCopulaVBar ::
       vBarArg :: vp :: auxVP ::
       vpToS :: vpToSInv :: vpToForToS :: sToComplement ::
-      sInvToQuestion :: gap ::
+      sInvToQuestion ::
+      gap ::
       vpToArg :: sToArg :: ppToArg :: npToArg :: advpToArg :: HNil
   }
   val grammar = SyncCFG(productions)

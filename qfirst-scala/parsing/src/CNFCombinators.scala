@@ -14,7 +14,15 @@ case class NullaryCombinator(
   val productions: Vector[Nullary[_]]
 ) extends CNFCombinator {
   val derivations: ScoredStream[Derivation] =
-    productions.map(p => p.construct.map(Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], _))).foldLeft(ScoredStream.empty[Derivation])(_ merge _)
+    productions.map(p =>
+      p.construct.map(
+        Derivation(
+          p.parentSymbol.asInstanceOf[ParseSymbol[Any]],
+          _,
+          "_"
+        )
+      )
+    ).foldLeft(ScoredStream.empty[Derivation])(_ merge _)
 }
 
 sealed trait UnaryCombinator extends CNFCombinator {
@@ -37,7 +45,13 @@ object UnaryCombinator {
         val vecOfStreams = for {
           p <- productions
         } yield p.construct(child :: HNil)
-          .map(Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], _))
+          .map(
+            Derivation(
+              p.parentSymbol.asInstanceOf[ParseSymbol[Any]],
+              _,
+              SyntaxTree.node(p.parentSymbol, Vector(d.tree))
+            )
+          )
         vecOfStreams.foldLeft(ScoredStream.empty[Derivation])(_ merge _)
       case _ => ScoredStream.empty[Derivation]
     }
@@ -69,7 +83,12 @@ object BinaryCombinator {
           p <- productions
         } yield p.construct(leftChild :: rightChild :: HNil).map(
           // not really sure why we need this cast...sigh...
-          result => Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], result))
+          result => Derivation(
+            p.parentSymbol.asInstanceOf[ParseSymbol[Any]],
+            result,
+            SyntaxTree.node(p.parentSymbol, Vector(left.tree, right.tree))
+          )
+        )
         vecOfStreams.foldLeft(ScoredStream.empty[Derivation])(_ merge _)
       case _ => ScoredStream.empty[Derivation]
     }

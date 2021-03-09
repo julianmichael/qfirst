@@ -174,7 +174,7 @@ class CafeTests extends CatsEffectSuite {
           sentence.verbEntries.foreach { case (verbIndex, verb) =>
             println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
             verb.questionLabels
-              .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
+              // .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
               // .filter(p => (p._1.endsWith("into?")))
               .foreach { case (qString, qLabel) =>
                 val answerSpans = qLabel.answerJudgments
@@ -194,7 +194,7 @@ class CafeTests extends CatsEffectSuite {
                 )
                 val parsing = new Parsing(ConsolidatedSentence.fromSentence(sentence))
                 println
-                parsing.parse(sf).take(2).toListScored.foreach {
+                parsing.parse(sf).take(4).toListScored.foreach {
                   case Scored(Left(block), score) =>
                     println(f"$block: $score%.2f")
                   case Scored(Right(deriv), score) =>

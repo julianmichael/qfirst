@@ -56,20 +56,19 @@ class AgendaBasedSyncCNFParser[Token](
     blocks: ScoredStream[EvaluationBlock.type]
   ): ScoredStream[Either[EvaluationBlock.type, Derivation { type Result = A }]] = {
     val chart = new Chart(tokens.size)
-    println(chart)
+    // println(chart)
     var agenda = Heap.empty[EdgeStream]
-    println(agenda)
+    // println(agenda)
     var evalBlocks = blocks
-    println(evalBlocks)
+    // println(evalBlocks)
 
     val lexicalDerivStreams = tokens.map(genlex)
-    println(lexicalDerivStreams)
+    // println(lexicalDerivStreams)
     // cache lexical scores for the A* heuristic.
     // if some lexical item is produced by no nodes, we can immediately return the empty stream.
     // (TODO.)
     // lexicalDerivStreams.map(_.headOption).sequence
     val lexicalScores = lexicalDerivStreams.map(_.headOption.get.score)
-    println(lexicalScores)
     val outsideScores = {
       val iter = for {
         begin <- (0 until tokens.size)
@@ -100,12 +99,21 @@ class AgendaBasedSyncCNFParser[Token](
       case None => None
       case Some(headEdgeStream) => headEdgeStream match {
         case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
-          Thread.sleep(100)
-          println("===== ===== ===== =====")
-          println(newSD)
-          println(span)
-          println(evalBlocks.headOption)
-          if(evalBlocks.headOption.exists(_.score < score)) {
+          // Thread.sleep(10)
+          // println("===== ===== ===== =====")
+          // println(score)
+          // println(curDeriv.item)
+          // println(curDeriv.treeGloss)
+          // println(span)
+          // println(evalBlocks.headOption)
+          // TODO change out for option? or remove entirely
+          require {
+            import cats.implicits._
+            val realWidth = curDeriv.tree.toVector.filter(_ != "_").size
+            val measuredWidth = span.foldMap(x => x._2 - x._1)
+            realWidth == measuredWidth
+          }
+          if(evalBlocks.headOption.exists(_.score < score + heuristic)) {
             val res = evalBlocks.headOption.get
             evalBlocks = evalBlocks.tailOption.get
             Some(res.map(Left(_)))
@@ -162,7 +170,7 @@ class AgendaBasedSyncCNFParser[Token](
                 for(newEnd <- (end + 1) to tokens.length) yield {
                   rightCombine(Some((end, newEnd)), Some((begin, newEnd)))
                 }
-                rightCombine(span, None)
+                rightCombine(None, span)
 
                 if(begin == 0 && end == tokens.size && symbol == rootSymbol) {
                   Some(
