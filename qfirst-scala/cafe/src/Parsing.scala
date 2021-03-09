@@ -88,8 +88,25 @@ class Parsing(sentence: ConsolidatedSentence) {
       "to" -> Vector(apply { case BareInfinitive => ToInfinitive })
     )
 
+    val modals = Set(
+      "can", // can't
+      "will", // won't
+      "might", // mightn't...?
+      "would", // wouldn't
+      "should", // shouldn't
+    )
+    val modalAux = modals.toList.map(mod =>
+      mod -> Vector(
+        apply {
+          case BareInfinitive => Finite(
+            qasrl.Tense.Finite.Modal(mod.lowerCase), None, None
+          )
+        }
+      )
+    ).toMap
+
     val all: Map[String, Vector[Auxiliary]] =
-      List(beAux, haveAux, doAux, toAux).reduce(_ ++ _)
+      List(beAux, haveAux, doAux, toAux, modalAux).reduce(_ ++ _)
   }
 
   case class Preposition(source: Option[Int], form: String)
@@ -562,7 +579,7 @@ class Parsing(sentence: ConsolidatedSentence) {
       forms,
       Q,
       ScoredStream.recurrence(
-        Scored(EvaluationBlock, 0.0), (x: EvaluationBlock.type) => Scored(x, 1.0)
+        Scored(EvaluationBlock, 0.0), (x: EvaluationBlock.type) => Scored(x, 10.0)
       )
     )
 }

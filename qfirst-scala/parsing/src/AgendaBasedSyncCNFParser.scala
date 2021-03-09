@@ -9,6 +9,7 @@ import ops.hlist._
 
 import cats.collections.Heap
 import cats.kernel.Order
+import cats.implicits._
 
 object EvaluationBlock
 
@@ -67,124 +68,125 @@ class AgendaBasedSyncCNFParser[Token](
     // cache lexical scores for the A* heuristic.
     // if some lexical item is produced by no nodes, we can immediately return the empty stream.
     // (TODO.)
-    // lexicalDerivStreams.map(_.headOption).sequence
-    val lexicalScores = lexicalDerivStreams.map(_.headOption.get.score)
-    val outsideScores = {
-      val iter = for {
-        begin <- (0 until tokens.size)
-        end <- ((begin + 1) to tokens.size)
-      } yield (begin, end) -> (lexicalScores.slice(0, begin).sum + lexicalScores.slice(end, tokens.size).sum)
-      iter.toMap
-    }
-    val totalOutsideScore = lexicalScores.sum
-    @inline def outsideScore(span: Option[(Int, Int)]) = span.fold(totalOutsideScore)(outsideScores)
+    lexicalDerivStreams.map(_.headOption.map(_.score)).sequence match {
+      case None => ScoredStream.empty
+      case Some(lexicalScores) =>
+        val outsideScores = {
+          val iter = for {
+            begin <- (0 until tokens.size)
+            end <- ((begin + 1) to tokens.size)
+          } yield (begin, end) -> (lexicalScores.slice(0, begin).sum + lexicalScores.slice(end, tokens.size).sum)
+          iter.toMap
+        }
+        val totalOutsideScore = lexicalScores.sum
+        @inline def outsideScore(span: Option[(Int, Int)]) = span.fold(totalOutsideScore)(outsideScores)
 
-    val allSpans = None +: (0 until tokens.size).flatMap(b => ((b + 1) to tokens.size).map(e => Some((b, e)))).toVector
+        val allSpans = None +: (0 until tokens.size).flatMap(b => ((b + 1) to tokens.size).map(e => Some((b, e)))).toVector
 
-    def addToAgenda(es: EdgeStream): Unit = {
-      agenda = agenda.add(es)
-    }
+        def addToAgenda(es: EdgeStream): Unit = {
+          agenda = agenda.add(es)
+        }
 
-    def addEdgeStream(derivStream: ScoredStream[Derivation], span: Option[(Int, Int)]): Unit =
-      derivStream.ifNonEmpty.map(EdgeStream(_, span, outsideScore(span))).foreach(addToAgenda)
+        def addEdgeStream(derivStream: ScoredStream[Derivation], span: Option[(Int, Int)]): Unit =
+          derivStream.ifNonEmpty.map(EdgeStream(_, span, outsideScore(span))).foreach(addToAgenda)
 
-    // start the agenda
-    (tokens, lexicalDerivStreams, (0 until tokens.size)).zipped.foreach {
-      (word, ds, i) => addEdgeStream(ds, Some((i, i + 1)))
-    }
-    addEdgeStream(combinators.nullary.derivations, None)
+        // start the agenda
+        (tokens, lexicalDerivStreams, (0 until tokens.size)).zipped.foreach {
+          (word, ds, i) => addEdgeStream(ds, Some((i, i + 1)))
+        }
+        addEdgeStream(combinators.nullary.derivations, None)
 
-    @tailrec
-    def nextRootNode: Option[Scored[Either[EvaluationBlock.type, Derivation { type Result = A }]]] = agenda.getMin match {
-      case None => None
-      case Some(headEdgeStream) => headEdgeStream match {
-        case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
-          // Thread.sleep(10)
-          // println("===== ===== ===== =====")
-          // println(score)
-          // println(curDeriv.item)
-          // println(curDeriv.treeGloss)
-          // println(span)
-          // println(evalBlocks.headOption)
-          // TODO change out for option? or remove entirely
-          require {
-            import cats.implicits._
-            val realWidth = curDeriv.tree.toVector.filter(_ != "_").size
-            val measuredWidth = span.foldMap(x => x._2 - x._1)
-            realWidth == measuredWidth
+        @tailrec
+        def nextRootNode: Option[Scored[Either[EvaluationBlock.type, Derivation { type Result = A }]]] = agenda.getMin match {
+          case None => None
+          case Some(headEdgeStream) => headEdgeStream match {
+            case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
+              // Thread.sleep(10)
+              // println("===== ===== ===== =====")
+              // println(score)
+              // println(curDeriv.item)
+              // println(curDeriv.treeGloss)
+              // println(span)
+              // println(evalBlocks.headOption)
+              // TODO change out for option? or remove entirely
+              require {
+                val realWidth = curDeriv.tree.toVector.filter(_ != "_").size
+                val measuredWidth = span.foldMap(x => x._2 - x._1)
+                realWidth == measuredWidth
+              }
+              if(evalBlocks.headOption.exists(_.score < score + heuristic)) {
+                val res = evalBlocks.headOption.get
+                evalBlocks = evalBlocks.tailOption.get
+                Some(res.map(Left(_)))
+              } else {
+                agenda = agenda.remove
+                addEdgeStream(remainingDerivs, span)
+                // to avoid `unapply-selector` path non-unification problems
+                val symbol = curDeriv.symbol
+                val item = curDeriv.item
+                chart.cell(span).add(newSD)
+                // find matching guys and put them in the agenda
+
+                def leftCombine(leftSpan: Option[(Int, Int)], resultSpan: Option[(Int, Int)]): Unit = for {
+                  leftCombinators <- combinators.rightThenLeftBinary.get(symbol).toSeq
+                  leftSymbol <- leftCombinators.keys
+                  leftCombinator <- leftCombinators.get(leftSymbol)
+                  leftTargets <- chart.cell(leftSpan).getDerivationStream(leftCombinator.leftSymbol)
+                } yield {
+                  val newDerivations = leftTargets.flatMap(leftCombinator(_, curDeriv)).adjust(score)
+                  addEdgeStream(newDerivations, resultSpan)
+                }
+
+                def rightCombine(rightSpan: Option[(Int, Int)], resultSpan: Option[(Int, Int)]): Unit = for {
+                  rightCombinators <- combinators.leftThenRightBinary.get(symbol).toSeq
+                  rightSymbol <- rightCombinators.keys
+                  rightCombinator <- rightCombinators.get(rightSymbol)
+                  rightTargets <- chart.cell(rightSpan).getDerivationStream(rightCombinator.rightSymbol)
+                } yield {
+                  val newDerivations = rightTargets.flatMap(rightCombinator(curDeriv, _)).adjust(score)
+                  addEdgeStream(newDerivations, resultSpan)
+                }
+
+                // unary case is same for null and non-null spans
+                for {
+                  unaryCombinator <- combinators.unary.get(symbol)
+                } yield {
+                  val newDerivations = unaryCombinator(curDeriv).adjust(score)
+                  addEdgeStream(newDerivations, span)
+                }
+
+                span match {
+                  case None =>
+                    for(curSpan <- allSpans) yield {
+                      leftCombine(curSpan, curSpan)
+                      rightCombine(curSpan, curSpan)
+                    }
+                    nextRootNode
+                  case Some((begin, end)) =>
+                    for(newBegin <- 0 to (begin - 1)) yield {
+                      leftCombine(Some((newBegin, begin)), Some((newBegin, end)))
+                    }
+                    leftCombine(None, span)
+
+                    for(newEnd <- (end + 1) to tokens.length) yield {
+                      rightCombine(Some((end, newEnd)), Some((begin, newEnd)))
+                    }
+                    rightCombine(None, span)
+
+                    if(begin == 0 && end == tokens.size && symbol == rootSymbol) {
+                      Some(
+                        newSD.asInstanceOf[Scored[Derivation { type Result = A }]]
+                          .map(Right(_))
+                      )
+                    } else {
+                      nextRootNode
+                    }
+                }
+              }
           }
-          if(evalBlocks.headOption.exists(_.score < score + heuristic)) {
-            val res = evalBlocks.headOption.get
-            evalBlocks = evalBlocks.tailOption.get
-            Some(res.map(Left(_)))
-          } else {
-            agenda = agenda.remove
-            addEdgeStream(remainingDerivs, span)
-            // to avoid `unapply-selector` path non-unification problems
-            val symbol = curDeriv.symbol
-            val item = curDeriv.item
-            chart.cell(span).add(newSD)
-            // find matching guys and put them in the agenda
-
-            def leftCombine(leftSpan: Option[(Int, Int)], resultSpan: Option[(Int, Int)]): Unit = for {
-              leftCombinators <- combinators.rightThenLeftBinary.get(symbol).toSeq
-              leftSymbol <- leftCombinators.keys
-              leftCombinator <- leftCombinators.get(leftSymbol)
-              leftTargets <- chart.cell(leftSpan).getDerivationStream(leftCombinator.leftSymbol)
-            } yield {
-              val newDerivations = leftTargets.flatMap(leftCombinator(_, curDeriv)).adjust(score)
-              addEdgeStream(newDerivations, resultSpan)
-            }
-
-            def rightCombine(rightSpan: Option[(Int, Int)], resultSpan: Option[(Int, Int)]): Unit = for {
-              rightCombinators <- combinators.leftThenRightBinary.get(symbol).toSeq
-              rightSymbol <- rightCombinators.keys
-              rightCombinator <- rightCombinators.get(rightSymbol)
-              rightTargets <- chart.cell(rightSpan).getDerivationStream(rightCombinator.rightSymbol)
-            } yield {
-              val newDerivations = rightTargets.flatMap(rightCombinator(curDeriv, _)).adjust(score)
-              addEdgeStream(newDerivations, resultSpan)
-            }
-
-            // unary case is same for null and non-null spans
-            for {
-              unaryCombinator <- combinators.unary.get(symbol)
-            } yield {
-              val newDerivations = unaryCombinator(curDeriv).adjust(score)
-              addEdgeStream(newDerivations, span)
-            }
-
-            span match {
-              case None =>
-                for(curSpan <- allSpans) yield {
-                  leftCombine(curSpan, curSpan)
-                  rightCombine(curSpan, curSpan)
-                }
-                nextRootNode
-              case Some((begin, end)) =>
-                for(newBegin <- 0 to (begin - 1)) yield {
-                  leftCombine(Some((newBegin, begin)), Some((newBegin, end)))
-                }
-                leftCombine(None, span)
-
-                for(newEnd <- (end + 1) to tokens.length) yield {
-                  rightCombine(Some((end, newEnd)), Some((begin, newEnd)))
-                }
-                rightCombine(None, span)
-
-                if(begin == 0 && end == tokens.size && symbol == rootSymbol) {
-                  Some(
-                    newSD.asInstanceOf[Scored[Derivation { type Result = A }]]
-                      .map(Right(_))
-                  )
-                } else {
-                  nextRootNode
-                }
-            }
-          }
-      }
+        }
+        ScoredStream.exhaustively(nextRootNode)
     }
-    ScoredStream.exhaustively(nextRootNode)
   }
 }
 
