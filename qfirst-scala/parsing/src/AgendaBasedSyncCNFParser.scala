@@ -101,13 +101,16 @@ class AgendaBasedSyncCNFParser[Token](
           case None => None
           case Some(headEdgeStream) => headEdgeStream match {
             case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
-              // Thread.sleep(10)
-              // println("===== ===== ===== =====")
-              // println(score)
-              // println(curDeriv.item)
-              // println(curDeriv.treeGloss)
-              // println(span)
-              // println(evalBlocks.headOption)
+              // if(span == Some(0 -> 1) || span.exists { case (b, e) => e - b > 2 }) {
+              // if(true) {
+              //   Thread.sleep(100)
+              //   println("===== ===== ===== =====")
+              //   println(score)
+              //   println(curDeriv.item)
+              //   println(curDeriv.treeGloss)
+              //   println(span)
+              //   println(evalBlocks.headOption)
+              // }
               // TODO change out for option? or remove entirely
               require {
                 val realWidth = curDeriv.tree.toVector.filter(_ != "_").size

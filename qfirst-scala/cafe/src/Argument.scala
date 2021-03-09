@@ -226,6 +226,13 @@ object ArgumentPath {
 
   def descend[F[_]](path: Option[Descent[F]], pos: ArgPosition): Option[ArgumentPath[F]] =
     path.collect { case Descent(`pos`, next) => next }
+  def ascend[F[_], G[_]](
+    path: Option[Either[ArgumentPath[F], ArgumentPath[G]]], pos: ArgPosition
+  ): Option[Either[ArgumentPath[F], ArgumentPath[G]]] =
+    path.map {
+      case Left(p) => Left(Descent(pos, p))
+      case Right(p) => Right(Descent(pos, p))
+    }
 
   implicit def argumentPathShow[F[_]]: Show[ArgumentPath[F]] = new Show[ArgumentPath[F]] {
     def show(path: ArgumentPath[F]): String = path match {
@@ -501,6 +508,16 @@ object Argument {
     case object how extends Adverb {
       val whWord = Wh.how
       val placeholder = None
+      override def instantiateConcrete(arg: Concrete): Option[Concrete] = arg match {
+        // case arg @ NounPhrase(_) => Some(arg)
+        case arg @ Prepositional(_, _) => Some(arg)
+        case arg @ Adverbial(_, _) => Some(arg)
+        // case arg @ ToInfinitive(_, _) => Some(arg)
+        case arg @ Verbal.Progressive(_, _) => Some(arg)
+        case arg @ Predicative(_) => Some(arg)
+        // case _ => Some(arg)
+        case _ => None
+      }
     }
     case object why extends Adverb {
       val whWord = Wh.why
@@ -1222,12 +1239,13 @@ object Predication {
           } else Right(NonEmptyList.of(pastParticiple))
         case form: VPForm.NotPredicative =>
           if(isPassive) {
-            val aux = form.getCopulaAuxChain(aspect)
+            Right(form.getCopulaAuxChain(aspect).append(pastParticiple))
               // tan.getCopulaAuxChain(otherType, subject)
-            aux.map(_ append pastParticiple)
           } else {
-            form.getAuxChain(
-              verb.forms, aspect, ensureDoSupport = needsFlippable
+            Right(
+              form.getAuxChain(
+                verb.forms, aspect, ensureDoSupport = needsFlippable
+              )
             )
           }
       }
@@ -1286,8 +1304,8 @@ object Predication {
       vpForm match {
         case VPForm.Predicative => Right(NonEmptyList.of(adj))
         case form: VPForm.NotPredicative =>
-          val aux = form.getCopulaAuxChain(aspect)
-          aux.map(_.append(adj))
+          val aux = form.getCopulaAuxChain(aspect).append(adj)
+          Right(aux)
       }
     }
     import ArgPosition._, ArgumentPath._
@@ -1323,7 +1341,7 @@ object Predication {
       case VPForm.Predicative =>
         Left(NonEmptyChain.one("Cannot construct predicative clause from a copula."))
       case form: VPForm.NotPredicative =>
-        form.getCopulaAuxChain(aspect)
+        Right(form.getCopulaAuxChain(aspect))
     }
     import ArgPosition._, ArgumentPath._
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
@@ -1349,7 +1367,7 @@ object Predication {
   ) extends Predication {
     type Self = Clausal
     type GramFeats = (SForm, Aspect)
-    def arguments: Vector[Argument] = subject +: predicate.arguments
+    def arguments: Vector[Argument] = predicate.arguments
 
     import Validated.valid
     // import LabeledTree.{leaf, leaves, node}
@@ -1457,12 +1475,13 @@ object Predication {
     }
 
     import ArgumentPath._, ArgPosition.Arg
-    def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
+    private[this] def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A] =
       SwapOutArg {
-        case Right(arg: Subject) if index == 0 =>
-          swapOutPred.replace(Right(this.copy(subject = arg)))
-        case Right(arg: NonSubject) if index > 0 =>
-          predicate.swapOutArg(swapOutInnerPred(swapOutPred), index - 1).replace(Right(arg))
+        // case Right(arg: Subject) if index == 0 =>
+        //   swapOutPred.replace(Right(this.copy(subject = arg)))
+        // case Right(arg: NonSubject) if index > 0 =>
+        case Right(arg: NonSubject) =>
+          predicate.swapOutArg(swapOutInnerPred(swapOutPred), index).replace(Right(arg))
         case Right(otherArg) =>
           Left(SubstitutionFailure(otherArg, Descent(Arg(index), End(Target))))
         case Left(failure) =>

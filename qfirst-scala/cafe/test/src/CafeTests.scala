@@ -167,13 +167,13 @@ class CafeTests extends CatsEffectSuite {
   test("align to QA-SRL") {
     val qasrlPath = Paths.get("../qasrl/data/qasrl-v2_1/orig/dev.jsonl.gz")
     IO.fromTry(Data.readQasrlDataset(qasrlPath)).flatMap { data =>
-      data.sentences.take(30).toList.traverse { case (sid, sentence) =>
+      data.sentences.take(10).toList.traverse { case (sid, sentence) =>
         IO {
           println("\n\n" + sid)
           println(Text.render(sentence.sentenceTokens))
           sentence.verbEntries.foreach { case (verbIndex, verb) =>
             println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
-            verb.questionLabels
+            verb.questionLabels.toList
               // .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
               // .filter(p => (p._1.endsWith("into?")))
               .foreach { case (qString, qLabel) =>
@@ -185,7 +185,7 @@ class CafeTests extends CatsEffectSuite {
                 val answersString = answerStrings.mkString(" / ")
 
                 val div = " ========== "
-                println(div + qString + div)
+                println("\n" + div + qString + div)
                 println("\t" + answersString)
 
                 val sf = SurfaceForm.fromQuestionSlots(
@@ -194,14 +194,23 @@ class CafeTests extends CatsEffectSuite {
                 )
                 val parsing = new Parsing(ConsolidatedSentence.fromSentence(sentence))
                 println
-                parsing.parse(sf).take(4).toListScored.foreach {
+                parsing.parse(sf)
+                  .toListScored
+                .toSet[
+                  Scored[Either[qfirst.parsing.EvaluationBlock,qfirst.parsing.Derivation {
+                                       type Result = qfirst.cafe.Argument.Clausal.FiniteQuestion
+                                     }]]
+                ].foreach {
                   case Scored(Left(block), score) =>
                     println(f"$block: $score%.2f")
                   case Scored(Right(deriv), score) =>
+                    println(deriv.treeGloss)
+                    println(deriv.item)
                     deriv.item.render(ArgPosition.Arg(0)) match {
-                      case Validated.Valid(tree) => println(
-                        SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
-                      )
+                      case Validated.Valid(tree) =>
+                        println(
+                          SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
+                        )
                       case Validated.Invalid(err) => println("\t" + err)
                     }
                 }

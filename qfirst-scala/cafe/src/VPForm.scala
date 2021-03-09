@@ -32,26 +32,20 @@ sealed trait VPForm {
     forms: InflectedForms,
     aspect: Aspect,
     ensureDoSupport: Boolean
-  ): AuxChainResult[NonEmptyList[String]] = this match {
-    case Finite(tense, num, pers)  => for {
-      (person, number) <- Parallel.parProduct(
-        pers.toRight(
-          NonEmptyChain.one("Subject of a finite clause needs person feature for agreement")),
-        num.toRight(
-          NonEmptyChain.one("Subject of a finite clause needs number feature for agreement"))
+  ): NonEmptyList[String] = this match {
+    case Finite(tense, num, pers)  =>
+      fixAgreement(
+        getVerbStack(forms, aspect, ensureDoSupport), // && clauseType == Inverted
+        forms, pers, num
       )
-    } yield fixAgreement(
-      getVerbStack(forms, aspect, ensureDoSupport), // && clauseType == Inverted
-      forms, person, number
-    )
-    case other => Right(getVerbStack(forms, aspect, ensureDoSupport))
+    case other => getVerbStack(forms, aspect, ensureDoSupport)
   }
 
   private def fixAgreement(
     verbStack: NonEmptyList[String],
     forms: InflectedForms,
-    person: Person,
-    number: Number
+    person: Option[Person],
+    number: Option[Number]
   ): NonEmptyList[String] = {
     modTop { top =>
       // not present means we have a modal on top; no need to change
@@ -60,12 +54,12 @@ sealed trait VPForm {
         if(theseForms == InflectedForms.beSingularForms) {
           import Person._, Number._
           ((person, number), top) match {
-            case ((First, Singular), "is") => "am"
-            case ((Second, Singular) | (_, Plural), "is") => "are"
-            case ((Second, Singular) | (_, Plural), "was") => "were"
+            case ((Some(First), Some(Singular)), "is") => "am"
+            case ((_, Some(Plural)), "is") => "are"
+            case ((_, Some(Plural)), "was") => "were"
             case _ => top // already third person singular, or 1st person singular past
           }
-        } else if(top == forms.presentSingular3rd.toString && number == Number.Plural) {
+        } else if(top == forms.presentSingular3rd.toString && number == Some(Number.Plural)) {
           forms.stem.toString
         } else top
       }
@@ -166,7 +160,7 @@ object VPForm {
 
   case object Predicative extends VPForm
   sealed trait NotPredicative extends VPForm {
-    def getCopulaAuxChain(aspect: Aspect): AuxChainResult[NonEmptyList[String]] = {
+    def getCopulaAuxChain(aspect: Aspect): NonEmptyList[String] = {
       getAuxChain(InflectedForms.beSingularForms, aspect, false)
     }
   }
