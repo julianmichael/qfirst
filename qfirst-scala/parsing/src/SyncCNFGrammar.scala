@@ -22,12 +22,12 @@ object SyncCNFProduction {
   case class Unary[Child, Parent](
     childSymbol: ParseSymbol[Child],
     parentSymbol: ParseSymbol[Parent],
-    construct: PartialFunction[Child :: HNil, ScoredStream[Parent]]) extends SyncCNFProduction
+    construct: Child :: HNil => ScoredStream[Parent]) extends SyncCNFProduction
   case class Binary[Left, Right, Parent](
     leftChildSymbol: ParseSymbol[Left],
     rightChildSymbol: ParseSymbol[Right],
     parentSymbol: ParseSymbol[Parent],
-    construct: PartialFunction[Left :: Right :: HNil, ScoredStream[Parent]]) extends SyncCNFProduction
+    construct: Left :: Right :: HNil => ScoredStream[Parent]) extends SyncCNFProduction
 }
 import SyncCNFProduction._
 

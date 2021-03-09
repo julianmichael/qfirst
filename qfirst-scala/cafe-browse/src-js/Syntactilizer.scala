@@ -1,4 +1,5 @@
-package qfirst.cafe.browse
+package qfirst.cafe
+package browse
 
 import scalajs.js
 import org.scalajs.dom
@@ -62,12 +63,72 @@ import japgolly.scalajs.react.vdom.TagOf
 import cats.data.Validated
 import qasrl.Tense
 
+import qfirst.parsing.ScoredStream
+import qfirst.parsing.EvaluationBlock
+
+import cats.collections.Heap
+import qfirst.parsing.Scored
+
+class LazyLoadingList[A] {
+
+  case class Context(
+    values: List[A],
+    loadMore: Option[Int => Callback]
+  )
+
+  case class Props(
+    source: Stream[A],
+    initSize: Int,
+    render: Context => VdomElement
+  )
+
+  case class State(
+    values: List[A],
+    done: Boolean
+  )
+  object State{
+    def fromSource(source: Stream[A], size: Int) = {
+      val values = source.take(size).toList
+      val nowDone = values.size < size
+      State(values, nowDone)
+    }
+  }
+
+  class Backend(scope: BackendScope[Props, State]) {
+    def render(props: Props, state: State) = {
+      props.render(
+        Context(
+          state.values,
+          if(state.done) None else Some { (i: Int) =>
+            scope.setState(
+              State.fromSource(props.source, state.values.size + i)
+            )
+          }
+        )
+      )
+    }
+  }
+
+  val Component = ScalaComponent.builder[Props]("Paginator")
+    .initialStateFromProps(p => State.fromSource(p.source, p.initSize))
+    .renderBackend[Backend]
+    .build
+
+  def make(
+    source: Stream[A],
+    initSize: Int)(
+    render: Context => VdomElement
+  )= Component(Props(source, initSize, render))
+}
+
 object Syntactilizer {
 
   val S = BrowserStyles
   val V = View
 
-  import qfirst.cafe._
+  val QuestionExpander = new LazyLoadingList[
+    Scored[Either[EvaluationBlock, Argument.Clausal.FiniteQuestion]]
+  ]
 
   def treeEltAux(
     tree: SyntaxTree[Argument, ArgContent],
@@ -121,7 +182,9 @@ object Syntactilizer {
 
   case class Props(
     sentence: ConsolidatedSentence
-  )
+  ) {
+    val parsing = new Parsing(sentence)
+  }
 
   // case class QuestionStructure(
   //   pred: Predication.Clausal,
@@ -158,18 +221,33 @@ object Syntactilizer {
   // }
 
   @Lenses case class State(
-    predsByIndex: Map[Int, Set[Predication]],
-    predsBySpan: Map[ESpan, Set[Predication]],
-    propsByVerbIndex: SortedMap[Int, Vector[Argument]]
+    questions: Map[Int, Map[String, ScoredStream[Either[EvaluationBlock, Argument.Clausal.FiniteQuestion]]]]
+    // predsByIndex: Map[Int, Set[Predication]],
+    // predsBySpan: Map[ESpan, Set[Predication]],
+    // propsByVerbIndex: SortedMap[Int, Vector[Argument]]
     // spans: Map[SpanId, ESpan],
     // predicates: Map[PredicateId, Int],
     // verbStructures: Map[Int, VerbStructure]
   )
   object State {
-    def fromSentence(sent: ConsolidatedSentence): State = {
+    def fromProps(props: Props): State = {
+      val qs = props.sentence.verbEntries.mapVals { verb =>
+        verb.questionLabels.mapVals { question =>
+          val form = SurfaceForm.fromQuestionSlots(
+            verb.verbIndex,
+            verb.verbInflectedForms,
+            question.questionSlots
+          )
+          props.parsing.parse(form).map {
+            case Left(block) => Left(block)
+            case Right(deriv) => Right(deriv.item)
+          }
+        }
+      }
       State(
-        Map(), Map(),
-        sent.verbEntries.map { case (k, v) => k -> Vector() }
+        qs
+      //   Map(), Map(),
+      //   sent.verbEntries.map { case (k, v) => k -> Vector() }
       )
       // State(Map(), Map(), Map())
     }
@@ -182,20 +260,20 @@ object Syntactilizer {
     Lens[Option[A], A](_.get)(a => opt => Some(a))
   }
 
-  def transitiveClause(index: Int, verbForms: InflectedForms) = {
-    Argument.Finite(
-      Some(
-        Predication.Verbal(
-          index = Some(index),
-          subject = Argument.ProForm.what,
-          verb = Lexicon.Verb(verbForms),
-          isPassive = false,
-          arguments = Vector(Argument.ProForm.what),
-          tan = TAN(Some(Tense.Finite.Present), false, false, false)
-        )
-      )
-    )
-  }
+  // def transitiveClause(index: Int, verbForms: InflectedForms) = {
+  //   Argument.Finite(
+  //     Some(
+  //       Predication.Verbal(
+  //         index = Some(index),
+  //         subject = Argument.ProForm.what,
+  //         verb = Lexicon.Verb(verbForms),
+  //         isPassive = false,
+  //         arguments = Vector(Argument.ProForm.what),
+  //         tan = TAN(Some(Tense.Finite.Present), false, false, false)
+  //       )
+  //     )
+  //   )
+  // }
 
   def clauseEditor(clause: StateSnapshot[Argument]) = {
     clause.value.render(ArgPosition.Arg(0)) match {
@@ -204,30 +282,67 @@ object Syntactilizer {
     }
   }
 
+  def clauseViewer(clause: Argument) = {
+    clause.render(ArgPosition.Arg(0)) match {
+      case Validated.Valid(tree) => argTreeElt(tree)
+      case Validated.Invalid(err) => <.div(err.toString)
+    }
+  }
+
   def verbPropEditor(
     sentence: ConsolidatedSentence,
     verbIndex: Int,
-    state: State,
-    verbState: StateSnapshot[Vector[Argument]]
+    state: State
+    // verbState: StateSnapshot[Vector[Argument]]
   ) = {
     <.div(
-      verbState.value.indices.flatMap(index =>
-        verbState.zoomStateO(
-          Optics.index[Vector[Argument], Int, Argument](index)
+      state.questions(verbIndex).toList.toVdomArray { case (q, cqs) =>
+        <.div(
+          <.div(q),
+          <.div("Parses: ")(
+            QuestionExpander.make(cqs.toStreamScored, 1) {
+              case QuestionExpander.Context(items, expandOpt) =>
+                <.div(
+                  items.toVdomArray {
+                    case Scored(Left(block), score) =>
+                      <.div(f"No parses with score < $score%.2f")
+                    case Scored(Right(question), score) =>
+                      <.div(f"Score: $score%.2f")(
+                        clauseViewer(question)
+                      )
+                  },
+                  expandOpt match {
+                    case None => <.div("all loaded")
+                    case Some(expand) => <.button("more")(
+                      ^.onClick --> expand(0)
+                    )
+                  }
+                )
+            }
+          )
         )
-      ).toVdomArray(clauseEditor(_)),
-      ArgLocal.make(
-        transitiveClause(verbIndex, sentence.verbEntries(verbIndex).verbInflectedForms)
-      ) { clause =>
-        clauseEditor(clause)
       }
+
+      // state.
+      // verbState.value.indices.flatMap(index =>
+      //   verbState.zoomStateO(
+      //     Optics.index[Vector[Argument], Int, Argument](index)
+      //   )
+      // ).toVdomArray(clauseEditor(_)),
+      // ArgLocal.make(
+      //   transitiveClause(verbIndex, sentence.verbEntries(verbIndex).verbInflectedForms)
+      // ) { clause =>
+      //   clauseEditor(clause)
+      // }
     )
   }
 
   def render(props: Props) = {
     import props.sentence
+    println(props)
     <.div(
-      StateLocal.make(State.fromSentence(props.sentence)) { state =>
+      StateLocal.make(State.fromProps(props)) { state =>
+        println(state.value)
         <.div(
           <.div(S.sentenceTextContainer)(
             <.span(S.sentenceText)(
@@ -270,11 +385,11 @@ object Syntactilizer {
                   sentence,
                   verbIndex,
                   state.value,
-                  state.zoomStateL(
-                    State.propsByVerbIndex
-                      .composeLens(Optics.at(verbIndex))
-                      .composeLens(unsafeOptionGet[Vector[Argument]])
-                  )
+                  // state.zoomStateL(
+                  //   State.propsByVerbIndex
+                  //     .composeLens(Optics.at(verbIndex))
+                  //     .composeLens(unsafeOptionGet[Vector[Argument]])
+                  // )
                 )
               )
             }
@@ -290,6 +405,5 @@ object Syntactilizer {
 
   def make(
     sentence: ConsolidatedSentence
-  ) = Component(Props(sentence)
-  )
+  ) = Component(Props(sentence))
 }

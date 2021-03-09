@@ -74,18 +74,18 @@ class Parsing(sentence: ConsolidatedSentence) {
 
     import VPForm._
     val beAux = Copula.forms
-      .mapVals(form => Vector(Auxiliary { case Predicative | Progressive => form }))
+      .mapVals(form => Vector(apply { case Predicative | Progressive => form }))
 
     val haveAux = vpFormMapping(InflectedForms.haveForms)
       .mapVals(_.filter(_ != Predicative))
-      .mapVals(_.map(form => Auxiliary { case Perfect => form }))
+      .mapVals(_.map(form => apply { case Perfect => form }))
 
     val doAux = vpFormMapping(InflectedForms.doForms)
       .mapVals(_.filter(_ != Predicative))
-      .mapVals(_.map(form => Auxiliary { case BareInfinitive => form }))
+      .mapVals(_.map(form => apply { case BareInfinitive => form }))
 
     val toAux = Map(
-      "to" -> Vector(Auxiliary { case BareInfinitive => ToInfinitive })
+      "to" -> Vector(apply { case BareInfinitive => ToInfinitive })
     )
 
     val all: Map[String, Vector[Auxiliary]] =
@@ -276,6 +276,32 @@ class Parsing(sentence: ConsolidatedSentence) {
     )
   }
 
+  def makeVBars(forms: InflectedForms, text: String, source: Option[Int]) = {
+    vpFormMapping(forms).get(text).combineAll.foldMap(form =>
+      ScoredStream.unit(
+        Derivation(
+          VBar,
+          Node(
+            VerbPhrase(
+              Predication.Verbal(
+                source,
+                Lexicon.Verb(forms),
+                isPassive = form == VPForm.Predicative,
+                Vector()
+              ),
+              form, Aspect.default
+            ),
+            None
+          )
+        )
+      )
+    )
+  }
+
+  val extraVerbs = Vector(
+    InflectedForms.doForms
+  )
+
   val genlex = (s: SurfaceForm) => s match {
     case SurfaceForm.Excerpt(span, text) =>
       ScoredStream.unit(Derivation(NP, Node(inferNPFromSpan(span), None))).merge(
@@ -299,27 +325,13 @@ class Parsing(sentence: ConsolidatedSentence) {
         Copula.forms.get(txt).map(form =>
           Derivation(Cop, Copula(sourceOpt, form))
         ).foldMap(ScoredStream.unit(_)),
-        sourceOpt.foldMap(index =>
+        sourceOpt.map(index =>
           sentence.verbEntries.get(index).foldMap(verb =>
-            vpFormMapping(verb.verbInflectedForms).get(txt).combineAll.foldMap(form =>
-              ScoredStream.unit(
-                Derivation(
-                  VBar,
-                  Node(
-                    VerbPhrase(
-                      Predication.Verbal(
-                        Some(index),
-                        Lexicon.Verb(verb.verbInflectedForms),
-                        isPassive = form == VPForm.Predicative,
-                        Vector()
-                      ),
-                      form, Aspect.default
-                    ),
-                    None
-                  )
-                )
-              )
-            )
+            makeVBars(verb.verbInflectedForms, txt, sourceOpt)
+          )
+        ).getOrElse(
+          extraVerbs.foldMap(forms =>
+            makeVBars(forms, txt, None)
           )
         ),
         Option(text).filter(Preposition.preps.contains).foldMap(prep =>
@@ -359,11 +371,14 @@ class Parsing(sentence: ConsolidatedSentence) {
           path
         )
     }
-    val preInvertedCopulaVBar = Arg to VBar usingSingleZ {
+    val preInvertedCopulaVBar = Arg to VBar usingSingle {
       case Node(arg: Argument.NounOrOblique, path) =>
-        Node(
-          VerbPhrase(Predication.Copular(None, arg, Vector()), VPForm.Predicative, Aspect.default),
-          path
+        Scored(
+          Node(
+            VerbPhrase(Predication.Copular(None, arg, Vector()), VPForm.Predicative, Aspect.default),
+            path
+          ),
+          1.0
         )
     }
     val vBarArg = (VBar, Arg) to VBar using {
@@ -484,33 +499,38 @@ class Parsing(sentence: ConsolidatedSentence) {
       }
     }
 
-    val gap = () to Arg using Vector(
-      Argument.NounPhrase(None),
-      Argument.Adverbial(None, Set()),
-      Argument.Prepositional(None, Set()),
-      Argument.Predicative(None),
-      Argument.Verbal.Gerund(None, Aspect.default),
-      Argument.Verbal.ToInfinitive(None, Aspect.default),
-      Argument.Verbal.Progressive(None, Aspect.default),
-      Argument.Clausal.Gerund(None, Aspect.default),
-      Argument.Clausal.ForToInfinitive(None, Aspect.default),
-      Argument.Clausal.Progressive(None, Aspect.default),
-      Argument.Clausal.Finite(None, SForm.Finite(qasrl.Tense.Finite.Past), Aspect.default),
-      Argument.Clausal.Inverted(None, SForm.Inverted(qasrl.Tense.Finite.Past), Aspect.default),
-      Argument.Clausal.FiniteComplement(
-        // _could_ add other complementizers later, but might as well wait until
-        // full lexicalization.
-        None, SForm.FiniteComplement(
-          Lexicon.Complementizer.that,
-          qasrl.Tense.Finite.Past
-        ), Aspect.default
+    val gap = () to Arg using ScoredStream.fromIndexedSeq(
+      Vector(
+        Argument.NounPhrase(None),
+        Argument.Adverbial(None, Set()),
+        Argument.Prepositional(None, Set()),
+        Argument.Predicative(None),
+        Argument.Verbal.Gerund(None, Aspect.default),
+        Argument.Verbal.ToInfinitive(None, Aspect.default),
+        Argument.Verbal.Progressive(None, Aspect.default),
+        Argument.Clausal.Gerund(None, Aspect.default),
+        Argument.Clausal.ForToInfinitive(None, Aspect.default),
+        Argument.Clausal.Progressive(None, Aspect.default),
+        Argument.Clausal.Finite(None, SForm.Finite(qasrl.Tense.Finite.Past), Aspect.default),
+        Argument.Clausal.Inverted(None, SForm.Inverted(qasrl.Tense.Finite.Past), Aspect.default),
+        Argument.Clausal.FiniteComplement(
+          // _could_ add other complementizers later, but might as well wait until
+          // full lexicalization.
+          None, SForm.FiniteComplement(
+            Lexicon.Complementizer.that,
+            qasrl.Tense.Finite.Past
+          ), Aspect.default
+        )
+      ).map(arg =>
+        Scored[Node[Argument]](
+          Node(
+            arg,
+            Some(Left(ArgumentPath.End(ArgumentPath.Target)))
+          ),
+          5.0 // penalty for gaps to aid parsing
+        )
       )
-    ).map(arg =>
-      Node(
-        arg,
-        Some(Left(ArgumentPath.End(ArgumentPath.Target)))
-      )
-    ).foldMap(ScoredStream.unit(_))
+    )
 
 
     val vpToArg = VP to Arg using {
@@ -527,12 +547,21 @@ class Parsing(sentence: ConsolidatedSentence) {
     val npToArg = NP to Arg usingSingleZ { case np => np }
     val advpToArg = AdvP to Arg usingSingleZ { case advp => Node(advp, None) }
     prtp :: pp ::
-      copulaVBar :: preInvertedCopulaVBar :: vBarArg :: vp :: auxVP ::
+      copulaVBar ::
+      // preInvertedCopulaVBar ::
+      vBarArg :: vp :: auxVP ::
       vpToS :: vpToSInv :: vpToForToS :: sToComplement ::
       sInvToQuestion :: gap ::
       vpToArg :: sToArg :: ppToArg :: npToArg :: advpToArg :: HNil
   }
   val grammar = SyncCFG(productions)
   val parser = AgendaBasedSyncCNFParser.buildFromSyncCFG(genlex, grammar)
-  def parseTest(forms: Vector[SurfaceForm]) = parser.parse(forms, Arg)
+  def parse(forms: Vector[SurfaceForm]) =
+    parser.parse(
+      forms,
+      Q,
+      ScoredStream.recurrence(
+        Scored(EvaluationBlock, 0.0), (x: EvaluationBlock.type) => Scored(x, 1.0)
+      )
+    )
 }

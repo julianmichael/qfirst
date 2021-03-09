@@ -18,6 +18,8 @@ import qasrl.ArgStructure
 import qasrl.labeling.SlotBasedLabel
 import cats.data.NonEmptyList
 import qasrl.data.QuestionLabel
+import qasrl.bank.ConsolidatedSentence
+import qfirst.parsing.Scored
 // import qfirst.cafe.Predication.ClauseFeats
 
 class CafeTests extends CatsEffectSuite {
@@ -159,66 +161,83 @@ class CafeTests extends CatsEffectSuite {
   //   questionStr + "\n\n" + answerStr
   // }
 
-  // import qasrl.bank.Data
-  // import java.nio.file.Paths
+  import qasrl.bank.Data
+  import java.nio.file.Paths
 
-  // test("align to QA-SRL") {
-  //   val qasrlPath = Paths.get("../qasrl/data/qasrl-v2_1/orig/dev.jsonl.gz")
-  //   IO.fromTry(Data.readQasrlDataset(qasrlPath)).flatMap { data =>
-  //     data.sentences.take(30).toList.traverse { case (sid, sentence) =>
-  //       IO {
-  //         println("\n\n" + sid)
-  //         println(Text.render(sentence.sentenceTokens))
-  //         sentence.verbEntries.foreach { case (verbIndex, verb) =>
-  //           println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
-  //           verb.questionLabels
-  //             .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
-  //             // .filter(p => (p._1.endsWith("into?")))
-  //             .foreach { case (qString, qLabel) =>
-  //             val answerSpans = qLabel.answerJudgments
-  //               .flatMap(_.judgment.getAnswer)
-  //               .flatMap(_.spans.toSortedSet)
-  //             val answerStrings = answerSpans.toVector.sorted
-  //               .map(s => Text.renderSpan(sentence.sentenceTokens, s))
-  //             val answersString = answerStrings.mkString(" / ")
+  test("align to QA-SRL") {
+    val qasrlPath = Paths.get("../qasrl/data/qasrl-v2_1/orig/dev.jsonl.gz")
+    IO.fromTry(Data.readQasrlDataset(qasrlPath)).flatMap { data =>
+      data.sentences.take(30).toList.traverse { case (sid, sentence) =>
+        IO {
+          println("\n\n" + sid)
+          println(Text.render(sentence.sentenceTokens))
+          sentence.verbEntries.foreach { case (verbIndex, verb) =>
+            println(s"($verbIndex) ${verb.verbInflectedForms.stem}")
+            verb.questionLabels
+              .filter(p => (p._1.endsWith("do?") || p._1.endsWith("doing?")))
+              // .filter(p => (p._1.endsWith("into?")))
+              .foreach { case (qString, qLabel) =>
+                val answerSpans = qLabel.answerJudgments
+                  .flatMap(_.judgment.getAnswer)
+                  .flatMap(_.spans.toSortedSet)
+                val answerStrings = answerSpans.toVector.sorted
+                  .map(s => Text.renderSpan(sentence.sentenceTokens, s))
+                val answersString = answerStrings.mkString(" / ")
 
-  //             val div = " ========== "
-  //             println(div + qString + div)
-  //             println("\t" + answersString)
+                val div = " ========== "
+                println(div + qString + div)
+                println("\t" + answersString)
 
-  //             Conversion.getAlignedPredications(verb.verbInflectedForms, qLabel).foreach {
-  //               case (pred, path) =>
-  //                 Argument.Finite(Some(pred)).render(ArgPosition.Arg(0)) match {
-  //                   case Validated.Valid(tree) => println(
-  //                     SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
-  //                   )
-  //                   case Validated.Invalid(err) => println("\t" + err)
-  //                 }
-  //                 println
-  //                 println(renderQA(pred, path, answerStrings))
-  //             }
-  //           }
-  //         }
-  //       }
-  //     }
-  //   }
+                val sf = SurfaceForm.fromQuestionSlots(
+                  verb.verbIndex, verb.verbInflectedForms,
+                  qLabel.questionSlots
+                )
+                val parsing = new Parsing(ConsolidatedSentence.fromSentence(sentence))
+                println
+                parsing.parse(sf).take(2).toListScored.foreach {
+                  case Scored(Left(block), score) =>
+                    println(f"$block: $score%.2f")
+                  case Scored(Right(deriv), score) =>
+                    deriv.item.render(ArgPosition.Arg(0)) match {
+                      case Validated.Valid(tree) => println(
+                        SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
+                      )
+                      case Validated.Invalid(err) => println("\t" + err)
+                    }
+                }
+              // Conversion.getAlignedPredications(verb.verbInflectedForms, qLabel).foreach {
+              //   case (pred, path) =>
+              //     Argument.Finite(Some(pred)).render(ArgPosition.Arg(0)) match {
+              //       case Validated.Valid(tree) => println(
+              //         SyntaxTree.gloss[Argument, ArgContent](tree, _.symbol, _.text)
+              //       )
+              //       case Validated.Invalid(err) => println("\t" + err)
+              //     }
+              //     println
+              //     println(renderQA(pred, path, answerStrings))
+              // }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // predication: Predication
+  // innerPath: ArgumentPath[ProForm]
+  // set of allowable answers
+  // procedure to incorporate answer back into the original.
+  // origPath: ArgumentPath[?] -- points to extracted element
+  //
+  // FIRST: normal pied piping.
+  // I want: 
+  //
+  // I want: tree, arg, inner path, list of answer types, for each one ???
+
+
+  // TODO
+  // test("argument extraction paths are always valid") {
   // }
-
-  // // predication: Predication
-  // // innerPath: ArgumentPath[ProForm]
-  // // set of allowable answers
-  // // procedure to incorporate answer back into the original.
-  // // origPath: ArgumentPath[?] -- points to extracted element
-  // //
-  // // FIRST: normal pied piping.
-  // // I want: 
-  // //
-  // // I want: tree, arg, inner path, list of answer types, for each one ???
-
-
-  // // TODO
-  // // test("argument extraction paths are always valid") {
-  // // }
-  // // test("predication extraction paths are always valid") {
-  // // }
+  // test("predication extraction paths are always valid") {
+  // }
 }

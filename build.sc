@@ -22,7 +22,7 @@ val qasrlVersion = "0.3.1-SNAPSHOT"
 val freelogVersion = "0.1.0"
 
 
-val catsCollectionsVersion = "0.9.0"
+val catsCollectionsVersion = "0.9.1"
 val mouseVersion = "0.26.2"
 
 // compiler plugins
@@ -98,7 +98,7 @@ trait CommonModule extends ScalaModule with ScalafmtModule {
     ivy"org.julianmichael::jjm-io::$jjmVersion",
     ivy"org.typelevel::mouse::$mouseVersion",
     ivy"org.typelevel::kittens::$kittensVersion",
-    ivy"org.typelevel::cats-collections-core:$catsCollectionsVersion",
+    ivy"org.typelevel::cats-collections-core::$catsCollectionsVersion",
     // ivy"org.typelevel::alleycats-core::$catsVersion",
     ivy"org.julianmichael::qasrl::$qasrlVersion",
     ivy"org.julianmichael::qasrl-bank::$qasrlVersion",

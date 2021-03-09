@@ -3,6 +3,7 @@ package qfirst.parsing
 import scala.annotation.tailrec
 
 import cats.collections.Heap
+import cats.implicits._
 
 import shapeless._
 import UnaryTCConstraint._
@@ -15,7 +16,7 @@ case class CFGProduction[ChildSymbols <: HList, ParentSymbol](
 
 case class SyncCFGProduction[ChildSymbols <: HList, Children <: HList, Parent](
   val production: CFGProduction[ChildSymbols, ParseSymbol[Parent]],
-  val construct: PartialFunction[Children, ScoredStream[Parent]]) (
+  val construct: Children => ScoredStream[Parent])(
   implicit val comapped: Comapped.Aux[ChildSymbols, ParseSymbol, Children]) {
   def childSymbols: ChildSymbols = production.childSymbols
   def parentSymbol: ParseSymbol[Parent] = production.parentSymbol
@@ -37,12 +38,24 @@ object SyncCFGProductionSyntax {
     def using(
       construct: PartialFunction[ChildrenTuple, ScoredStream[Parent]])(
     ): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x))))
+      SyncCFGProduction(this, x => construct.lift(gen.from(x)).combineAll)
 
     def usingSingle(construct: PartialFunction[ChildrenTuple, Scored[Parent]]): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x)).map(ScoredStream.unit)))
-    def usingSingleZ(construct: PartialFunction[ChildrenTuple, Parent]): SyncCFGProduction[ChildSymbols, Children, Parent] =
-      SyncCFGProduction(this, Function.unlift(x => construct.lift(gen.from(x)).map(ScoredStream.unit(_))))
+      SyncCFGProduction(
+        this,
+        x => construct.lift(gen.from(x))
+          .map[ScoredStream[Parent]](ScoredStream.unit(_))
+          .combineAll
+      )
+    def usingSingleZ(
+      construct: PartialFunction[ChildrenTuple, Parent]
+    ): SyncCFGProduction[ChildSymbols, Children, Parent] =
+      SyncCFGProduction(
+        this,
+        x => construct.lift(gen.from(x))
+          .map[ScoredStream[Parent]](ScoredStream.unit[Parent](_))
+          .combineAll
+      )
   }
 
   // really only exists for nice syntax
@@ -50,12 +63,33 @@ object SyncCFGProductionSyntax {
     val child: ParseSymbol[Child],
     val parent: ParseSymbol[Parent]
   ) {
-    def using(construct: PartialFunction[Child, ScoredStream[Parent]]): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
-      SyncCFGProduction(this, ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct)
-    def usingSingle(construct: PartialFunction[Child, Scored[Parent]]): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
-      SyncCFGProduction(this, ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct andThen ScoredStream.unit[Parent])
-    def usingSingleZ(construct: PartialFunction[Child, Parent]): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
-      SyncCFGProduction(this, ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct andThen ScoredStream.unit[Parent])
+
+    def using(
+      construct: PartialFunction[Child, ScoredStream[Parent]]
+    ): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
+      SyncCFGProduction(
+        this,
+        x => construct.lift(x.head).combineAll
+        // ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct
+      )
+
+    def usingSingle(
+      construct: PartialFunction[Child, Scored[Parent]]
+    ): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
+      SyncCFGProduction(
+        this,
+        x => construct.lift(x.head).map(ScoredStream.unit).combineAll
+        // ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct andThen ScoredStream.unit[Parent]
+      )
+
+    def usingSingleZ(
+      construct: PartialFunction[Child, Parent]
+    ): SyncCFGProduction[ParseSymbol[Child] :: HNil, Child :: HNil, Parent] =
+      SyncCFGProduction(
+        this,
+        x => construct.lift(x.head).map(ScoredStream.unit[Parent]).combineAll
+        // ({ case child :: HNil => child }: PartialFunction[Child :: HNil, Child]) andThen construct andThen ScoredStream.unit[Parent]
+      )
   }
 
   case class NullaryCFGProductionHelper[Parent](

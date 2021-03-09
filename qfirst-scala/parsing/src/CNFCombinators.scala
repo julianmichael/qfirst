@@ -36,8 +36,8 @@ object UnaryCombinator {
       case Derivation(`childSymbol`, child) =>
         val vecOfStreams = for {
           p <- productions
-          scoredResults <- p.construct.lift(child :: HNil).toVector
-        } yield scoredResults.map(Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], _))
+        } yield p.construct(child :: HNil)
+          .map(Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], _))
         vecOfStreams.foldLeft(ScoredStream.empty[Derivation])(_ merge _)
       case _ => ScoredStream.empty[Derivation]
     }
@@ -67,8 +67,7 @@ object BinaryCombinator {
       case (Derivation(`leftSymbol`, leftChild), Derivation(`rightSymbol`, rightChild)) =>
         val vecOfStreams = for {
           p <- productions
-          scoredResults <- p.construct.lift(leftChild :: rightChild :: HNil)
-        } yield scoredResults.map(
+        } yield p.construct(leftChild :: rightChild :: HNil).map(
           // not really sure why we need this cast...sigh...
           result => Derivation(p.parentSymbol.asInstanceOf[ParseSymbol[Any]], result))
         vecOfStreams.foldLeft(ScoredStream.empty[Derivation])(_ merge _)

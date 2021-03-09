@@ -318,6 +318,7 @@ class ScoredCons[A] protected[parsing] (
     head ::< tail.removeFirst(p)
   }
 
+  // TODO actually remove Scored from it?
   // TODO implement natively
   override def collect[B](f: PartialFunction[A, Scored[B]]) = {
     val easyWayOut = (a: A) => f.lift(a).fold(empty[B])(unit[B])
