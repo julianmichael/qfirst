@@ -1,3 +1,4 @@
+import code
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("run_mlm_features")
@@ -19,7 +20,7 @@ lemma_override_map = {
 }
 
 def lemmatize(token):
-    return lemma_override_map.get(token) or nlp(token)[0].lemma_
+    return lemma_override_map.get(token.lower()) or nlp(token)[0].lemma_
 
 # utility methods
 
@@ -61,14 +62,8 @@ class MLMFeatureBuilder:
     def __init__(self):
         pass
 
-# TODO: figure out what to do about n't token.
-# This isn't in BERT's vocab, but gets masked out on its own, creating massive confusion.
-# maybe I can just not care and fiat it later. it's always gonna be ARGM-NEG or whatever, right?
-# perhaps that's all the more reason not to normalize the final distributions later;
-# sufficiently spread-out distributions aren't going to do much.
-# this could potentially help with other similar issues? maybe?
-
 from transformers import BertTokenizer, BertForMaskedLM
+from transformers import RobertaTokenizer, RobertaForMaskedLM
 class BertMLMFeatureBuilder(MLMFeatureBuilder):
     """Includes:
     - tokenizer (for vocab indexing conversions), and
@@ -76,8 +71,12 @@ class BertMLMFeatureBuilder(MLMFeatureBuilder):
     """
     def __init__(self, should_lemmatize = True):
         super(MLMFeatureBuilder, self).__init__()
-        self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased', local_files_only = True)
-        self.model = BertForMaskedLM.from_pretrained('bert-large-uncased', local_files_only = True)
+        #self.tokenizer = BertTokenizer.from_pretrained('google/bert_uncased_L-2_H-128_A-2', local_files_only = True)
+        #self.model = BertForMaskedLM.from_pretrained('google/bert_uncased_L-2_H-128_A-2', local_files_only = True)
+        # self.tokenizer = RobertaTokenizer.from_pretrained('roberta-large', local_files_only = True)
+        # self.model = RobertaForMaskedLM.from_pretrained('roberta-large', local_files_only = True)
+        self.tokenizer = BertTokenizer.from_pretrained('bert-large-uncased-whole-word-masking', local_files_only = True)
+        self.model = BertForMaskedLM.from_pretrained('bert-large-uncased-whole-word-masking', local_files_only = True)
         self.model.eval()
         self.model.to('cuda')
 
@@ -126,37 +125,54 @@ class BertMLMFeatureBuilder(MLMFeatureBuilder):
         else:
             return self.tokenizer.convert_ids_to_tokens(indices)
 
-    def run(self, tokens, index, keep_indices = None):
+    def run(self, tokens, start_index, end_index, keep_indices = None, repeat = False):
+        """start_index inclusive, end_index exclusive. runs with span masked."""
         # copy tokens, then replace target span with a mask.
         # Special handling for "n't" contractions: make sure to remove the whole thing
+        # assert end_index > start_index
         toks = list(tokens)
-        if toks[index] == "n't":
-            toks.pop(index - 1)
-            toks[index - 1] = self.tokenizer.mask_token
-            yus = True
-        elif index < len(toks) - 1 and toks[index + 1] == "n't":
-            toks.pop(index)
-            toks[index] = self.tokenizer.mask_token
-            yus = True
+        # expand span to cover n't contractions
+        if toks[start_index] == "n't":
+          start_index = start_index - 1
+        if end_index < len(tokens) and toks[end_index] == "n't":
+          end_index = end_index + 1
+        # remove all but 1 token of the target span
+        while end_index > start_index + 1:
+          toks.pop(start_index)
+          end_index = end_index - 1
+        # replace the last target token with [MASK]
+        toks[start_index] = self.tokenizer.mask_token
+
+        if not repeat:
+          # produce input string for BERT, collapsing contractions so the tokenizer can do its thing
+          text = " ".join(["[CLS]"] + toks + ["[SEP]"])
+          text = text.replace(" n't", "n't") # combine "n't" contractions together
+
+          # Retokenize input for the encoder
+          tokenized_text = self.tokenizer.tokenize(text)
+          masked_index = indexOfFirst(tokenized_text, self.tokenizer.mask_token)
+          assert masked_index > -1
+
+          # Convert token to vocabulary indices
+          indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_text)
+          # Define sentence A and B indices associated to 1st and 2nd sentences (see paper)
+          segment_ids = [0] * len(tokenized_text)
+
         else:
-            toks[index] = self.tokenizer.mask_token
-            yus = False
-        text = " ".join(["[CLS]"] + toks + ["[SEP]"])
-        text = text.replace(" n't", "n't") # combine "n't" contractions together
+          first_text = " ".join(["[CLS]"] + list(tokens))
+          first_text = first_text.replace(" n't", "n't")
+          tokenized_first_text = self.tokenizer.tokenize(first_text)
 
-        # if yus:
-        #     print(tokens)
-        #     print(text)
+          second_text = " ".join(toks + ["[SEP]"])
+          second_text = second_text.replace(" n't", "n't")
+          tokenized_second_text = self.tokenizer.tokenize(second_text)
 
-        # Retokenize input for the encoder
-        tokenized_text = self.tokenizer.tokenize(text)
-        masked_index = indexOfFirst(tokenized_text, self.tokenizer.mask_token)
-        assert masked_index > -1
+          tokenized_text = tokenized_first_text + tokenized_second_text
+          masked_index = indexOfFirst(tokenized_text, self.tokenizer.mask_token)
+          assert masked_index > -1
 
-        # Convert token to vocabulary indices
-        indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_text)
-        # Define sentence A and B indices associated to 1st and 2nd sentences (see paper)
-        segment_ids = [0] * len(tokenized_text)
+          indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_text)
+          segment_ids = ([0] * len(tokenized_first_text)) + ([0] * len(tokenized_second_text))
 
         # Convert inputs to PyTorch tensors
         tokens_tensor = torch.tensor([indexed_tokens]).to('cuda')
@@ -205,15 +221,15 @@ model = BertMLMFeatureBuilder(should_lemmatize = True)
 data_sources = {
     "dev": {
         "path": "frame-induction/conll08/out/mlm-inputs/dev.jsonl.gz",
-        "size": 1333
+        "size": 1228
     },
     "train": {
         "path": "frame-induction/conll08/out/mlm-inputs/train.jsonl.gz",
-        "size": 39278
+        "size": 35566
     },
     "test": {
         "path": "frame-induction/conll08/out/mlm-inputs/test.jsonl.gz",
-        "size": 2398
+        "size": 2139
     }
 }
 final_vocab_size = 1024
@@ -244,21 +260,26 @@ def get_lines(split):
     return tqdm(read_lines(source["path"]), total = source["size"])
     # return itertools.islice(read_lines(data_sources[split]), 5)
 
-def run_symm_left(tokens, index, keep_indices):
-    new_tokens = list(tokens)
-    new_tokens.insert(index, "and")
-    new_tokens.insert(index, model.tokenizer.mask_token)
-    return model.run(new_tokens, index, keep_indices)
+def run_repeated(tokens, start_index, end_index, keep_indices):
+    return model.run(tokens, start_index, end_index, keep_indices, repeat=True)
 
-def run_symm_right(tokens, index, keep_indices):
+def run_symm_left(tokens, start_index, end_index, keep_indices):
     new_tokens = list(tokens)
-    new_tokens.insert(index + 1, "and")
-    new_tokens.insert(index + 2, model.tokenizer.mask_token)
-    return model.run(new_tokens, index + 2, keep_indices)
+    new_tokens.insert(start_index, "and")
+    new_tokens.insert(start_index, model.tokenizer.mask_token)
+    return model.run(new_tokens, start_index, start_index + 1, keep_indices)
 
-def run_symm_both(tokens, index, keep_indices):
-    left = run_symm_left(tokens, index, keep_indices)
-    right = run_symm_right(tokens, index, keep_indices)
+def run_symm_right(tokens, start_index, end_index, keep_indices):
+    new_tokens = list(tokens)
+    # if end_index == len(tokens) and tokens[end_index] == ".":
+    #   end_index = end_index - 1
+    new_tokens.insert(end_index, "and")
+    new_tokens.insert(end_index + 1, model.tokenizer.mask_token)
+    return model.run(new_tokens, end_index + 1, end_index + 2, keep_indices)
+
+def run_symm_both(tokens, start_index, end_index, keep_indices):
+    left = run_symm_left(tokens, start_index, end_index, keep_indices)
+    right = run_symm_right(tokens, start_index, end_index, keep_indices)
     product = torch.nn.functional.softmax(left.log() + right.log(), dim = 0)
     return product
 
@@ -268,16 +289,21 @@ all_verb_data = {
         "verbs": {},
         "args": {}
     },
-    # "symm_left": {
-    #     "run": run_symm_left,
-    #     "verbs": {},
-    #     "args": {}
-    # },
-    # "symm_right": {
-    #     "run": run_symm_right,
-    #     "verbs": {},
-    #     "args": {}
-    # },
+    "repeated": {
+        "run": run_repeated,
+        "verbs": {},
+        "args": {}
+    },
+    "symm_left": {
+        "run": run_symm_left,
+        "verbs": {},
+        "args": {}
+    },
+    "symm_right": {
+        "run": run_symm_right,
+        "verbs": {},
+        "args": {}
+    },
     "symm_both": {
         "run": run_symm_both,
         "verbs": {},
@@ -318,22 +344,20 @@ for split in data_sources:
     for line in get_lines(split):
         input_json = json.loads(line)
         tokens = input_json["sentenceTokens"]
-        for verb, verb_indices in input_json["verbs"].items():
+        for verb, mlm_info in input_json["verbs"].items():
             for mode, mode_data in all_verb_data.items():
                 verb_data = get_dist_data(mode_data["verbs"], verb)
-                for index in verb_indices:
-                    if should_include(input_json["sentenceId"], verb, index):
+                for verb_index in mlm_info["verbIndices"]:
+                    if should_include(input_json["sentenceId"], verb, verb_index):
                         verb_data["total"] += 1
-                        probs = mode_data["run"](tokens, index, None)
+                        probs = mode_data["run"](tokens, verb_index, verb_index + 1, None)
                         verb_data["pcounts"].add_(probs)
                         verb_data["maxes"] = torch.max(verb_data["maxes"], probs)
-        for verb, arg_indices in input_json["argsByVerb"].items():
-            for mode, mode_data in all_verb_data.items():
                 args_data = get_dist_data(mode_data["args"], verb)
-                for index in arg_indices:
-                    if should_include(input_json["sentenceId"], verb, index):
+                for arg_span in mlm_info["argSpans"]:
+                    if should_include(input_json["sentenceId"], verb, arg_span[0]):
                         args_data["total"] += 1
-                        probs = mode_data["run"](tokens, index, None)
+                        probs = mode_data["run"](tokens, arg_span[0], arg_span[1], None)
                         args_data["pcounts"].add_(probs)
                         args_data["maxes"] = torch.max(args_data["maxes"], probs)
                         # if keep_indices is not None:
@@ -352,10 +376,10 @@ for split in data_sources:
 logger.info("Computing vocabularies")
 for mode, mode_data in all_verb_data.items():
     for verb, verb_data in mode_data["verbs"].items():
-        top_pcounts, top_indices = torch.topk(verb_data["maxes"], final_vocab_size)
+        top_pcounts, top_indices = torch.topk(verb_data["maxes"], final_vocab_size - 1)
         verb_data["keep_indices"] = top_indices
     for verb, arg_data in mode_data["args"].items():
-        top_pcounts, top_indices = torch.topk(arg_data["maxes"], final_vocab_size)
+        top_pcounts, top_indices = torch.topk(arg_data["maxes"], final_vocab_size - 1)
         arg_data["keep_indices"] = top_indices
 
 for mode, mode_data in all_verb_data.items():
@@ -365,14 +389,14 @@ for mode, mode_data in all_verb_data.items():
 
     logger.info("Writing vocabularies")
     verb_vocabs = {
-        verb: model.get_tokens(verb_data["keep_indices"])
+        verb: ["<none>"] + model.get_tokens(verb_data["keep_indices"])
         for verb, verb_data in mode_data["verbs"].items()
     }
     verb_vocab_file = os.path.join(mode_dir, "verb_vocabs.json")
     with open(verb_vocab_file, 'wt') as f:
         f.write(json.dumps(verb_vocabs))
     arg_vocabs = {
-        verb: model.get_tokens(arg_data["keep_indices"])
+        verb: ["<none>"] + model.get_tokens(arg_data["keep_indices"])
         for verb, arg_data in mode_data["args"].items()
     }
     arg_vocab_file = os.path.join(mode_dir, "arg_vocabs.json")
@@ -394,25 +418,27 @@ for mode, mode_data in all_verb_data.items():
                         for line in get_lines(split):
                             input_json = json.loads(line)
                             tokens = input_json["sentenceTokens"]
-                            for verb, verb_indices in input_json["verbs"].items():
+                            for verb, mlm_info in input_json["verbs"].items():
                                 verb_data = mode_data["verbs"][verb]
-                                for index in verb_indices:
+                                for index in mlm_info["verbIndices"]:
                                     instance_id = {
                                         "sentenceId": input_json["sentenceId"],
                                         "verbLemma": verb,
-                                        "index": index
+                                        "span": [index, index + 1]
                                     }
-                                    instance_vec = mode_data["run"](tokens, index, verb_data["keep_indices"])
+                                    instance_vec = mode_data["run"](tokens, index, index + 1, verb_data["keep_indices"])
+                                    instance_vec = torch.cat([torch.FloatTensor([1e-12]).to(instance_vec.device), instance_vec])
                                     f_verb_ids.write(json.dumps(instance_id) + "\n")
                                     f_verb_vecs.write(instance_vec.cpu().numpy().tobytes())
-                            for verb, arg_indices in input_json["argsByVerb"].items():
+
                                 arg_data = mode_data["args"][verb]
-                                for index in arg_indices:
+                                for arg_span in mlm_info["argSpans"]:
                                     instance_id = {
                                         "sentenceId": input_json["sentenceId"],
                                         "verbLemma": verb,
-                                        "index": index
+                                        "span": arg_span
                                     }
-                                    instance_vec = mode_data["run"](tokens, index, arg_data["keep_indices"])
+                                    instance_vec = mode_data["run"](tokens, arg_span[0], arg_span[1], arg_data["keep_indices"])
+                                    instance_vec = torch.cat([torch.FloatTensor([1e-12]).to(instance_vec.device), instance_vec])
                                     f_arg_ids.write(json.dumps(instance_id) + "\n")
                                     f_arg_vecs.write(instance_vec.cpu().numpy().tobytes())
