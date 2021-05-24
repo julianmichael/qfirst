@@ -48,6 +48,19 @@ object BrowserStyles extends jjm.ui.View.Styles {
     textAlign.center
   )
 
+  val questionParseGroup = style(
+    addClassNames("p-2"),
+    display.flex,
+    flexDirection.column
+  )
+  val questionParseGroupQuestionText = style(
+    fontWeight.bold
+  )
+  val questionParseContainer = style(
+    addClassName("p-1"),
+    borderWidth(1 px)
+  )
+
   // styles
   override val checkboxSpan = style(
     // addClassNames("ml-3", "pl-3")

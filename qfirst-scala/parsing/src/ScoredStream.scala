@@ -40,6 +40,14 @@ sealed trait ScoredStream[A] {
   @inline final def withFilter(p: A => Boolean): ScoredStream[A] = filter(p)
   @inline final def filterNot(p: A => Boolean): ScoredStream[A] = filter(a => !p(a))
 
+  def distinct: ScoredStream[A] = distinctAux(Set.empty[A])
+  private def distinctAux(dupes: Set[A]): ScoredStream[A] = this match {
+    case ScoredNil() => ScoredNil[A]
+    case head ::< tail =>
+      if(dupes.contains(head.item)) tail().distinctAux(dupes)
+      else head ::< tail().distinctAux(dupes + head.item)
+  }
+
   def merge(other: ScoredStream[A]): ScoredStream[A]
 
   def take(n: Int): ScoredStream[A]

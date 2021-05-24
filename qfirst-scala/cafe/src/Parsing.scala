@@ -126,24 +126,27 @@ class Parsing(sentence: ConsolidatedSentence) {
     aspect: Aspect
   ) {
     import VPForm._
-    def toArgument: Vector[Argument.Semantic] = form match {
-      case Predicative => pred match {
-        case pred: Predication.NonCopularVerbLike =>
-          Vector(Argument.Predicative(Some(pred)))
-        case _ => Vector()
+    def toArgument: Vector[Argument.Semantic] =
+      pred.validateLex.foldMap { pred =>
+        form match {
+          case Predicative => pred match {
+            case pred: Predication.NonCopularVerbLike =>
+              Vector(Argument.Predicative(Some(pred)))
+            case _ => Vector()
+          }
+          case Progressive => Vector(
+            Argument.Verbal.Gerund(Some(pred), aspect),
+            Argument.Verbal.Progressive(Some(pred), aspect)
+          )
+          case BareInfinitive => Vector(
+            Argument.Verbal.BareInfinitive(Some(pred), aspect)
+          )
+          case ToInfinitive => Vector(
+            Argument.Verbal.ToInfinitive(Some(pred), aspect)
+          )
+          case _ => Vector()
+        }
       }
-      case Progressive => Vector(
-        Argument.Verbal.Gerund(Some(pred), aspect),
-        Argument.Verbal.Progressive(Some(pred), aspect)
-      )
-      case BareInfinitive => Vector(
-        Argument.Verbal.BareInfinitive(Some(pred), aspect)
-      )
-      case ToInfinitive => Vector(
-        Argument.Verbal.ToInfinitive(Some(pred), aspect)
-      )
-      case _ => Vector()
-    }
   }
 
   case class Clause(
@@ -152,27 +155,45 @@ class Parsing(sentence: ConsolidatedSentence) {
     aspect: Aspect
   ) {
     import SForm._
-    def toArgument: Vector[Argument.Clausal] = form match {
-      case Progressive => Vector(
-        Argument.Clausal.Gerund(Some(pred), aspect),
-        Argument.Clausal.Progressive(Some(pred), aspect)
-      )
-      // case BareInfinitive => Vector(
-      //   Argument.Clausal.BareInfinitive(Some(pred), aspect)
-      // )
-      case ForToInfinitive => Vector(
-        Argument.Clausal.ForToInfinitive(Some(pred), aspect)
-      )
-      case f @ Finite(_) => Vector(
-        Argument.Clausal.Finite(Some(pred), f, aspect)
-      )
-      case f @ FiniteComplement(_, _) => Vector(
-        Argument.Clausal.FiniteComplement(Some(pred), f, aspect)
-      )
-      case f @ Inverted(_) => Vector(
-        Argument.Clausal.Inverted(Some(pred), f, aspect)
-      )
-      // case _ => Vector()
+    def toArgument(
+      path: Option[Either[ArgumentPath[ArgSnapshot], ArgumentPath[ProFormExtraction]]]
+    ): Vector[Node[Argument]] = {
+      val res = form match {
+        case Progressive =>
+          // // left-branch island and subject island constraints?
+          // if(
+          //   path.exists {
+          //     case Left(ArgumentPath.Descent(ArgPosition.Subj, _)) => true
+          //     case _ => false
+          //   }
+          // ) Vector()
+          // else Vector(
+          //   Argument.Clausal.Gerund(Some(pred), aspect)
+          //     // Node(Argument.Clausal.Progressive(Some(pred), aspect), path)
+          // )
+        // case BareInfinitive => Vector(
+        //   Argument.Clausal.BareInfinitive(Some(pred), aspect)
+        // )
+
+          Vector(
+            Argument.Clausal.Gerund(Some(pred), aspect)
+            // Argument.Clausal.Progressive(Some(pred), aspect)
+          )
+        case ForToInfinitive => Vector(
+          Argument.Clausal.ForToInfinitive(Some(pred), aspect)
+        )
+        case f @ Finite(_) => Vector(
+          Argument.Clausal.Finite(Some(pred), f, aspect)
+        )
+        case f @ FiniteComplement(_, _) => Vector(
+          Argument.Clausal.FiniteComplement(Some(pred), f, aspect)
+        )
+        case f @ Inverted(_) => Vector(
+          Argument.Clausal.Inverted(Some(pred), f, aspect)
+        )
+        // case _ => Vector()
+      }
+      res.map(Node(_, path))
     }
   }
 
@@ -453,28 +474,30 @@ class Parsing(sentence: ConsolidatedSentence) {
         ).foldMap { path =>
           val vals = (subj.value, vp.value) match {
             case (subj: Argument.Subject, VerbPhrase(vPred, vForm, aspect)) =>
-              import VPForm._
-              vForm match {
-                case Progressive => ScoredStream.unit(
-                  Clause(Predication.Clausal(subj, vPred), SForm.Progressive, aspect)
-                )
-                case Finite(tense, numAgr, persAgr) =>
-                  val numGood = cats.data.Ior
-                    .fromOptions(numAgr, subj.number)
-                    .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
-                  val persGood = cats.data.Ior
-                    .fromOptions(persAgr, subj.person)
-                    .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
-                  if(numGood && persGood) {
-                    ScoredStream.unit(
-                      Clause(Predication.Clausal(subj, vPred), SForm.Finite(tense), aspect)
-                    )
-                  } else ScoredStream.empty
+              vPred.validateLex.foldMap { vPred =>
+                import VPForm._
+                vForm match {
+                  case Progressive => ScoredStream.unit(
+                    Clause(Predication.Clausal(subj, vPred), SForm.Progressive, aspect)
+                  )
+                  case Finite(tense, numAgr, persAgr) =>
+                    val numGood = cats.data.Ior
+                      .fromOptions(numAgr, subj.number)
+                      .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
+                    val persGood = cats.data.Ior
+                      .fromOptions(persAgr, subj.person)
+                      .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
+                    if(numGood && persGood) {
+                      ScoredStream.unit(
+                        Clause(Predication.Clausal(subj, vPred), SForm.Finite(tense), aspect)
+                      )
+                    } else ScoredStream.empty[Clause]
 
-                case Predicative | BareInfinitive | ToInfinitive | Perfect =>
-                  ScoredStream.empty
+                  case Predicative | BareInfinitive | ToInfinitive | Perfect =>
+                    ScoredStream.empty[Clause]
+                }
               }
-            case _ => ScoredStream.empty
+            case _ => ScoredStream.empty[Clause]
           }
           vals.map(value => Node(value, path))
         }
@@ -484,16 +507,18 @@ class Parsing(sentence: ConsolidatedSentence) {
         Node(subj: Argument.Subject, Some(Left(path @ ArgumentPath.End(ArgumentPath.Target)))),
         Node(VerbPhrase(pred, VPForm.Finite(tense, _, _), aspect), None)
       ) =>
-        ScoredStream.unit(
-          Node(
-            Clause(Predication.Clausal(subj, pred), SForm.Inverted(tense), aspect),
-            Some(Left(ArgumentPath.Descent(ArgPosition.Subj, path)))
+        pred.validateLex.foldMap { pred =>
+          ScoredStream.unit(
+            Node(
+              Clause(Predication.Clausal(subj, pred), SForm.Inverted(tense), aspect),
+              Some(Left(ArgumentPath.Descent(ArgPosition.Subj, path)))
+            )
           )
-        )
+        }
       case _ => ScoredStream.empty
     }
-    // NOTE: this prohibits any extraction from inside the subject,
-    // which I think is correct in English anyway.
+    // NOTE: this prohibits _any_ extraction from inside the subject,
+    // enforcing the subject island constraint.
     val vpToSInv = (Aux, Arg, VP) to S using {
       case (aux,
             Node(subj: Argument.Subject, None),
@@ -508,12 +533,14 @@ class Parsing(sentence: ConsolidatedSentence) {
               .fromOptions(persAgr, subj.person)
               .forall(_.onlyBoth.forall(Function.tupled(_ == _)))
             if(numGood && persGood) {
-              ScoredStream.unit(
-                Node(
-                  Clause(Predication.Clausal(subj, pred), SForm.Inverted(tense), aspect),
-                  vpPath
+              pred.validateLex.foldMap { pred =>
+                ScoredStream.unit(
+                  Node(
+                    Clause(Predication.Clausal(subj, pred), SForm.Inverted(tense), aspect),
+                    vpPath
+                  )
                 )
-              )
+              }
             } else ScoredStream.empty[Node[Clause]]
         }.combineAll
     }
@@ -525,12 +552,14 @@ class Parsing(sentence: ConsolidatedSentence) {
         ).foldMap { path =>
           (subj.value, vp.value) match {
             case (subj: Argument.Subject, VerbPhrase(vPred, VPForm.ToInfinitive, aspect)) =>
-              ScoredStream.unit(
-                Node(
-                  Clause(Predication.Clausal(subj, vPred), SForm.ForToInfinitive, aspect),
-                  path
+              vPred.validateLex.foldMap { vPred =>
+                ScoredStream.unit(
+                  Node(
+                    Clause(Predication.Clausal(subj, vPred), SForm.ForToInfinitive, aspect),
+                    path
+                  )
                 )
-              )
+              }
             case _ => ScoredStream.empty
           }
         }
@@ -625,7 +654,7 @@ class Parsing(sentence: ConsolidatedSentence) {
     }
     val sToArg = S to Arg using {
       case s => ScoredStream.fromIndexedSeq(
-        s.value.toArgument.map(arg => s.map(_ => arg: Argument)).map(Scored.unit)
+        s.value.toArgument(s.path).map(Scored.unit(_))
       )
     }
     val ppToArg = PP to Arg usingSingleZ { case pp => pp }

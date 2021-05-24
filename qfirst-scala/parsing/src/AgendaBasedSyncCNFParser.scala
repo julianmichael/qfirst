@@ -102,7 +102,7 @@ class AgendaBasedSyncCNFParser[Token](
           case Some(headEdgeStream) => headEdgeStream match {
             case EdgeStream((newSD @ Scored(curDeriv, score)) ::<+ remainingDerivs, span, heuristic) =>
               def debugPrint = {
-                Thread.sleep(100)
+                // Thread.sleep(100)
                 println("===== ===== ===== =====")
                 println(score)
                 println(curDeriv.item)

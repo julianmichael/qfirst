@@ -1170,6 +1170,8 @@ object Predication {
       needsFlippable: Boolean
     ): Either[NonEmptyChain[String], NonEmptyList[String]]
 
+    def validateLex: Option[Self]
+
     def swapOutArg[A](swapOutPred: SwapOutPred[Self, A], index: Int): SwapOutArg[A]
 
     import Validated.valid
@@ -1244,6 +1246,58 @@ object Predication {
   ) extends NonCopularVerbLike {
     type Self = Verbal
     override def predPOS = "verb"
+
+    // TODO: rely on lexicalized grammar later
+    // TODO: change proxy situation to be sensitive to ARGUMENT structure,
+    // in order to handle things like form/aspect agreement.
+    def validateLex: Option[Self] = {
+      if(verb.forms == InflectedForms.doForms) {
+        def isModifier(arg: Argument.NonSubject) = arg match {
+          case arg: Argument.Nominal => false
+          case arg: Argument.Verbal.BareInfinitive => false
+          case _ => true
+        }
+        def isNP(arg: Argument.NonSubject) = arg match {
+          case arg: Argument.Nominal => true
+          case _ => false
+        }
+        def thisWithProxy = {
+          import ArgumentPath._
+          import ArgPosition.Arg
+          if(isPassive) {
+            this // TODO: in theory could handle the passive case, but
+            // requires subject / whole clause.
+            // probably should just wait until lexicalization
+          } else {
+            this.copy(
+              proxy = Some(
+                ProxyArgument(
+                  Descent(Arg(0), End(Target)),
+                  arg => arg match {
+                    // TODO: only can do Verbal bc of Self type issue.
+                    // cannot do copulas and adjectives.
+                    // fine for now, but should be fixed with lexicalization.
+                    case Argument.Verbal.BareInfinitive(Some(v: Verbal), _) =>
+                      Some(Right(v))
+                    case _ => None
+                  }
+                )
+              )
+            )
+          }
+        }
+
+        if(isPassive) {
+          if(arguments.forall(isModifier)) Some(thisWithProxy) else None
+        } else {
+          if(arguments.headOption.exists(isNP) && arguments.tail.forall(isModifier)) {
+            Some(thisWithProxy)
+          } else None
+        }
+
+      } else Some(this)
+    }
+
     override def renderVerbChain(vpForm: VPForm, aspect: Aspect, needsFlippable: Boolean) = {
       def pastParticiple = verb.forms.pastParticiple.toString
       vpForm match {
@@ -1280,29 +1334,6 @@ object Predication {
   }
   object Verbal {
     // maybe also 'what happened _?' type of pro-form?
-    // XXX change to a pro-form
-    // import ArgumentPath._
-    // import ArgPosition._
-    // def doSomething(
-    //   subject: Argument.Subject,
-    //   // modifiers: Vector[NonNominal],
-    //   tan: TAN
-    // ) = Verbal(
-    //   None,
-    //   subject, Verb(InflectedForms.doForms), false,
-    //   Vector(Argument.ProForm.what),// +: modifiers,
-    //   tan,
-    //   Some(
-    //     ProxyArgument(
-    //       Descent(Arg(0), End(Target)),
-    //       arg => arg match {
-    //         case bare: Argument.BareInfinitive =>
-    //           bare.pred.map(Right(_))
-    //         case _ => None
-    //       }
-    //     )
-    //   )
-    // )
   }
 
   case class Adjectival(
@@ -1313,6 +1344,7 @@ object Predication {
   ) extends NonCopularVerbLike {
     type Self = Adjectival
     override def predPOS = "adj"
+    def validateLex: Option[Self] = Some(this)
     override def renderVerbChain(vpForm: VPForm, aspect: Aspect, needsFlippable: Boolean) = {
       val adj = adjective.form.toString
       vpForm match {
@@ -1346,6 +1378,9 @@ object Predication {
     type Self = Copular
     def arguments = argument +: modifiers
     def predPOS = "copula"
+
+    // TODO
+    def validateLex: Option[Self] = Some(this)
 
     override def renderVerbChain(
       vpForm: VPForm,

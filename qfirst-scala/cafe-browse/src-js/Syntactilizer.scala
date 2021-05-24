@@ -66,7 +66,7 @@ import qasrl.Tense
 import qfirst.parsing.ScoredStream
 import qfirst.parsing.EvaluationBlock
 
-import cats.collections.Heap
+import qfirst.parsing.Derivation
 import qfirst.parsing.Scored
 
 class LazyLoadingList[A] {
@@ -127,7 +127,7 @@ object Syntactilizer {
   val V = View
 
   val QuestionExpander = new LazyLoadingList[
-    Scored[Either[EvaluationBlock, Argument.Clausal.FiniteQuestion]]
+    Scored[Argument.Clausal.FiniteQuestion]
   ]
 
   def treeEltAux(
@@ -221,7 +221,11 @@ object Syntactilizer {
   // }
 
   @Lenses case class State(
-    questions: Map[Int, Map[String, ScoredStream[Either[EvaluationBlock, Argument.Clausal.FiniteQuestion]]]]
+    sentence: ConsolidatedSentence,
+    // questionDerivations: Map[Int, Map[String, ScoredStream[Either[EvaluationBlock, Derivation { type Result = Argument.Clausal.FiniteQuestion }]]]],
+    // questions: Map[Int, Map[String, ScoredStream[Either[EvaluationBlock, Argument.Clausal.FiniteQuestion]]]]
+    questionDerivations: Map[Int, Map[String, ScoredStream[Derivation { type Result = Argument.Clausal.FiniteQuestion }]]],
+    questions: Map[Int, Map[String, ScoredStream[Argument.Clausal.FiniteQuestion]]]
     // predsByIndex: Map[Int, Set[Predication]],
     // predsBySpan: Map[ESpan, Set[Predication]],
     // propsByVerbIndex: SortedMap[Int, Vector[Argument]]
@@ -231,25 +235,34 @@ object Syntactilizer {
   )
   object State {
     def fromProps(props: Props): State = {
-      val qs = props.sentence.verbEntries.mapVals { verb =>
+      val derivations = props.sentence.verbEntries.mapVals { verb =>
         verb.questionLabels.mapVals { question =>
           val form = SurfaceForm.fromQuestionSlots(
             verb.verbIndex,
             verb.verbInflectedForms,
             question.questionSlots
           )
-          props.parsing.parse(form).map {
-            case Left(block) => Left(block)
-            case Right(deriv) => Right(deriv.item)
+          props.parsing.parse(form).collect {
+            // case Left(block) => Left(block)
+            // case Right(deriv) => Right(deriv)
+            case Right(deriv) => Scored(deriv, 0.0)
           }
         }
       }
-      State(
-        qs
-      //   Map(), Map(),
-      //   sent.verbEntries.map { case (k, v) => k -> Vector() }
+      val questions = derivations.mapVals(
+        _.mapVals(
+          _.map {
+            _.item
+            // case Left(block) => Left(block)
+            // case Right(deriv) => Right(deriv.item)
+          }.distinct
+        )
       )
-      // State(Map(), Map(), Map())
+      State(
+        props.sentence,
+        derivations,
+        questions
+      )
     }
   }
 
@@ -260,23 +273,15 @@ object Syntactilizer {
     Lens[Option[A], A](_.get)(a => opt => Some(a))
   }
 
-  // def transitiveClause(index: Int, verbForms: InflectedForms) = {
-  //   Argument.Finite(
-  //     Some(
-  //       Predication.Verbal(
-  //         index = Some(index),
-  //         subject = Argument.ProForm.what,
-  //         verb = Lexicon.Verb(verbForms),
-  //         isPassive = false,
-  //         arguments = Vector(Argument.ProForm.what),
-  //         tan = TAN(Some(Tense.Finite.Present), false, false, false)
-  //       )
-  //     )
-  //   )
-  // }
-
   def clauseEditor(clause: StateSnapshot[Argument]) = {
     clause.value.render(ArgPosition.Arg(0)) match {
+      case Validated.Valid(tree) => argTreeElt(tree)
+      case Validated.Invalid(err) => <.div(err.toString)
+    }
+  }
+
+  def questionViewer(deriv: Derivation { type Result = Argument.Clausal.FiniteQuestion }) = {
+    deriv.item.render(ArgPosition.Arg(0)) match {
       case Validated.Valid(tree) => argTreeElt(tree)
       case Validated.Invalid(err) => <.div(err.toString)
     }
@@ -294,32 +299,30 @@ object Syntactilizer {
     verbIndex: Int,
     state: State
     // verbState: StateSnapshot[Vector[Argument]]
-  ) = {
+  ) = { // TODO: add styling
     <.div(
       state.questions(verbIndex).toList.toVdomArray { case (q, cqs) =>
-        <.div(
-          <.div(q),
-          <.div("Parses: ")(
-            QuestionExpander.make(cqs.toStreamScored, 1) {
-              case QuestionExpander.Context(items, expandOpt) =>
-                <.div(
-                  items.toVdomArray {
-                    case Scored(Left(block), score) =>
-                      <.div(f"No parses with score < $score%.2f")
-                    case Scored(Right(question), score) =>
-                      <.div(f"Score: $score%.2f")(
-                        clauseViewer(question)
-                      )
-                  },
-                  expandOpt match {
-                    case None => <.div("all loaded")
-                    case Some(expand) => <.button("more")(
-                      ^.onClick --> expand(0)
+        <.div(S.questionParseGroup)(
+          <.div(S.questionParseGroupQuestionText)(q),
+          QuestionExpander.make(cqs.toStreamScored, 3) {
+            case QuestionExpander.Context(items, expandOpt) =>
+              <.div(S.questionParseContainer)(
+                items.toVdomArray {
+                  // case Scored(Left(block), score) =>
+                  //   <.div(f"No parses with score < $score%.2f")
+                  case Scored(question, score) =>
+                    <.div(f"Score: $score%.2f")(
+                      clauseViewer(question)
                     )
-                  }
-                )
-            }
-          )
+                },
+                expandOpt match {
+                  case None => TagMod.empty
+                  case Some(expand) => <.button("more")(
+                    ^.onClick --> expand(1)
+                  )
+                }
+              )
+          }
         )
       }
 
@@ -339,10 +342,8 @@ object Syntactilizer {
 
   def render(props: Props) = {
     import props.sentence
-    println(props)
     <.div(
       StateLocal.make(State.fromProps(props)) { state =>
-        println(state.value)
         <.div(
           <.div(S.sentenceTextContainer)(
             <.span(S.sentenceText)(
@@ -372,7 +373,7 @@ object Syntactilizer {
             )
           ),
           <.div(S.verbEntriesContainer)(
-            props.sentence.verbEntries.toList.toVdomArray { case (verbIndex, verb) =>
+            state.value.sentence.verbEntries.toList.toVdomArray { case (verbIndex, verb) =>
               <.div(S.verbEntryDisplay)(
                 <.div(S.verbHeading)(
                   <.span(S.verbHeadingText)(
