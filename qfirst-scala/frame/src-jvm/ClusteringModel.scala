@@ -661,6 +661,7 @@ object FullArgumentModel {
     DifferentVerbs -> "dv"
   ) ++ List("masked", "repeated", "symm_both", "symm_left", "symm_right").flatMap(mode =>
     List(
+      VerbMLMEntropy(mode) -> s"verb_mlm_$mode",
       HeadMLMEntropy(mode) -> s"head_mlm_$mode",
       PrepMLMEntropy(mode) -> s"prep_mlm_$mode",
       SpanMLMEntropy(mode) -> s"span_mlm_$mode"
@@ -877,6 +878,7 @@ object FullArgumentModel {
     )
   }
 
+
   case object DifferentVerbs extends LossTerm {
     type FlatParam = Map[VerbId, Double]
     type AgglomParam = Map[VerbId, Double]
@@ -946,14 +948,14 @@ object FullArgumentModel {
 
     def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
-    ): features.ArgFeats[DenseVector[Float]]
+    ): IO[VerbType => ArgumentId[Arg] => DenseVector[Float]]
 
-    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = getDists(features).get.as(())
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) = getDists(features).as(())
 
     override def create[VerbType, Arg](
       features: Features[VerbType, Arg], verbType: VerbType
     ) = for {
-      argMLMFeatures <- getDists(features).get.map(_.apply(verbType))
+      argMLMFeatures <- getDists(features).map(_.apply(verbType))
       // tfidf = TFIDF.makeTransform(
       //   headProbabilityMass = 0.99,
       //   priorSmoothingLambda = 1000.0,
@@ -965,27 +967,60 @@ object FullArgumentModel {
     )
   }
 
+  case class VerbMLMEntropy(mode: String) extends DenseDistributionEntropy {
+    override def init[VerbType, Arg](features: Features[VerbType, Arg]) =
+      super.init(features) >> features.verbArgSets.get.as(())
+
+    // override def create[VerbType, Arg](
+    //   features: Features[VerbType, Arg], verbType: VerbType
+    // ) = for {
+    //   argIdToVerbId <- features.verbArgSets.get.map(_.apply(verbType)).map(
+    //     _.toList.flatMap { case (verbId, args) =>
+    //       args.toList.map(arg => ArgumentId(verbId, arg) -> verbId)
+    //     }.toMap
+    //   )
+    // } yield (
+    //   new NonLikeClustering(argIdToVerbId),
+    //   new NonLikeClustering(argIdToVerbId)
+    // )
+
+    override def getDists[VerbType, Arg](
+      features: Features[VerbType, Arg]
+    ) = for {
+      argIdToVerbId <- features.verbArgSets.get.map(
+        _.mapVals(
+          _.toList.flatMap { case (verbId, args) =>
+            args.toList.map(arg => ArgumentId(verbId, arg) -> verbId)
+          }.toMap
+        )
+      )
+      verbMLMFeats <- features.getVerbMLMFeatures(mode).get
+    } yield (verbType: VerbType) => (argId: ArgumentId[Arg]) => {
+        verbMLMFeats(verbType)(argIdToVerbId(verbType)(argId))
+    }
+  }
+
   case class HeadMLMEntropy(mode: String) extends DenseDistributionEntropy {
     override def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
-    ): features.ArgFeats[DenseVector[Float]] = {
-      features.getArgHeadMLMFeatures(mode)
+    ) = {
+      features.getArgHeadMLMFeatures(mode).get
     }
   }
 
   case class PrepMLMEntropy(mode: String) extends DenseDistributionEntropy {
     override def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
-    ): features.ArgFeats[DenseVector[Float]] = {
-      features.getArgPrepMLMFeatures(mode)
+    ) = {
+      features.getArgPrepMLMFeatures(mode).get
     }
   }
 
   case class SpanMLMEntropy(mode: String) extends DenseDistributionEntropy {
     override def getDists[VerbType, Arg](
       features: Features[VerbType, Arg]
-    ): features.ArgFeats[DenseVector[Float]] = {
-      features.getArgSpanMLMFeatures(mode)
+    ) = {
+      features.getArgSpanMLMFeatures(mode).get
     }
   }
 }
