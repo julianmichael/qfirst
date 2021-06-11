@@ -11,6 +11,7 @@ import io.circe.generic.JsonCodec
     case SyntFAll => "SyntF + all rules"
     case HumQQ => "HUM-QQ"
     case HumQQLex => "HUM-QQ + lex"
+    case HumQQLexMI => "HUM-QQ + lex + MI"
     case Gold => "Gold"
     case GoldWithSense => "Gold + sense"
   }
@@ -22,6 +23,7 @@ import io.circe.generic.JsonCodec
     case SyntFAll => "arg/mndc->noop"
     case HumQQ => "arg/qent+dv"
     case HumQQLex => "arg/mnd->qent+dv"
+    case HumQQLexMI => "arg/mnd->qent+dv+pent"
     case Gold => "arg/g->noop"
     case GoldWithSense => "arg/r->noop"
   }
@@ -34,10 +36,11 @@ object ClusterModelSpec {
   case object SyntFAll extends ClusterModelSpec
   case object HumQQ extends ClusterModelSpec
   case object HumQQLex extends ClusterModelSpec
+  case object HumQQLexMI extends ClusterModelSpec
   case object Gold extends ClusterModelSpec
   case object GoldWithSense extends ClusterModelSpec
 
-  def all = List(SyntF, SyntFLex, SyntFPassAct, SyntFAll, HumQQ, HumQQLex, Gold, GoldWithSense)
+  def all = List(SyntF, SyntFLex, SyntFPassAct, SyntFAll, HumQQ, HumQQLex, HumQQLexMI, Gold, GoldWithSense)
 
   def fromString(x: String): Option[ClusterModelSpec] = all.find(_.toString == x)
 }

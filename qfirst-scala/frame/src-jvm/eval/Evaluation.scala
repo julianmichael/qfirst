@@ -295,7 +295,7 @@ object Evaluation {
                 .map(_.unorderedFold)
             ) -> clustering.extraClusters.values.toVector
           }
-          learnedClusterings = allClusterings.mapVals(_._1)
+          // learnedClusterings = allClusterings.mapVals(_._1)
           // _ <- itemDistsOpt.traverse { itemDists =>
           //   IO {
           //     val allClusters = learnedClusterings.toVector.flatMap { case (verb, clusters) =>

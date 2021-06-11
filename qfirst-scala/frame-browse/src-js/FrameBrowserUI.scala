@@ -2,7 +2,6 @@ package qfirst.frame.browse
 
 import qfirst.clustering.MergeTree
 import qfirst.frame._
-import qfirst.frame.math._
 import qfirst.frame.eval._
 
 import qfirst.model.eval.filterGoldNonDense

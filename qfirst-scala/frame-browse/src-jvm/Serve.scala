@@ -44,7 +44,7 @@ import jjm.implicits._
 import freelog.EphemeralTreeLogger
 
 object Serve extends CommandIOApp(
-  name = "mill -i qfirst.jvm.runVerbAnn",
+  name = "mill -i qfirst.frame-browse.serve",
   header = "Spin up the annotation server for QA-SRL Clause frames.") {
 
   import scala.concurrent.ExecutionContext.Implicits.global
