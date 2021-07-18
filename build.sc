@@ -62,7 +62,7 @@ val disciplineVersion = "1.0.0"
 val munitVersion = "0.7.21"
 val munitCatsEffectVersion = "0.11.0"
 
-import $file.`scripts-build`.SimpleJSDepsBuild, SimpleJSDepsBuild.SimpleJSDeps
+import $file.scripts.SimpleJSDepsBuild, SimpleJSDepsBuild.SimpleJSDeps
 
 trait CommonModule extends ScalaModule with ScalafmtModule {
 
@@ -181,7 +181,7 @@ trait FullJsModule extends JsModule with SimpleJSDeps {
 
 object qfirst extends Module {
 
-  override def millSourcePath = build.millSourcePath / "qfirst-scala"
+  override def millSourcePath = build.millSourcePath / "qfirst"
 
   object parsing extends Module {
     object js extends JsModule
