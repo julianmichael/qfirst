@@ -1,1 +1,0 @@
-from qfirst.predictors.end_to_end_predictor import EndToEndPredictor

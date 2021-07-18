@@ -1,6 +1,3 @@
-[submodule "lib/allennlp"]
-	path = lib/allennlp
-	url = https://github.com/allenai/allennlp.git
 [submodule "lib/evilplot"]
 	path = lib/evilplot
 	url = git@github.com:julianmichael/evilplot.git
