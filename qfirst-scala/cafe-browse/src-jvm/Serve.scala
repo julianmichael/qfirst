@@ -47,13 +47,13 @@ object Serve extends CommandIOApp(
 
     val qasrlBankO = Opts.option[Path](
       "qasrl-bank", metavar = "path", help = "Path to the QA-SRL Bank 2.0 data, e.g., ../qasrl-bank/data/qasrl-v2."
-    ).withDefault(Paths.get("data/qasrl-v2_1"))
+    ).withDefault(Paths.get("../qasrl/data/qasrl-v2_1"))
     //.
       // .or()
 
     val qaNomO = Opts.option[Path](
       "qanom", metavar = "path", help = "Path to the QA-Nom data."
-    ).withDefault(Paths.get("data/qanom"))
+    ).withDefault(Paths.get("../qasrl/data/qanom"))
 
     val domainO = Opts.option[String](
       "domain", metavar = "domain", help = "domain name the server is being hosted at."
