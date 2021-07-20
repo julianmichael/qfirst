@@ -229,145 +229,50 @@ object qfirst extends Module {
     }
   }
 
-  object `clause-ext` extends Module {
-    object js extends JsModule
-    object jvm extends JvmModule
-  }
-
-  // object `clause-ext-ann` extends Module {
-  //   object js extends FullJsModule {
-  //     def moduleDeps = Seq(`clause-ext`.js)
-  //   }
-  //   object jvm extends FullJvmModule {
-
-  //     def moduleDeps = Seq(`clause-ext`.jvm)
-
-  //     def serve(args: String*) = T.command {
-  //       val jsPath = `clause-ext-ann`.js.fastOpt().path.toString
-  //       val jsDepsPath = `clause-ext-ann`.js.aggregatedJSDeps().path.toString
-  //       val runMain = runMainFn()
-  //       runMain(
-  //         "qfirst.clause.ext.ann.Serve",
-  //         List(
-  //           "--jsDeps", jsDepsPath,
-  //           "--js", jsPath
-  //         ) ++ args)
-  //     }
-  //   }
+  // object `clause-ext` extends Module {
+  //   object js extends JsModule
+  //   object jvm extends JvmModule
   // }
 
-  // object `clause-ext-demo` extends Module {
-  //   object js extends FullJsModule {
-
-  //     def moduleDeps = Seq(`clause-ext`.js, `model-eval`.js)
+  // object frame extends Module {
+  //   object js extends JsModule {
+  //     def moduleDeps = Seq(`model-eval`.js, clustering.js)
 
   //     override def ivyDeps = super.ivyDeps() ++ Agg(
-  //       ivy"org.julianmichael::spacro::$spacroVersion",
-  //       ivy"org.julianmichael::qasrl-crowd::$qasrlVersion"
+  //       ivy"org.julianmichael::jjm-datasets::$jjmVersion",
+  //       ivy"org.julianmichael::freelog::$freelogVersion",
+  //       ivy"com.cibo::evilplot::$evilplotVersion"
   //     )
   //   }
   //   object jvm extends FullJvmModule {
-
-  //     def moduleDeps = Seq(`clause-ext`.jvm, `model-eval`.jvm)
-
-  //     override def resources = T.sources(
-  //       millSourcePath / "resources",
-  //       `clause-ext-demo`.js.fastOpt().path / RelPath.up,
-  //       `clause-ext-demo`.js.aggregatedJSDeps().path / RelPath.up
-  //     )
+  //     def moduleDeps = Seq(`model-eval`.jvm, clustering.jvm)
 
   //     override def ivyDeps = super.ivyDeps() ++ Agg(
-  //       ivy"org.julianmichael::spacro::$spacroVersion",
-  //       ivy"org.julianmichael::qasrl-crowd::$qasrlVersion",
-  //       ivy"org.julianmichael::jjm-corenlp::$jjmVersion",
-  //       ivy"com.lihaoyi::ammonite-ops::$ammoniteOpsVersion",
-  //       // not sure if any of these are needed
-  //       // ivy"com.github.japgolly.scalacss::ext-scalatags:$scalacssVersion",
-  //       // ivy"com.typesafe.scala-logging::scala-logging::$scalaLoggingVersion",
-  //       // ivy"org.slf4j:slf4j-api:$slf4jApiVersion" // decided to match scala-logging transitive dep
+  //       ivy"org.julianmichael::jjm-datasets::$jjmVersion",
+  //       ivy"org.julianmichael::freelog::$freelogVersion",
+  //       ivy"com.cibo::evilplot::$evilplotVersion",
+  //       ivy"org.scalanlp::breeze:$breezeVersion",
+  //       ivy"org.scalanlp::breeze-natives:$breezeVersion",
+  //       ivy"com.lihaoyi::scalatags:$scalatagsVersion",
+  //       ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
   //     )
   //   }
   // }
 
-  object clustering extends Module {
-    object js extends JsModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::freelog::$freelogVersion"
-      )
-    }
-    object jvm extends FullJvmModule {
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::freelog::$freelogVersion",
-        ivy"org.scalanlp::breeze:$breezeVersion",
-        ivy"org.scalanlp::breeze-natives:$breezeVersion"
-      )
-    }
-  }
+  // object `frame-ann` extends Module {
+  //   object jvm extends FullJvmModule { def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm) }
+  //   object js extends FullJsModule { def moduleDeps = Seq(frame.js, `clause-ext`.js) }
 
-  object frame extends Module {
-    object js extends JsModule {
-      def moduleDeps = Seq(`model-eval`.js, clustering.js)
-
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::jjm-datasets::$jjmVersion",
-        ivy"org.julianmichael::freelog::$freelogVersion",
-        ivy"com.cibo::evilplot::$evilplotVersion"
-      )
-    }
-    object jvm extends FullJvmModule {
-      def moduleDeps = Seq(`model-eval`.jvm, clustering.jvm)
-
-      override def ivyDeps = super.ivyDeps() ++ Agg(
-        ivy"org.julianmichael::jjm-datasets::$jjmVersion",
-        ivy"org.julianmichael::freelog::$freelogVersion",
-        ivy"com.cibo::evilplot::$evilplotVersion",
-        ivy"org.scalanlp::breeze:$breezeVersion",
-        ivy"org.scalanlp::breeze-natives:$breezeVersion",
-        ivy"com.lihaoyi::scalatags:$scalatagsVersion",
-        ivy"com.github.tototoshi::scala-csv:$scalaCsvVersion"
-      )
-    }
-  }
-
-  object `frame-ann` extends Module {
-    object jvm extends FullJvmModule { def moduleDeps = Seq(frame.jvm, `clause-ext`.jvm) }
-    object js extends FullJsModule { def moduleDeps = Seq(frame.js, `clause-ext`.js) }
-
-    def serve(args: String*) = T.command {
-      val jsPath = js.fastOpt().path.toString
-      val jsDepsPath = js.aggregatedJSDeps().path.toString
-      val runMain = jvm.runMainFn()
-      runMain(
-        "qfirst.frame.ann.Serve",
-        List(
-          "--jsDeps", jsDepsPath,
-          "--js", jsPath
-        ) ++ args)
-    }
-  }
-
-  object `frame-browse` extends Module {
-    object jvm extends FullJvmModule { def moduleDeps = Seq(frame.jvm) }
-    object js extends FullJsModule { def moduleDeps = Seq(frame.js) }
-
-    def serve(args: String*) = T.command {
-      val jsPath = js.fastOpt().path.toString
-      val jsDepsPath = js.aggregatedJSDeps().path.toString
-      val runMain = jvm.runMainFn()
-      runMain(
-        "qfirst.frame.browse.Serve",
-        List(
-          "--jsDeps", jsDepsPath,
-          "--js", jsPath
-        ) ++ args)
-    }
-  }
-
-  object `model-gen` extends Module {
-    object jvm extends FullJvmModule
-  }
-  object `model-eval` extends Module {
-    object jvm extends FullJvmModule { def moduleDeps = Seq(`clause-ext`.js) }
-    object js extends JsModule { def moduleDeps = Seq(`clause-ext`.js) }
-  }
+  //   def serve(args: String*) = T.command {
+  //     val jsPath = js.fastOpt().path.toString
+  //     val jsDepsPath = js.aggregatedJSDeps().path.toString
+  //     val runMain = jvm.runMainFn()
+  //     runMain(
+  //       "qfirst.frame.ann.Serve",
+  //       List(
+  //         "--jsDeps", jsDepsPath,
+  //         "--js", jsPath
+  //       ) ++ args)
+  //   }
+  // }
 }

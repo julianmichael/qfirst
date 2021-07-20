@@ -1,6 +1,9 @@
 # qfirst
 
 Working repository for QA-SRL research.
+Much of the contents of this repo have ended up in
+[qasrl-modeling](https://github.com/julianmichael/qasrl-modeling)
+or [qasrl-roles](https://github.com/julianmichael/qasrl-roles).
 
 ## Contents
 

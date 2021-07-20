@@ -1,3 +1,0 @@
-package qfirst.frame.browse
-
-trait FeatureServiceCompanionPlatformExtensions
