@@ -17,12 +17,12 @@ class ParsingTestSuite extends munit.CatsEffectSuite {
   val IntSymb = new ParseSymbol[ExpInt]("Int")
 
   val genTerminals = (s: String) => {
-    val term = ScoredStream.unit(Derivation(Terminal(s), s))
+    val term = ScoredStream.unit(Derivation(Terminal(s), s, s))
     val num = scala.util.Try(s.toInt).toOption match {
       case None => ScoredStream.empty[Derivation]
-      case Some(i) => ScoredStream.unit(Scored(Derivation(IntSymb, ExpInt(i)), 1.0))
+      case Some(i) => ScoredStream.unit(Scored(Derivation(IntSymb, ExpInt(i), i.toString), 1.0))
     }
-    val arbStr = ScoredStream.unit(Scored(Derivation(StrSymb, ExpStr(s)), 2.0))
+    val arbStr = ScoredStream.unit(Scored(Derivation(StrSymb, ExpStr(s), s), 2.0))
     term merge num merge arbStr
   }
 
@@ -63,10 +63,10 @@ object Calculator {
 
   val Num = new ParseSymbol[Int]("Num")
   val genlex = (s: String) => {
-    val term = ScoredStream.unit(Derivation(Terminal(s), s))
+    val term = ScoredStream.unit(Derivation(Terminal(s), s, s))
     val num = scala.util.Try(s.toInt).toOption match {
       case None => ScoredStream.empty[Derivation]
-      case Some(i) => ScoredStream.unit(Scored(Derivation(Num, i), 1.0))
+      case Some(i) => ScoredStream.unit(Scored(Derivation(Num, i, i.toString), 1.0))
     }
     num merge term
   }

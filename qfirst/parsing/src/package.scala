@@ -19,6 +19,7 @@ package object parsing {
   }
 
   /* One of the main datatypes in the parser; also involved in how we translate a CFG */
+  // TODO: maybe have children: List[Derivation | String] instead of tree, then construct tree later
   sealed trait Derivation {
     type Result
     val symbol: ParseSymbol[Result]
